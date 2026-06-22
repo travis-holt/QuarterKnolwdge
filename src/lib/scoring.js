@@ -1,0 +1,266 @@
+// ─────────────────────────────────────────────────────────────────────────────
+// SCORING + MATRIX READ-OFFS
+//
+// All scoring is per-domain — there is deliberately no single overall score.
+// Levels are derived from THRESHOLDS in data/config.js so the bands are easy
+// to change in one place.
+// ─────────────────────────────────────────────────────────────────────────────
+
+import { THRESHOLDS, LEVELS, COLUMN_GAP_THRESHOLD, TRAINING_RULES } from '../data/config.js';
+import { DOMAINS, QUESTIONS } from '../data/questions.js';
+import { moduleForDomain } from '../data/training.js';
+
+/**
+ * Score a set of answers into a per-domain percent-correct map.
+ * @param {Record<string,string>} answers - questionId -> chosen optionId
+ * @returns {Record<string,number>} domainId -> percent correct (0–100, rounded)
+ */
+export function scorePerDomain(answers) {
+  const tally = {}; // domainId -> { correct, total }
+  for (const domain of DOMAINS) {
+    tally[domain.id] = { correct: 0, total: 0 };
+  }
+
+  for (const q of QUESTIONS) {
+    const bucket = tally[q.domainId];
+    if (!bucket) continue;
+    bucket.total += 1;
+    if (answers[q.id] === q.correctOptionId) {
+      bucket.correct += 1;
+    }
+  }
+
+  const scores = {};
+  for (const domain of DOMAINS) {
+    const { correct, total } = tally[domain.id];
+    scores[domain.id] = total === 0 ? 0 : Math.round((correct / total) * 100);
+  }
+  return scores;
+}
+
+/**
+ * Map a per-domain percentage to a capability level id.
+ * @param {number} pct
+ * @returns {'learning'|'solid'|'canTeach'}
+ */
+export function scoreToLevel(pct) {
+  if (pct >= THRESHOLDS.canTeach) return 'canTeach';
+  if (pct < THRESHOLDS.learning) return 'learning';
+  return 'solid';
+}
+
+/** Convenience: full level descriptor ({id,label,color,text}) for a percentage. */
+export function levelFor(pct) {
+  return LEVELS[scoreToLevel(pct)];
+}
+
+/**
+ * Build the matrix rows from sample navigators + the optional live taker.
+ * Each row: { name, isLive, scores, levels } where levels[domainId] is a level id.
+ * @param {{name:string,scores:Record<string,number>}[]} samples
+ * @param {{name:string,scores:Record<string,number>}|null} liveResult
+ */
+export function buildMatrixRows(samples, liveResult) {
+  const toRow = (nav, isLive) => ({
+    name: nav.name,
+    isLive,
+    scores: nav.scores,
+    levels: Object.fromEntries(
+      DOMAINS.map((d) => [d.id, scoreToLevel(nav.scores[d.id] ?? 0)])
+    ),
+  });
+
+  const rows = samples.map((n) => toRow(n, false));
+  if (liveResult) rows.push(toRow(liveResult, true));
+  return rows;
+}
+
+/**
+ * Column gaps — domains where a majority (COLUMN_GAP_THRESHOLD) of navigators
+ * sit at "Learning". These are floor-wide training priorities.
+ * @returns {{domainId:string, learningCount:number, total:number, share:number}[]}
+ */
+export function columnGaps(rows) {
+  const gaps = [];
+  for (const domain of DOMAINS) {
+    const learningCount = rows.filter((r) => r.levels[domain.id] === 'learning').length;
+    const share = rows.length === 0 ? 0 : learningCount / rows.length;
+    if (share >= COLUMN_GAP_THRESHOLD) {
+      gaps.push({ domainId: domain.id, learningCount, total: rows.length, share });
+    }
+  }
+  return gaps;
+}
+
+/**
+ * Can-Teach roster — for each domain, the navigators who can teach it.
+ * @returns {Record<string, string[]>} domainId -> [names]
+ */
+export function canTeachRoster(rows) {
+  const roster = {};
+  for (const domain of DOMAINS) {
+    roster[domain.id] = rows
+      .filter((r) => r.levels[domain.id] === 'canTeach')
+      .map((r) => r.name);
+  }
+  return roster;
+}
+
+/**
+ * Readiness tally — each navigator's count of Can-Teach cells, highest first.
+ * A data-backed "who's ready for more" signal.
+ * @returns {{name:string, isLive:boolean, canTeachCount:number}[]}
+ */
+export function readinessTally(rows) {
+  return rows
+    .map((r) => ({
+      name: r.name,
+      isLive: r.isLive,
+      canTeachCount: Object.values(r.levels).filter((lvl) => lvl === 'canTeach').length,
+    }))
+    .sort((a, b) => b.canTeachCount - a.canTeachCount);
+}
+
+/**
+ * Floor-wide headline stats for the Team Overview dashboard.
+ * @returns {{assessed:number, solidPlusRate:number, coveredDomains:number,
+ *            totalDomains:number, avgReadiness:number, learningRate:number}}
+ */
+export function floorStats(rows) {
+  const totalCells = rows.length * DOMAINS.length;
+  let solidPlus = 0;
+  let learning = 0;
+  for (const r of rows) {
+    for (const d of DOMAINS) {
+      if (r.levels[d.id] === 'learning') learning += 1;
+      else solidPlus += 1;
+    }
+  }
+  const roster = canTeachRoster(rows);
+  const coveredDomains = DOMAINS.filter((d) => roster[d.id].length > 0).length;
+  const totalCanTeach = rows.reduce(
+    (sum, r) => sum + Object.values(r.levels).filter((l) => l === 'canTeach').length,
+    0
+  );
+  return {
+    assessed: rows.length,
+    solidPlusRate: totalCells ? Math.round((solidPlus / totalCells) * 100) : 0,
+    learningRate: totalCells ? Math.round((learning / totalCells) * 100) : 0,
+    coveredDomains,
+    totalDomains: DOMAINS.length,
+    avgReadiness: rows.length ? totalCanTeach / rows.length : 0,
+  };
+}
+
+/**
+ * Per-domain level distribution (counts) — drives the stacked bars on the
+ * Team Overview dashboard.
+ * @returns {{domainId:string, learning:number, solid:number, canTeach:number, total:number}[]}
+ */
+export function domainDistribution(rows) {
+  return DOMAINS.map((d) => {
+    const counts = { learning: 0, solid: 0, canTeach: 0 };
+    for (const r of rows) counts[r.levels[d.id]] += 1;
+    return { domainId: d.id, ...counts, total: rows.length };
+  });
+}
+
+/** Find a single built row by navigator name (or null). */
+export function findRow(rows, name) {
+  return rows.find((r) => r.name === name) ?? null;
+}
+
+/**
+ * Auto-assigned training for a single navigator, driven by TRAINING_RULES.
+ * Each weak domain pulls in its training module, tagged with priority and the
+ * level it was assigned at. Required (Learning) items come before Stretch.
+ * @returns {{domainId:string, level:string, priority:string, goal:string,
+ *            module:object|null}[]}
+ */
+export function trainingForRow(row) {
+  return DOMAINS.map((d) => ({ domainId: d.id, level: row.levels[d.id] }))
+    .filter(({ level }) => TRAINING_RULES[level]?.assign)
+    .map(({ domainId, level }) => {
+      const rule = TRAINING_RULES[level];
+      return {
+        domainId,
+        level,
+        priority: rule.priority,
+        goal: rule.goal,
+        module: moduleForDomain(domainId),
+      };
+    })
+    .sort((a, b) => TRAINING_RULES[a.level].rank - TRAINING_RULES[b.level].rank);
+}
+
+/**
+ * Floor-wide training plan: every navigator with their auto-assigned modules,
+ * plus a count of required items. Navigators with the most Required items first.
+ * @returns {{name:string, isLive:boolean, assignments:object[], requiredCount:number}[]}
+ */
+export function trainingPlan(rows) {
+  return rows
+    .map((r) => {
+      const assignments = trainingForRow(r);
+      return {
+        name: r.name,
+        isLive: r.isLive,
+        assignments,
+        requiredCount: assignments.filter((a) => a.priority === 'Required').length,
+      };
+    })
+    .sort((a, b) => b.requiredCount - a.requiredCount);
+}
+
+/**
+ * Training grouped by domain — a "run one session for this cohort" view.
+ * @returns {{domainId:string, module:object|null, required:string[], stretch:string[]}[]}
+ */
+export function trainingByDomain(rows) {
+  return DOMAINS.map((d) => {
+    const required = [];
+    const stretch = [];
+    for (const r of rows) {
+      const rule = TRAINING_RULES[r.levels[d.id]];
+      if (!rule?.assign) continue;
+      (rule.priority === 'Required' ? required : stretch).push(r.name);
+    }
+    return { domainId: d.id, module: moduleForDomain(d.id), required, stretch };
+  }).filter((x) => x.required.length > 0 || x.stretch.length > 0);
+}
+
+/**
+ * Headline training stats for the dashboard.
+ * @returns {{totalRequired:number, totalStretch:number, navigatorsWithRequired:number,
+ *            domainsNeedingTraining:number}}
+ */
+export function trainingStats(rows) {
+  const byDomain = trainingByDomain(rows);
+  const plan = trainingPlan(rows);
+  return {
+    totalRequired: byDomain.reduce((s, d) => s + d.required.length, 0),
+    totalStretch: byDomain.reduce((s, d) => s + d.stretch.length, 0),
+    navigatorsWithRequired: plan.filter((p) => p.requiredCount > 0).length,
+    domainsNeedingTraining: byDomain.filter((d) => d.required.length > 0).length,
+  };
+}
+
+/**
+ * Suggested mentors for one navigator: for each domain where they are not yet
+ * Can-Teach, list colleagues who can teach it (excluding themselves).
+ * @returns {{domainId:string, level:string, mentors:string[]}[]}
+ */
+export function mentorSuggestions(rows, name) {
+  const me = findRow(rows, name);
+  if (!me) return [];
+  const roster = canTeachRoster(rows);
+  return DOMAINS.filter((d) => me.levels[d.id] !== 'canTeach')
+    .map((d) => ({
+      domainId: d.id,
+      level: me.levels[d.id],
+      mentors: roster[d.id].filter((n) => n !== name),
+    }))
+    .filter((x) => x.mentors.length > 0)
+    // surface the biggest gaps first (Learning before Solid)
+    .sort((a, b) => (a.level === 'learning' ? -1 : 1) - (b.level === 'learning' ? -1 : 1));
+}
