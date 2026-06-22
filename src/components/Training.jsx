@@ -3,7 +3,7 @@ import { trainingByDomain, trainingPlan, trainingStats } from '../lib/scoring.js
 
 const domainName = (id) => DOMAINS.find((d) => d.id === id)?.name ?? id;
 
-export default function Training({ rows, onOpenNavigator }) {
+export default function Training({ rows, onOpenNavigator, onPreviewModule }) {
   const stats = trainingStats(rows);
   const byDomain = trainingByDomain(rows);
   const plan = trainingPlan(rows);
@@ -56,6 +56,9 @@ export default function Training({ rows, onOpenNavigator }) {
                     {d.module.title} · ~{d.module.estMinutes} min
                   </span>
                 )}
+                <button className="btn btn--ghost btn--sm train-domain__preview" onClick={() => onPreviewModule(d.domainId)}>
+                  Preview module
+                </button>
               </div>
               {d.module?.blurb && <p className="train-domain__blurb">{d.module.blurb}</p>}
               <div className="train-domain__cohorts">
@@ -115,7 +118,9 @@ export default function Training({ rows, onOpenNavigator }) {
                       <span className={`cohort__tag ${a.priority === 'Required' ? 'cohort__tag--req' : 'cohort__tag--stretch'}`}>
                         {a.priority}
                       </span>
-                      <span className="train-assign__title">{a.module?.title ?? domainName(a.domainId)}</span>
+                      <button className="linkbtn train-assign__title" onClick={() => onPreviewModule(a.domainId)}>
+                        {a.module?.title ?? domainName(a.domainId)}
+                      </button>
                       <span className="train-assign__goal">{a.goal}</span>
                     </li>
                   ))}

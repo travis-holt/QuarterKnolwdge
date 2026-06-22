@@ -4,7 +4,7 @@ import { findRow, mentorSuggestions, trainingForRow } from '../lib/scoring.js';
 
 const domainName = (id) => DOMAINS.find((d) => d.id === id)?.name ?? id;
 
-export default function NavigatorDetail({ rows, name, onBack, onOpenNavigator }) {
+export default function NavigatorDetail({ rows, name, onBack, onOpenNavigator, onPreviewModule }) {
   const row = findRow(rows, name);
 
   if (!row) {
@@ -115,15 +115,23 @@ export default function NavigatorDetail({ rows, name, onBack, onOpenNavigator })
         ) : (
           <ul className="readoff__list">
             {training.map((a) => (
-              <li key={a.domainId} className="train-assign">
+              <li key={a.domainId} className="train-assign train-assign--detail">
                 <span className={`cohort__tag ${a.priority === 'Required' ? 'cohort__tag--req' : 'cohort__tag--stretch'}`}>
                   {a.priority}
                 </span>
-                <span className="train-assign__title">
-                  {a.module?.title ?? domainName(a.domainId)}
-                  {a.module && <span className="train-assign__mins"> · ~{a.module.estMinutes} min</span>}
+                <span className="train-assign__body">
+                  <button className="linkbtn train-assign__title" onClick={() => onPreviewModule(a.domainId)}>
+                    {a.module?.title ?? domainName(a.domainId)}
+                  </button>
+                  <span className="train-assign__why">
+                    Assigned because {domainName(a.domainId)} is at{' '}
+                    {LEVELS[a.level].label} · {a.goal}
+                    {a.module && ` · ~${a.module.estMinutes} min`}
+                  </span>
                 </span>
-                <span className="train-assign__goal">{a.goal}</span>
+                <button className="btn btn--ghost btn--sm" onClick={() => onPreviewModule(a.domainId)}>
+                  Preview
+                </button>
               </li>
             ))}
           </ul>

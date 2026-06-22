@@ -8,6 +8,7 @@ import Overview from './components/Overview.jsx';
 import Navigators from './components/Navigators.jsx';
 import NavigatorDetail from './components/NavigatorDetail.jsx';
 import Training from './components/Training.jsx';
+import TrainingModule from './components/TrainingModule.jsx';
 import { scorePerDomain, buildMatrixRows } from './lib/scoring.js';
 import { SAMPLE_NAVIGATORS } from './data/navigators.js';
 
@@ -19,6 +20,9 @@ export default function App() {
   const [liveResult, setLiveResult] = useState(null);
   // Currently drilled-into navigator (by name) for the detail dashboard.
   const [selected, setSelected] = useState(null);
+  // Currently previewed training module (by domainId) + where to return to.
+  const [moduleDomain, setModuleDomain] = useState(null);
+  const [moduleReturn, setModuleReturn] = useState('training');
 
   // Single source of truth for every screen that needs the full roster.
   const rows = buildMatrixRows(SAMPLE_NAVIGATORS, liveResult);
@@ -37,6 +41,12 @@ export default function App() {
   const openNavigator = (name) => {
     setSelected(name);
     setView('navigator');
+  };
+
+  const openModule = (domainId, returnTo = 'training') => {
+    setModuleDomain(domainId);
+    setModuleReturn(returnTo);
+    setView('module');
   };
 
   return (
@@ -74,7 +84,11 @@ export default function App() {
         )}
 
         {view === 'training' && (
-          <Training rows={rows} onOpenNavigator={openNavigator} />
+          <Training
+            rows={rows}
+            onOpenNavigator={openNavigator}
+            onPreviewModule={(d) => openModule(d, 'training')}
+          />
         )}
 
         {view === 'navigator' && (
@@ -82,6 +96,16 @@ export default function App() {
             rows={rows}
             name={selected}
             onBack={() => setView('navigators')}
+            onOpenNavigator={openNavigator}
+            onPreviewModule={(d) => openModule(d, 'navigator')}
+          />
+        )}
+
+        {view === 'module' && (
+          <TrainingModule
+            rows={rows}
+            domainId={moduleDomain}
+            onBack={() => setView(moduleReturn)}
             onOpenNavigator={openNavigator}
           />
         )}
