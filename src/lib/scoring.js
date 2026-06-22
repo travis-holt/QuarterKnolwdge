@@ -9,6 +9,7 @@
 import { THRESHOLDS, LEVELS, COLUMN_GAP_THRESHOLD, TRAINING_RULES } from '../data/config.js';
 import { DOMAINS, QUESTIONS } from '../data/questions.js';
 import { moduleForDomain } from '../data/training.js';
+import { DEPARTMENTS, ASSESSED_DEPT } from '../data/departments.js';
 
 /**
  * Score a set of answers into a per-domain percent-correct map.
@@ -72,6 +73,53 @@ export function buildMatrixRows(samples, liveResult) {
 
   const rows = samples.map((n) => toRow(n, false));
   if (liveResult) rows.push(toRow(liveResult, true));
+  return rows;
+}
+
+/**
+ * Pull one department's per-domain scores out of the nested navigator data,
+ * returning the flat { name, scores } shape the rest of the app expects.
+ */
+export function deptSamples(samples, deptId) {
+  return samples.map((n) => ({ name: n.name, scores: n.departments[deptId] ?? {} }));
+}
+
+/** Overall score for a department = mean of its domain scores (or null if none). */
+export function departmentOverall(scores) {
+  const vals = DOMAINS.map((d) => scores?.[d.id]).filter((v) => typeof v === 'number');
+  if (vals.length === 0) return null;
+  return Math.round(vals.reduce((a, b) => a + b, 0) / vals.length);
+}
+
+/**
+ * Cross-department strength: each navigator with an overall + level per
+ * department. The live taker is only assessed in ASSESSED_DEPT; elsewhere their
+ * cells are null (not yet assessed).
+ * @returns {{name:string, isLive:boolean,
+ *            depts:Record<string,{overall:number,level:string}|null>}[]}
+ */
+export function departmentMatrix(samples, liveResult) {
+  const cellsFor = (getScores) =>
+    Object.fromEntries(
+      DEPARTMENTS.map((dep) => {
+        const overall = departmentOverall(getScores(dep.id));
+        return [dep.id, overall == null ? null : { overall, level: scoreToLevel(overall) }];
+      })
+    );
+
+  const rows = samples.map((n) => ({
+    name: n.name,
+    isLive: false,
+    depts: cellsFor((deptId) => n.departments[deptId]),
+  }));
+
+  if (liveResult) {
+    rows.push({
+      name: liveResult.name,
+      isLive: true,
+      depts: cellsFor((deptId) => (deptId === ASSESSED_DEPT ? liveResult.scores : null)),
+    });
+  }
   return rows;
 }
 

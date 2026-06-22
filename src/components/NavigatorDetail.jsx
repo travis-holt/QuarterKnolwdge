@@ -1,11 +1,13 @@
 import { DOMAINS } from '../data/questions.js';
+import { DEPARTMENTS } from '../data/departments.js';
 import { LEVELS } from '../data/config.js';
 import { findRow, mentorSuggestions, trainingForRow } from '../lib/scoring.js';
 
 const domainName = (id) => DOMAINS.find((d) => d.id === id)?.name ?? id;
 
-export default function NavigatorDetail({ rows, name, onBack, onOpenNavigator, onPreviewModule }) {
+export default function NavigatorDetail({ rows, name, deptName, deptMatrix, onBack, onOpenNavigator, onPreviewModule }) {
   const row = findRow(rows, name);
+  const deptRow = deptMatrix?.find((r) => r.name === name);
 
   if (!row) {
     return (
@@ -37,7 +39,7 @@ export default function NavigatorDetail({ rows, name, onBack, onOpenNavigator, o
             {row.isLive && <span className="matrix__you">you</span>}
           </h1>
           <p className="navdetail__lede">
-            Development dashboard · {canTeachCount > 0
+            {deptName} · {canTeachCount > 0
               ? `can teach ${canTeachCount} of ${DOMAINS.length} domains`
               : 'building toward first Can-Teach domain'}
             {growth.length > 0 && ` · ${growth.length} growth ${growth.length === 1 ? 'area' : 'areas'}`}
@@ -48,6 +50,40 @@ export default function NavigatorDetail({ rows, name, onBack, onOpenNavigator, o
           <span className="navdetail__ready-label">Can-Teach domains</span>
         </div>
       </header>
+
+      {/* ── Strength across departments ───────────────────────────────── */}
+      {deptRow && (
+        <div className="card navdetail__panel">
+          <h2 className="overview__panel-title">Strength across departments</h2>
+          <p className="readoff__sub">
+            Overall level per department. The breakdown below is for <strong>{deptName}</strong> —
+            switch departments up top.
+          </p>
+          <div className="deptstrip">
+            {DEPARTMENTS.map((d) => {
+              const cell = deptRow.depts[d.id];
+              const isCurrent = d.name === deptName;
+              if (!cell) {
+                return (
+                  <div key={d.id} className={`deptstrip__item ${isCurrent ? 'is-current' : ''}`}>
+                    <span className="deptstrip__name">{d.name}</span>
+                    <span className="deptcell deptcell--na">— not assessed</span>
+                  </div>
+                );
+              }
+              const level = LEVELS[cell.level];
+              return (
+                <div key={d.id} className={`deptstrip__item ${isCurrent ? 'is-current' : ''}`}>
+                  <span className="deptstrip__name">{d.name}</span>
+                  <span className="deptcell" style={{ background: level.color, color: level.text }}>
+                    {cell.overall}% <span className="deptcell__lvl">{level.label}</span>
+                  </span>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
 
       {/* ── Strengths / growth callouts ───────────────────────────────── */}
       <div className="navdetail__callouts">

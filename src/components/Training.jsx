@@ -3,7 +3,7 @@ import { trainingByDomain, trainingPlan, trainingStats } from '../lib/scoring.js
 
 const domainName = (id) => DOMAINS.find((d) => d.id === id)?.name ?? id;
 
-export default function Training({ rows, onOpenNavigator, onPreviewModule }) {
+export default function Training({ rows, deptName, onOpenNavigator, onPreviewModule }) {
   const stats = trainingStats(rows);
   const byDomain = trainingByDomain(rows);
   const plan = trainingPlan(rows);
@@ -11,7 +11,9 @@ export default function Training({ rows, onOpenNavigator, onPreviewModule }) {
   return (
     <section className="training">
       <header className="overview__head">
-        <h1 className="overview__title">Training assignments</h1>
+        <h1 className="overview__title">
+          Training assignments{deptName && <span className="title-dept"> · {deptName}</span>}
+        </h1>
         <p className="overview__lede">
           Auto-assigned from each navigator&rsquo;s check results — Required where they&rsquo;re at
           Learning, Stretch where they&rsquo;re Solid and climbing toward Can-Teach. Course content

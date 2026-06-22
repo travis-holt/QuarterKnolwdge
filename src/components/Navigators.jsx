@@ -8,11 +8,13 @@ function levelCounts(row) {
   return counts;
 }
 
-export default function Navigators({ rows, onOpenNavigator }) {
+export default function Navigators({ rows, deptName, onOpenNavigator }) {
   return (
     <section className="navigators">
       <header className="overview__head">
-        <h1 className="overview__title">Navigators</h1>
+        <h1 className="overview__title">
+          Navigators{deptName && <span className="title-dept"> · {deptName}</span>}
+        </h1>
         <p className="overview__lede">
           Select anyone to open their development dashboard.
         </p>

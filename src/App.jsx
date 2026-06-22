@@ -9,11 +9,15 @@ import Navigators from './components/Navigators.jsx';
 import NavigatorDetail from './components/NavigatorDetail.jsx';
 import Training from './components/Training.jsx';
 import TrainingModule from './components/TrainingModule.jsx';
-import { scorePerDomain, buildMatrixRows } from './lib/scoring.js';
+import DeptBar from './components/DeptBar.jsx';
+import { scorePerDomain, buildMatrixRows, deptSamples, departmentMatrix } from './lib/scoring.js';
 import { SAMPLE_NAVIGATORS } from './data/navigators.js';
+import { DEPARTMENTS, ASSESSED_DEPT, departmentName } from './data/departments.js';
 
 // Views: start · check · results · matrix · overview · navigators · navigator.
 // State is in-memory only.
+const DEPT_SCOPED_VIEWS = ['overview', 'matrix', 'navigators', 'training', 'navigator'];
+
 export default function App() {
   const [view, setView] = useState('start');
   // The live taker's result: { name, scores } — appears as a new matrix row.
@@ -23,9 +27,18 @@ export default function App() {
   // Currently previewed training module (by domainId) + where to return to.
   const [moduleDomain, setModuleDomain] = useState(null);
   const [moduleReturn, setModuleReturn] = useState('training');
+  // Which department the dashboards are scoped to.
+  const [selectedDept, setSelectedDept] = useState(ASSESSED_DEPT);
 
-  // Single source of truth for every screen that needs the full roster.
-  const rows = buildMatrixRows(SAMPLE_NAVIGATORS, liveResult);
+  // Rows scoped to the selected department. The live taker only appears in the
+  // assessed department (that's all the check measures).
+  const rows = buildMatrixRows(
+    deptSamples(SAMPLE_NAVIGATORS, selectedDept),
+    selectedDept === ASSESSED_DEPT ? liveResult : null
+  );
+  // Cross-department strength (all departments at once).
+  const deptMatrix = departmentMatrix(SAMPLE_NAVIGATORS, liveResult);
+  const deptName = departmentName(selectedDept);
 
   const handleSubmit = (name, answers) => {
     const scores = scorePerDomain(answers);
@@ -53,6 +66,10 @@ export default function App() {
     <div className="app">
       <Nav view={view} setView={setView} hasResult={!!liveResult} />
 
+      {DEPT_SCOPED_VIEWS.includes(view) && (
+        <DeptBar selectedDept={selectedDept} setSelectedDept={setSelectedDept} />
+      )}
+
       <main className="main">
         {view === 'start' && (
           <Start onStart={() => setView('check')} onOverview={() => setView('overview')} />
@@ -72,20 +89,27 @@ export default function App() {
         )}
 
         {view === 'matrix' && (
-          <Matrix rows={rows} onTakeCheck={() => setView('check')} onOpenNavigator={openNavigator} />
+          <Matrix rows={rows} deptName={deptName} onTakeCheck={() => setView('check')} onOpenNavigator={openNavigator} />
         )}
 
         {view === 'overview' && (
-          <Overview rows={rows} onOpenNavigator={openNavigator} onViewMatrix={() => setView('matrix')} />
+          <Overview
+            rows={rows}
+            deptName={deptName}
+            deptMatrix={deptMatrix}
+            onOpenNavigator={openNavigator}
+            onViewMatrix={() => setView('matrix')}
+          />
         )}
 
         {view === 'navigators' && (
-          <Navigators rows={rows} onOpenNavigator={openNavigator} />
+          <Navigators rows={rows} deptName={deptName} onOpenNavigator={openNavigator} />
         )}
 
         {view === 'training' && (
           <Training
             rows={rows}
+            deptName={deptName}
             onOpenNavigator={openNavigator}
             onPreviewModule={(d) => openModule(d, 'training')}
           />
@@ -95,6 +119,8 @@ export default function App() {
           <NavigatorDetail
             rows={rows}
             name={selected}
+            deptName={deptName}
+            deptMatrix={deptMatrix}
             onBack={() => setView('navigators')}
             onOpenNavigator={openNavigator}
             onPreviewModule={(d) => openModule(d, 'navigator')}

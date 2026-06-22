@@ -1,4 +1,5 @@
 import { DOMAINS } from '../data/questions.js';
+import { DEPARTMENTS } from '../data/departments.js';
 import { LEVELS, LEVEL_ORDER } from '../data/config.js';
 import {
   floorStats,
@@ -10,7 +11,7 @@ import {
 
 const domainName = (id) => DOMAINS.find((d) => d.id === id)?.name ?? id;
 
-export default function Overview({ rows, onOpenNavigator, onViewMatrix }) {
+export default function Overview({ rows, deptName, deptMatrix, onOpenNavigator, onViewMatrix }) {
   const stats = floorStats(rows);
   const dist = domainDistribution(rows);
   const gaps = columnGaps(rows);
@@ -32,6 +33,63 @@ export default function Overview({ rows, onOpenNavigator, onViewMatrix }) {
           ready to mentor. A development snapshot, not a ranking.
         </p>
       </header>
+
+      {/* ── Strength by department (cross-department) ──────────────────── */}
+      <div className="card overview__panel">
+        <h2 className="overview__panel-title">Strength by department</h2>
+        <p className="readoff__sub">
+          Each navigator&rsquo;s overall level per department (average across domains).
+          The metrics below this drill into <strong>{deptName}</strong> — switch departments up top.
+        </p>
+        <div className="matrix-scroll">
+          <table className="matrix deptmatrix">
+            <thead>
+              <tr>
+                <th className="matrix__corner">Navigator</th>
+                {DEPARTMENTS.map((d) => (
+                  <th key={d.id} className="matrix__colhead">{d.name}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {deptMatrix.map((row) => (
+                <tr key={row.name} className={row.isLive ? 'is-live' : ''}>
+                  <th className="matrix__rowhead">
+                    <button className="matrix__rowbtn" onClick={() => onOpenNavigator(row.name)}>
+                      {row.name}
+                      {row.isLive && <span className="matrix__you">you</span>}
+                    </button>
+                  </th>
+                  {DEPARTMENTS.map((d) => {
+                    const cell = row.depts[d.id];
+                    if (!cell) {
+                      return <td key={d.id} className="matrix__cell"><span className="deptcell deptcell--na">—</span></td>;
+                    }
+                    const level = LEVELS[cell.level];
+                    return (
+                      <td key={d.id} className="matrix__cell">
+                        <span className="deptcell" style={{ background: level.color, color: level.text }}>
+                          {cell.overall}%
+                          <span className="deptcell__lvl">{level.label}</span>
+                        </span>
+                      </td>
+                    );
+                  })}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+        <div className="matrix__legend overview__legend">
+          {LEVEL_ORDER.map((id) => (
+            <span key={id} className="legend-item">
+              <span className="legend-swatch" style={{ background: LEVELS[id].color }} />
+              {LEVELS[id].label}
+            </span>
+          ))}
+          <span className="legend-item"><span className="legend-swatch legend-swatch--na" />Not assessed</span>
+        </div>
+      </div>
 
       {/* ── Headline KPIs ─────────────────────────────────────────────── */}
       <div className="kpis">
@@ -62,7 +120,7 @@ export default function Overview({ rows, onOpenNavigator, onViewMatrix }) {
       {/* ── Domain capability distribution ────────────────────────────── */}
       <div className="card overview__panel">
         <div className="overview__panel-head">
-          <h2 className="overview__panel-title">Capability by domain</h2>
+          <h2 className="overview__panel-title">Capability by domain · {deptName}</h2>
           <button className="linkbtn" onClick={onViewMatrix}>
             Open the full matrix →
           </button>

@@ -4,7 +4,7 @@ import { columnGaps, canTeachRoster, readinessTally } from '../lib/scoring.js';
 
 const domainName = (id) => DOMAINS.find((d) => d.id === id)?.name ?? id;
 
-export default function Matrix({ rows, onTakeCheck, onOpenNavigator }) {
+export default function Matrix({ rows, deptName, onTakeCheck, onOpenNavigator }) {
   const hasLive = rows.some((r) => r.isLive);
   const gaps = columnGaps(rows);
   const roster = canTeachRoster(rows);
@@ -14,7 +14,9 @@ export default function Matrix({ rows, onTakeCheck, onOpenNavigator }) {
   return (
     <section className="matrix-view">
       <header className="matrix-view__head">
-        <h1 className="matrix-view__title">Capability matrix</h1>
+        <h1 className="matrix-view__title">
+          Capability matrix{deptName && <span className="title-dept"> · {deptName}</span>}
+        </h1>
         <p className="matrix-view__lede">
           Each navigator across every domain — colour shows the level. This is a development
           map, not a scoreboard.
