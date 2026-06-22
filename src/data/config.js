@@ -15,10 +15,11 @@ export const THRESHOLDS = {
 
 // The three capability levels. Order matters (lowest → highest).
 // `color` is the cell fill in the matrix; `text` is readable on that fill.
+// Traffic-light urgency: red = needs work, amber = mid, green = best.
 export const LEVELS = {
-  learning: { id: 'learning', label: 'Learning', color: '#e9dcc9', text: '#5a4a36' },
-  solid: { id: 'solid', label: 'Solid', color: '#cdd6cb', text: '#3a4a3a' },
-  canTeach: { id: 'canTeach', label: 'Can-Teach', color: '#c4744f', text: '#ffffff' },
+  learning: { id: 'learning', label: 'Learning', color: '#c0392b', text: '#ffffff' },
+  solid: { id: 'solid', label: 'Solid', color: '#e0b13c', text: '#4a3a12' },
+  canTeach: { id: 'canTeach', label: 'Can-Teach', color: '#3e8e5a', text: '#ffffff' },
 };
 
 export const LEVEL_ORDER = ['learning', 'solid', 'canTeach'];
