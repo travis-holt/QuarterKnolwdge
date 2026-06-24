@@ -9,7 +9,7 @@
 // NOTE: this file is in the public repo, so this passcode is visible to anyone
 // who reads the source. That is acceptable for a small trusted pilot (no
 // sensitive data); replace with real auth before any public production use.
-export const SUPERVISOR_PASSCODE = '2468';
+export const SUPERVISOR_PASSCODE = '0200';
 
 // Per-domain score → level thresholds (percentages).
 //   < learning            → Learning
