@@ -15,7 +15,7 @@
 
 ### Identity / Auth
 - **No login system.** Navigators type their name; supervisors enter a hardcoded passcode.
-- Passcode stored in `src/data/config.js` as `SUPERVISOR_PASSCODE` — never committed to a public variable; for the pilot this is acceptable (small trusted team).
+- Passcode stored in `src/data/config.js` as `SUPERVISOR_PASSCODE`. This file is in the public repo, so the passcode is visible to anyone who reads the source. This is **acceptable for a small trusted pilot** (no sensitive data, no real auth required) but must be replaced with proper auth before any public-facing production deployment.
 
 ### Roles
 Two distinct roles with structurally separate views:
@@ -38,7 +38,7 @@ Same name submits again → Firestore document overwritten (clean re-take). No v
 | File | Change |
 |---|---|
 | `src/lib/firebase.js` | New — Firebase app init + Firestore instance |
-| `src/lib/db.js` | New — Firestore read/write helpers (`saveResult`, `subscribeResults`) |
+| `src/lib/db.js` | New — Firestore helpers: `saveResult` (write), `getResult(name)` (navigator one-time read), `subscribeResults(cb)` (supervisor live listener) |
 | `src/lib/session.js` | New — localStorage session layer (`getSession`, `setSession`, `clearSession`) |
 | `src/App.jsx` | Role-branched router; reads session; subscribes to Firestore |
 | `src/components/Start.jsx` | Becomes the role gate |
@@ -74,8 +74,9 @@ Pick "Navigator" → enter name → check Firestore for that name
 ```
 
 **Personal dashboard** — the returning-navigator landing and the post-submit destination:
-- Per-domain breakdown (worst → best order)
-- Strengths (Can-Teach domains) and growth areas (Learning domains)
+- Per-domain breakdown (worst → best order), all domains shown
+- Strengths (Can-Teach domains) and growth areas (Learning domains) called out
+- Suggested mentors: for each non-Can-Teach domain, colleagues who can teach it
 - Assigned training: Required modules (Learning domains) + Stretch modules (Solid domains)
 - Training content will use real SOP-based lessons (to be provided by owner)
 
@@ -130,7 +131,9 @@ clearSession()          // "Switch user" / "Sign out"
 
 ```js
 // Collection: results
-// Document ID: navigator name (lowercased + trimmed for consistency)
+// Document ID: navigator name (lowercased + trimmed, e.g. "sarah chen")
+// ⚠ Pilot constraint: two navigators with the same name will collide.
+// For ~3–10 known navigators this is acceptable; use a UUID key for production.
 {
   name: "Sarah Chen",          // display name as entered
   submittedAt: Timestamp,
