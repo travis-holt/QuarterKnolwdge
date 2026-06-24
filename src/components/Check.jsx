@@ -5,7 +5,11 @@ const domainName = (id) => DOMAINS.find((d) => d.id === id)?.name ?? id;
 
 // Stepped flow: one scenario per step, with a progress bar. The taker can move
 // back and forth and must answer before advancing past each step.
-export default function Check({ onSubmit, onCancel }) {
+//
+// `hideName` hides the optional name field (used when the taker is already
+// identified — e.g. a signed-in navigator). `greetingName` shows a friendly
+// header in that case.
+export default function Check({ onSubmit, onCancel, hideName = false, greetingName }) {
   const [name, setName] = useState('');
   const [step, setStep] = useState(0);
   const [answers, setAnswers] = useState({});
@@ -40,14 +44,18 @@ export default function Check({ onSubmit, onCancel }) {
           <span>
             Question {step + 1} of {total}
           </span>
-          <input
-            className="check__name"
-            type="text"
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-            placeholder="Your name (optional)"
-            aria-label="Your name"
-          />
+          {hideName ? (
+            greetingName && <span className="check__greeting">Hi {greetingName} 👋</span>
+          ) : (
+            <input
+              className="check__name"
+              type="text"
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              placeholder="Your name (optional)"
+              aria-label="Your name"
+            />
+          )}
         </div>
       </div>
 

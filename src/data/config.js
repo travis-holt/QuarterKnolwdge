@@ -4,6 +4,13 @@
 // and the warm palette) lives here so it is easy to find and change.
 // ─────────────────────────────────────────────────────────────────────────────
 
+// Supervisor passcode — unlocks the management view (matrix / overview /
+// navigators / training) from the Start gate. CHANGE THIS before the pilot.
+// NOTE: this file is in the public repo, so this passcode is visible to anyone
+// who reads the source. That is acceptable for a small trusted pilot (no
+// sensitive data); replace with real auth before any public production use.
+export const SUPERVISOR_PASSCODE = '2468';
+
 // Per-domain score → level thresholds (percentages).
 //   < learning            → Learning
 //   learning … canTeach-1 → Solid

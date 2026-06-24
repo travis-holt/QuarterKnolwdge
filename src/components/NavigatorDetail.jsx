@@ -12,7 +12,7 @@ export default function NavigatorDetail({ rows, name, deptName, deptMatrix, onBa
   if (!row) {
     return (
       <section className="navdetail">
-        <button className="linkbtn" onClick={onBack}>← Back to navigators</button>
+        {onBack && <button className="linkbtn" onClick={onBack}>← Back to navigators</button>}
         <p className="readoff__empty">No data for this navigator.</p>
       </section>
     );
@@ -30,7 +30,9 @@ export default function NavigatorDetail({ rows, name, deptName, deptMatrix, onBa
 
   return (
     <section className="navdetail">
-      <button className="linkbtn navdetail__back" onClick={onBack}>← Back to navigators</button>
+      {onBack && (
+        <button className="linkbtn navdetail__back" onClick={onBack}>← Back to navigators</button>
+      )}
 
       <header className="navdetail__head">
         <div>
@@ -184,10 +186,16 @@ export default function NavigatorDetail({ rows, name, deptName, deptMatrix, onBa
               <li key={m.domainId} className="readoff__row">
                 <span className="tag">{domainName(m.domainId)}</span>
                 <span className="readoff__people">
-                  {m.mentors.map((name, i) => (
-                    <span key={name}>
+                  {m.mentors.map((mentorName, i) => (
+                    <span key={mentorName}>
                       {i > 0 && ', '}
-                      <button className="linkbtn" onClick={() => onOpenNavigator(name)}>{name}</button>
+                      {onOpenNavigator ? (
+                        <button className="linkbtn" onClick={() => onOpenNavigator(mentorName)}>
+                          {mentorName}
+                        </button>
+                      ) : (
+                        mentorName
+                      )}
                     </span>
                   ))}
                 </span>

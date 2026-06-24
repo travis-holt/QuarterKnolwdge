@@ -4,16 +4,24 @@ import { trainingByDomain } from '../lib/scoring.js';
 
 const domainName = (id) => DOMAINS.find((d) => d.id === id)?.name ?? id;
 
-// Preview of a single training module: the mockup lesson content plus the
-// auto-assigned cohort (who needs it, and why).
-export default function TrainingModule({ rows, domainId, onBack, onOpenNavigator }) {
+// Preview of a single training module: the mockup lesson content plus, for
+// supervisors, the auto-assigned cohort (who needs it, and why). Navigators pass
+// `showCohort={false}` so other navigators' names never appear.
+export default function TrainingModule({
+  rows,
+  domainId,
+  onBack,
+  onOpenNavigator,
+  showCohort = true,
+  backLabel = '← Back to training',
+}) {
   const mod = moduleForDomain(domainId);
   const cohort = trainingByDomain(rows).find((d) => d.domainId === domainId);
 
   if (!mod) {
     return (
       <section className="module">
-        <button className="linkbtn" onClick={onBack}>← Back to training</button>
+        <button className="linkbtn" onClick={onBack}>{backLabel}</button>
         <p className="readoff__empty">No training module for this domain yet.</p>
       </section>
     );
@@ -21,7 +29,7 @@ export default function TrainingModule({ rows, domainId, onBack, onOpenNavigator
 
   return (
     <section className="module">
-      <button className="linkbtn navdetail__back" onClick={onBack}>← Back to training</button>
+      <button className="linkbtn navdetail__back" onClick={onBack}>{backLabel}</button>
 
       <header className="module__head">
         <span className="tag tag--accent">{domainName(domainId)}</span>
@@ -62,7 +70,8 @@ export default function TrainingModule({ rows, domainId, onBack, onOpenNavigator
         </ul>
       </div>
 
-      {/* ── Auto-assigned cohort ──────────────────────────────────────── */}
+      {/* ── Auto-assigned cohort (supervisor only) ────────────────────── */}
+      {showCohort && (
       <div className="card module__assigned">
         <h2 className="overview__panel-title">Auto-assigned to</h2>
         <p className="readoff__sub">
@@ -101,6 +110,7 @@ export default function TrainingModule({ rows, domainId, onBack, onOpenNavigator
           </div>
         )}
       </div>
+      )}
     </section>
   );
 }

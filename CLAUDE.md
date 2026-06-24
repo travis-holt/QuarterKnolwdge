@@ -10,8 +10,8 @@
 > [§8 Current System State](#8-current-system-state) and [§15 Current Priorities](#15-current-priorities)
 > accurate at all times.
 >
-> **Last updated:** 2026-06-24 · **Doc maintainer:** Claude (AI agent) + repo owner.
-> Assumptions are explicitly marked **[ASSUMPTION]**.
+> **Last updated:** 2026-06-24 (Firebase pilot implemented) · **Doc maintainer:** Claude (AI
+> agent) + repo owner. Assumptions are explicitly marked **[ASSUMPTION]**.
 
 ---
 
@@ -226,10 +226,15 @@ training assignments.
 - **Language:** JavaScript (JSX). No TypeScript.
 - **Styling:** A single hand-written stylesheet, [src/styles.css](src/styles.css) (BEM-ish class
   names, CSS variables for the palette). No CSS framework.
-- **State management:** Local React state in [src/App.jsx](src/App.jsx) only (`useState`). No
-  Redux/Zustand/Context. State is **in-memory** and resets on reload.
-- **Routing:** None (no React Router). Navigation is a `view` string in `App` state. Internal
-  views: `start · check · results · matrix · overview · navigators · navigator · training · module`.
+- **State management:** Local React state (`useState`). No Redux/Zustand/Context. [App.jsx](src/App.jsx)
+  owns the **session** (role + name + navigatorId) only and routes to one of two role apps:
+  [SupervisorApp.jsx](src/components/SupervisorApp.jsx) (live Firestore data) or
+  [NavigatorApp.jsx](src/components/NavigatorApp.jsx) (the signed-in navigator's own data). Each role
+  app owns its own `view` state and data subscriptions.
+- **Routing:** None (no React Router). Navigation is a `view` string inside each role app.
+  Supervisor views: `overview · matrix · navigators · navigator · training · module`. Navigator
+  views: `check · dashboard · training · module`. The Start **gate** (role select → navigator
+  dropdown+PIN / supervisor passcode) shows when there is no session.
 - **UI systems:** Custom components in [src/components/](src/components/); shared data in
   [src/data/](src/data/); pure logic in [src/lib/scoring.js](src/lib/scoring.js).
 
@@ -243,22 +248,37 @@ QuarterKnolwdge/
 ├── CLAUDE.md                # THIS FILE — project knowledge base
 ├── ClaudeCode_Build_Brief.md# original brief
 ├── SOP Guide.pdf            # source of truth for domains/questions
+├── .env.local.example       # Firebase config template (copy → .env.local, gitignored)
+├── firestore.rules          # pilot-grade Firestore security rules
 └── src/
     ├── main.jsx             # React root
-    ├── App.jsx              # view state + dept scope + in-memory live result
+    ├── App.jsx              # session + role routing (thin shell)
     ├── styles.css           # entire stylesheet
-    ├── components/          # Nav, Start, Check, Results, Matrix, Overview,
-    │                        #   Navigators, NavigatorDetail, Training,
-    │                        #   TrainingModule, DeptBar
-    ├── data/                # config, questions, navigators, training, departments
+    ├── components/          # Nav, Start (gate), Check, Matrix, Overview,
+    │                        #   Navigators, NavigatorDetail, Training, MyTraining,
+    │                        #   TrainingModule, DeptBar, SupervisorApp, NavigatorApp,
+    │                        #   EmptyState, Footer
+    ├── data/                # config, questions, navigators (placeholder), training, departments
     └── lib/
+        ├── firebase.js      # Firebase app init + Firestore instance (defensive)
+        ├── db.js            # ALL Firestore reads/writes (roster + results)
+        ├── session.js       # localStorage session layer (isolated, swappable for real auth)
         ├── scoring.js       # all scoring, read-offs, analytics, training logic
         └── scoring.test.js  # Vitest unit tests for scoring.js (38 tests)
 ```
 
 ### Backend Architecture
-- **None by design.** No server, API, database, authentication, or storage. The brief mandates a
-  self-contained, in-memory prototype. All data is static JS modules under `src/data/`.
+- **Firebase / Firestore (pilot).** As of the 2026-06-24 Firebase pilot, the app persists data to
+  Cloud Firestore (free Spark tier). No custom server — the static site talks to Firestore directly.
+  Two collections: `roster` (supervisor-managed navigator list) and `results` (submissions), both
+  UUID-keyed. All Firestore access is isolated in [src/lib/db.js](src/lib/db.js); init in
+  [src/lib/firebase.js](src/lib/firebase.js) (reads `VITE_FIREBASE_*` from gitignored `.env.local`).
+- **No auth system** (by design for the pilot): navigators pick their name from the roster and enter
+  a 4-digit PIN; supervisors enter `SUPERVISOR_PASSCODE`. Session persistence is localStorage only,
+  isolated in [src/lib/session.js](src/lib/session.js). Security rules in `firestore.rules` are
+  pilot-grade (open to the two collections) — replace with real auth before production.
+- **Pre-pilot state (historical):** the original prototype was fully in-memory with static sample
+  data and no backend.
 
 ### Infrastructure
 - **Hosting:** GitHub Pages (project site) from the `gh-pages` branch.
@@ -369,6 +389,27 @@ stateDiagram-v2
 - **Alternatives considered:** Fabricate checks for all departments.
 - **Impact:** Cross-department views work now; mockup departments are clearly labelled.
 
+### 2026-06-24 — Firebase pilot: roster+PIN identity, UUID keys, role-split apps
+- **Decision:** No login. Navigator picks their name from a supervisor-managed roster dropdown and
+  enters a 4-digit PIN; supervisor enters `SUPERVISOR_PASSCODE`. Firestore `roster` + `results`
+  collections are UUID-keyed. `App.jsx` is a thin session router delegating to `SupervisorApp` /
+  `NavigatorApp`. All Firestore access isolated in `db.js`; all session access in `session.js`.
+- **Reasoning:** Roster dropdown eliminates name typos/collisions; PIN stops navigators opening each
+  other's dashboards; UUID keys make same-name collisions impossible; role-split apps make the
+  navigator's lack of access to team views *structural*, not just hidden UI; isolating db/session
+  keeps the eventual swap to real auth a one-module change.
+- **Alternatives considered:** free-text name entry (typo/collision risk); single App with
+  conditional rendering (weaker privacy boundary); name-keyed documents (collisions).
+- **Impact:** `SAMPLE_NAVIGATORS` removed; empty states added; `scoring.js` untouched (Firestore
+  rows match the existing `{name, scores}` shape exactly).
+
+### 2026-06-24 — Defensive Firebase init (never crash without config)
+- **Decision:** `firebase.js` only initialises when `VITE_FIREBASE_*` config is present, wrapped in
+  try/catch; exports `isFirebaseConfigured`. All `db.js` calls are gated on it.
+- **Reasoning:** Lets the full UI be built, tested, and committed *before* the owner creates the
+  Firebase project — the app boots to a clean "not connected" state instead of a white-screen crash.
+- **Impact:** Safe to commit now; safe to run locally; deploy is the only step that waits on config.
+
 ### 2026-06-23 — Deploy via `gh-pages` branch (not Actions)
 - **Decision:** Publish `dist/` to a `gh-pages` branch with the `gh-pages` npm tool.
 - **Reasoning:** The Codespaces token cannot manage Pages settings or push workflow files;
@@ -472,9 +513,42 @@ stateDiagram-v2
     the Navigators tab. Roster shows all members including "Not yet taken" state.
 - **Design doc:** `docs/superpowers/specs/2026-06-24-firebase-pilot-design.md`
 - **Implementation plan:** `docs/superpowers/plans/2026-06-24-firebase-pilot-plan.md`
-- **Status:** Ready to implement. Phase 1 (foundation, no Firebase config needed) can start
-  immediately. Phases 2–9 blocked on owner creating the Firebase project and providing
-  `.env.local` config.
+- **Status:** Design complete. (Implementation followed — see next entry.)
+
+### 2026-06-24 — Firebase pilot IMPLEMENTED (all code, awaiting Firebase config)
+- **What changed:** Built the entire Firebase pilot end to end (Phases 1–9 of the plan). The app is
+  now a role-based multi-user webapp backed by Firestore.
+  - **New libs:** `src/lib/firebase.js` (defensive init — never crashes the app if config is
+    absent), `src/lib/db.js` (all Firestore reads/writes: roster + results), `src/lib/session.js`
+    (isolated localStorage session).
+  - **Start gate** (`Start.jsx`): role select → navigator (roster dropdown + PIN) / supervisor
+    (passcode). PIN validated against the roster entry; passcode against `SUPERVISOR_PASSCODE`.
+  - **Role split:** `App.jsx` reduced to a thin session/role router. New `SupervisorApp.jsx`
+    (live `onSnapshot` results + roster, full management views) and `NavigatorApp.jsx` (own
+    dashboard + my-training only; structurally no route to team views).
+  - **Roster management:** `Navigators.jsx` gained an "Add navigator" form (name + 4-digit PIN →
+    `addToRoster`) and shows "Not yet taken" for roster members without a submission.
+  - **Navigator privacy:** `NavigatorDetail` renders mentor names as plain text (no drill-in) and
+    hides the back button when used as a navigator's own dashboard; `TrainingModule` hides the
+    cohort list for navigators (`showCohort={false}`); new `MyTraining.jsx` for the navigator's
+    own plan. `Check.jsx` gained `hideName`/`greetingName` (navigator is already identified).
+  - **Sample data removed:** `SAMPLE_NAVIGATORS` deleted; matrix starts empty and fills from
+    Firestore. New `EmptyState.jsx` covers no-submissions, non-assessed-department, and
+    not-configured cases. `Footer.jsx` extracted (sample-data wording removed). `Results.jsx`
+    removed (navigator now lands directly on the richer dashboard).
+  - **Config/setup:** `SUPERVISOR_PASSCODE` added to `config.js`; `.env.local.example` and
+    `firestore.rules` added; `firebase` SDK added to `package.json`.
+- **Files affected:** new `src/lib/firebase.js`, `src/lib/db.js`, `src/lib/session.js`,
+  `src/components/{SupervisorApp,NavigatorApp,Start,Navigators,Nav,Check,NavigatorDetail,
+  TrainingModule,MyTraining,EmptyState,Footer,Matrix}.jsx`, `src/App.jsx`, `src/data/{config,
+  navigators}.js`, `src/styles.css`, `.env.local.example`, `firestore.rules`, `package.json`.
+  `src/lib/scoring.js` and `scoring.test.js` unchanged.
+- **Verification:** `npm test` → 38 passing; `npm run build` → clean; `npm run dev` → all modules
+  transform and serve (200). Defensive Firebase init verified to not crash without config.
+- **Status:** Code complete. **Not yet deployed** — deploying with empty Firebase config would
+  break the live prototype, so deploy waits until the owner provides `.env.local`. The owner must
+  (1) create a Firebase project, (2) fill `.env.local` from `.env.local.example`, (3) apply
+  `firestore.rules`, (4) `npm run build && npx gh-pages -d dist --dotfiles`.
 
 ---
 
@@ -492,10 +566,14 @@ stateDiagram-v2
   router are **not** yet tested.
 - **Incomplete areas:** no CI, no persistence, no trend/history, no mentor pairing,
   no coverage/bus-factor view, no completion tracking; no component/UI tests.
-- **Active integrations:** none yet — Firebase integration is **planned** (design in progress).
-- **Deployment status:** live on GitHub Pages; redeploy is manual.
-- **Counts (today):** 6 domains · 20 questions · 6 sample navigators (to be removed) · 4 departments · 38 unit
-  tests · ~2,300 LOC across `src/`.
+- **Active integrations:** **Firebase / Firestore** (pilot) — code complete, awaiting the owner's
+  Firebase project config in `.env.local` to go live.
+- **Deployment status:** live GitHub Pages site still runs the **pre-pilot prototype**. The Firebase
+  pilot is committed but **not deployed** (deploy waits on `.env.local`; deploying with empty config
+  would break the live site).
+- **Counts (today):** 6 domains · 20 questions · **sample navigators removed** (matrix starts empty,
+  fills from Firestore) · 4 departments (Pediatrics live; others show empty/not-assessed states) ·
+  38 unit tests · 2 Firestore collections (`roster`, `results`).
 
 ---
 
@@ -539,8 +617,18 @@ stateDiagram-v2
 ```
 
 ### Database schemas / API endpoints / env vars
-- **None.** No DB, no API, no environment variables. (If persistence is added later, document the
-  schema and any `VITE_*` env vars here.)
+- **Firestore collections** (both UUID-keyed; levels are never stored — always derived client-side):
+  - `roster/{uuid}` → `{ name, pin, createdAt }` — supervisor-managed navigator list.
+  - `results/{uuid}` → `{ name, navigatorId, scores: {domainId: pct}, submittedAt }` — submissions.
+    The result document shares the navigator's roster UUID as its id (so a retake overwrites cleanly).
+- **Env vars** (in gitignored `.env.local`, see `.env.local.example`): `VITE_FIREBASE_API_KEY`,
+  `VITE_FIREBASE_AUTH_DOMAIN`, `VITE_FIREBASE_PROJECT_ID`, `VITE_FIREBASE_STORAGE_BUCKET`,
+  `VITE_FIREBASE_MESSAGING_SENDER_ID`, `VITE_FIREBASE_APP_ID`.
+- **db.js API** (the only Firestore surface): `addToRoster(name, pin)`, `getRoster()`,
+  `subscribeRoster(cb)`, `getResult(navigatorId)`, `saveResult(navigatorId, name, scores)`,
+  `subscribeResults(cb)`. `subscribe*` return an unsubscribe function.
+- **No custom REST API.** No secrets in the repo except `SUPERVISOR_PASSCODE` (pilot-acceptable;
+  see decisions log).
 
 ### Build & run
 ```bash
@@ -611,8 +699,13 @@ npx gh-pages -d dist --dotfiles   # publish dist/ to gh-pages branch
 
 ## 12. Bugs & Known Issues
 
-- **No persistence (by design):** reloading clears the live taker's result. *Severity: low (intended).*
-  *Workaround:* re-take the check; sample data always present.
+- **~~No persistence~~ (resolved by Firebase pilot):** results now persist in Firestore and survive
+  reloads. *(Pre-pilot prototype was in-memory; that limitation is gone in the pilot code.)*
+- **Passcode/PIN are client-side (pilot):** `SUPERVISOR_PASSCODE` is in the public repo and PINs are
+  readable in Firestore; a determined user could bypass the gate. *Severity: low for a trusted pilot.*
+  *Mitigation:* documented; must move to real auth before production.
+- **Non-assessed departments are empty:** with sample data removed, only Pediatrics has live data;
+  other departments show an empty state. *Severity: low (intended for pilot).*
 - **Pages deploy is manual:** forgetting `npx gh-pages -d dist` after a build leaves the live site
   stale. *Severity: low.* *Workaround:* always run build+deploy together; verify the live bundle
   hash matches the new build.
@@ -687,23 +780,30 @@ npx gh-pages -d dist --dotfiles   # publish dist/ to gh-pages branch
    are provided.
 
 **Active work items:**
-- **[READY TO IMPLEMENT]** Firebase pilot. Design complete; plan written.
-  - **Phase 1 (no Firebase config needed):** install Firebase SDK, create `.env.local.example`,
-    `src/lib/firebase.js`, add `SUPERVISOR_PASSCODE` to `config.js`, create `src/lib/session.js`.
-  - **Phases 2–9:** blocked on owner providing Firebase project config for `.env.local`.
-  - Full step-by-step plan: `docs/superpowers/plans/2026-06-24-firebase-pilot-plan.md`.
+- **[CODE COMPLETE — AWAITING OWNER SETUP]** Firebase pilot. All code is built, tested (38 green),
+  and builds clean. **Owner's remaining steps to go live:**
+  1. Create a Firebase project at console.firebase.google.com; add a Web App; enable Firestore.
+  2. Copy `.env.local.example` → `.env.local` and fill in the `VITE_FIREBASE_*` values.
+  3. Apply `firestore.rules` (paste into Firestore → Rules, or `firebase deploy --only firestore:rules`).
+  4. Change `SUPERVISOR_PASSCODE` in `src/data/config.js` from the placeholder `2468`.
+  5. `npm run dev` to smoke-test locally → add a navigator (Navigators tab) → take the check as
+     that navigator → confirm the supervisor matrix updates live.
+  6. Deploy: `npm run build && npx gh-pages -d dist --dotfiles`; verify the live site.
+  - Full plan: `docs/superpowers/plans/2026-06-24-firebase-pilot-plan.md`.
 
 **Blockers:**
-- **Firebase config** — owner must create project at console.firebase.google.com and fill in
-  `.env.local` from `.env.local.example` before Phases 2–9 can proceed.
+- **Firebase config** — owner must create the project and fill `.env.local` to take the pilot live
+  (the code is done and waiting).
 - Real per-department question content requires additional SOPs from the owner.
 - Real training materials needed to replace mockup module content.
 
 **Upcoming milestones:**
 - ✅ First automated tests for `scoring.js` — done 2026-06-23 (Vitest, 38 tests).
 - ✅ Firebase pilot design doc + implementation plan — done 2026-06-24.
-- Firebase pilot implementation + redeploy (next).
-- Next test step after pilot: component/integration tests (jsdom + Testing Library).
+- ✅ Firebase pilot implementation (all code) — done 2026-06-24.
+- Firebase project setup + first live deploy of the pilot (owner — next).
+- Next test step after pilot: component/integration tests (jsdom + Testing Library) — now higher
+  value given the new role-routing and gate logic.
 
 ---
 

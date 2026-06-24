@@ -22,7 +22,7 @@ export default function Matrix({ rows, deptName, onTakeCheck, onOpenNavigator })
           map, not a scoreboard.
         </p>
         <p className="matrix-view__hint">
-          {!hasLive && (
+          {onTakeCheck && !hasLive && (
             <>
               Tip:{' '}
               <button className="linkbtn" onClick={onTakeCheck}>

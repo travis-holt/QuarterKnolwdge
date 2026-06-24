@@ -1,0 +1,36 @@
+// ─────────────────────────────────────────────────────────────────────────────
+// Firestore security rules — PILOT GRADE.
+//
+// This pilot has no authentication (navigators use a name + PIN, supervisors a
+// passcode — all client-side). Firestore therefore cannot identify callers, so
+// these rules simply scope access to the two collections the app uses and block
+// everything else. They are NOT production-secure: anyone with the project URL
+// and these collection names could read/write. That trade-off is acceptable for
+// a small, trusted, short-lived pilot with no sensitive data.
+//
+// BEFORE any public/production deployment: add Firebase Auth and rewrite these
+// rules to check request.auth.
+//
+// To apply: paste into Firestore → Rules in the Firebase console, or run
+//   firebase deploy --only firestore:rules
+// ─────────────────────────────────────────────────────────────────────────────
+
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Supervisor-managed roster and navigator submissions.
+    match /roster/{docId} {
+      allow read, write: if true;
+    }
+    match /results/{docId} {
+      allow read, write: if true;
+    }
+
+    // Everything else is denied.
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

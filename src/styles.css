@@ -1376,6 +1376,217 @@ button {
   border-left: 4px solid var(--accent);
 }
 
+/* ── Role gate (Start) ─────────────────────────────────────────────────────── */
+.gate__roles {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+  margin: 8px 0 8px;
+}
+
+.gate__role {
+  text-align: left;
+  cursor: pointer;
+  padding: 22px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  transition: border-color 0.15s, transform 0.05s;
+}
+
+.gate__role:hover {
+  border-color: var(--accent);
+}
+
+.gate__role:active {
+  transform: translateY(1px);
+}
+
+.gate__role-title {
+  font-size: 19px;
+  font-weight: 700;
+  color: var(--ink);
+}
+
+.gate__role-sub {
+  font-size: 14.5px;
+  color: var(--ink-soft);
+  line-height: 1.45;
+}
+
+.gate {
+  max-width: 460px;
+}
+
+.gate__back {
+  margin-bottom: 16px;
+  display: inline-block;
+}
+
+.gate__title {
+  font-size: 28px;
+  font-weight: 700;
+  margin: 0 0 12px;
+  letter-spacing: -0.01em;
+}
+
+.gate__notice {
+  font-size: 15px;
+  color: var(--ink-soft);
+  line-height: 1.5;
+  margin: 0 0 20px;
+}
+
+.gate__form {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+
+.gate__field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.gate__label {
+  font-size: 13px;
+  font-weight: 650;
+  color: var(--ink-soft);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.gate__select,
+.gate__input {
+  font: inherit;
+  padding: 11px 13px;
+  border-radius: 10px;
+  border: 1px solid var(--line);
+  background: #fff;
+  color: var(--ink);
+}
+
+.gate__select:focus,
+.gate__input:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.gate__error {
+  color: #c0392b;
+  font-size: 14px;
+  font-weight: 600;
+  margin: -6px 0 0;
+}
+
+.nav__signout {
+  margin-left: 8px;
+  border: 1px solid var(--line);
+}
+
+.check__greeting {
+  font-size: 14px;
+  font-weight: 650;
+  color: var(--accent);
+}
+
+/* ── Empty states ──────────────────────────────────────────────────────────── */
+.empty {
+  max-width: 640px;
+}
+
+.empty__card {
+  padding: 36px;
+  text-align: center;
+}
+
+.empty__title {
+  font-size: 22px;
+  font-weight: 700;
+  margin: 0 0 12px;
+}
+
+.empty__body {
+  font-size: 15.5px;
+  color: var(--ink-soft);
+  line-height: 1.55;
+  margin: 0;
+}
+
+.empty__body code {
+  background: #efe8da;
+  padding: 1px 6px;
+  border-radius: 5px;
+  font-size: 13.5px;
+}
+
+/* ── Navigators: roster management ─────────────────────────────────────────── */
+.navigators__head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.add-nav {
+  padding: 22px;
+  margin-bottom: 22px;
+}
+
+.add-nav__fields {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+  margin: 14px 0 0;
+}
+
+.add-nav__actions {
+  display: flex;
+  gap: 10px;
+  justify-content: flex-end;
+  margin-top: 18px;
+}
+
+.nav-card--pending {
+  opacity: 0.92;
+  border-style: dashed;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  cursor: default;
+}
+
+.nav-card__pending-tag {
+  font-size: 12px;
+  font-weight: 650;
+  padding: 4px 10px;
+  border-radius: 999px;
+  background: #efe8da;
+  color: var(--ink-soft);
+  white-space: nowrap;
+}
+
+.nav-card__pending-note {
+  font-size: 13.5px;
+  color: var(--ink-soft);
+  margin: 0;
+  line-height: 1.45;
+}
+
+.nav-card__pin {
+  font-size: 13px;
+  color: var(--ink-soft);
+  margin: 0;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ── My training (navigator) ───────────────────────────────────────────────── */
+.mytraining__list {
+  display: grid;
+  gap: 14px;
+}
+
 .takeaways {
   margin: 12px 0 0;
   padding-left: 20px;
@@ -1409,5 +1620,14 @@ button {
   }
   .dist__row {
     grid-template-columns: 110px 1fr;
+  }
+  .gate__roles {
+    grid-template-columns: 1fr;
+  }
+  .add-nav__fields {
+    grid-template-columns: 1fr;
+  }
+  .navigators__head {
+    flex-direction: column;
   }
 }

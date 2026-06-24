@@ -1,0 +1,169 @@
+import { useState, useEffect } from 'react';
+import Nav from './Nav.jsx';
+import Check from './Check.jsx';
+import NavigatorDetail from './NavigatorDetail.jsx';
+import MyTraining from './MyTraining.jsx';
+import TrainingModule from './TrainingModule.jsx';
+import EmptyState from './EmptyState.jsx';
+import Footer from './Footer.jsx';
+import { scorePerDomain, buildMatrixRows, departmentMatrix, findRow } from '../lib/scoring.js';
+import { getResult, saveResult, subscribeResults } from '../lib/db.js';
+import { isFirebaseConfigured } from '../lib/firebase.js';
+import { ASSESSED_DEPT, departmentName } from '../data/departments.js';
+
+// The navigator's self-contained app. They can ONLY ever see their own data:
+// there is no route to the matrix, overview, or other navigators' dashboards.
+// (They do receive the floor's results — read-only — so mentor suggestions can
+// name colleagues who can teach their growth domains, but those names are not
+// clickable and open nothing.)
+export default function NavigatorApp({ navigatorId, name, onSignOut }) {
+  const [view, setView] = useState('loading'); // loading · check · dashboard · training · module
+  const [ownResult, setOwnResult] = useState(null); // { scores }
+  const [results, setResults] = useState([]); // whole floor (for mentor data)
+  const [moduleDomain, setModuleDomain] = useState(null);
+  const [loadError, setLoadError] = useState(false);
+
+  // Decide the entry view: returning navigator → dashboard, new → check.
+  useEffect(() => {
+    let active = true;
+    if (!isFirebaseConfigured) {
+      setLoadError(true);
+      setView('error');
+      return undefined;
+    }
+    getResult(navigatorId)
+      .then((res) => {
+        if (!active) return;
+        if (res) {
+          setOwnResult(res);
+          setView('dashboard');
+        } else {
+          setView('check');
+        }
+      })
+      .catch(() => {
+        if (active) {
+          setLoadError(true);
+          setView('error');
+        }
+      });
+    return () => {
+      active = false;
+    };
+  }, [navigatorId]);
+
+  // Live floor results — used only to compute mentor suggestions.
+  useEffect(() => {
+    if (!isFirebaseConfigured) return undefined;
+    const unsub = subscribeResults(setResults);
+    return () => unsub();
+  }, []);
+
+  const handleSubmit = async (_ignoredName, answers) => {
+    const scores = scorePerDomain(answers);
+    setOwnResult({ name, navigatorId, scores });
+    setView('dashboard');
+    try {
+      await saveResult(navigatorId, name, scores);
+    } catch {
+      // The dashboard already shows their result from local state; a failed
+      // write just means it won't sync to the supervisor. Surfacing a toast is
+      // a future nicety — for the pilot, local state keeps the UX intact.
+    }
+  };
+
+  const openModule = (domainId) => {
+    setModuleDomain(domainId);
+    setView('module');
+  };
+
+  // Merge own result into the floor results (dedup by navigatorId) so the
+  // navigator's own row is present immediately after submit, before the
+  // onSnapshot listener catches up.
+  const merged = new Map();
+  for (const r of results) merged.set(r.navigatorId ?? r.id, r);
+  if (ownResult) merged.set(navigatorId, { name, navigatorId, scores: ownResult.scores });
+  const rows = buildMatrixRows([...merged.values()], null);
+
+  const deptName = departmentName(ASSESSED_DEPT);
+  const deptMatrix = ownResult
+    ? departmentMatrix([{ name, departments: { [ASSESSED_DEPT]: ownResult.scores } }], null)
+    : [];
+  const myRow = findRow(rows, name);
+
+  if (view === 'loading') {
+    return (
+      <Shell role="navigator" view="dashboard" setView={() => {}} onSignOut={onSignOut}>
+        <EmptyState title="Loading…">One moment while we pull up your check.</EmptyState>
+      </Shell>
+    );
+  }
+
+  if (view === 'error') {
+    return (
+      <Shell role="navigator" view="dashboard" setView={() => {}} onSignOut={onSignOut}>
+        <EmptyState title="Couldn’t connect">
+          The check isn’t connected to its database yet, or the connection failed. Please let your
+          supervisor know.
+        </EmptyState>
+      </Shell>
+    );
+  }
+
+  return (
+    <Shell role="navigator" view={view} setView={setView} onSignOut={onSignOut}>
+      {view === 'check' && (
+        <Check onSubmit={handleSubmit} onCancel={onSignOut} hideName greetingName={name} />
+      )}
+
+      {view === 'dashboard' &&
+        (myRow ? (
+          <NavigatorDetail
+            rows={rows}
+            name={name}
+            deptName={deptName}
+            deptMatrix={deptMatrix}
+            onBack={null}
+            onOpenNavigator={null}
+            onPreviewModule={openModule}
+          />
+        ) : (
+          <EmptyState title="No results yet">
+            It looks like your check hasn’t been recorded.{' '}
+            <button className="linkbtn" onClick={() => setView('check')}>Take the check</button>.
+          </EmptyState>
+        ))}
+
+      {view === 'training' &&
+        (myRow ? (
+          <MyTraining row={myRow} onPreviewModule={openModule} />
+        ) : (
+          <EmptyState title="No training yet">
+            Take the check first and your training plan will appear here.
+          </EmptyState>
+        ))}
+
+      {view === 'module' && (
+        <TrainingModule
+          rows={rows}
+          domainId={moduleDomain}
+          onBack={() => setView('training')}
+          onOpenNavigator={null}
+          showCohort={false}
+          backLabel="← Back to my training"
+        />
+      )}
+    </Shell>
+  );
+}
+
+// Shared shell for the navigator: nav + main + footer.
+function Shell({ role, view, setView, onSignOut, children }) {
+  return (
+    <div className="app">
+      <Nav role={role} view={view} setView={setView} onSignOut={onSignOut} />
+      <main className="main">{children}</main>
+      <Footer />
+    </div>
+  );
+}
