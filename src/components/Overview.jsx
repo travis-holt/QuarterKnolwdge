@@ -1,9 +1,11 @@
 import { DOMAINS } from '../data/questions.js';
+import { COMPETENCIES, competencyName } from '../data/competencies.js';
 import { DEPARTMENTS } from '../data/departments.js';
 import { LEVELS, LEVEL_ORDER } from '../data/config.js';
 import {
   floorStats,
   domainDistribution,
+  competencyDistribution,
   columnGaps,
   canTeachRoster,
   readinessTally,
@@ -14,6 +16,7 @@ const domainName = (id) => DOMAINS.find((d) => d.id === id)?.name ?? id;
 export default function Overview({ rows, deptName, deptMatrix, onOpenNavigator, onViewMatrix }) {
   const stats = floorStats(rows);
   const dist = domainDistribution(rows);
+  const compDist = competencyDistribution(rows);
   const gaps = columnGaps(rows);
   const roster = canTeachRoster(rows);
   const readiness = readinessTally(rows);
@@ -160,6 +163,51 @@ export default function Overview({ rows, deptName, deptMatrix, onOpenNavigator, 
           ))}
         </div>
       </div>
+
+      {/* ── Competency capability distribution (capability axis) ──────── */}
+      {compDist.length > 0 && (
+        <div className="card overview__panel">
+          <h2 className="overview__panel-title">Capability by competency</h2>
+          <p className="readoff__sub">
+            The how-they-work axis — critical thinking, communication, escalation and more — across
+            every navigator assessed, independent of department.
+          </p>
+          <div className="dist">
+            {compDist.map((c) => (
+              <div key={c.competencyId} className="dist__row">
+                <span className="dist__name">{competencyName(c.competencyId)}</span>
+                <div className="dist__bar" title={`${c.learning} Learning · ${c.solid} Solid · ${c.canTeach} Can-Teach`}>
+                  {LEVEL_ORDER.map((lvl) => {
+                    const count = c[lvl];
+                    if (!count) return null;
+                    return (
+                      <span
+                        key={lvl}
+                        className="dist__seg"
+                        style={{
+                          width: `${(count / c.total) * 100}%`,
+                          background: LEVELS[lvl].color,
+                          color: LEVELS[lvl].text,
+                        }}
+                      >
+                        {count}
+                      </span>
+                    );
+                  })}
+                </div>
+              </div>
+            ))}
+          </div>
+          <div className="matrix__legend overview__legend">
+            {LEVEL_ORDER.map((id) => (
+              <span key={id} className="legend-item">
+                <span className="legend-swatch" style={{ background: LEVELS[id].color }} />
+                {LEVELS[id].label}
+              </span>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* ── Priorities / strengths / readiness ────────────────────────── */}
       <div className="overview__cols">

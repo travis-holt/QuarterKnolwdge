@@ -7,10 +7,13 @@
 //
 // Two collections, both keyed by UUID (never by name → no typo/collision risk):
 //   roster   — supervisor-managed navigator list { name, pin, createdAt }
-//   results  — check submissions { name, navigatorId, scores, submittedAt }
+//   results  — check submissions { name, navigatorId, scores, competencyScores,
+//              submittedAt }
 //
 // Levels (learning/solid/canTeach) are NEVER stored — always derived client-side
-// by scoreToLevel(), so thresholds stay tunable without a data migration.
+// by scoreToLevel(), so thresholds stay tunable without a data migration. Older
+// result docs may predate `competencyScores`; the scoring layer tolerates its
+// absence (competency views simply skip those rows).
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { db } from './firebase.js';
@@ -23,10 +26,16 @@ import {
   getDocs,
   onSnapshot,
   serverTimestamp,
+  query,
+  where,
+  writeBatch,
+  updateDoc,
+  deleteDoc,
 } from 'firebase/firestore';
 
 const ROSTER = 'roster';
 const RESULTS = 'results';
+const QUESTIONS_COL = 'questions';
 
 // ── Roster ───────────────────────────────────────────────────────────────────
 
@@ -86,12 +95,14 @@ export async function getResult(navigatorId) {
  * @param {string} navigatorId
  * @param {string} name                  denormalised for display
  * @param {Record<string,number>} scores  domainId -> percent
+ * @param {Record<string,number|null>} [competencyScores]  competencyId -> percent
  */
-export async function saveResult(navigatorId, name, scores) {
+export async function saveResult(navigatorId, name, scores, competencyScores = {}) {
   await setDoc(doc(db, RESULTS, navigatorId), {
     name,
     navigatorId,
     scores,
+    competencyScores,
     submittedAt: serverTimestamp(),
   });
 }
@@ -109,4 +120,110 @@ export function subscribeResults(cb, onError) {
     (snap) => cb(snap.docs.map((d) => ({ id: d.id, ...d.data() }))),
     onError ?? ((err) => console.error('subscribeResults:', err))
   );
+}
+
+// ── Questions (live, supervisor-managed bank) ──────────────────────────────────
+//
+// Each question doc carries the scoring shape plus a `status`:
+//   draft    — generated/added, awaiting supervisor review (NOT in the check)
+//   active   — live in the navigator's check
+//   archived — retired, kept for history
+// Levels are never stored; the check reads only `status === 'active'` questions.
+
+const QUESTION_FIELDS = (q) => ({
+  domainId: q.domainId,
+  competencies: q.competencies ?? [],
+  scenario: q.scenario,
+  options: q.options,
+  correctOptionId: q.correctOptionId,
+});
+
+/**
+ * Supervisor: live subscription to the WHOLE question bank (all statuses) for
+ * the Question Bank management view.
+ * @param {(questions:object[]) => void} cb
+ * @param {(err:Error) => void} [onError]
+ * @returns {() => void} unsubscribe
+ */
+export function subscribeQuestions(cb, onError) {
+  return onSnapshot(
+    collection(db, QUESTIONS_COL),
+    (snap) => cb(snap.docs.map((d) => ({ id: d.id, ...d.data() }))),
+    onError ?? ((err) => console.error('subscribeQuestions:', err))
+  );
+}
+
+/**
+ * One-time fetch of the ACTIVE questions only — the live check bank.
+ * @returns {Promise<object[]>}
+ */
+export async function getActiveQuestions() {
+  const snap = await getDocs(query(collection(db, QUESTIONS_COL), where('status', '==', 'active')));
+  return snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+}
+
+/**
+ * Seed the bank from the static seed the first time only. No-op if any question
+ * already exists. Seed questions are written `active` using their stable seed id.
+ * @param {object[]} seed
+ * @returns {Promise<boolean>} true if it seeded, false if the bank was non-empty
+ */
+export async function seedQuestionsIfEmpty(seed) {
+  const snap = await getDocs(collection(db, QUESTIONS_COL));
+  if (!snap.empty) return false;
+  const batch = writeBatch(db);
+  for (const q of seed) {
+    batch.set(doc(db, QUESTIONS_COL, q.id), {
+      ...QUESTION_FIELDS(q),
+      status: 'active',
+      source: 'seed',
+      createdAt: serverTimestamp(),
+    });
+  }
+  await batch.commit();
+  return true;
+}
+
+/**
+ * Save a batch of draft questions (e.g. Gemini output or manual adds). Each gets
+ * a fresh UUID and status `draft` — never live until the supervisor activates it.
+ * @param {object[]} drafts
+ * @param {string} [source]  provenance tag (e.g. 'gemini', 'manual')
+ * @returns {Promise<string[]>} the new draft ids
+ */
+export async function saveDraftQuestions(drafts, source = 'gemini') {
+  const batch = writeBatch(db);
+  const ids = [];
+  for (const q of drafts) {
+    const ref = doc(collection(db, QUESTIONS_COL));
+    ids.push(ref.id);
+    batch.set(ref, {
+      ...QUESTION_FIELDS(q),
+      status: 'draft',
+      source,
+      createdAt: serverTimestamp(),
+    });
+  }
+  await batch.commit();
+  return ids;
+}
+
+/** Supervisor: patch a question's editable fields. */
+export async function updateQuestion(id, patch) {
+  await updateDoc(doc(db, QUESTIONS_COL, id), patch);
+}
+
+/** Supervisor: make a question live in the check. */
+export async function activateQuestion(id) {
+  await updateDoc(doc(db, QUESTIONS_COL, id), { status: 'active' });
+}
+
+/** Supervisor: retire a question (kept for history, not in the check). */
+export async function archiveQuestion(id) {
+  await updateDoc(doc(db, QUESTIONS_COL, id), { status: 'archived' });
+}
+
+/** Supervisor: permanently delete a question. */
+export async function deleteQuestion(id) {
+  await deleteDoc(doc(db, QUESTIONS_COL, id));
 }

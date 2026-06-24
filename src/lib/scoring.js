@@ -1,40 +1,93 @@
 // ─────────────────────────────────────────────────────────────────────────────
 // SCORING + MATRIX READ-OFFS
 //
-// All scoring is per-domain — there is deliberately no single overall score.
-// Levels are derived from THRESHOLDS in data/config.js so the bands are easy
-// to change in one place.
+// Two scoring axes, both derived from the same answers and never reduced to a
+// single overall grade:
+//   • per-DOMAIN  (topic: scheduling, insurance, …)        — scorePerDomain
+//   • per-COMPETENCY (capability: critical thinking, …)    — scorePerCompetency
+// Each option carries a `points` value (0–100 = quality of that choice), so an
+// answer earns partial credit, not just right/wrong. Levels are derived from
+// THRESHOLDS in data/config.js so the bands are easy to change in one place.
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { THRESHOLDS, LEVELS, COLUMN_GAP_THRESHOLD, TRAINING_RULES } from '../data/config.js';
-import { DOMAINS, QUESTIONS } from '../data/questions.js';
+import { DOMAINS, SEED_QUESTIONS } from '../data/questions.js';
+import { COMPETENCIES } from '../data/competencies.js';
 import { moduleForDomain } from '../data/training.js';
 import { DEPARTMENTS, ASSESSED_DEPT } from '../data/departments.js';
 
 /**
- * Score a set of answers into a per-domain percent-correct map.
- * @param {Record<string,string>} answers - questionId -> chosen optionId
- * @returns {Record<string,number>} domainId -> percent correct (0–100, rounded)
+ * Points earned for one question given the chosen option.
+ * Uses the option's `points` (partial credit) when present; falls back to a
+ * binary 100/0 against `correctOptionId` for legacy/ungraded options. An absent
+ * or invalid answer earns 0.
+ * @param {string|undefined} answer - chosen optionId
+ * @param {object} question
+ * @returns {number} 0–100
  */
-export function scorePerDomain(answers) {
-  const tally = {}; // domainId -> { correct, total }
+function earnedPoints(answer, question) {
+  const opt = question.options.find((o) => o.id === answer);
+  if (!opt) return 0;
+  if (typeof opt.points === 'number') return opt.points;
+  return answer === question.correctOptionId ? 100 : 0;
+}
+
+/**
+ * Score a set of answers into a per-domain map (0–100), averaging earned points
+ * across each domain's questions.
+ * @param {Record<string,string>} answers - questionId -> chosen optionId
+ * @param {object[]} [questions] - the active question bank (defaults to the seed)
+ * @returns {Record<string,number>} domainId -> score (0–100, rounded)
+ */
+export function scorePerDomain(answers, questions = SEED_QUESTIONS) {
+  const tally = {}; // domainId -> { earned, total }
   for (const domain of DOMAINS) {
-    tally[domain.id] = { correct: 0, total: 0 };
+    tally[domain.id] = { earned: 0, total: 0 };
   }
 
-  for (const q of QUESTIONS) {
+  for (const q of questions) {
     const bucket = tally[q.domainId];
     if (!bucket) continue;
     bucket.total += 1;
-    if (answers[q.id] === q.correctOptionId) {
-      bucket.correct += 1;
-    }
+    bucket.earned += earnedPoints(answers[q.id], q);
   }
 
   const scores = {};
   for (const domain of DOMAINS) {
-    const { correct, total } = tally[domain.id];
-    scores[domain.id] = total === 0 ? 0 : Math.round((correct / total) * 100);
+    const { earned, total } = tally[domain.id];
+    scores[domain.id] = total === 0 ? 0 : Math.round(earned / total);
+  }
+  return scores;
+}
+
+/**
+ * Score a set of answers into a per-competency map (0–100), averaging earned
+ * points across each competency's tagged questions. Competencies with no tagged
+ * questions in the active bank are returned as `null` (consumers skip them).
+ * @param {Record<string,string>} answers
+ * @param {object[]} [questions] - the active question bank (defaults to the seed)
+ * @returns {Record<string,number|null>} competencyId -> score (0–100) or null
+ */
+export function scorePerCompetency(answers, questions = SEED_QUESTIONS) {
+  const tally = {}; // competencyId -> { earned, total }
+  for (const c of COMPETENCIES) {
+    tally[c.id] = { earned: 0, total: 0 };
+  }
+
+  for (const q of questions) {
+    const earned = earnedPoints(answers[q.id], q);
+    for (const cid of q.competencies ?? []) {
+      const bucket = tally[cid];
+      if (!bucket) continue; // ignore unknown/typo competency tags
+      bucket.total += 1;
+      bucket.earned += earned;
+    }
+  }
+
+  const scores = {};
+  for (const c of COMPETENCIES) {
+    const { earned, total } = tally[c.id];
+    scores[c.id] = total === 0 ? null : Math.round(earned / total);
   }
   return scores;
 }
@@ -57,19 +110,34 @@ export function levelFor(pct) {
 
 /**
  * Build the matrix rows from sample navigators + the optional live taker.
- * Each row: { name, isLive, scores, levels } where levels[domainId] is a level id.
- * @param {{name:string,scores:Record<string,number>}[]} samples
- * @param {{name:string,scores:Record<string,number>}|null} liveResult
+ * Each row carries both scoring axes:
+ *   { name, isLive, scores, levels,                 // per-domain
+ *     competencyScores, competencyLevels }          // per-competency
+ * `competencyLevels` only includes competencies the row actually has a score for
+ * (a bank may not exercise all 9), so consumers can iterate it safely.
+ * @param {{name,scores,competencyScores?}[]} samples
+ * @param {{name,scores,competencyScores?}|null} liveResult
  */
 export function buildMatrixRows(samples, liveResult) {
-  const toRow = (nav, isLive) => ({
-    name: nav.name,
-    isLive,
-    scores: nav.scores,
-    levels: Object.fromEntries(
-      DOMAINS.map((d) => [d.id, scoreToLevel(nav.scores[d.id] ?? 0)])
-    ),
-  });
+  const toRow = (nav, isLive) => {
+    const scores = nav.scores ?? {};
+    const competencyScores = nav.competencyScores ?? {};
+    return {
+      name: nav.name,
+      isLive,
+      scores,
+      levels: Object.fromEntries(
+        DOMAINS.map((d) => [d.id, scoreToLevel(scores[d.id] ?? 0)])
+      ),
+      competencyScores,
+      competencyLevels: Object.fromEntries(
+        COMPETENCIES.filter((c) => typeof competencyScores[c.id] === 'number').map((c) => [
+          c.id,
+          scoreToLevel(competencyScores[c.id]),
+        ])
+      ),
+    };
+  };
 
   const rows = samples.map((n) => toRow(n, false));
   if (liveResult) rows.push(toRow(liveResult, true));
@@ -211,6 +279,26 @@ export function domainDistribution(rows) {
     for (const r of rows) counts[r.levels[d.id]] += 1;
     return { domainId: d.id, ...counts, total: rows.length };
   });
+}
+
+/**
+ * Per-competency level distribution (counts) — the capability-axis analogue of
+ * domainDistribution. Skips competencies no row has a score for, and only counts
+ * rows that were actually assessed on each competency.
+ * @returns {{competencyId:string, learning:number, solid:number, canTeach:number, total:number}[]}
+ */
+export function competencyDistribution(rows) {
+  return COMPETENCIES.map((c) => {
+    const counts = { learning: 0, solid: 0, canTeach: 0 };
+    let total = 0;
+    for (const r of rows) {
+      const lvl = r.competencyLevels?.[c.id];
+      if (!lvl) continue;
+      counts[lvl] += 1;
+      total += 1;
+    }
+    return { competencyId: c.id, ...counts, total };
+  }).filter((x) => x.total > 0);
 }
 
 /** Find a single built row by navigator name (or null). */

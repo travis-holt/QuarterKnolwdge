@@ -18,6 +18,7 @@ export default function Nav({ role, view, setView, onSignOut }) {
             active: view === 'navigators' || view === 'navigator',
           },
           { id: 'training', label: 'Training' },
+          { id: 'questions', label: 'Questions' },
         ];
 
   const home = role === 'navigator' ? 'dashboard' : 'overview';

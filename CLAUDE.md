@@ -10,8 +10,8 @@
 > [§8 Current System State](#8-current-system-state) and [§15 Current Priorities](#15-current-priorities)
 > accurate at all times.
 >
-> **Last updated:** 2026-06-24 (post-code-review robustness fixes) · **Doc maintainer:** Claude (AI
-> agent) + repo owner. Assumptions are explicitly marked **[ASSUMPTION]**.
+> **Last updated:** 2026-06-24 (competency engine + Gemini scenario generation on Vercel) ·
+> **Doc maintainer:** Claude (AI agent) + repo owner. Assumptions are explicitly marked **[ASSUMPTION]**.
 
 ---
 
@@ -136,15 +136,17 @@ training assignments.
 - **Dependencies:** `QUESTIONS`, `DOMAINS`.
 - **Notes:** Stepped flow chosen over single-page for demo clarity.
 
-### F2 — Per-Domain Scoring → Level Mapping
-- **Purpose:** Convert answers into per-domain % and a 3-level rating; never one total.
-- **User benefit:** Actionable, non-punitive signal.
-- **Technical implementation:** `scorePerDomain()` and `scoreToLevel()` in
-  [src/lib/scoring.js](src/lib/scoring.js); thresholds in [src/data/config.js](src/data/config.js)
-  (`THRESHOLDS = { learning: 60, canTeach: 85 }`).
+### F2 — Multi-Signal Scoring → Level Mapping (two axes)
+- **Purpose:** Convert answers into per-domain **and** per-competency scores; never one total.
+- **User benefit:** Actionable, non-punitive signal on both *what* (domain) and *how* (competency).
+- **Technical implementation:** `scorePerDomain(answers, questions)` and
+  `scorePerCompetency(answers, questions)` in [src/lib/scoring.js](src/lib/scoring.js) average each
+  option's `points` (partial credit, not binary); `scoreToLevel()` maps to the 3 levels. Thresholds
+  in [src/data/config.js](src/data/config.js) (`THRESHOLDS = { learning: 60, canTeach: 85 }`).
 - **Status:** Complete.
-- **Dependencies:** `THRESHOLDS`, `LEVELS`.
-- **Notes:** `<60` Learning, `60–84` Solid, `85+` Can-Teach. Easy to change in one place.
+- **Dependencies:** `THRESHOLDS`, `LEVELS`, `COMPETENCIES`.
+- **Notes:** `<60` Learning, `60–84` Solid, `85+` Can-Teach (same bands for both axes). Each option
+  carries `points` (0–100) + an SOP-referenced `rationale`; the 100-point option is `correctOptionId`.
 
 ### F3 — Capability Matrix (hero screen)
 - **Purpose:** Navigators × domains grid, color-coded by level; the centrepiece.
@@ -210,11 +212,41 @@ training assignments.
   selector. Live check assesses **Pediatrics only** (`ASSESSED_DEPT`); others are mockups.
 - **Status:** Complete (Pediatrics live; other 3 departments = mockup data).
 
-### F11 — Deployment (GitHub Pages)
-- **Purpose:** Persistent public URL for showcasing, independent of the dev environment.
-- **Technical implementation:** Vite `base: '/QuarterKnolwdge/'` on build; `gh-pages` branch via
-  `npx gh-pages -d dist`. Live at **https://travis-holt.github.io/QuarterKnolwdge/**.
+### F11 — Deployment (Vercel)
+- **Purpose:** Persistent public URL + a place to run serverless functions (which GitHub Pages can't).
+- **Technical implementation:** Vite served at root (`base: '/'`); `vercel.json` (framework `vite`,
+  output `dist`); `/api/*` serverless functions deploy alongside. Env vars set in the Vercel project.
+- **Status:** Complete (code). **[ASSUMPTION]** Owner links the Vercel project + sets env vars.
+- **Notes:** Replaces the prior GitHub Pages deploy; the `/QuarterKnolwdge/` base-path hack is retired.
+
+### F12 — Competency Axis (9 competencies)
+- **Purpose:** Measure *how* a navigator thinks/decides/communicates, across all domains.
+- **User benefit:** Capability signal orthogonal to topic — surfaces e.g. weak Escalation even when
+  domain scores look fine.
+- **Technical implementation:** [src/data/competencies.js](src/data/competencies.js) (`COMPETENCIES`
+  ×9); `scorePerCompetency()` + `competencyDistribution()` in scoring.js; competency breakdown on
+  `NavigatorDetail`, competency distribution on `Overview`. Stored as `results.competencyScores`.
 - **Status:** Complete.
+
+### F13 — Rule-Based Coaching (post-check)
+- **Purpose:** Immediate, specific feedback after a check — no LLM.
+- **User benefit:** The navigator leaves knowing exactly what to reinforce and why.
+- **Technical implementation:** [src/components/Coaching.jsx](src/components/Coaching.jsx) — per-question
+  review (your choice + points + best answer + both authored rationales) and competency strengths/gaps.
+  Shown between submit and the dashboard.
+- **Status:** Complete.
+
+### F14 — Question Bank + Gemini Scenario Generation (review gate)
+- **Purpose:** Grow the check from the SOP; questions are live Firestore data, not a static file.
+- **User benefit:** Supervisors generate, review, and curate the assessment without a code change.
+- **Technical implementation:** Firestore `questions` collection (`draft`/`active`/`archived`);
+  `db.js` CRUD (`subscribeQuestions`, `getActiveQuestions`, `saveDraftQuestions`, `activate/archive/
+  delete/updateQuestion`, `seedQuestionsIfEmpty`); supervisor UI
+  [QuestionBank.jsx](src/components/QuestionBank.jsx) + [QuestionEditor.jsx](src/components/QuestionEditor.jsx);
+  serverless [api/generate-scenarios.js](api/generate-scenarios.js) (Gemini `gemini-2.5-flash`,
+  structured JSON output, validated/repaired; rotates across multiple keys on rate-limit). Only
+  **active** questions appear in the check; AI drafts require human activation.
+- **Status:** Complete (code). **[ASSUMPTION]** Owner sets `GEMINI_API_KEY` + `GENERATION_SECRET` on Vercel.
 
 ---
 
@@ -242,53 +274,67 @@ training assignments.
 ```
 QuarterKnolwdge/
 ├── index.html               # Vite entry HTML
-├── vite.config.js           # base path for Pages set on build only
+├── vite.config.js           # base '/' (served at root on Vercel)
+├── vercel.json              # Vercel project config (framework vite, output dist)
 ├── package.json             # scripts: dev/build/preview/test/test:watch
 ├── README.md                # quick-start + tweak guide
 ├── CLAUDE.md                # THIS FILE — project knowledge base
-├── ClaudeCode_Build_Brief.md# original brief
 ├── SOP Guide.pdf            # source of truth for domains/questions
-├── .env.local.example       # Firebase config template (copy → .env.local, gitignored)
-├── firestore.rules          # pilot-grade Firestore security rules
+├── .env.local.example       # Firebase + Gemini env template (copy → .env.local, gitignored)
+├── firestore.rules          # pilot-grade Firestore security rules (roster/results/questions)
+├── api/                     # Vercel serverless functions
+│   ├── generate-scenarios.js#   Gemini proxy (holds GEMINI_API_KEY; validates output)
+│   ├── health.js            #   deploy/health check
+│   └── _sop-context.js      #   SOP grounding text (helper, not a route)
 └── src/
     ├── main.jsx             # React root
     ├── App.jsx              # session + role routing (thin shell)
     ├── styles.css           # entire stylesheet
-    ├── components/          # Nav, Start (gate), Check, Matrix, Overview,
-    │                        #   Navigators, NavigatorDetail, Training, MyTraining,
-    │                        #   TrainingModule, DeptBar, SupervisorApp, NavigatorApp,
-    │                        #   EmptyState, Footer
-    ├── data/                # config, questions, navigators (placeholder), training, departments
+    ├── components/          # Nav, Start, Check, Coaching, Matrix, Overview, Navigators,
+    │                        #   NavigatorDetail, Training, MyTraining, TrainingModule,
+    │                        #   QuestionBank, QuestionEditor, DeptBar, SupervisorApp,
+    │                        #   NavigatorApp, EmptyState, Footer
+    ├── data/                # config, questions (DOMAINS + SEED_QUESTIONS), competencies,
+    │                        #   navigators (placeholder), training, departments
     └── lib/
         ├── firebase.js      # Firebase app init + Firestore instance (defensive)
-        ├── db.js            # ALL Firestore reads/writes (roster + results)
+        ├── db.js            # ALL Firestore reads/writes (roster + results + questions)
         ├── session.js       # localStorage session layer (isolated, swappable for real auth)
-        ├── scoring.js       # all scoring, read-offs, analytics, training logic
-        └── scoring.test.js  # Vitest unit tests for scoring.js (38 tests)
+        ├── scoring.js       # all scoring (2 axes), read-offs, analytics, training logic
+        └── scoring.test.js  # Vitest unit tests for scoring.js (46 tests)
 ```
 
 ### Backend Architecture
-- **Firebase / Firestore (pilot).** As of the 2026-06-24 Firebase pilot, the app persists data to
-  Cloud Firestore (free Spark tier). No custom server — the static site talks to Firestore directly.
-  Two collections: `roster` (supervisor-managed navigator list) and `results` (submissions), both
-  UUID-keyed. All Firestore access is isolated in [src/lib/db.js](src/lib/db.js); init in
-  [src/lib/firebase.js](src/lib/firebase.js) (reads `VITE_FIREBASE_*` from gitignored `.env.local`).
-- **No auth system** (by design for the pilot): navigators pick their name from the roster and enter
-  a 4-digit PIN; supervisors enter `SUPERVISOR_PASSCODE`. Session persistence is localStorage only,
+- **Firebase / Firestore (pilot).** The app persists data to Cloud Firestore (free Spark tier).
+  Three collections: `roster` (navigator list), `results` (submissions, now incl.
+  `competencyScores`), and `questions` (supervisor-managed scenario bank: `draft`/`active`/
+  `archived`) — all UUID-keyed. All Firestore access is isolated in [src/lib/db.js](src/lib/db.js);
+  init in [src/lib/firebase.js](src/lib/firebase.js) (reads `VITE_FIREBASE_*` from `.env.local`).
+- **Serverless (Vercel functions, `/api`).** [api/generate-scenarios.js](api/generate-scenarios.js)
+  is a Gemini proxy: it holds the `GEMINI_API_KEY` **server-side only** (never bundled to the
+  browser), calls `gemini-2.5-flash` with structured-JSON output, validates/repairs each scenario,
+  and returns drafts the client persists for review. Multiple keys may be supplied
+  (`GEMINI_API_KEYS`, comma-separated); the function **rotates to the next key on 429/503** to
+  stretch the free tier. [api/health.js](api/health.js) is a deploy check. Helper modules are
+  `_`-prefixed (`api/_sop-context.js`) so Vercel doesn't route them. The endpoint is gated by
+  `GENERATION_SECRET` (supervisor passcode) — pilot-grade.
+- **No auth system** (by design for the pilot): navigators pick their name from the roster + a
+  4-digit PIN; supervisors enter `SUPERVISOR_PASSCODE`. Session persistence is localStorage only,
   isolated in [src/lib/session.js](src/lib/session.js). Security rules in `firestore.rules` are
-  pilot-grade (open to the two collections) — replace with real auth before production.
-- **Pre-pilot state (historical):** the original prototype was fully in-memory with static sample
-  data and no backend.
+  pilot-grade (open per-collection) — replace with real auth before production.
+- **Pre-pilot state (historical):** the original prototype was fully in-memory; then a static
+  GitHub-Pages + Firestore pilot with no server; now Vercel + serverless for the Gemini proxy.
 
 ### Infrastructure
-- **Hosting:** GitHub Pages (project site) from the `gh-pages` branch.
+- **Hosting:** **Vercel** — serves the React build at root **and** the `/api` serverless functions.
 - **Repo:** `github.com/travis-holt/QuarterKnolwdge` (public).
-- **Deployment:** Manual — `npm run build` then `npx gh-pages -d dist --dotfiles`.
-- **CI/CD:** None. **[ASSUMPTION]** No GitHub Actions (Codespaces token lacks workflow/Pages-admin
-  scope; deploys are run manually from the dev environment).
+- **Deployment:** Vercel (Git-connected or `vercel` CLI). Build `npm run build` → output `dist`.
+  Env vars (Vercel project settings): `VITE_FIREBASE_*` (client, build-time), `GEMINI_API_KEY` +
+  `GENERATION_SECRET` (server-only). **Historical:** GitHub Pages via `gh-pages` (retired).
+- **CI/CD:** None beyond Vercel's build. **[ASSUMPTION]** No GitHub Actions.
 - **Monitoring:** None.
-- **Security:** No secrets, no auth, no PII. Sample/illustrative data only. The Pages site is
-  public to anyone with the URL.
+- **Security:** `GEMINI_API_KEY`/`GENERATION_SECRET` are server-only and never in the bundle. No
+  PII; sample/illustrative data only. Site is public to anyone with the URL.
 
 ### Component / data-flow diagram
 ```mermaid
@@ -415,6 +461,34 @@ stateDiagram-v2
 - **Reasoning:** The Codespaces token cannot manage Pages settings or push workflow files;
   branch-based publish works with normal repo write access.
 - **Impact:** Deploys are a single manual command; `base` must stay `/QuarterKnolwdge/`.
+- **Superseded 2026-06-24** by the Vercel migration (serverless functions need a server host).
+
+### 2026-06-24 — Competency engine: 9 competencies as a second axis + points-based scoring
+- **Decision:** Keep the 6 SOP domains AND add 9 competencies (capability axis), both derived from
+  the same answers. Each option carries `points` (0–100, partial credit) + an SOP `rationale`
+  instead of binary right/wrong. Competencies reuse the existing 3-level traffic-light system.
+- **Reasoning:** Measures *how* a navigator thinks/decides/communicates, not just topic recall;
+  partial credit rewards defensible judgement. Reusing levels keeps the UI consistent.
+- **Alternatives considered:** replace domains with competencies (loses topic signal); a separate
+  4-level Beginner→Expert scale (more config, inconsistent colours) — **[ASSUMPTION]** owner can opt
+  into 4-level later.
+- **Impact:** `scoring.js` functions take `questions` as a param; `results` gain `competencyScores`;
+  new `Coaching` view + competency panels; tests grew 38 → 46.
+
+### 2026-06-24 — Live Gemini scenario generation via a serverless proxy on Vercel
+- **Decision:** SOP→scenario generation is a live in-app feature. A Vercel serverless function holds
+  the Gemini key server-side and returns validated drafts; the question bank moves to a Firestore
+  `questions` collection with a supervisor **review gate** (draft → active). Hosting migrates from
+  GitHub Pages to Vercel (one platform for the SPA + `/api`).
+- **Reasoning:** A key can't ship in a public static bundle; generation is *authoring-time* quality
+  control, so a human gate must sit between AI output and a live assessment. Vercel hosts both the
+  static app and the function on a free tier.
+- **Alternatives considered:** offline one-off generation shipped as static data (less flexible);
+  client-side Gemini calls (key exposure — rejected); Cloudflare Worker / Firebase Blaze (owner
+  chose Vercel).
+- **Impact:** New `api/*`; `db.js` gains questions CRUD; `Check`/`NavigatorApp` read the active bank
+  (seed fallback); `scoring.js` is questions-parametrised. Pilot-grade endpoint auth via the
+  supervisor passcode (`GENERATION_SECRET`).
 
 ---
 
@@ -562,30 +636,63 @@ stateDiagram-v2
   transform and serve (200). Defensive Firebase init verified to not crash without config.
 - **Status:** Code complete and **deployed to GitHub Pages**. Firebase project is live (`quarterly-knowledge-check`); `.env.local` is configured; supervisor and navigator flows verified working end-to-end.
 
+### 2026-06-24 — Competency engine + Gemini scenario generation on Vercel (Phases 1a–1d)
+- **What changed:** Turned the check into a two-axis, scenario-based competency platform that grows
+  its own question bank from the SOP via Gemini.
+  - **1a — Vercel migration:** `vite.config.js` base → `/`; added `vercel.json` + `api/health.js`;
+    retired the gh-pages base-path hack.
+  - **1b — Competency engine:** new `src/data/competencies.js` (9 competencies). All 18 seed
+    questions upgraded to per-option `points`+`rationale` and `competencies` tags (and renamed
+    `QUESTIONS` → `SEED_QUESTIONS`, with a back-compat alias). `scoring.js` refactored:
+    `scorePerDomain(answers, questions)` is now points-based, new `scorePerCompetency()` +
+    `competencyDistribution()`, `buildMatrixRows()` carries both axes. New `Coaching.jsx`
+    (rule-based post-check feedback); competency panels on `NavigatorDetail` + `Overview`;
+    `db.saveResult` stores `competencyScores`. Tests 38 → **46**.
+  - **1c — Question bank in Firestore:** new `questions` collection + `db.js` CRUD
+    (`subscribeQuestions`, `getActiveQuestions`, `saveDraftQuestions`, `activate/archive/delete/
+    updateQuestion`, `seedQuestionsIfEmpty`). `Check`/`NavigatorApp` read the **active** bank (seed
+    fallback). New supervisor `QuestionBank.jsx` + `QuestionEditor.jsx` (review gate) + "Questions"
+    nav tab. `firestore.rules` extended.
+  - **1d — Gemini generation:** `api/generate-scenarios.js` (gemini-2.5-flash, structured JSON,
+    validate/repair, multi-key rotation on 429/503) + `api/_sop-context.js`. Supervisor "Generate"
+    → drafts → review → activate. (2.0-flash returns a free-tier limit of 0 on the project keys, so
+    2.5-flash is used.)
+- **Files affected:** new `api/{generate-scenarios,health,_sop-context}.js`, `vercel.json`,
+  `src/data/competencies.js`, `src/components/{Coaching,QuestionBank,QuestionEditor}.jsx`; edited
+  `src/lib/{scoring,scoring.test,db}.js`, `src/data/questions.js`,
+  `src/components/{Check,NavigatorApp,SupervisorApp,NavigatorDetail,Overview,Nav}.jsx`,
+  `src/styles.css`, `vite.config.js`, `firestore.rules`, `.env.local.example`.
+- **Verification:** `npm test` → **46 passing**; `npm run build` → clean; `npm run dev` → 200;
+  `node --check` on all `api/*` → OK.
+- **Status:** Code complete. **[ASSUMPTION]** Awaiting owner to link Vercel + set `GEMINI_API_KEY`
+  / `GENERATION_SECRET`; until then the in-app Generate button is the only feature that needs the
+  backend — the rest runs on the existing Firebase config.
+
 ---
 
 ## 8. Current System State
 
-- **Working end to end:** supervisor adds navigators → navigators sign in → take check → per-domain
-  results persist to Firestore → supervisor matrix updates live → overview/navigator dashboards →
-  training (with previewable modules) → department switching. Build is clean and the test suite is
-  green (`npm test` → 38 passing).
-- **Existing functionality:** all features F1–F11 (see [§4](#4-feature-inventory)) are **Complete**.
+- **Working end to end (logic + UI):** supervisor adds navigators / generates+curates questions →
+  navigators sign in → take the active check → land on **coaching** → per-domain **and**
+  per-competency results persist to Firestore → supervisor matrix/overview update live (incl.
+  competency distribution) → navigator/training dashboards → department switching. Build clean,
+  tests green (`npm test` → **46 passing**).
+- **Existing functionality:** features F1–F14 (see [§4](#4-feature-inventory)) are **Complete** in
+  code. F11 (Vercel) + F14 (Gemini generation) need the owner's Vercel/env setup to run live.
 - **Experimental / mockup:**
-  - Training **content** is mockup (clearly flagged in UI). Logic is real.
-  - **Adult Medicine, OB/GYN, Behavioural Health** are not assessed; only **Pediatrics** is a
-    live check.
-- **Test coverage:** `lib/scoring.js` is unit-tested (all 18 exports). Components and the App view
-  router are **not** yet tested.
-- **Incomplete areas:** no CI, no trend/history, no mentor pairing, no coverage/bus-factor view,
-  no completion tracking; no component/UI tests.
-- **Active integrations:** **Firebase / Firestore** (pilot) — **live**. Firebase project:
-  `quarterly-knowledge-check`. `.env.local` configured locally (gitignored).
-- **Deployment status:** **Live at https://travis-holt.github.io/QuarterKnolwdge/** — Firebase
-  pilot is deployed and running. Firebase config baked into the build at deploy time from `.env.local`.
-- **Counts (today):** 6 domains · 20 questions · **no sample navigators** (matrix fills from
-  Firestore) · 4 departments (Pediatrics live; others show empty/not-assessed states) ·
-  38 unit tests · 2 Firestore collections (`roster`, `results`).
+  - Training **content** is mockup (flagged in UI). Logic is real.
+  - **Adult Medicine, OB/GYN, Behavioural Health** are not assessed; only **Pediatrics** is live.
+- **Test coverage:** `lib/scoring.js` is unit-tested (46 tests, incl. competency scoring). Components,
+  the role apps, and the serverless function are **not** yet tested.
+- **Incomplete areas:** no CI, no trend/history, no mentor pairing, no coverage/bus-factor view, no
+  completion tracking; no component/UI tests; open-ended/interview/generative-coaching = Phase 2.
+- **Active integrations:** **Firebase / Firestore** (live) + **Gemini via Vercel serverless**
+  (code complete; awaiting owner env setup).
+- **Deployment status:** Migrating **GitHub Pages → Vercel**. **[ASSUMPTION]** Owner links the
+  Vercel project and sets env vars; the old Pages URL serves the prior build until then.
+- **Counts (today):** 6 domains · 9 competencies · 18 seed questions (bank now grows in Firestore) ·
+  4 departments (Pediatrics live) · **46** unit tests · **3** Firestore collections
+  (`roster`, `results`, `questions`) · 2 serverless functions.
 
 ---
 
@@ -593,14 +700,18 @@ stateDiagram-v2
 
 ### Important modules
 - **[src/lib/scoring.js](src/lib/scoring.js)** — all pure logic. Exports:
-  - `scorePerDomain(answers)` → `{ [domainId]: percent }`
+  - `scorePerDomain(answers, questions?)` → `{ [domainId]: percent }` (points-based; defaults to seed)
+  - `scorePerCompetency(answers, questions?)` → `{ [competencyId]: percent|null }` (null = untagged)
   - `scoreToLevel(pct)` → `'learning'|'solid'|'canTeach'`; `levelFor(pct)` → full descriptor
-  - `buildMatrixRows(samples, liveResult)` → rows `{ name, isLive, scores, levels }`
+  - `buildMatrixRows(samples, liveResult)` → rows `{ name, isLive, scores, levels,
+    competencyScores, competencyLevels }`
   - `columnGaps(rows)`, `canTeachRoster(rows)`, `readinessTally(rows)`
-  - `floorStats(rows)`, `domainDistribution(rows)`, `findRow(rows, name)`
+  - `floorStats(rows)`, `domainDistribution(rows)`, `competencyDistribution(rows)`, `findRow(rows, name)`
   - `deptSamples(samples, deptId)`, `departmentOverall(scores)`, `departmentMatrix(samples, live)`
   - `trainingForRow(row)`, `trainingPlan(rows)`, `trainingByDomain(rows)`, `trainingStats(rows)`
   - `mentorSuggestions(rows, name)`
+  - **Note:** `scorePerDomain`/`scorePerCompetency` take the active `questions` bank as a param;
+    components pass the Firestore active bank, falling back to `SEED_QUESTIONS`.
 - **[src/App.jsx](src/App.jsx)** — thin session router only. Reads `getSession()` on mount;
   routes to `<Start>`, `<SupervisorApp>`, or `<NavigatorApp>` based on `session.role`. All view
   state, Firestore subscriptions, and data live inside the role apps.
@@ -608,8 +719,12 @@ stateDiagram-v2
 ### Data modules (the "knobs")
 - **[src/data/config.js](src/data/config.js):** `THRESHOLDS`, `LEVELS`, `LEVEL_ORDER`,
   `COLUMN_GAP_THRESHOLD`, `TRAINING_RULES`, `PALETTE`.
-- **[src/data/questions.js](src/data/questions.js):** `DOMAINS` (`{id,name,blurb}`), `QUESTIONS`
-  (`{id, domainId, scenario, options:[{id,text}], correctOptionId}`).
+- **[src/data/questions.js](src/data/questions.js):** `DOMAINS` (`{id,name,blurb}`),
+  `SEED_QUESTIONS` (`{id, domainId, competencies:[id], scenario, options:[{id,text,points,
+  rationale}], correctOptionId}`); `QUESTIONS` is a back-compat alias of `SEED_QUESTIONS`. The seed
+  seeds Firestore on first run and is the offline fallback; the live bank is the `questions` collection.
+- **[src/data/competencies.js](src/data/competencies.js):** `COMPETENCIES` (9 × `{id,name,blurb}`),
+  `competencyName(id)`, `COMPETENCY_IDS` (Set, for validating tags).
 - **[src/data/navigators.js](src/data/navigators.js):** placeholder only — `SAMPLE_NAVIGATORS`
   was removed in the Firebase pilot. Navigator data now comes from Firestore.
 - **[src/data/training.js](src/data/training.js):** `TRAINING_MODULES`
@@ -620,39 +735,48 @@ stateDiagram-v2
 
 ### Key shapes
 ```js
-// matrix row (department-scoped)
-{ name, isLive, scores: {domainId: pct}, levels: {domainId: 'learning'|'solid'|'canTeach'} }
+// matrix row (two axes)
+{ name, isLive,
+  scores: {domainId: pct}, levels: {domainId: 'learning'|'solid'|'canTeach'},
+  competencyScores: {competencyId: pct}, competencyLevels: {competencyId: level} }
 // department-matrix row (cross-department)
 { name, isLive, depts: { [deptId]: { overall, level } | null } }   // null = not assessed
+// question (Firestore `questions` doc + seed)
+{ domainId, competencies:[id], scenario, options:[{id,text,points,rationale}],
+  correctOptionId, status:'draft'|'active'|'archived', source, createdAt }
 // training assignment
 { domainId, level, priority: 'Required'|'Stretch', goal, module }
 ```
 
 ### Database schemas / API endpoints / env vars
-- **Firestore collections** (both UUID-keyed; levels are never stored — always derived client-side):
+- **Firestore collections** (UUID-keyed; levels never stored — always derived client-side):
   - `roster/{uuid}` → `{ name, pin, createdAt }` — supervisor-managed navigator list.
-  - `results/{uuid}` → `{ name, navigatorId, scores: {domainId: pct}, submittedAt }` — submissions.
-    The result document shares the navigator's roster UUID as its id (so a retake overwrites cleanly).
-- **Env vars** (in gitignored `.env.local`, see `.env.local.example`): `VITE_FIREBASE_API_KEY`,
-  `VITE_FIREBASE_AUTH_DOMAIN`, `VITE_FIREBASE_PROJECT_ID`, `VITE_FIREBASE_STORAGE_BUCKET`,
-  `VITE_FIREBASE_MESSAGING_SENDER_ID`, `VITE_FIREBASE_APP_ID`.
-- **db.js API** (the only Firestore surface): `addToRoster(name, pin)`, `getRoster()`,
-  `subscribeRoster(cb, onError?)`, `getResult(navigatorId)`, `saveResult(navigatorId, name, scores)`,
-  `subscribeResults(cb, onError?)`. `subscribe*` return an unsubscribe function. `onError` defaults
-  to `console.error` if omitted; callers that want UI feedback should pass their own handler.
-- **No custom REST API.** No secrets in the repo except `SUPERVISOR_PASSCODE` (pilot-acceptable;
-  see decisions log).
+  - `results/{uuid}` → `{ name, navigatorId, scores:{domainId:pct}, competencyScores:{compId:pct},
+    submittedAt }`. Shares the navigator's roster UUID (a retake overwrites cleanly). Older docs may
+    lack `competencyScores` (tolerated).
+  - `questions/{uuid}` → the question shape above. Only `status:'active'` appears in the check.
+- **Serverless endpoint:** `POST /api/generate-scenarios` `{ domainId, count, secret }` → `{ questions }`
+  (validated drafts). `GET /api/health` → `{ ok }`.
+- **Env vars:** client (gitignored `.env.local`, build-time) `VITE_FIREBASE_*`; **server-only**
+  (Vercel project settings — never `VITE_`-prefixed) `GEMINI_API_KEYS` (comma-separated; rotated on
+  rate-limit) or single `GEMINI_API_KEY`, plus `GENERATION_SECRET`.
+- **db.js API** (the only Firestore surface): roster — `addToRoster`, `getRoster`,
+  `subscribeRoster(cb,onError?)`; results — `getResult`, `saveResult(navigatorId, name, scores,
+  competencyScores?)`, `subscribeResults(cb,onError?)`; questions — `subscribeQuestions(cb,onError?)`,
+  `getActiveQuestions()`, `seedQuestionsIfEmpty(seed)`, `saveDraftQuestions(drafts, source?)`,
+  `updateQuestion(id,patch)`, `activateQuestion(id)`, `archiveQuestion(id)`, `deleteQuestion(id)`.
+- **Secrets:** `SUPERVISOR_PASSCODE` is in the repo (pilot-acceptable); `GEMINI_API_KEY` /
+  `GENERATION_SECRET` are server-only env vars, never committed or bundled.
 
 ### Build & run
 ```bash
 npm install          # install deps
-npm run dev          # local dev server (http://localhost:5173, base '/')
-npm run build        # production build to dist/ (base '/QuarterKnolwdge/')
+npm run dev          # local dev (http://localhost:5173, base '/'); /api needs `vercel dev`
+npm run build        # production build to dist/ (base '/')
 npm run preview      # preview the production build
 npm test             # run the Vitest suite once (CI-style)
 npm run test:watch   # run Vitest in watch mode
-# deploy:
-npx gh-pages -d dist --dotfiles   # publish dist/ to gh-pages branch
+# deploy: Vercel (Git-connected push, or `vercel --prod`). Set env vars in the Vercel project.
 ```
 
 ---
@@ -775,47 +899,55 @@ npx gh-pages -d dist --dotfiles   # publish dist/ to gh-pages branch
 - **Architectural patterns:** single-`App` view router (string `view` state); department scope and
   `liveResult` live in `App` and flow down as props; no global store.
 - **Common pitfalls:**
-  - Don't rename the repo / change Vite `base` without updating the Pages deploy (asset 404s).
+  - **Never** `VITE_`-prefix `GEMINI_API_KEY`/`GENERATION_SECRET` — that would bundle the key into
+    the public client. They are server-only env vars used by `/api`.
+  - The `/api` functions only run under `vercel dev` or on Vercel — plain `npm run dev` won't serve
+    them, so the in-app Generate button needs `vercel dev` locally.
+  - Scoring takes the active `questions` bank as a param — don't re-import a static list inside the
+    scoring path; pass the bank through (seed fallback is fine).
+  - Keep the two axes distinct: domains = topic, competencies = capability. Both reuse `scoreToLevel`.
   - Don't invent operational KPIs — the product is **knowledge-only** by decision.
   - The live check only assesses **Pediatrics** (`ASSESSED_DEPT`); other departments are mockups.
-  - After any build, **deploy** (`npx gh-pages -d dist --dotfiles`) and verify the live bundle hash.
 - **Required workflows:**
-  1. Make the change. 2. `npm test` (must be green) **and** `npm run build` (must be clean).
-     3. Update **this CLAUDE.md** (relevant section + a §7 history entry). 4. Commit
-     (Co-Authored-By: Claude). 5. Push. 6. Redeploy + verify the live site.
+  1. Make the change. 2. `npm test` (green) **and** `npm run build` (clean); `node --check` any
+     edited `api/*`. 3. Update **this CLAUDE.md** (relevant section + a §7 history entry). 4. Commit
+     (Co-Authored-By: Claude). 5. Push (Vercel deploys on push once linked).
   - When you touch `lib/scoring.js` (or the data it reads), update/extend `scoring.test.js` too.
-- **Important assumptions:** Firebase pilot is live — real multi-user, Firestore-backed. No sample
-  data; no real patient data or company branding. Auth is PIN/passcode (pilot-grade); must move to
-  real auth before production.
-- **To re-key the check to a different SOP:** edit `DOMAINS` + `QUESTIONS` in `questions.js` (and
-  optionally `TRAINING_MODULES`); everything else follows automatically.
+- **Important assumptions:** Firebase pilot is live. Gemini generation is code-complete but needs the
+  owner's Vercel + env setup. No real patient data or company branding. Auth is PIN/passcode
+  (pilot-grade); endpoint auth is the supervisor passcode — must move to real auth before production.
+- **To re-key the check to a different SOP:** edit `DOMAINS` in `questions.js`, refresh
+  `api/_sop-context.js`, and either edit `SEED_QUESTIONS` or generate a new bank in the Question Bank
+  UI; competencies + everything else follow automatically.
 
 ---
 
 ## 15. Current Priorities
 
 1. **Maintain this CLAUDE.md** on every change (highest standing priority).
-2. **Structure multi-department live checks** (per-department question sets) when additional SOPs
-   are provided by the owner.
-3. **Component/integration tests** — now the highest unresolved technical debt given the role-routing
-   and gate logic (jsdom + Testing Library).
+2. **Owner setup to go live with generation:** link the Vercel project; set `VITE_FIREBASE_*`,
+   `GEMINI_API_KEY`, `GENERATION_SECRET`; apply `firestore.rules` (now incl. `questions`); verify
+   the Generate → review → activate flow end-to-end.
+3. **Component/integration tests** — highest unresolved tech debt given role-routing, the gate, the
+   coaching flow, and the question-bank UI (jsdom + Testing Library).
+4. **Phase 2 (needs the same serverless layer):** AI-graded open-ended responses, interview
+   simulation, generative coaching, finer per-signal sub-scoring.
 
 **Active work items:**
-- None blocking. The Firebase pilot is live and working. Awaiting owner to provide additional SOPs
-  for non-Pediatrics departments.
+- Owner: complete the Vercel + env setup (item 2). Until then, generation is the only feature that
+  needs the backend; the rest runs on the existing Firebase config.
 
 **Blockers:**
+- Live Gemini generation needs the owner's Vercel project + `GEMINI_API_KEY`/`GENERATION_SECRET`.
 - Real per-department question content requires additional SOPs from the owner.
 - Real training materials needed to replace mockup module content.
 
 **Upcoming milestones:**
-- ✅ First automated tests for `scoring.js` — done 2026-06-23 (Vitest, 38 tests).
-- ✅ Firebase pilot design doc + implementation plan — done 2026-06-24.
-- ✅ Firebase pilot implementation (all code) — done 2026-06-24.
-- ✅ Firebase project configured + pilot deployed live — done 2026-06-24.
-- ✅ Post-review robustness fixes (subscription errors, duplicate names) — done 2026-06-24.
+- ✅ First automated tests for `scoring.js` — done 2026-06-23 (Vitest, now 46 tests).
+- ✅ Firebase pilot implemented + deployed live — done 2026-06-24.
+- ✅ Competency engine + Gemini scenario generation on Vercel (code) — done 2026-06-24.
+- Vercel link + env setup → live generation — awaiting owner.
 - Component/integration tests (jsdom + Testing Library) — next technical priority.
-- Multi-department live checks — awaiting SOPs from owner.
 
 ---
 

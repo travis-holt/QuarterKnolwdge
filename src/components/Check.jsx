@@ -1,21 +1,23 @@
 import { useState } from 'react';
-import { QUESTIONS, DOMAINS } from '../data/questions.js';
+import { SEED_QUESTIONS, DOMAINS } from '../data/questions.js';
 
 const domainName = (id) => DOMAINS.find((d) => d.id === id)?.name ?? id;
 
 // Stepped flow: one scenario per step, with a progress bar. The taker can move
 // back and forth and must answer before advancing past each step.
 //
+// `questions` is the active bank (passed in by the role app from Firestore);
+// defaults to the static seed so the component still works standalone.
 // `hideName` hides the optional name field (used when the taker is already
 // identified — e.g. a signed-in navigator). `greetingName` shows a friendly
 // header in that case.
-export default function Check({ onSubmit, onCancel, hideName = false, greetingName }) {
+export default function Check({ onSubmit, onCancel, questions = SEED_QUESTIONS, hideName = false, greetingName }) {
   const [name, setName] = useState('');
   const [step, setStep] = useState(0);
   const [answers, setAnswers] = useState({});
 
-  const q = QUESTIONS[step];
-  const total = QUESTIONS.length;
+  const q = questions[step];
+  const total = questions.length;
   const isLast = step === total - 1;
   const answeredCurrent = answers[q.id] != null;
   const answeredCount = Object.keys(answers).length;

@@ -14,6 +14,7 @@ import { describe, it, expect } from 'vitest';
 
 import {
   scorePerDomain,
+  scorePerCompetency,
   scoreToLevel,
   levelFor,
   buildMatrixRows,
@@ -25,6 +26,7 @@ import {
   readinessTally,
   floorStats,
   domainDistribution,
+  competencyDistribution,
   findRow,
   trainingForRow,
   trainingPlan,
@@ -35,6 +37,7 @@ import {
 
 import { THRESHOLDS, LEVELS, COLUMN_GAP_THRESHOLD } from '../data/config.js';
 import { DOMAINS, QUESTIONS } from '../data/questions.js';
+import { COMPETENCIES } from '../data/competencies.js';
 import { DEPARTMENTS, ASSESSED_DEPT } from '../data/departments.js';
 
 // ── helpers ──────────────────────────────────────────────────────────────────
@@ -46,7 +49,22 @@ const allCorrectAnswers = () =>
   Object.fromEntries(QUESTIONS.map((q) => [q.id, q.correctOptionId]));
 const allWrongAnswers = () =>
   Object.fromEntries(QUESTIONS.map((q) => [q.id, wrongOptionFor(q)]));
-const questionsInDomain = (domainId) => QUESTIONS.filter((q) => q.domainId === domainId);
+
+// Deterministic synthetic bank for exercising points-based scoring without
+// coupling to the authored content. Two questions in domain D0, the second also
+// tagging a second competency; a third (no `points`) exercises the binary fallback.
+const C0 = COMPETENCIES[0].id;
+const C1 = COMPETENCIES[1].id;
+const FAKE_D0 = DOMAIN_IDS[0];
+const FAKE_D1 = DOMAIN_IDS[1];
+const FAKE_QUESTIONS = [
+  { id: 'fq1', domainId: FAKE_D0, competencies: [C0], correctOptionId: 'a',
+    options: [{ id: 'a', text: '', points: 100 }, { id: 'b', text: '', points: 40 }, { id: 'c', text: '', points: 0 }] },
+  { id: 'fq2', domainId: FAKE_D0, competencies: [C0, C1], correctOptionId: 'a',
+    options: [{ id: 'a', text: '', points: 100 }, { id: 'b', text: '', points: 20 }] },
+  { id: 'fq3', domainId: FAKE_D1, competencies: [C1], correctOptionId: 'a', // no points → binary fallback
+    options: [{ id: 'a', text: '' }, { id: 'b', text: '' }] },
+];
 
 // Representative score for each band, expressed relative to the thresholds so the
 // tests stay correct if the thresholds move.
@@ -77,34 +95,62 @@ describe('scorePerDomain', () => {
     expect(Object.keys(scores).sort()).toEqual([...DOMAIN_IDS].sort());
   });
 
-  it('scores every domain 100 when all answers are correct', () => {
+  it('scores every domain 100 when the best (100-point) option is chosen', () => {
     const scores = scorePerDomain(allCorrectAnswers());
     for (const id of DOMAIN_IDS) expect(scores[id]).toBe(100);
   });
 
-  it('scores every domain 0 when all answers are wrong', () => {
-    const scores = scorePerDomain(allWrongAnswers());
-    for (const id of DOMAIN_IDS) expect(scores[id]).toBe(0);
-  });
-
-  it('treats unanswered questions as incorrect (empty answers → all 0)', () => {
+  it('treats unanswered questions as 0 points (empty answers → all 0)', () => {
     const scores = scorePerDomain({});
     for (const id of DOMAIN_IDS) expect(scores[id]).toBe(0);
   });
 
-  it('rounds partial domain results and leaves other domains untouched', () => {
-    const answers = allCorrectAnswers();
-    const sitesQs = questionsInDomain('sites');
-    // flip exactly one question in the "sites" domain
-    answers[sitesQs[0].id] = wrongOptionFor(sitesQs[0]);
-
-    const scores = scorePerDomain(answers);
-    const expected = Math.round(((sitesQs.length - 1) / sitesQs.length) * 100);
-    expect(scores.sites).toBe(expected);
-    // all other domains remain perfect
-    for (const id of DOMAIN_IDS.filter((d) => d !== 'sites')) {
-      expect(scores[id]).toBe(100);
+  it('awards partial credit: suboptimal answers land strictly between 0 and 100', () => {
+    const scores = scorePerDomain(allWrongAnswers());
+    for (const id of DOMAIN_IDS) {
+      expect(scores[id]).toBeGreaterThanOrEqual(0);
+      expect(scores[id]).toBeLessThan(100); // not the best option anywhere
     }
+  });
+
+  it('averages option points across a domain (synthetic bank via questions param)', () => {
+    // fq1 → 40, fq2 → 100 ; both in FAKE_D0 → (40+100)/2 = 70
+    const scores = scorePerDomain({ fq1: 'b', fq2: 'a' }, FAKE_QUESTIONS);
+    expect(scores[FAKE_D0]).toBe(70);
+  });
+
+  it('falls back to binary 100/0 for options without a points field', () => {
+    expect(scorePerDomain({ fq3: 'a' }, FAKE_QUESTIONS)[FAKE_D1]).toBe(100);
+    expect(scorePerDomain({ fq3: 'b' }, FAKE_QUESTIONS)[FAKE_D1]).toBe(0);
+  });
+});
+
+// ── scorePerCompetency ───────────────────────────────────────────────────────
+
+describe('scorePerCompetency', () => {
+  it('returns one entry per competency', () => {
+    const scores = scorePerCompetency({}, FAKE_QUESTIONS);
+    expect(Object.keys(scores).sort()).toEqual(COMPETENCIES.map((c) => c.id).sort());
+  });
+
+  it('averages earned points across each competency\'s tagged questions', () => {
+    // fq1(C0)=40, fq2(C0,C1)=100, fq3(C1)=100(binary best)
+    const scores = scorePerCompetency({ fq1: 'b', fq2: 'a', fq3: 'a' }, FAKE_QUESTIONS);
+    expect(scores[C0]).toBe(70); // (40 + 100) / 2
+    expect(scores[C1]).toBe(100); // (100 + 100) / 2
+  });
+
+  it('returns null for competencies no question in the bank exercises', () => {
+    const scores = scorePerCompetency({}, FAKE_QUESTIONS);
+    for (const c of COMPETENCIES) {
+      if (c.id === C0 || c.id === C1) expect(scores[c.id]).toBe(0);
+      else expect(scores[c.id]).toBeNull();
+    }
+  });
+
+  it('covers all 9 competencies with the real seed bank', () => {
+    const scores = scorePerCompetency(allCorrectAnswers());
+    for (const c of COMPETENCIES) expect(scores[c.id]).toBe(100);
   });
 });
 
@@ -163,6 +209,19 @@ describe('buildMatrixRows', () => {
 
   it('returns an empty array for no samples and no live taker', () => {
     expect(buildMatrixRows([], null)).toEqual([]);
+  });
+
+  it('derives competency scores and levels when present, and tolerates their absence', () => {
+    const rows = buildMatrixRows(
+      [{ name: 'Ada', scores: makeScores({}, SOLID), competencyScores: { [C0]: TEACH } }],
+      null
+    );
+    expect(rows[0].competencyScores[C0]).toBe(TEACH);
+    expect(rows[0].competencyLevels[C0]).toBe('canTeach');
+    // a row with no competency data still builds, with empty competency maps
+    const bare = buildMatrixRows([{ name: 'Bea', scores: makeScores({}, SOLID) }], null);
+    expect(bare[0].competencyScores).toEqual({});
+    expect(bare[0].competencyLevels).toEqual({});
   });
 });
 
@@ -322,6 +381,30 @@ describe('domainDistribution', () => {
     for (const d of dist) {
       expect(d.learning + d.solid + d.canTeach).toBe(d.total);
     }
+  });
+});
+
+describe('competencyDistribution', () => {
+  it('counts levels per competency and skips uncovered competencies', () => {
+    const rows = buildMatrixRows(
+      [
+        { name: 'Ada', scores: {}, competencyScores: { [C0]: TEACH, [C1]: LEARN } },
+        { name: 'Bea', scores: {}, competencyScores: { [C0]: SOLID, [C1]: LEARN } },
+      ],
+      null
+    );
+    const dist = competencyDistribution(rows);
+    const c0 = dist.find((x) => x.competencyId === C0);
+    expect(c0).toMatchObject({ canTeach: 1, solid: 1, learning: 0, total: 2 });
+    const c1 = dist.find((x) => x.competencyId === C1);
+    expect(c1).toMatchObject({ learning: 2, total: 2 });
+    // competencies no row scored are absent from the distribution
+    expect(dist.every((x) => x.total > 0)).toBe(true);
+    expect(dist).toHaveLength(2);
+  });
+
+  it('returns an empty array when no row has competency scores', () => {
+    expect(competencyDistribution(fixtureRows())).toEqual([]);
   });
 });
 
