@@ -10,7 +10,7 @@
 > [§8 Current System State](#8-current-system-state) and [§15 Current Priorities](#15-current-priorities)
 > accurate at all times.
 >
-> **Last updated:** 2026-06-23 · **Doc maintainer:** Claude (AI agent) + repo owner.
+> **Last updated:** 2026-06-24 · **Doc maintainer:** Claude (AI agent) + repo owner.
 > Assumptions are explicitly marked **[ASSUMPTION]**.
 
 ---
@@ -454,6 +454,36 @@ stateDiagram-v2
 > Git commit short-SHAs are referenced where a discrete commit exists; some incremental work was
 > folded into later commits.
 
+### 2026-06-24 — Real-webapp design in progress (Firebase pilot)
+- **What's happening:** Design session (brainstorm → spec → plan) is underway to convert the
+  prototype into a real multi-user webapp for a small pilot (~3–10 navigators).
+- **Decisions locked so far:**
+  - **Persistence:** Firebase/Firestore (free Spark tier, real-time, no server needed, stays on
+    GitHub Pages).
+  - **Identity / auth:** No login. Navigators type their name to start the check. Supervisors
+    enter a hardcoded passcode (stored in `config.js` as `SUPERVISOR_PASSCODE`) to unlock the
+    management view.
+  - **Role split:** Two distinct roles — `navigator` (sees only their own results + training +
+    mentor suggestions) and `supervisor` (sees the full matrix, overview, navigators list,
+    training tab — same as the current prototype, but fed from Firestore).
+  - **Sample data:** `SAMPLE_NAVIGATORS` will be **removed entirely**. The matrix starts empty
+    and fills with real submissions. A friendly empty state is shown until the first navigator
+    submits.
+  - **Access:** Laptop only (no mobile). Each navigator on their own laptop; supervisor on theirs.
+  - **Real-time sync:** Navigator submits → Firestore document written → supervisor's management
+    dashboard updates live via `onSnapshot` listener.
+  - **Re-take:** Same name submits again → Firestore document is overwritten (clean re-take).
+- **Architecture section approved.** Next section to design: role flow (Start screen gate,
+  navigator vs. supervisor UX paths, what each role can and cannot see).
+- **Files that will change:** `src/lib/firebase.js` (new), `src/lib/db.js` (new),
+  `src/App.jsx`, `src/components/Start.jsx`, `src/data/navigators.js` (SAMPLE_NAVIGATORS
+  removed), `src/data/config.js` (add `SUPERVISOR_PASSCODE`). `.env.local` (Firebase config,
+  gitignored).
+- **Files that will NOT change:** `src/lib/scoring.js`, `src/lib/scoring.test.js`, all other
+  components (they receive real Firestore-sourced rows instead of sample rows, but their APIs
+  are unchanged).
+- **Status:** Design doc not yet written. Resume from §2 of design (role flow) in next chat.
+
 ---
 
 ## 8. Current System State
@@ -470,9 +500,9 @@ stateDiagram-v2
   router are **not** yet tested.
 - **Incomplete areas:** no CI, no persistence, no trend/history, no mentor pairing,
   no coverage/bus-factor view, no completion tracking; no component/UI tests.
-- **Active integrations:** none (no external services by design).
+- **Active integrations:** none yet — Firebase integration is **planned** (design in progress).
 - **Deployment status:** live on GitHub Pages; redeploy is manual.
-- **Counts (today):** 6 domains · 20 questions · 6 sample navigators · 4 departments · 38 unit
+- **Counts (today):** 6 domains · 20 questions · 6 sample navigators (to be removed) · 4 departments · 38 unit
   tests · ~2,300 LOC across `src/`.
 
 ---
@@ -648,8 +678,9 @@ npx gh-pages -d dist --dotfiles   # publish dist/ to gh-pages branch
      3. Update **this CLAUDE.md** (relevant section + a §7 history entry). 4. Commit
      (Co-Authored-By: Claude). 5. Push. 6. Redeploy + verify the live site.
   - When you touch `lib/scoring.js` (or the data it reads), update/extend `scoring.test.js` too.
-- **Important assumptions:** no backend/persistence; in-memory state; sample data only; no real
-  patient data or company branding.
+- **Important assumptions:** currently no backend/persistence; in-memory state; sample data only;
+  no real patient data or company branding. **Firebase integration is in design** — this
+  assumption will change once the pilot feature is implemented.
 - **To re-key the check to a different SOP:** edit `DOMAINS` + `QUESTIONS` in `questions.js` (and
   optionally `TRAINING_MODULES`); everything else follows automatically.
 
@@ -658,21 +689,34 @@ npx gh-pages -d dist --dotfiles   # publish dist/ to gh-pages branch
 ## 15. Current Priorities
 
 1. **Maintain this CLAUDE.md** on every change (highest standing priority).
-2. **Decide next feature** with the owner: mentor pairing (floor-wide) **or** coverage/bus-factor
-   **or** training completion tracking.
+2. **Complete the Firebase pilot design + implementation** — convert the prototype into a real
+   multi-user webapp (design in progress, see §7 entry dated 2026-06-24).
 3. **Structure multi-department live checks** (per-department question sets) when additional SOPs
    are provided.
 
-**Active work items:** none in progress (last task: department dimension shipped + deployed).
+**Active work items:**
+- **[IN PROGRESS]** Real-webapp design (Firebase/Firestore pilot). Design session was interrupted
+  mid-brainstorm. **Resume point:** Section 2 of design (role flow — how navigator vs. supervisor
+  enters and what each sees). Architecture (Section 1) was approved.
+  - Invoke the `/brainstorming` skill to continue. Brief it with: "We are mid-design on converting
+    this prototype into a real multi-user webapp. Firebase/Firestore is the chosen persistence layer
+    (free Spark tier, real-time, static site stays on GitHub Pages). No login — navigator types
+    their name, supervisor uses a hardcoded passcode from config.js. Two roles: navigator (own
+    dashboard only) and supervisor (full matrix/overview/training). Sample navigators removed.
+    Architecture section approved. Now design Section 2: the role flow — Start screen gate,
+    navigator UX path, supervisor UX path, what each role can and cannot see."
 
 **Blockers:**
+- Firebase project not yet created (owner needs to create it at console.firebase.google.com and
+  provide the config object for `.env.local`).
 - Real per-department question content requires additional SOPs from the owner.
 - Real training materials needed to replace mockup module content.
 
 **Upcoming milestones:**
-- Next feature increment (per #2 above) + redeploy.
-- ✅ First automated tests for `scoring.js` (technical-debt paydown) — done 2026-06-23 (Vitest, 38
-  tests). Next test step: component/integration tests (jsdom + Testing Library).
+- ✅ First automated tests for `scoring.js` — done 2026-06-23 (Vitest, 38 tests).
+- Firebase pilot design doc + implementation plan (next immediate step).
+- Firebase pilot implementation + redeploy.
+- Next test step after pilot: component/integration tests (jsdom + Testing Library).
 
 ---
 
