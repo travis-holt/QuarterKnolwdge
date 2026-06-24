@@ -1,14 +1,22 @@
 import { useState, useEffect } from 'react';
 import Nav from './Nav.jsx';
 import Check from './Check.jsx';
+import Coaching from './Coaching.jsx';
 import NavigatorDetail from './NavigatorDetail.jsx';
 import MyTraining from './MyTraining.jsx';
 import TrainingModule from './TrainingModule.jsx';
 import EmptyState from './EmptyState.jsx';
 import Footer from './Footer.jsx';
-import { scorePerDomain, buildMatrixRows, departmentMatrix, findRow } from '../lib/scoring.js';
-import { getResult, saveResult, subscribeResults } from '../lib/db.js';
+import {
+  scorePerDomain,
+  scorePerCompetency,
+  buildMatrixRows,
+  departmentMatrix,
+  findRow,
+} from '../lib/scoring.js';
+import { getResult, saveResult, subscribeResults, getActiveQuestions } from '../lib/db.js';
 import { isFirebaseConfigured } from '../lib/firebase.js';
+import { SEED_QUESTIONS } from '../data/questions.js';
 import { ASSESSED_DEPT, departmentName } from '../data/departments.js';
 
 // The navigator's self-contained app. They can ONLY ever see their own data:
@@ -17,8 +25,10 @@ import { ASSESSED_DEPT, departmentName } from '../data/departments.js';
 // name colleagues who can teach their growth domains, but those names are not
 // clickable and open nothing.)
 export default function NavigatorApp({ navigatorId, name, onSignOut }) {
-  const [view, setView] = useState('loading'); // loading · check · dashboard · training · module
-  const [ownResult, setOwnResult] = useState(null); // { scores }
+  const [view, setView] = useState('loading'); // loading · check · coaching · dashboard · training · module
+  const [ownResult, setOwnResult] = useState(null); // { name, navigatorId, scores, competencyScores }
+  const [lastAnswers, setLastAnswers] = useState(null); // answers from the just-taken check (for coaching)
+  const [questions, setQuestions] = useState(SEED_QUESTIONS); // active bank (seed fallback)
   const [results, setResults] = useState([]); // whole floor (for mentor data)
   const [moduleDomain, setModuleDomain] = useState(null);
   const [loadError, setLoadError] = useState(false);
@@ -62,12 +72,33 @@ export default function NavigatorApp({ navigatorId, name, onSignOut }) {
     return () => unsub();
   }, []);
 
+  // Load the active question bank; fall back to the static seed if the bank is
+  // empty (not yet seeded) or unreachable, so the check always works.
+  useEffect(() => {
+    if (!isFirebaseConfigured) return undefined;
+    let active = true;
+    getActiveQuestions()
+      .then((qs) => {
+        if (active && qs.length > 0) setQuestions(qs);
+      })
+      .catch(() => {
+        /* keep the seed fallback */
+      });
+    return () => {
+      active = false;
+    };
+  }, []);
+
   const handleSubmit = async (_ignoredName, answers) => {
-    const scores = scorePerDomain(answers);
-    setOwnResult({ name, navigatorId, scores });
-    setView('dashboard');
+    const scores = scorePerDomain(answers, questions);
+    const competencyScores = scorePerCompetency(answers, questions);
+    setOwnResult({ name, navigatorId, scores, competencyScores });
+    setLastAnswers(answers);
+    // Land on the coaching review first; the navigator continues to their
+    // dashboard from there.
+    setView('coaching');
     try {
-      await saveResult(navigatorId, name, scores);
+      await saveResult(navigatorId, name, scores, competencyScores);
     } catch {
       // The dashboard already shows their result from local state; a failed
       // write just means it won't sync to the supervisor. Surfacing a toast is
@@ -85,7 +116,13 @@ export default function NavigatorApp({ navigatorId, name, onSignOut }) {
   // onSnapshot listener catches up.
   const merged = new Map();
   for (const r of results) merged.set(r.navigatorId ?? r.id, r);
-  if (ownResult) merged.set(navigatorId, { name, navigatorId, scores: ownResult.scores });
+  if (ownResult)
+    merged.set(navigatorId, {
+      name,
+      navigatorId,
+      scores: ownResult.scores,
+      competencyScores: ownResult.competencyScores,
+    });
   const rows = buildMatrixRows([...merged.values()], null);
 
   const deptName = departmentName(ASSESSED_DEPT);
@@ -116,7 +153,23 @@ export default function NavigatorApp({ navigatorId, name, onSignOut }) {
   return (
     <Shell role="navigator" view={view} setView={setView} onSignOut={onSignOut}>
       {view === 'check' && (
-        <Check onSubmit={handleSubmit} onCancel={onSignOut} hideName greetingName={name} />
+        <Check
+          onSubmit={handleSubmit}
+          onCancel={onSignOut}
+          questions={questions}
+          hideName
+          greetingName={name}
+        />
+      )}
+
+      {view === 'coaching' && lastAnswers && ownResult && (
+        <Coaching
+          questions={questions}
+          answers={lastAnswers}
+          competencyScores={ownResult.competencyScores}
+          name={name}
+          onContinue={() => setView('dashboard')}
+        />
       )}
 
       {view === 'dashboard' &&

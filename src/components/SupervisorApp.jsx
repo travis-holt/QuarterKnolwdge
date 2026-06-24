@@ -7,11 +7,25 @@ import Navigators from './Navigators.jsx';
 import NavigatorDetail from './NavigatorDetail.jsx';
 import Training from './Training.jsx';
 import TrainingModule from './TrainingModule.jsx';
+import QuestionBank from './QuestionBank.jsx';
 import EmptyState from './EmptyState.jsx';
 import Footer from './Footer.jsx';
 import { buildMatrixRows, departmentMatrix } from '../lib/scoring.js';
-import { subscribeResults, subscribeRoster, addToRoster } from '../lib/db.js';
+import {
+  subscribeResults,
+  subscribeRoster,
+  addToRoster,
+  subscribeQuestions,
+  seedQuestionsIfEmpty,
+  saveDraftQuestions,
+  activateQuestion,
+  archiveQuestion,
+  deleteQuestion,
+  updateQuestion,
+} from '../lib/db.js';
 import { isFirebaseConfigured } from '../lib/firebase.js';
+import { SEED_QUESTIONS } from '../data/questions.js';
+import { SUPERVISOR_PASSCODE } from '../data/config.js';
 import { ASSESSED_DEPT, departmentName } from '../data/departments.js';
 
 // Views where the DeptBar appears. The Navigators tab is intentionally NOT here:
@@ -26,6 +40,7 @@ export default function SupervisorApp({ onSignOut }) {
   const [view, setView] = useState('overview');
   const [results, setResults] = useState([]);
   const [roster, setRoster] = useState([]);
+  const [questions, setQuestions] = useState([]);
   const [selected, setSelected] = useState(null);
   const [moduleDomain, setModuleDomain] = useState(null);
   const [moduleReturn, setModuleReturn] = useState('training');
@@ -45,6 +60,17 @@ export default function SupervisorApp({ onSignOut }) {
       unsubResults();
       unsubRoster();
     };
+  }, []);
+
+  // Question bank — seed once from the static seed, then live-subscribe.
+  useEffect(() => {
+    if (!isFirebaseConfigured) return undefined;
+    seedQuestionsIfEmpty(SEED_QUESTIONS).catch((err) => console.error('seedQuestions:', err));
+    const unsub = subscribeQuestions(setQuestions, (err) => {
+      console.error('subscribeQuestions:', err);
+      setSubscribeError(true);
+    });
+    return () => unsub();
   }, []);
 
   const isAssessed = selectedDept === ASSESSED_DEPT;
@@ -73,6 +99,26 @@ export default function SupervisorApp({ onSignOut }) {
   };
 
   const handleAddNavigator = (name, pin) => addToRoster(name, pin);
+
+  // Generate scenarios via the serverless Gemini proxy. The function returns
+  // validated draft questions; we persist them as `draft` for review (they never
+  // go live until activated). The supervisor passcode gates the endpoint
+  // (pilot-grade — see firestore.rules / CLAUDE.md security notes).
+  const handleGenerate = async ({ domainId, count }) => {
+    const res = await fetch('/api/generate-scenarios', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ domainId, count, secret: SUPERVISOR_PASSCODE }),
+    });
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      throw new Error(body.error || `Generation failed (${res.status})`);
+    }
+    const { questions: drafts } = await res.json();
+    if (!drafts?.length) throw new Error('No scenarios returned.');
+    await saveDraftQuestions(drafts, 'gemini');
+    return drafts.length;
+  };
 
   // Decide whether a data view should be replaced by an empty state.
   const emptyState = () => {
@@ -176,6 +222,17 @@ export default function SupervisorApp({ onSignOut }) {
                 domainId={moduleDomain}
                 onBack={() => setView(moduleReturn)}
                 onOpenNavigator={openNavigator}
+              />
+            )}
+
+            {view === 'questions' && (
+              <QuestionBank
+                questions={questions}
+                onActivate={activateQuestion}
+                onArchive={archiveQuestion}
+                onDelete={deleteQuestion}
+                onSaveEdit={updateQuestion}
+                onGenerate={handleGenerate}
               />
             )}
           </>

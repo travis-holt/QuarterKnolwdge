@@ -1644,3 +1644,315 @@ button {
   padding: 0.625rem 1rem;
   width: calc(100% - 2rem);
 }
+
+/* ── Coaching (post-check rule-based feedback) ───────────────────────────── */
+.coaching {
+  max-width: var(--maxw);
+  margin: 0 auto;
+}
+.coaching__head {
+  margin-bottom: 1.25rem;
+}
+.coaching__list {
+  list-style: none;
+  margin: 0.5rem 0 0;
+  padding: 0;
+  display: grid;
+  gap: 1rem;
+}
+.coaching__q {
+  border-top: 1px solid var(--line);
+  padding-top: 1rem;
+}
+.coaching__q:first-child {
+  border-top: none;
+  padding-top: 0;
+}
+.coaching__q-head {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-bottom: 0.4rem;
+}
+.coaching__q-num {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.4rem;
+  height: 1.4rem;
+  border-radius: 50%;
+  background: var(--accent-soft);
+  color: var(--ink);
+  font-size: 0.75rem;
+  font-weight: 700;
+}
+.coaching__pts {
+  margin-left: auto;
+  font-size: 0.8rem;
+  font-weight: 700;
+  padding: 0.1rem 0.5rem;
+  border-radius: 999px;
+}
+.coaching__pts.is-good {
+  background: #e2f0e8;
+  color: #2c6a45;
+}
+.coaching__pts.is-partial {
+  background: #f7eccf;
+  color: #7a5c12;
+}
+.coaching__pts.is-poor {
+  background: #f7ddd8;
+  color: #9a3322;
+}
+.coaching__scenario {
+  margin: 0 0 0.6rem;
+  color: var(--ink);
+  line-height: 1.5;
+}
+.coaching__choice {
+  border: 1px solid var(--line);
+  border-left-width: 4px;
+  border-radius: 6px;
+  padding: 0.6rem 0.75rem;
+  margin-bottom: 0.5rem;
+  background: var(--surface);
+}
+.coaching__choice.is-good {
+  border-left-color: #3e8e5a;
+}
+.coaching__choice.is-partial {
+  border-left-color: #e0b13c;
+}
+.coaching__choice.is-poor {
+  border-left-color: #c0392b;
+}
+.coaching__choice.is-best {
+  border-left-color: #3e8e5a;
+  background: #f3f8f4;
+}
+.coaching__choice-label {
+  display: block;
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--ink-soft);
+  margin-bottom: 0.2rem;
+}
+.coaching__choice-text {
+  margin: 0;
+  color: var(--ink);
+  font-weight: 600;
+  line-height: 1.45;
+}
+.coaching__rationale {
+  margin: 0.35rem 0 0;
+  color: var(--ink-soft);
+  font-size: 0.9rem;
+  line-height: 1.45;
+}
+.coaching__actions {
+  margin-top: 1.5rem;
+  display: flex;
+  justify-content: flex-end;
+}
+
+/* ── Question bank (supervisor review gate) ──────────────────────────────── */
+.qbank {
+  max-width: var(--maxw);
+  margin: 0 auto;
+}
+.qbank__gen-row {
+  display: flex;
+  align-items: flex-end;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+  margin-top: 0.5rem;
+}
+.qbank__gen-row .qedit__field {
+  margin: 0;
+}
+.qbank__msg {
+  margin: 0.75rem 0 0;
+  font-size: 0.9rem;
+}
+.qbank__msg.is-ok {
+  color: #2c6a45;
+}
+.qbank__msg.is-err {
+  color: #9a3322;
+}
+.qbank__list {
+  list-style: none;
+  margin: 0.5rem 0 0;
+  padding: 0;
+  display: grid;
+  gap: 0.85rem;
+}
+.qbank__item {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 0.85rem;
+  background: var(--surface);
+}
+.qbank__item.is-editing {
+  padding: 0;
+  background: transparent;
+  border: none;
+}
+.qbank__item-head {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  flex-wrap: wrap;
+  margin-bottom: 0.5rem;
+}
+.qbank__comp {
+  font-size: 0.7rem;
+}
+.qbank__source {
+  margin-left: auto;
+  font-size: 0.72rem;
+  color: var(--ink-soft);
+  font-style: italic;
+}
+.qbank__scenario {
+  margin: 0 0 0.5rem;
+  color: var(--ink);
+  line-height: 1.45;
+}
+.qbank__options {
+  list-style: none;
+  margin: 0 0 0.5rem;
+  padding: 0;
+  display: grid;
+  gap: 0.3rem;
+}
+.qbank__opt {
+  display: flex;
+  align-items: baseline;
+  gap: 0.5rem;
+  font-size: 0.9rem;
+  color: var(--ink-soft);
+}
+.qbank__opt.is-best {
+  color: var(--ink);
+  font-weight: 600;
+}
+.qbank__opt-pts {
+  flex: none;
+  width: 2.2rem;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  font-size: 0.78rem;
+  color: var(--accent);
+}
+.qbank__why {
+  margin: 0 0 0.5rem;
+  font-size: 0.85rem;
+  color: var(--ink-soft);
+  font-style: italic;
+}
+.qbank__actions {
+  display: flex;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+/* ── Question editor form ────────────────────────────────────────────────── */
+.qedit {
+  border: 1px solid var(--accent);
+  border-radius: 8px;
+  padding: 0.9rem;
+  background: var(--surface);
+  display: grid;
+  gap: 0.75rem;
+}
+.qedit__field {
+  display: grid;
+  gap: 0.3rem;
+}
+.qedit__label {
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--ink-soft);
+}
+.qedit__textarea,
+.qedit__select,
+.qedit__opt-text,
+.qedit__opt-rationale,
+.qedit__opt-pts {
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 0.45rem 0.55rem;
+  font: inherit;
+  color: var(--ink);
+  background: #fff;
+}
+.qedit__row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.75rem;
+}
+.qedit__comps {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+}
+.qedit__chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 0.2rem 0.55rem;
+  font-size: 0.8rem;
+  cursor: pointer;
+}
+.qedit__chip.is-on {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+.qedit__chip input {
+  accent-color: var(--accent);
+}
+.qedit__opt {
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 0.5rem;
+  display: grid;
+  gap: 0.4rem;
+  margin-bottom: 0.4rem;
+}
+.qedit__opt.is-best {
+  border-color: #3e8e5a;
+  background: #f3f8f4;
+}
+.qedit__opt-head {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+.qedit__opt-id {
+  flex: none;
+  font-weight: 700;
+  color: var(--accent);
+}
+.qedit__opt-text {
+  flex: 1;
+}
+.qedit__opt-pts {
+  width: 4rem;
+  flex: none;
+}
+.qedit__error {
+  margin: 0;
+  color: #9a3322;
+  font-size: 0.85rem;
+}
+.qedit__actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.5rem;
+}

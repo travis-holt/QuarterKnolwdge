@@ -1,4 +1,5 @@
 import { DOMAINS } from '../data/questions.js';
+import { COMPETENCIES, competencyName } from '../data/competencies.js';
 import { DEPARTMENTS } from '../data/departments.js';
 import { LEVELS } from '../data/config.js';
 import { findRow, mentorSuggestions, trainingForRow } from '../lib/scoring.js';
@@ -27,6 +28,13 @@ export default function NavigatorDetail({ rows, name, deptName, deptMatrix, onBa
 
   // Ordered worst → best so the bars read as a development priority list.
   const ordered = [...DOMAINS].sort((a, b) => row.scores[a.id] - row.scores[b.id]);
+
+  // Competency axis — only those the bank actually exercised, worst → best.
+  const competencyScores = row.competencyScores ?? {};
+  const competencyLevels = row.competencyLevels ?? {};
+  const orderedComps = COMPETENCIES.filter((c) => typeof competencyScores[c.id] === 'number').sort(
+    (a, b) => competencyScores[a.id] - competencyScores[b.id]
+  );
 
   return (
     <section className="navdetail">
@@ -143,6 +151,37 @@ export default function NavigatorDetail({ rows, name, deptName, deptMatrix, onBa
           })}
         </div>
       </div>
+
+      {/* ── Per-competency breakdown ──────────────────────────────────── */}
+      {orderedComps.length > 0 && (
+        <div className="card navdetail__panel">
+          <h2 className="overview__panel-title">Competency breakdown</h2>
+          <p className="readoff__sub">
+            How {row.name} thinks, decides, and communicates — measured across every scenario, not
+            tied to one topic.
+          </p>
+          <div className="results__grid navdetail__grid">
+            {orderedComps.map((c) => {
+              const pct = competencyScores[c.id];
+              const level = LEVELS[competencyLevels[c.id]];
+              return (
+                <div key={c.id} className="result-card navdetail__card">
+                  <div className="result-card__top">
+                    <span className="result-card__domain">{competencyName(c.id)}</span>
+                    <span className="level-chip" style={{ background: level.color, color: level.text }}>
+                      {level.label}
+                    </span>
+                  </div>
+                  <div className="result-card__bar">
+                    <div className="result-card__bar-fill" style={{ width: `${pct}%`, background: level.color }} />
+                  </div>
+                  <div className="result-card__pct">{pct}% capability</div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
 
       {/* ── Auto-assigned training ────────────────────────────────────── */}
       <div className="card navdetail__panel">

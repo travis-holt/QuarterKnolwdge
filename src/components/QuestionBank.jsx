@@ -1,0 +1,181 @@
+import { useState } from 'react';
+import { DOMAINS } from '../data/questions.js';
+import { COMPETENCIES, competencyName } from '../data/competencies.js';
+import QuestionEditor from './QuestionEditor.jsx';
+
+const domainName = (id) => DOMAINS.find((d) => d.id === id)?.name ?? id;
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Question Bank — the supervisor's review gate. Generated scenarios land as
+// `draft` and are NEVER live until activated here. Supervisors can also edit,
+// archive, or delete. This is the human quality control between AI output and a
+// live assessment.
+// ─────────────────────────────────────────────────────────────────────────────
+
+export default function QuestionBank({ questions, onActivate, onArchive, onDelete, onSaveEdit, onGenerate }) {
+  const [editingId, setEditingId] = useState(null);
+  const [genDomain, setGenDomain] = useState(DOMAINS[0].id);
+  const [genCount, setGenCount] = useState(3);
+  const [generating, setGenerating] = useState(false);
+  const [message, setMessage] = useState(null); // { kind: 'ok'|'err', text }
+
+  const byStatus = (s) => questions.filter((q) => (q.status ?? 'active') === s);
+  const drafts = byStatus('draft');
+  const active = byStatus('active');
+  const archived = byStatus('archived');
+
+  const runGenerate = async () => {
+    setGenerating(true);
+    setMessage(null);
+    try {
+      const n = await onGenerate({ domainId: genDomain, count: Number(genCount) || 1 });
+      setMessage({ kind: 'ok', text: `${n} draft scenario${n === 1 ? '' : 's'} added below for review.` });
+    } catch (err) {
+      setMessage({ kind: 'err', text: err?.message || 'Generation failed. Check the server logs.' });
+    } finally {
+      setGenerating(false);
+    }
+  };
+
+  const saveEdit = async (edited) => {
+    await onSaveEdit(edited.id, {
+      scenario: edited.scenario,
+      domainId: edited.domainId,
+      competencies: edited.competencies,
+      options: edited.options,
+      correctOptionId: edited.correctOptionId,
+    });
+    setEditingId(null);
+  };
+
+  const renderQuestion = (q, actions) => {
+    if (editingId === q.id) {
+      return (
+        <li key={q.id} className="qbank__item is-editing">
+          <QuestionEditor question={q} onSave={saveEdit} onCancel={() => setEditingId(null)} />
+        </li>
+      );
+    }
+    const best = q.options?.find((o) => o.id === q.correctOptionId);
+    return (
+      <li key={q.id} className="qbank__item">
+        <div className="qbank__item-head">
+          <span className="tag tag--accent">{domainName(q.domainId)}</span>
+          {(q.competencies ?? []).map((c) => (
+            <span key={c} className="tag qbank__comp">{competencyName(c)}</span>
+          ))}
+          {q.source && <span className="qbank__source">via {q.source}</span>}
+        </div>
+        <p className="qbank__scenario">{q.scenario}</p>
+        <ul className="qbank__options">
+          {(q.options ?? []).map((o) => (
+            <li key={o.id} className={`qbank__opt ${o.id === q.correctOptionId ? 'is-best' : ''}`}>
+              <span className="qbank__opt-pts">{typeof o.points === 'number' ? o.points : o.id === q.correctOptionId ? 100 : 0}</span>
+              <span className="qbank__opt-text">{o.text}</span>
+            </li>
+          ))}
+        </ul>
+        {best?.rationale && <p className="qbank__why">Best answer: {best.rationale}</p>}
+        <div className="qbank__actions">
+          <button className="btn btn--ghost btn--sm" onClick={() => setEditingId(q.id)}>Edit</button>
+          {actions}
+        </div>
+      </li>
+    );
+  };
+
+  return (
+    <section className="qbank">
+      <header className="overview__head">
+        <h1 className="overview__title">Question bank</h1>
+        <p className="overview__lede">
+          Generate scenarios from the SOP, review them, and activate the ones you trust. Only{' '}
+          <strong>active</strong> questions appear in the navigator&rsquo;s check.
+        </p>
+      </header>
+
+      {/* ── Generate ──────────────────────────────────────────────────── */}
+      <div className="card qbank__gen">
+        <h2 className="overview__panel-title">Generate from the SOP</h2>
+        <p className="readoff__sub">
+          Drafts are created for your review — nothing goes live until you activate it.
+        </p>
+        <div className="qbank__gen-row">
+          <label className="qedit__field">
+            <span className="qedit__label">Domain</span>
+            <select className="qedit__select" value={genDomain} onChange={(e) => setGenDomain(e.target.value)}>
+              {DOMAINS.map((d) => (
+                <option key={d.id} value={d.id}>{d.name}</option>
+              ))}
+            </select>
+          </label>
+          <label className="qedit__field">
+            <span className="qedit__label">How many</span>
+            <input className="qedit__select" type="number" min={1} max={8} value={genCount} onChange={(e) => setGenCount(e.target.value)} />
+          </label>
+          <button className="btn btn--primary" onClick={runGenerate} disabled={generating}>
+            {generating ? 'Generating…' : 'Generate scenarios'}
+          </button>
+        </div>
+        {message && (
+          <p className={`qbank__msg ${message.kind === 'err' ? 'is-err' : 'is-ok'}`}>{message.text}</p>
+        )}
+      </div>
+
+      {/* ── Review queue (drafts) ─────────────────────────────────────── */}
+      <div className="card overview__panel">
+        <h2 className="overview__panel-title">Review queue · {drafts.length}</h2>
+        {drafts.length === 0 ? (
+          <p className="readoff__empty">No drafts awaiting review.</p>
+        ) : (
+          <ul className="qbank__list">
+            {drafts.map((q) =>
+              renderQuestion(
+                q,
+                <>
+                  <button className="btn btn--primary btn--sm" onClick={() => onActivate(q.id)}>Activate</button>
+                  <button className="btn btn--ghost btn--sm" onClick={() => onDelete(q.id)}>Discard</button>
+                </>
+              )
+            )}
+          </ul>
+        )}
+      </div>
+
+      {/* ── Active ────────────────────────────────────────────────────── */}
+      <div className="card overview__panel">
+        <h2 className="overview__panel-title">Active in the check · {active.length}</h2>
+        {active.length === 0 ? (
+          <p className="readoff__empty">No active questions yet — activate a draft to build the check.</p>
+        ) : (
+          <ul className="qbank__list">
+            {active.map((q) =>
+              renderQuestion(
+                q,
+                <button className="btn btn--ghost btn--sm" onClick={() => onArchive(q.id)}>Archive</button>
+              )
+            )}
+          </ul>
+        )}
+      </div>
+
+      {/* ── Archived ──────────────────────────────────────────────────── */}
+      {archived.length > 0 && (
+        <div className="card overview__panel">
+          <h2 className="overview__panel-title">Archived · {archived.length}</h2>
+          <ul className="qbank__list">
+            {archived.map((q) =>
+              renderQuestion(
+                q,
+                <>
+                  <button className="btn btn--ghost btn--sm" onClick={() => onActivate(q.id)}>Restore</button>
+                  <button className="btn btn--ghost btn--sm" onClick={() => onDelete(q.id)}>Delete</button>
+                </>
+              )
+            )}
+          </ul>
+        </div>
+      )}
+    </section>
+  );
+}

@@ -27,6 +27,10 @@ service cloud.firestore {
     match /results/{docId} {
       allow read, write: if true;
     }
+    // Supervisor-managed question bank (draft / active / archived scenarios).
+    match /questions/{docId} {
+      allow read, write: if true;
+    }
 
     // Everything else is denied.
     match /{document=**} {
