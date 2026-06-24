@@ -238,7 +238,7 @@ training assignments.
 QuarterKnolwdge/
 ├── index.html               # Vite entry HTML
 ├── vite.config.js           # base path for Pages set on build only
-├── package.json             # scripts: dev/build/preview
+├── package.json             # scripts: dev/build/preview/test/test:watch
 ├── README.md                # quick-start + tweak guide
 ├── CLAUDE.md                # THIS FILE — project knowledge base
 ├── ClaudeCode_Build_Brief.md# original brief
@@ -252,7 +252,8 @@ QuarterKnolwdge/
     │                        #   TrainingModule, DeptBar
     ├── data/                # config, questions, navigators, training, departments
     └── lib/
-        └── scoring.js       # all scoring, read-offs, analytics, training logic
+        ├── scoring.js       # all scoring, read-offs, analytics, training logic
+        └── scoring.test.js  # Vitest unit tests for scoring.js (38 tests)
 ```
 
 ### Backend Architecture
@@ -437,6 +438,18 @@ stateDiagram-v2
 - **Reason:** Permanent project memory + onboarding doc.
 - **Result:** Single source of truth established (this file).
 
+### 2026-06-23 — First automated tests (scoring.js)
+- **What changed:** Added Vitest as the test runner and a unit-test suite covering all 18 exports
+  of `lib/scoring.js` (scoring, level mapping, matrix build, read-offs, department views, training
+  assignment, mentor suggestions). Added `test`/`test:watch` npm scripts. Fixtures are built from
+  the real data modules and level boundaries are asserted relative to `THRESHOLDS`, so the tests
+  survive future tuning of the config "knobs".
+- **Files affected:** new `src/lib/scoring.test.js`, `package.json` (scripts + `vitest` devDep).
+- **Reason:** Pay down the top technical-debt item — the pure logic was highly testable and had
+  zero coverage.
+- **Result:** 38 tests passing (`npm test`); production build unaffected (test file is excluded
+  from the app bundle).
+
 > **Note on dates:** all work above was completed in a single session dated **2026-06-23**.
 > Git commit short-SHAs are referenced where a discrete commit exists; some incremental work was
 > folded into later commits.
@@ -446,18 +459,21 @@ stateDiagram-v2
 ## 8. Current System State
 
 - **Working end to end:** take check → per-domain results → matrix → overview → navigator
-  dashboards → training (with previewable modules) → department switching. Build is clean.
+  dashboards → training (with previewable modules) → department switching. Build is clean and the
+  test suite is green (`npm test` → 38 passing).
 - **Existing functionality:** all features F1–F11 (see [§4](#4-feature-inventory)) are **Complete**.
 - **Experimental / mockup:**
   - Training **content** is mockup (clearly flagged in UI). Logic is real.
   - **Adult Medicine, OB/GYN, Behavioural Health** carry mockup scores; only **Pediatrics** is a
     live check.
-- **Incomplete areas:** no tests, no CI, no persistence, no trend/history, no mentor pairing,
-  no coverage/bus-factor view, no completion tracking.
+- **Test coverage:** `lib/scoring.js` is unit-tested (all 18 exports). Components and the App view
+  router are **not** yet tested.
+- **Incomplete areas:** no CI, no persistence, no trend/history, no mentor pairing,
+  no coverage/bus-factor view, no completion tracking; no component/UI tests.
 - **Active integrations:** none (no external services by design).
 - **Deployment status:** live on GitHub Pages; redeploy is manual.
-- **Counts (today):** 6 domains · 20 questions · 6 sample navigators · 4 departments · ~2,300 LOC
-  across `src/`.
+- **Counts (today):** 6 domains · 20 questions · 6 sample navigators · 4 departments · 38 unit
+  tests · ~2,300 LOC across `src/`.
 
 ---
 
@@ -510,6 +526,8 @@ npm install          # install deps
 npm run dev          # local dev server (http://localhost:5173, base '/')
 npm run build        # production build to dist/ (base '/QuarterKnolwdge/')
 npm run preview      # preview the production build
+npm test             # run the Vitest suite once (CI-style)
+npm run test:watch   # run Vitest in watch mode
 # deploy:
 npx gh-pages -d dist --dotfiles   # publish dist/ to gh-pages branch
 ```
@@ -559,8 +577,10 @@ npx gh-pages -d dist --dotfiles   # publish dist/ to gh-pages branch
 - Heatmap intensity toggle (show % inside matrix cells).
 
 ### Technical Debt
-- No automated tests (logic in `scoring.js` is highly testable — add unit tests).
-- No CI/CD (manual deploys); consider a Pages GitHub Action when token scope allows.
+- `lib/scoring.js` is unit-tested (Vitest, 38 tests). **Components and the App view router are
+  still untested** — add component/integration tests next (would need jsdom + Testing Library).
+- No CI/CD (manual deploys); now that a `test` script exists, a CI step could run `npm test` —
+  consider a Pages GitHub Action when token scope allows.
 - Single large `styles.css` — fine for now; revisit if it keeps growing.
 - Repo name typo `QuarterKnolwdge` is load-bearing for the Pages `base` path — don't rename
   casually (would break asset URLs).
@@ -624,9 +644,10 @@ npx gh-pages -d dist --dotfiles   # publish dist/ to gh-pages branch
   - The live check only assesses **Pediatrics** (`ASSESSED_DEPT`); other departments are mockups.
   - After any build, **deploy** (`npx gh-pages -d dist --dotfiles`) and verify the live bundle hash.
 - **Required workflows:**
-  1. Make the change. 2. `npm run build` (must be clean). 3. Update **this CLAUDE.md** (relevant
-     section + a §7 history entry). 4. Commit (Co-Authored-By: Claude). 5. Push. 6. Redeploy +
-     verify the live site.
+  1. Make the change. 2. `npm test` (must be green) **and** `npm run build` (must be clean).
+     3. Update **this CLAUDE.md** (relevant section + a §7 history entry). 4. Commit
+     (Co-Authored-By: Claude). 5. Push. 6. Redeploy + verify the live site.
+  - When you touch `lib/scoring.js` (or the data it reads), update/extend `scoring.test.js` too.
 - **Important assumptions:** no backend/persistence; in-memory state; sample data only; no real
   patient data or company branding.
 - **To re-key the check to a different SOP:** edit `DOMAINS` + `QUESTIONS` in `questions.js` (and
@@ -650,7 +671,8 @@ npx gh-pages -d dist --dotfiles   # publish dist/ to gh-pages branch
 
 **Upcoming milestones:**
 - Next feature increment (per #2 above) + redeploy.
-- First automated tests for `scoring.js` (technical-debt paydown).
+- ✅ First automated tests for `scoring.js` (technical-debt paydown) — done 2026-06-23 (Vitest, 38
+  tests). Next test step: component/integration tests (jsdom + Testing Library).
 
 ---
 
