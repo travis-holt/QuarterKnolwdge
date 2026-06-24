@@ -243,9 +243,9 @@ training assignments.
   `db.js` CRUD (`subscribeQuestions`, `getActiveQuestions`, `saveDraftQuestions`, `activate/archive/
   delete/updateQuestion`, `seedQuestionsIfEmpty`); supervisor UI
   [QuestionBank.jsx](src/components/QuestionBank.jsx) + [QuestionEditor.jsx](src/components/QuestionEditor.jsx);
-  serverless [api/generate-scenarios.js](api/generate-scenarios.js) (Gemini `gemini-2.0-flash`,
-  structured JSON output, validated/repaired). Only **active** questions appear in the check; AI
-  drafts require human activation.
+  serverless [api/generate-scenarios.js](api/generate-scenarios.js) (Gemini `gemini-2.5-flash`,
+  structured JSON output, validated/repaired; rotates across multiple keys on rate-limit). Only
+  **active** questions appear in the check; AI drafts require human activation.
 - **Status:** Complete (code). **[ASSUMPTION]** Owner sets `GEMINI_API_KEY` + `GENERATION_SECRET` on Vercel.
 
 ---
@@ -312,10 +312,12 @@ QuarterKnolwdge/
   init in [src/lib/firebase.js](src/lib/firebase.js) (reads `VITE_FIREBASE_*` from `.env.local`).
 - **Serverless (Vercel functions, `/api`).** [api/generate-scenarios.js](api/generate-scenarios.js)
   is a Gemini proxy: it holds the `GEMINI_API_KEY` **server-side only** (never bundled to the
-  browser), calls `gemini-2.0-flash` with structured-JSON output, validates/repairs each scenario,
-  and returns drafts the client persists for review. [api/health.js](api/health.js) is a deploy
-  check. Helper modules are `_`-prefixed (`api/_sop-context.js`) so Vercel doesn't route them.
-  The endpoint is gated by `GENERATION_SECRET` (supervisor passcode) — pilot-grade.
+  browser), calls `gemini-2.5-flash` with structured-JSON output, validates/repairs each scenario,
+  and returns drafts the client persists for review. Multiple keys may be supplied
+  (`GEMINI_API_KEYS`, comma-separated); the function **rotates to the next key on 429/503** to
+  stretch the free tier. [api/health.js](api/health.js) is a deploy check. Helper modules are
+  `_`-prefixed (`api/_sop-context.js`) so Vercel doesn't route them. The endpoint is gated by
+  `GENERATION_SECRET` (supervisor passcode) — pilot-grade.
 - **No auth system** (by design for the pilot): navigators pick their name from the roster + a
   4-digit PIN; supervisors enter `SUPERVISOR_PASSCODE`. Session persistence is localStorage only,
   isolated in [src/lib/session.js](src/lib/session.js). Security rules in `firestore.rules` are
@@ -651,8 +653,10 @@ stateDiagram-v2
     updateQuestion`, `seedQuestionsIfEmpty`). `Check`/`NavigatorApp` read the **active** bank (seed
     fallback). New supervisor `QuestionBank.jsx` + `QuestionEditor.jsx` (review gate) + "Questions"
     nav tab. `firestore.rules` extended.
-  - **1d — Gemini generation:** `api/generate-scenarios.js` (gemini-2.0-flash, structured JSON,
-    validate/repair) + `api/_sop-context.js`. Supervisor "Generate" → drafts → review → activate.
+  - **1d — Gemini generation:** `api/generate-scenarios.js` (gemini-2.5-flash, structured JSON,
+    validate/repair, multi-key rotation on 429/503) + `api/_sop-context.js`. Supervisor "Generate"
+    → drafts → review → activate. (2.0-flash returns a free-tier limit of 0 on the project keys, so
+    2.5-flash is used.)
 - **Files affected:** new `api/{generate-scenarios,health,_sop-context}.js`, `vercel.json`,
   `src/data/competencies.js`, `src/components/{Coaching,QuestionBank,QuestionEditor}.jsx`; edited
   `src/lib/{scoring,scoring.test,db}.js`, `src/data/questions.js`,
@@ -754,7 +758,8 @@ stateDiagram-v2
 - **Serverless endpoint:** `POST /api/generate-scenarios` `{ domainId, count, secret }` → `{ questions }`
   (validated drafts). `GET /api/health` → `{ ok }`.
 - **Env vars:** client (gitignored `.env.local`, build-time) `VITE_FIREBASE_*`; **server-only**
-  (Vercel project settings — never `VITE_`-prefixed) `GEMINI_API_KEY`, `GENERATION_SECRET`.
+  (Vercel project settings — never `VITE_`-prefixed) `GEMINI_API_KEYS` (comma-separated; rotated on
+  rate-limit) or single `GEMINI_API_KEY`, plus `GENERATION_SECRET`.
 - **db.js API** (the only Firestore surface): roster — `addToRoster`, `getRoster`,
   `subscribeRoster(cb,onError?)`; results — `getResult`, `saveResult(navigatorId, name, scores,
   competencyScores?)`, `subscribeResults(cb,onError?)`; questions — `subscribeQuestions(cb,onError?)`,

@@ -43,9 +43,9 @@ The supervisor **Questions** tab can generate scenario drafts from the SOP. This
 through a serverless function so the API key stays server-side.
 
 1. Get a free key at [aistudio.google.com/apikey](https://aistudio.google.com/apikey).
-2. Set two **server-only** env vars (NOT `VITE_`-prefixed): `GEMINI_API_KEY` and
-   `GENERATION_SECRET` (set the secret equal to your `SUPERVISOR_PASSCODE`). See
-   [`.env.local.example`](.env.local.example).
+2. Set two **server-only** env vars (NOT `VITE_`-prefixed): `GEMINI_API_KEYS` (one or more keys,
+   comma-separated — the function rotates to the next on rate-limit) and `GENERATION_SECRET`
+   (set the secret equal to your `SUPERVISOR_PASSCODE`). See [`.env.local.example`](.env.local.example).
 3. The `/api` functions only run on Vercel or under `vercel dev` — plain `npm run dev` serves the
    app but not `/api`, so the Generate button needs `vercel dev` locally (or a deploy).
 

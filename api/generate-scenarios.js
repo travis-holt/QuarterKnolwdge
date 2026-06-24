@@ -1,10 +1,12 @@
 // ─────────────────────────────────────────────────────────────────────────────
 // POST /api/generate-scenarios — serverless Gemini proxy (Vercel).
 //
-// Generates draft scenario MCQs from the SOP for one domain. The Gemini API key
-// lives ONLY in this server-side function (env GEMINI_API_KEY) and never reaches
-// the browser. The endpoint is gated by a shared secret (env GENERATION_SECRET)
-// to deter anonymous abuse of the quota — pilot-grade, see CLAUDE.md security.
+// Generates draft scenario MCQs from the SOP for one domain. Gemini API keys live
+// ONLY in this server-side function and never reach the browser. Multiple keys may
+// be supplied (env GEMINI_API_KEYS, comma-separated; or a single GEMINI_API_KEY);
+// the function rotates to the next key whenever one is rate-limited / quota-
+// exhausted, maximising the free-tier budget. The endpoint is gated by a shared
+// secret (env GENERATION_SECRET) to deter anonymous abuse — pilot-grade.
 //
 // Returns validated drafts: { questions: [...] }. It does NOT touch Firestore —
 // the client persists the drafts via db.saveDraftQuestions, keeping db.js the
@@ -16,7 +18,9 @@ import { DOMAINS } from '../src/data/questions.js';
 import { COMPETENCIES } from '../src/data/competencies.js';
 import { SOP_CONTEXT } from './_sop-context.js';
 
-const MODEL = 'gemini-2.0-flash';
+// gemini-2.5-flash has free-tier availability on the project keys in use (2.0-flash
+// returns a free-tier limit of 0 in this region). Swap here if quota/model changes.
+const MODEL = 'gemini-2.5-flash';
 const COMPETENCY_IDS = new Set(COMPETENCIES.map((c) => c.id));
 const LETTERS = ['a', 'b', 'c', 'd', 'e'];
 
@@ -102,14 +106,42 @@ function sanitize(raw, domainId) {
   };
 }
 
+// Configured keys: GEMINI_API_KEYS (comma-separated, preferred) with GEMINI_API_KEY
+// as a single-key fallback. De-duped and trimmed.
+function getApiKeys() {
+  const multi = (process.env.GEMINI_API_KEYS || '').split(',').map((k) => k.trim()).filter(Boolean);
+  const single = (process.env.GEMINI_API_KEY || '').trim();
+  return [...new Set(multi.length ? multi : single ? [single] : [])];
+}
+
+// One Gemini call with a given key → { ok, status, text?, detail? }.
+async function callGemini(apiKey, requestBody) {
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/${MODEL}:generateContent?key=${apiKey}`;
+  const resp = await fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(requestBody),
+  });
+  if (!resp.ok) {
+    return { ok: false, status: resp.status, detail: await resp.text().catch(() => '') };
+  }
+  const data = await resp.json();
+  return { ok: true, status: 200, text: data?.candidates?.[0]?.content?.parts?.[0]?.text };
+}
+
+// Per-key failures where trying a DIFFERENT key may succeed (quota / rate limit /
+// permission / transient overload). A 400 (bad request) is our bug, not the key's,
+// so it is NOT rotated — it surfaces immediately.
+const ROTATABLE = new Set([429, 403, 503, 500]);
+
 export default async function handler(req, res) {
   if (req.method !== 'POST') {
     return res.status(405).json({ error: 'Method not allowed' });
   }
 
-  const apiKey = process.env.GEMINI_API_KEY;
+  const keys = getApiKeys();
   const secret = process.env.GENERATION_SECRET;
-  if (!apiKey || !secret) {
+  if (keys.length === 0 || !secret) {
     return res.status(500).json({ error: 'Generation is not configured on the server.' });
   }
 
@@ -122,49 +154,65 @@ export default async function handler(req, res) {
   if (!domain) return res.status(400).json({ error: 'Unknown domain.' });
   const n = Math.max(1, Math.min(8, Number(count) || 1));
 
-  try {
-    const url = `https://generativelanguage.googleapis.com/v1beta/models/${MODEL}:generateContent?key=${apiKey}`;
-    const gemRes = await fetch(url, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        contents: [{ parts: [{ text: buildPrompt(domain, n) }] }],
-        generationConfig: {
-          responseMimeType: 'application/json',
-          responseSchema: RESPONSE_SCHEMA,
-          temperature: 0.7,
-        },
-      }),
-    });
+  const requestBody = {
+    contents: [{ parts: [{ text: buildPrompt(domain, n) }] }],
+    generationConfig: {
+      responseMimeType: 'application/json',
+      responseSchema: RESPONSE_SCHEMA,
+      temperature: 0.7,
+    },
+  };
 
-    if (!gemRes.ok) {
-      const detail = await gemRes.text().catch(() => '');
-      console.error('Gemini error:', gemRes.status, detail);
-      return res.status(502).json({ error: `Gemini request failed (${gemRes.status}).` });
-    }
+  // Rotate across keys: start at a random offset to spread load across the pool,
+  // and advance to the next key whenever one is rate-limited / quota-exhausted.
+  const start = Math.floor(Math.random() * keys.length);
+  let rotated = 0;
+  let text = null;
 
-    const data = await gemRes.json();
-    const text = data?.candidates?.[0]?.content?.parts?.[0]?.text;
-    if (!text) return res.status(502).json({ error: 'Empty response from Gemini.' });
-
-    let parsed;
+  for (let i = 0; i < keys.length; i++) {
+    const keyIdx = (start + i) % keys.length;
+    let result;
     try {
-      parsed = JSON.parse(text);
-    } catch {
-      return res.status(502).json({ error: 'Gemini returned invalid JSON.' });
+      result = await callGemini(keys[keyIdx], requestBody);
+    } catch (err) {
+      console.error(`Gemini fetch threw on key #${keyIdx} — rotating:`, err);
+      rotated += 1;
+      continue;
     }
-
-    const questions = (Array.isArray(parsed) ? parsed : [])
-      .map((q) => sanitize(q, domainId))
-      .filter(Boolean);
-
-    if (questions.length === 0) {
-      return res.status(422).json({ error: 'No valid scenarios were produced. Try again.' });
+    if (result.ok) {
+      text = result.text;
+      break;
     }
-
-    return res.status(200).json({ questions });
-  } catch (err) {
-    console.error('generate-scenarios:', err);
-    return res.status(500).json({ error: 'Unexpected server error.' });
+    if (ROTATABLE.has(result.status)) {
+      console.warn(`Gemini key #${keyIdx} returned ${result.status} — rotating.`);
+      rotated += 1;
+      continue;
+    }
+    console.error('Gemini error (not rotatable):', result.status, result.detail);
+    return res.status(502).json({ error: `Gemini request failed (${result.status}).` });
   }
+
+  if (text == null) {
+    if (rotated >= keys.length) {
+      return res.status(429).json({ error: 'All Gemini keys are rate-limited right now. Try again shortly.' });
+    }
+    return res.status(502).json({ error: 'Empty response from Gemini.' });
+  }
+
+  let parsed;
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    return res.status(502).json({ error: 'Gemini returned invalid JSON.' });
+  }
+
+  const questions = (Array.isArray(parsed) ? parsed : [])
+    .map((q) => sanitize(q, domainId))
+    .filter(Boolean);
+
+  if (questions.length === 0) {
+    return res.status(422).json({ error: 'No valid scenarios were produced. Try again.' });
+  }
+
+  return res.status(200).json({ questions });
 }
