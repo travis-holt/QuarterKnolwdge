@@ -34,6 +34,7 @@ export default function Navigators({ rows, roster, deptName, onOpenNavigator, on
 
       {showForm && (
         <AddNavigatorForm
+          roster={roster}
           onAdd={onAddNavigator}
           onDone={() => setShowForm(false)}
         />
@@ -110,7 +111,7 @@ function NavigatorCardBody({ row }) {
   );
 }
 
-function AddNavigatorForm({ onAdd, onDone }) {
+function AddNavigatorForm({ roster, onAdd, onDone }) {
   const [name, setName] = useState('');
   const [pin, setPin] = useState('');
   const [error, setError] = useState('');
@@ -126,6 +127,10 @@ function AddNavigatorForm({ onAdd, onDone }) {
     }
     if (!/^\d{4}$/.test(pin.trim())) {
       setError('PIN must be exactly 4 digits.');
+      return;
+    }
+    if (roster.some((r) => r.name.toLowerCase() === trimmed.toLowerCase())) {
+      setError('A navigator with that name already exists.');
       return;
     }
     setBusy(true);

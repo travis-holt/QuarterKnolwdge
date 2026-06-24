@@ -55,7 +55,10 @@ export default function NavigatorApp({ navigatorId, name, onSignOut }) {
   // Live floor results — used only to compute mentor suggestions.
   useEffect(() => {
     if (!isFirebaseConfigured) return undefined;
-    const unsub = subscribeResults(setResults);
+    const unsub = subscribeResults(setResults, (err) => {
+      console.error('subscribeResults (navigator):', err);
+      // Non-critical — mentor suggestions just won't update live.
+    });
     return () => unsub();
   }, []);
 

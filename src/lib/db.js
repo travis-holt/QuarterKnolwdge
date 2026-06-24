@@ -57,12 +57,15 @@ export async function getRoster() {
 /**
  * Supervisor: live subscription to the roster (for the Navigators tab).
  * @param {(roster:{id:string,name:string,pin:string}[]) => void} cb
+ * @param {(err:Error) => void} [onError]
  * @returns {() => void} unsubscribe
  */
-export function subscribeRoster(cb) {
-  return onSnapshot(collection(db, ROSTER), (snap) => {
-    cb(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
-  });
+export function subscribeRoster(cb, onError) {
+  return onSnapshot(
+    collection(db, ROSTER),
+    (snap) => cb(snap.docs.map((d) => ({ id: d.id, ...d.data() }))),
+    onError ?? ((err) => console.error('subscribeRoster:', err))
+  );
 }
 
 // ── Results ──────────────────────────────────────────────────────────────────
@@ -97,10 +100,13 @@ export async function saveResult(navigatorId, name, scores) {
  * Live subscription to all results. Drives the supervisor dashboards (and the
  * navigator's mentor suggestions, which need the rest of the floor's data).
  * @param {(results:{id:string,name:string,navigatorId:string,scores:Record<string,number>}[]) => void} cb
+ * @param {(err:Error) => void} [onError]
  * @returns {() => void} unsubscribe
  */
-export function subscribeResults(cb) {
-  return onSnapshot(collection(db, RESULTS), (snap) => {
-    cb(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
-  });
+export function subscribeResults(cb, onError) {
+  return onSnapshot(
+    collection(db, RESULTS),
+    (snap) => cb(snap.docs.map((d) => ({ id: d.id, ...d.data() }))),
+    onError ?? ((err) => console.error('subscribeResults:', err))
+  );
 }

@@ -1631,3 +1631,16 @@ button {
     flex-direction: column;
   }
 }
+
+/* ── Subscription error banner ───────────────────────────────────────────── */
+.subscribe-error {
+  background: #fdf0ee;
+  border: 1px solid #c0392b;
+  border-radius: 6px;
+  color: #c0392b;
+  font-size: 0.875rem;
+  margin: 1rem auto;
+  max-width: var(--maxw);
+  padding: 0.625rem 1rem;
+  width: calc(100% - 2rem);
+}

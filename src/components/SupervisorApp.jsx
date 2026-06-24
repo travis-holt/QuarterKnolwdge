@@ -30,12 +30,17 @@ export default function SupervisorApp({ onSignOut }) {
   const [moduleDomain, setModuleDomain] = useState(null);
   const [moduleReturn, setModuleReturn] = useState('training');
   const [selectedDept, setSelectedDept] = useState(ASSESSED_DEPT);
+  const [subscribeError, setSubscribeError] = useState(false);
 
   // Live listeners — results + roster. Unsubscribe on unmount.
   useEffect(() => {
     if (!isFirebaseConfigured) return undefined;
-    const unsubResults = subscribeResults(setResults);
-    const unsubRoster = subscribeRoster(setRoster);
+    const onError = (err) => {
+      console.error('Firestore subscription error:', err);
+      setSubscribeError(true);
+    };
+    const unsubResults = subscribeResults(setResults, onError);
+    const unsubRoster = subscribeRoster(setRoster, onError);
     return () => {
       unsubResults();
       unsubRoster();
@@ -106,6 +111,11 @@ export default function SupervisorApp({ onSignOut }) {
       )}
 
       <main className="main">
+        {subscribeError && (
+          <div className="subscribe-error">
+            Lost connection to the database — data may be stale. Check your network and reload.
+          </div>
+        )}
         {showEmpty ? (
           emptyState()
         ) : (

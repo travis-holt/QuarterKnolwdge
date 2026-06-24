@@ -10,7 +10,7 @@
 > [§8 Current System State](#8-current-system-state) and [§15 Current Priorities](#15-current-priorities)
 > accurate at all times.
 >
-> **Last updated:** 2026-06-24 (Firebase pilot implemented) · **Doc maintainer:** Claude (AI
+> **Last updated:** 2026-06-24 (post-code-review robustness fixes) · **Doc maintainer:** Claude (AI
 > agent) + repo owner. Assumptions are explicitly marked **[ASSUMPTION]**.
 
 ---
@@ -495,6 +495,21 @@ stateDiagram-v2
 > Git commit short-SHAs are referenced where a discrete commit exists; some incremental work was
 > folded into later commits.
 
+### 2026-06-24 — Post-review robustness fixes (subscription errors + duplicate names)
+- **What changed:** Two issues found in a systematic code review were fixed.
+  1. **Silent Firestore subscription errors (moderate):** `subscribeRoster` and `subscribeResults`
+     in `db.js` now accept an optional `onError` callback (defaulting to `console.error`).
+     `SupervisorApp.jsx` passes a shared handler that sets `subscribeError` state and renders a
+     red banner: *"Lost connection to the database — data may be stale."* `NavigatorApp.jsx` logs
+     the error (mentor suggestions silently stop updating — non-critical for the pilot).
+  2. **Duplicate navigator names (minor):** `AddNavigatorForm` in `Navigators.jsx` now receives
+     the live `roster` prop and performs a case-insensitive name-equality check before calling
+     `addToRoster`. Shows *"A navigator with that name already exists."* inline.
+- **Files affected:** `src/lib/db.js`, `src/components/SupervisorApp.jsx`,
+  `src/components/NavigatorApp.jsx`, `src/components/Navigators.jsx`, `src/styles.css`
+  (`.subscribe-error` banner style added).
+- **Verification:** `npm test` → 38 passing; `npm run build` → clean.
+
 ### 2026-06-24 — Firebase pilot design complete; implementation plan written
 - **What happened:** Full design session completed. Spec and implementation plan written,
   reviewed, and committed.
@@ -545,34 +560,31 @@ stateDiagram-v2
   `src/lib/scoring.js` and `scoring.test.js` unchanged.
 - **Verification:** `npm test` → 38 passing; `npm run build` → clean; `npm run dev` → all modules
   transform and serve (200). Defensive Firebase init verified to not crash without config.
-- **Status:** Code complete. **Not yet deployed** — deploying with empty Firebase config would
-  break the live prototype, so deploy waits until the owner provides `.env.local`. The owner must
-  (1) create a Firebase project, (2) fill `.env.local` from `.env.local.example`, (3) apply
-  `firestore.rules`, (4) `npm run build && npx gh-pages -d dist --dotfiles`.
+- **Status:** Code complete and **deployed to GitHub Pages**. Firebase project is live (`quarterly-knowledge-check`); `.env.local` is configured; supervisor and navigator flows verified working end-to-end.
 
 ---
 
 ## 8. Current System State
 
-- **Working end to end:** take check → per-domain results → matrix → overview → navigator
-  dashboards → training (with previewable modules) → department switching. Build is clean and the
-  test suite is green (`npm test` → 38 passing).
+- **Working end to end:** supervisor adds navigators → navigators sign in → take check → per-domain
+  results persist to Firestore → supervisor matrix updates live → overview/navigator dashboards →
+  training (with previewable modules) → department switching. Build is clean and the test suite is
+  green (`npm test` → 38 passing).
 - **Existing functionality:** all features F1–F11 (see [§4](#4-feature-inventory)) are **Complete**.
 - **Experimental / mockup:**
   - Training **content** is mockup (clearly flagged in UI). Logic is real.
-  - **Adult Medicine, OB/GYN, Behavioural Health** carry mockup scores; only **Pediatrics** is a
+  - **Adult Medicine, OB/GYN, Behavioural Health** are not assessed; only **Pediatrics** is a
     live check.
 - **Test coverage:** `lib/scoring.js` is unit-tested (all 18 exports). Components and the App view
   router are **not** yet tested.
-- **Incomplete areas:** no CI, no persistence, no trend/history, no mentor pairing,
-  no coverage/bus-factor view, no completion tracking; no component/UI tests.
-- **Active integrations:** **Firebase / Firestore** (pilot) — code complete, awaiting the owner's
-  Firebase project config in `.env.local` to go live.
-- **Deployment status:** live GitHub Pages site still runs the **pre-pilot prototype**. The Firebase
-  pilot is committed but **not deployed** (deploy waits on `.env.local`; deploying with empty config
-  would break the live site).
-- **Counts (today):** 6 domains · 20 questions · **sample navigators removed** (matrix starts empty,
-  fills from Firestore) · 4 departments (Pediatrics live; others show empty/not-assessed states) ·
+- **Incomplete areas:** no CI, no trend/history, no mentor pairing, no coverage/bus-factor view,
+  no completion tracking; no component/UI tests.
+- **Active integrations:** **Firebase / Firestore** (pilot) — **live**. Firebase project:
+  `quarterly-knowledge-check`. `.env.local` configured locally (gitignored).
+- **Deployment status:** **Live at https://travis-holt.github.io/QuarterKnolwdge/** — Firebase
+  pilot is deployed and running. Firebase config baked into the build at deploy time from `.env.local`.
+- **Counts (today):** 6 domains · 20 questions · **no sample navigators** (matrix fills from
+  Firestore) · 4 departments (Pediatrics live; others show empty/not-assessed states) ·
   38 unit tests · 2 Firestore collections (`roster`, `results`).
 
 ---
@@ -589,17 +601,17 @@ stateDiagram-v2
   - `deptSamples(samples, deptId)`, `departmentOverall(scores)`, `departmentMatrix(samples, live)`
   - `trainingForRow(row)`, `trainingPlan(rows)`, `trainingByDomain(rows)`, `trainingStats(rows)`
   - `mentorSuggestions(rows, name)`
-- **[src/App.jsx](src/App.jsx)** — holds `view`, `liveResult`, `selected` (navigator),
-  `moduleDomain`/`moduleReturn`, `selectedDept`. Builds dept-scoped `rows` and `deptMatrix`,
-  passes them down. `DEPT_SCOPED_VIEWS` controls when `DeptBar` shows.
+- **[src/App.jsx](src/App.jsx)** — thin session router only. Reads `getSession()` on mount;
+  routes to `<Start>`, `<SupervisorApp>`, or `<NavigatorApp>` based on `session.role`. All view
+  state, Firestore subscriptions, and data live inside the role apps.
 
 ### Data modules (the "knobs")
 - **[src/data/config.js](src/data/config.js):** `THRESHOLDS`, `LEVELS`, `LEVEL_ORDER`,
   `COLUMN_GAP_THRESHOLD`, `TRAINING_RULES`, `PALETTE`.
 - **[src/data/questions.js](src/data/questions.js):** `DOMAINS` (`{id,name,blurb}`), `QUESTIONS`
   (`{id, domainId, scenario, options:[{id,text}], correctOptionId}`).
-- **[src/data/navigators.js](src/data/navigators.js):** `SAMPLE_NAVIGATORS`
-  (`{name, departments:{[deptId]:{[domainId]:percent}}}`).
+- **[src/data/navigators.js](src/data/navigators.js):** placeholder only — `SAMPLE_NAVIGATORS`
+  was removed in the Firebase pilot. Navigator data now comes from Firestore.
 - **[src/data/training.js](src/data/training.js):** `TRAINING_MODULES`
   (`{domainId, title, blurb, estMinutes, lessons:[{title,points[]}], keyTakeaways[]}`);
   `moduleForDomain(id)`.
@@ -625,8 +637,9 @@ stateDiagram-v2
   `VITE_FIREBASE_AUTH_DOMAIN`, `VITE_FIREBASE_PROJECT_ID`, `VITE_FIREBASE_STORAGE_BUCKET`,
   `VITE_FIREBASE_MESSAGING_SENDER_ID`, `VITE_FIREBASE_APP_ID`.
 - **db.js API** (the only Firestore surface): `addToRoster(name, pin)`, `getRoster()`,
-  `subscribeRoster(cb)`, `getResult(navigatorId)`, `saveResult(navigatorId, name, scores)`,
-  `subscribeResults(cb)`. `subscribe*` return an unsubscribe function.
+  `subscribeRoster(cb, onError?)`, `getResult(navigatorId)`, `saveResult(navigatorId, name, scores)`,
+  `subscribeResults(cb, onError?)`. `subscribe*` return an unsubscribe function. `onError` defaults
+  to `console.error` if omitted; callers that want UI feedback should pass their own handler.
 - **No custom REST API.** No secrets in the repo except `SUPERVISOR_PASSCODE` (pilot-acceptable;
   see decisions log).
 
@@ -699,21 +712,29 @@ npx gh-pages -d dist --dotfiles   # publish dist/ to gh-pages branch
 
 ## 12. Bugs & Known Issues
 
-- **~~No persistence~~ (resolved by Firebase pilot):** results now persist in Firestore and survive
-  reloads. *(Pre-pilot prototype was in-memory; that limitation is gone in the pilot code.)*
+- **~~No persistence~~ (resolved):** results persist in Firestore and survive reloads.
+- **~~Silent Firestore subscription errors~~ (resolved 2026-06-24):** `subscribeRoster` and
+  `subscribeResults` now accept an `onError` callback; `SupervisorApp` shows a red banner on
+  connection loss instead of silently staling.
+- **~~Duplicate navigator names~~ (resolved 2026-06-24):** `AddNavigatorForm` performs a
+  case-insensitive check against the live roster before writing; blocks duplicates with an inline
+  error message.
 - **Passcode/PIN are client-side (pilot):** `SUPERVISOR_PASSCODE` is in the public repo and PINs are
   readable in Firestore; a determined user could bypass the gate. *Severity: low for a trusted pilot.*
   *Mitigation:* documented; must move to real auth before production.
-- **Non-assessed departments are empty:** with sample data removed, only Pediatrics has live data;
-  other departments show an empty state. *Severity: low (intended for pilot).*
-- **Pages deploy is manual:** forgetting `npx gh-pages -d dist` after a build leaves the live site
-  stale. *Severity: low.* *Workaround:* always run build+deploy together; verify the live bundle
-  hash matches the new build.
+- **Visible PINs in Navigators tab:** supervisor can see all navigator PINs in plain text (by
+  design — supervisor assigns and shares them). *Severity: low.* A "Show PIN" toggle could be added
+  before any broader rollout.
+- **Silent save failure for navigator:** if `saveResult` fails after submission, the navigator sees
+  their results from local state but the supervisor's matrix doesn't update. *Severity: low for
+  pilot.* A future toast notification would improve this.
+- **Non-assessed departments are empty:** only Pediatrics has live data; other departments show an
+  empty state. *Severity: low (intended for pilot).*
+- **Pages deploy is manual:** forgetting `npx gh-pages -d dist --dotfiles` after a build leaves the
+  live site stale. *Severity: low.* *Workaround:* always run build+deploy together.
 - **Mockup departments can be mistaken for real data** if the "illustrative mockup data" note is
-  overlooked. *Severity: low.* *Mitigation:* DeptBar shows the note; live check-taker shows
-  "not assessed" outside Pediatrics.
-- **[ASSUMPTION] No known functional bugs** in scoring/read-offs; logic was spot-verified via Node
-  but not unit-tested.
+  overlooked. *Severity: low.* *Mitigation:* DeptBar shows the note.
+- **No known functional bugs** in scoring/read-offs (38 unit tests green).
 
 ---
 
@@ -763,9 +784,9 @@ npx gh-pages -d dist --dotfiles   # publish dist/ to gh-pages branch
      3. Update **this CLAUDE.md** (relevant section + a §7 history entry). 4. Commit
      (Co-Authored-By: Claude). 5. Push. 6. Redeploy + verify the live site.
   - When you touch `lib/scoring.js` (or the data it reads), update/extend `scoring.test.js` too.
-- **Important assumptions:** currently no backend/persistence; in-memory state; sample data only;
-  no real patient data or company branding. **Firebase integration is in design** — this
-  assumption will change once the pilot feature is implemented.
+- **Important assumptions:** Firebase pilot is live — real multi-user, Firestore-backed. No sample
+  data; no real patient data or company branding. Auth is PIN/passcode (pilot-grade); must move to
+  real auth before production.
 - **To re-key the check to a different SOP:** edit `DOMAINS` + `QUESTIONS` in `questions.js` (and
   optionally `TRAINING_MODULES`); everything else follows automatically.
 
@@ -774,26 +795,16 @@ npx gh-pages -d dist --dotfiles   # publish dist/ to gh-pages branch
 ## 15. Current Priorities
 
 1. **Maintain this CLAUDE.md** on every change (highest standing priority).
-2. **Complete the Firebase pilot design + implementation** — convert the prototype into a real
-   multi-user webapp (design in progress, see §7 entry dated 2026-06-24).
-3. **Structure multi-department live checks** (per-department question sets) when additional SOPs
-   are provided.
+2. **Structure multi-department live checks** (per-department question sets) when additional SOPs
+   are provided by the owner.
+3. **Component/integration tests** — now the highest unresolved technical debt given the role-routing
+   and gate logic (jsdom + Testing Library).
 
 **Active work items:**
-- **[CODE COMPLETE — AWAITING OWNER SETUP]** Firebase pilot. All code is built, tested (38 green),
-  and builds clean. **Owner's remaining steps to go live:**
-  1. Create a Firebase project at console.firebase.google.com; add a Web App; enable Firestore.
-  2. Copy `.env.local.example` → `.env.local` and fill in the `VITE_FIREBASE_*` values.
-  3. Apply `firestore.rules` (paste into Firestore → Rules, or `firebase deploy --only firestore:rules`).
-  4. Change `SUPERVISOR_PASSCODE` in `src/data/config.js` from the placeholder `2468`.
-  5. `npm run dev` to smoke-test locally → add a navigator (Navigators tab) → take the check as
-     that navigator → confirm the supervisor matrix updates live.
-  6. Deploy: `npm run build && npx gh-pages -d dist --dotfiles`; verify the live site.
-  - Full plan: `docs/superpowers/plans/2026-06-24-firebase-pilot-plan.md`.
+- None blocking. The Firebase pilot is live and working. Awaiting owner to provide additional SOPs
+  for non-Pediatrics departments.
 
 **Blockers:**
-- **Firebase config** — owner must create the project and fill `.env.local` to take the pilot live
-  (the code is done and waiting).
 - Real per-department question content requires additional SOPs from the owner.
 - Real training materials needed to replace mockup module content.
 
@@ -801,9 +812,10 @@ npx gh-pages -d dist --dotfiles   # publish dist/ to gh-pages branch
 - ✅ First automated tests for `scoring.js` — done 2026-06-23 (Vitest, 38 tests).
 - ✅ Firebase pilot design doc + implementation plan — done 2026-06-24.
 - ✅ Firebase pilot implementation (all code) — done 2026-06-24.
-- Firebase project setup + first live deploy of the pilot (owner — next).
-- Next test step after pilot: component/integration tests (jsdom + Testing Library) — now higher
-  value given the new role-routing and gate logic.
+- ✅ Firebase project configured + pilot deployed live — done 2026-06-24.
+- ✅ Post-review robustness fixes (subscription errors, duplicate names) — done 2026-06-24.
+- Component/integration tests (jsdom + Testing Library) — next technical priority.
+- Multi-department live checks — awaiting SOPs from owner.
 
 ---
 
