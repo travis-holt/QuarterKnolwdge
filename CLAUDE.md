@@ -454,35 +454,27 @@ stateDiagram-v2
 > Git commit short-SHAs are referenced where a discrete commit exists; some incremental work was
 > folded into later commits.
 
-### 2026-06-24 — Real-webapp design in progress (Firebase pilot)
-- **What's happening:** Design session (brainstorm → spec → plan) is underway to convert the
-  prototype into a real multi-user webapp for a small pilot (~3–10 navigators).
-- **Decisions locked so far:**
-  - **Persistence:** Firebase/Firestore (free Spark tier, real-time, no server needed, stays on
-    GitHub Pages).
-  - **Identity / auth:** No login. Navigators type their name to start the check. Supervisors
-    enter a hardcoded passcode (stored in `config.js` as `SUPERVISOR_PASSCODE`) to unlock the
-    management view.
-  - **Role split:** Two distinct roles — `navigator` (sees only their own results + training +
-    mentor suggestions) and `supervisor` (sees the full matrix, overview, navigators list,
-    training tab — same as the current prototype, but fed from Firestore).
-  - **Sample data:** `SAMPLE_NAVIGATORS` will be **removed entirely**. The matrix starts empty
-    and fills with real submissions. A friendly empty state is shown until the first navigator
-    submits.
-  - **Access:** Laptop only (no mobile). Each navigator on their own laptop; supervisor on theirs.
-  - **Real-time sync:** Navigator submits → Firestore document written → supervisor's management
-    dashboard updates live via `onSnapshot` listener.
-  - **Re-take:** Same name submits again → Firestore document is overwritten (clean re-take).
-- **Architecture section approved.** Next section to design: role flow (Start screen gate,
-  navigator vs. supervisor UX paths, what each role can and cannot see).
-- **Files that will change:** `src/lib/firebase.js` (new), `src/lib/db.js` (new),
-  `src/App.jsx`, `src/components/Start.jsx`, `src/data/navigators.js` (SAMPLE_NAVIGATORS
-  removed), `src/data/config.js` (add `SUPERVISOR_PASSCODE`). `.env.local` (Firebase config,
-  gitignored).
-- **Files that will NOT change:** `src/lib/scoring.js`, `src/lib/scoring.test.js`, all other
-  components (they receive real Firestore-sourced rows instead of sample rows, but their APIs
-  are unchanged).
-- **Status:** Design doc not yet written. Resume from §2 of design (role flow) in next chat.
+### 2026-06-24 — Firebase pilot design complete; implementation plan written
+- **What happened:** Full design session completed. Spec and implementation plan written,
+  reviewed, and committed.
+- **Key decisions locked:**
+  - **Persistence:** Firebase/Firestore (free Spark tier). Two collections: `roster` + `results`,
+    both UUID-keyed (never name-keyed — no typo/collision risk).
+  - **Identity:** Navigator selects name from supervisor-managed roster dropdown + enters a
+    4-digit PIN. Supervisor enters hardcoded passcode from `config.js`.
+  - **Role split:** `navigator` (own dashboard: per-domain breakdown, strengths/gaps, mentor
+    suggestions, assigned training) and `supervisor` (full matrix/overview/training, live via
+    `onSnapshot`).
+  - **Session:** `src/lib/session.js` owns all localStorage state; exposes `{ role, name,
+    navigatorId }` contract; swappable for real auth with no downstream changes.
+  - **Sample data:** `SAMPLE_NAVIGATORS` removed. Matrix starts empty; fills with real submissions.
+  - **Roster management:** Supervisor adds navigators (name + PIN) via "Add Navigator" form in
+    the Navigators tab. Roster shows all members including "Not yet taken" state.
+- **Design doc:** `docs/superpowers/specs/2026-06-24-firebase-pilot-design.md`
+- **Implementation plan:** `docs/superpowers/plans/2026-06-24-firebase-pilot-plan.md`
+- **Status:** Ready to implement. Phase 1 (foundation, no Firebase config needed) can start
+  immediately. Phases 2–9 blocked on owner creating the Firebase project and providing
+  `.env.local` config.
 
 ---
 
@@ -695,27 +687,22 @@ npx gh-pages -d dist --dotfiles   # publish dist/ to gh-pages branch
    are provided.
 
 **Active work items:**
-- **[IN PROGRESS]** Real-webapp design (Firebase/Firestore pilot). Design session was interrupted
-  mid-brainstorm. **Resume point:** Section 2 of design (role flow — how navigator vs. supervisor
-  enters and what each sees). Architecture (Section 1) was approved.
-  - Invoke the `/brainstorming` skill to continue. Brief it with: "We are mid-design on converting
-    this prototype into a real multi-user webapp. Firebase/Firestore is the chosen persistence layer
-    (free Spark tier, real-time, static site stays on GitHub Pages). No login — navigator types
-    their name, supervisor uses a hardcoded passcode from config.js. Two roles: navigator (own
-    dashboard only) and supervisor (full matrix/overview/training). Sample navigators removed.
-    Architecture section approved. Now design Section 2: the role flow — Start screen gate,
-    navigator UX path, supervisor UX path, what each role can and cannot see."
+- **[READY TO IMPLEMENT]** Firebase pilot. Design complete; plan written.
+  - **Phase 1 (no Firebase config needed):** install Firebase SDK, create `.env.local.example`,
+    `src/lib/firebase.js`, add `SUPERVISOR_PASSCODE` to `config.js`, create `src/lib/session.js`.
+  - **Phases 2–9:** blocked on owner providing Firebase project config for `.env.local`.
+  - Full step-by-step plan: `docs/superpowers/plans/2026-06-24-firebase-pilot-plan.md`.
 
 **Blockers:**
-- Firebase project not yet created (owner needs to create it at console.firebase.google.com and
-  provide the config object for `.env.local`).
+- **Firebase config** — owner must create project at console.firebase.google.com and fill in
+  `.env.local` from `.env.local.example` before Phases 2–9 can proceed.
 - Real per-department question content requires additional SOPs from the owner.
 - Real training materials needed to replace mockup module content.
 
 **Upcoming milestones:**
 - ✅ First automated tests for `scoring.js` — done 2026-06-23 (Vitest, 38 tests).
-- Firebase pilot design doc + implementation plan (next immediate step).
-- Firebase pilot implementation + redeploy.
+- ✅ Firebase pilot design doc + implementation plan — done 2026-06-24.
+- Firebase pilot implementation + redeploy (next).
 - Next test step after pilot: component/integration tests (jsdom + Testing Library).
 
 ---
