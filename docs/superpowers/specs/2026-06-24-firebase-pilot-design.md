@@ -11,11 +11,12 @@
 ### Persistence
 - **Firebase / Firestore** (free Spark tier).
 - Real-time, no server needed, compatible with GitHub Pages static hosting.
-- Each navigator's result is one Firestore document, keyed by name.
+- Two Firestore collections: `roster` (supervisor-managed navigator list) and `results` (submissions). Both keyed by UUID — never by name.
 
 ### Identity / Auth
-- **No login system.** Navigators type their name; supervisors enter a hardcoded passcode.
-- Passcode stored in `src/data/config.js` as `SUPERVISOR_PASSCODE`. This file is in the public repo, so the passcode is visible to anyone who reads the source. This is **acceptable for a small trusted pilot** (no sensitive data, no real auth required) but must be replaced with proper auth before any public-facing production deployment.
+- **No login system.** Navigators select their name from a roster dropdown and enter a PIN. Supervisors enter a hardcoded passcode.
+- **Navigator PIN:** a short code (4 digits) set by the supervisor when adding them to the roster. Shared privately (e.g. Slack DM). Prevents one navigator from opening another's dashboard.
+- **Supervisor passcode** stored in `src/data/config.js` as `SUPERVISOR_PASSCODE`. This file is in the public repo, so the passcode is visible to anyone who reads the source. This is **acceptable for a small trusted pilot** (no sensitive data, no real auth required) but must be replaced with proper auth before any public-facing production deployment.
 
 ### Roles
 Two distinct roles with structurally separate views:
@@ -32,17 +33,18 @@ Laptop only (no mobile optimisation required for this pilot).
 Navigator submits → Firestore document written → supervisor's dashboard updates live via `onSnapshot` listener. No manual refresh required.
 
 ### Re-take
-Same name submits again → Firestore document overwritten (clean re-take). No version history for the pilot.
+Same navigator submits again → their `results` document (keyed by UUID) is overwritten. No version history for the pilot. Name typos are eliminated because the navigator selects from the roster dropdown, not a free-text field.
 
 ### Files that will change
 | File | Change |
 |---|---|
 | `src/lib/firebase.js` | New — Firebase app init + Firestore instance |
-| `src/lib/db.js` | New — Firestore helpers: `saveResult` (write), `getResult(name)` (navigator one-time read), `subscribeResults(cb)` (supervisor live listener) |
+| `src/lib/db.js` | New — Firestore helpers: `getRoster()` (dropdown population), `addToRoster(name, pin)` (supervisor), `saveResult(navigatorId, name, scores)`, `getResult(navigatorId)` (navigator one-time read), `subscribeResults(cb)` + `subscribeRoster(cb)` (supervisor live listeners) |
 | `src/lib/session.js` | New — localStorage session layer (`getSession`, `setSession`, `clearSession`) |
 | `src/App.jsx` | Role-branched router; reads session; subscribes to Firestore |
 | `src/components/Start.jsx` | Becomes the role gate |
 | `src/components/Nav.jsx` | Navigator variant (2 tabs) vs supervisor variant (full) |
+| `src/components/Navigators.jsx` | Add "Add Navigator" button + form (supervisor only) |
 | `src/data/navigators.js` | `SAMPLE_NAVIGATORS` removed |
 | `src/data/config.js` | Add `SUPERVISOR_PASSCODE` |
 | `.env.local` | Firebase config (gitignored) |
@@ -58,7 +60,7 @@ Same name submits again → Firestore document overwritten (clean re-take). No v
 
 The Start screen opens with an explicit **role selector**: "I'm a navigator" / "I'm a supervisor."
 
-- **Navigator** → name entry sub-screen
+- **Navigator** → roster dropdown + PIN sub-screen
 - **Supervisor** → passcode entry sub-screen (validated against `SUPERVISOR_PASSCODE`)
 
 A wrong passcode shows an inline error and stays on the gate. Never reveals whether the input "almost" matched.
@@ -68,9 +70,11 @@ Session is persisted in `localStorage` via `src/lib/session.js`. On return visit
 ### 2.2 Navigator path
 
 ```
-Pick "Navigator" → enter name → check Firestore for that name
-   ├─ No prior result  → take the check → submit → personal dashboard
-   └─ Prior result      → personal dashboard directly (full analysis, no retake prompt)
+Pick "Navigator" → select name from roster dropdown → enter PIN
+   ├─ Wrong PIN         → inline error, stay on gate
+   └─ Correct PIN       → check Firestore results for this navigator's UUID
+         ├─ No prior result  → take the check → submit → personal dashboard
+         └─ Prior result      → personal dashboard directly (full analysis, no retake prompt)
 ```
 
 **Personal dashboard** — the returning-navigator landing and the post-submit destination:
@@ -109,6 +113,7 @@ Plus a **Sign out** link to clear the session and return to the Start gate.
 | Navigators list | ❌ | ✅ |
 | Training tab (full) | ❌ | ✅ |
 | DeptBar (department switch) | ❌ | ✅ |
+| Manage navigator roster (add/view) | ❌ | ✅ |
 | Take the check | ✅ | — |
 | My results tab | ✅ | — |
 | My training tab | ✅ | — |
@@ -118,9 +123,9 @@ Plus a **Sign out** link to clear the session and return to the Start gate.
 `src/lib/session.js` is the single owner of all session state. It reads/writes `localStorage` and exposes a stable contract:
 
 ```js
-getSession()            // → { role: 'navigator'|'supervisor', name } | null
-setSession(role, name)  // call after successful role entry
-clearSession()          // "Switch user" / "Sign out"
+getSession()                          // → { role, name, navigatorId? } | null
+setSession(role, name, navigatorId?)  // navigatorId set for navigator role only
+clearSession()                        // "Switch user" / "Sign out"
 ```
 
 `App` calls `getSession()` on mount. If a session exists, the gate is skipped.
@@ -129,13 +134,24 @@ clearSession()          // "Switch user" / "Sign out"
 
 ### 2.6 Firestore data shape
 
+Two collections. Both keyed by UUID — never by name. Same-name collisions are impossible.
+
 ```js
-// Collection: results
-// Document ID: navigator name (lowercased + trimmed, e.g. "sarah chen")
-// ⚠ Pilot constraint: two navigators with the same name will collide.
-// For ~3–10 known navigators this is acceptable; use a UUID key for production.
+// Collection: roster
+// Document ID: UUID (auto-generated by Firestore on addToRoster)
+// Managed by supervisor via the Navigators tab "Add Navigator" form.
 {
-  name: "Sarah Chen",          // display name as entered
+  name: "Sarah Chen",     // display name shown in dropdown
+  pin: "4821",            // 4-digit PIN, supervisor shares privately
+  createdAt: Timestamp
+}
+
+// Collection: results
+// Document ID: same UUID as the navigator's roster entry
+// Written on check submit; overwritten on retake.
+{
+  name: "Sarah Chen",       // denormalised for display without a roster join
+  navigatorId: "<uuid>",    // back-reference to roster entry
   submittedAt: Timestamp,
   scores: {
     scheduling: 80,
@@ -147,6 +163,8 @@ clearSession()          // "Switch user" / "Sign out"
 ```
 
 Levels (`learning` / `solid` / `canTeach`) are **never stored** — always derived client-side by `scoreToLevel()` from `scoring.js`. Thresholds stay tunable without a data migration.
+
+**Supervisor Navigators tab** shows the full roster (not just those who've submitted). Navigators who haven't submitted yet appear with a "Not yet taken" state. The "Add Navigator" form takes a name + 4-digit PIN and calls `addToRoster()`.
 
 ---
 
