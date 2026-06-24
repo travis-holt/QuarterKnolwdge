@@ -4,6 +4,9 @@
   "version": "0.1.0",
   "type": "module",
   "description": "Quarterly Knowledge Check prototype — capability map for patient navigators",
+  "engines": {
+    "node": ">=20.0.0"
+  },
   "scripts": {
     "dev": "vite",
     "build": "vite build",
