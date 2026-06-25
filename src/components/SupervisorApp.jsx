@@ -102,6 +102,9 @@ export default function SupervisorApp({ onSignOut }) {
     setView('navigator');
   };
 
+  // Roster UUID for the currently selected navigator (used to fetch interviews).
+  const selectedNavigatorId = roster.find((m) => m.name === selected)?.id ?? null;
+
   const openModule = (domainId, returnTo = 'training') => {
     setModuleDomain(domainId);
     setModuleReturn(returnTo);
@@ -231,6 +234,7 @@ export default function SupervisorApp({ onSignOut }) {
                 onBack={() => setView('navigators')}
                 onOpenNavigator={openNavigator}
                 onPreviewModule={(d) => openModule(d, 'navigator')}
+                navigatorId={selectedNavigatorId}
               />
             )}
 

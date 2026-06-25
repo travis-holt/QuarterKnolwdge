@@ -1,14 +1,48 @@
+import { useState, useEffect } from 'react';
 import { DOMAINS } from '../data/questions.js';
 import { COMPETENCIES, competencyName } from '../data/competencies.js';
 import { DEPARTMENTS } from '../data/departments.js';
 import { LEVELS } from '../data/config.js';
 import { findRow, mentorSuggestions, trainingForRow } from '../lib/scoring.js';
+import { getInterviews } from '../lib/db.js';
 
 const domainName = (id) => DOMAINS.find((d) => d.id === id)?.name ?? id;
 
-export default function NavigatorDetail({ rows, name, deptName, deptMatrix, onBack, onOpenNavigator, onPreviewModule }) {
+function formatDate(ts) {
+  if (!ts) return '—';
+  const date = typeof ts.toDate === 'function' ? ts.toDate() : new Date((ts.seconds ?? 0) * 1000);
+  return date.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
+}
+
+export default function NavigatorDetail({ rows, name, deptName, deptMatrix, onBack, onOpenNavigator, onPreviewModule, navigatorId }) {
   const row = findRow(rows, name);
   const deptRow = deptMatrix?.find((r) => r.name === name);
+
+  // Practice interview sessions — only fetched when supervisors have the navigatorId.
+  const [interviews, setInterviews] = useState(null); // null = loading
+  const [expandedId, setExpandedId] = useState(null);
+
+  useEffect(() => {
+    if (!navigatorId) return;
+    setInterviews(null);
+    setExpandedId(null);
+    getInterviews(navigatorId)
+      .then((list) =>
+        setInterviews(
+          [...list].sort((a, b) => {
+            const aT = a.endedAt?.seconds ?? 0;
+            const bT = b.endedAt?.seconds ?? 0;
+            return bT - aT; // newest first
+          })
+        )
+      )
+      .catch((err) => {
+        console.error('getInterviews:', err);
+        setInterviews([]);
+      });
+  }, [navigatorId]);
+
+  const toggleExpand = (id) => setExpandedId((prev) => (prev === id ? null : id));
 
   if (!row) {
     return (
@@ -241,6 +275,70 @@ export default function NavigatorDetail({ rows, name, deptName, deptMatrix, onBa
               </li>
             ))}
           </ul>
+        </div>
+      )}
+
+      {/* ── Practice sessions (supervisor only — requires navigatorId) ── */}
+      {navigatorId && (
+        <div className="card navdetail__panel">
+          <h2 className="overview__panel-title">Practice sessions</h2>
+          <p className="readoff__sub">
+            Transcripts from {row.name}&rsquo;s roleplay practice calls.
+          </p>
+          {interviews === null ? (
+            <div className="interview-log__loading">
+              <div className="skeleton skeleton--line" style={{ width: '55%' }} />
+              <div className="skeleton skeleton--line" style={{ width: '40%' }} />
+            </div>
+          ) : interviews.length === 0 ? (
+            <p className="readoff__empty">No practice sessions recorded yet.</p>
+          ) : (
+            <ul className="interview-log">
+              {interviews.map((session) => {
+                const isOpen = expandedId === session.id;
+                const navTurns = session.transcript.filter((t) => t.role === 'navigator').length;
+                return (
+                  <li key={session.id} className={`interview-log__item ${isOpen ? 'is-open' : ''}`}>
+                    <button
+                      className="interview-log__header"
+                      onClick={() => toggleExpand(session.id)}
+                      aria-expanded={isOpen}
+                    >
+                      <span className="tag">{domainName(session.domainId)}</span>
+                      <span className="interview-log__caller">
+                        Caller: <strong>{session.callerName}</strong>
+                      </span>
+                      <span className="interview-log__meta">
+                        {navTurns} {navTurns === 1 ? 'response' : 'responses'} · {formatDate(session.endedAt)}
+                      </span>
+                      <span className="interview-log__toggle" aria-hidden="true">
+                        {isOpen ? '↑' : '↓'}
+                      </span>
+                    </button>
+
+                    {isOpen && (
+                      <div className="interview-log__body">
+                        <p className="interview-log__scenario">{session.scenario}</p>
+                        <div className="interview-log__chat">
+                          {session.transcript.map((turn, i) => (
+                            <div
+                              key={i}
+                              className={`interview-log__turn interview-log__turn--${turn.role}`}
+                            >
+                              <span className="interview-log__turn-label">
+                                {turn.role === 'patient' ? session.callerName : row.name}
+                              </span>
+                              <p className="interview-log__turn-text">{turn.text}</p>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                  </li>
+                );
+              })}
+            </ul>
+          )}
         </div>
       )}
     </section>
