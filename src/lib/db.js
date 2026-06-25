@@ -55,6 +55,38 @@ export async function addToRoster(name, pin) {
 }
 
 /**
+ * Supervisor: edit a roster entry's name and/or PIN.
+ * @param {string} id   roster UUID
+ * @param {{ name?: string, pin?: string }} patch
+ */
+export async function updateRosterEntry(id, patch) {
+  const update = {};
+  if (patch.name !== undefined) update.name = patch.name.trim();
+  if (patch.pin !== undefined) update.pin = String(patch.pin).trim();
+  await updateDoc(doc(db, ROSTER, id), update);
+}
+
+/**
+ * Supervisor: activate or deactivate a navigator.
+ * Inactive navigators are hidden from the sign-in dropdown and floor stats
+ * but their data is preserved.
+ * @param {string} id
+ * @param {'active'|'inactive'} status
+ */
+export async function setRosterStatus(id, status) {
+  await updateDoc(doc(db, ROSTER, id), { status });
+}
+
+/**
+ * Supervisor: delete a navigator's result so they can retake the check.
+ * The roster entry is untouched; only the submission is removed.
+ * @param {string} navigatorId  roster UUID (same as the results doc id)
+ */
+export async function clearResult(navigatorId) {
+  await deleteDoc(doc(db, RESULTS, navigatorId));
+}
+
+/**
  * One-time fetch of the full roster (for the navigator dropdown on the gate).
  * @returns {Promise<{id:string,name:string,pin:string}[]>}
  */

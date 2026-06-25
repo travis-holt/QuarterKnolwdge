@@ -10,7 +10,7 @@
 > [§8 Current System State](#8-current-system-state) and [§15 Current Priorities](#15-current-priorities)
 > accurate at all times.
 >
-> **Last updated:** 2026-06-25 (full SOP context; GENERATION_SECRET removed; Gemini generation live) ·
+> **Last updated:** 2026-06-25 (roster CRUD: edit/deactivate/reset with confirmation gate) ·
 > **Doc maintainer:** Claude (AI agent) + repo owner. Assumptions are explicitly marked **[ASSUMPTION]**.
 
 ---
@@ -239,13 +239,21 @@ training assignments.
   `NavigatorDetail`, competency distribution on `Overview`. Stored as `results.competencyScores`.
 - **Status:** Complete.
 
-### F13 — Rule-Based Coaching (post-check)
-- **Purpose:** Immediate, specific feedback after a check — no LLM.
-- **User benefit:** The navigator leaves knowing exactly what to reinforce and why.
-- **Technical implementation:** [src/components/Coaching.jsx](src/components/Coaching.jsx) — per-question
-  review (your choice + points + best answer + both authored rationales) and competency strengths/gaps.
-  Shown between submit and the dashboard.
-- **Status:** Complete.
+### F13 — Two-Layer Coaching (post-check)
+- **Purpose:** Immediate, specific feedback after a check — rule-based baseline + optional AI layer.
+- **User benefit:** The navigator leaves knowing exactly what to reinforce and why; AI layer adds
+  personalized 2–3 sentence coaching grounded in what they actually got wrong.
+- **Technical implementation:** [src/components/Coaching.jsx](src/components/Coaching.jsx) — on mount,
+  fires `POST /api/generate-coaching` (async) and shows a skeleton while Gemini generates; renders
+  AI coaching notes per weak competency above the per-question review when ready; silently falls back
+  to rule-based view if the call fails or returns nothing. Rule-based layer (competency chips +
+  per-question rationale review) is always present.
+  [api/generate-coaching.js](api/generate-coaching.js) — Gemini proxy (same key rotation as
+  `generate-scenarios`); builds a digest of missed questions with authored rationales as grounding;
+  validates output (only known competency IDs with non-empty strings); returns `{ coaching: {...} }`.
+  Temperature 0.4 for consistency; only coaches competencies below `canTeach` threshold. Advisory
+  only — never touches a score or Firestore.
+- **Status:** Complete (Phase 2 — first AI-in-the-live-path feature).
 
 ### F14 — Question Bank + Gemini Scenario Generation (review gate)
 - **Purpose:** Grow the check from the SOP; questions are live Firestore data, not a static file.
@@ -791,32 +799,84 @@ stateDiagram-v2
   (root + CSS); new tokens/fonts confirmed in the bundle.
 - **Status:** Complete (code). Presentation-only; safe to deploy with the rest.
 
+### 2026-06-25 — Roster CRUD: edit, deactivate, reset with confirmation gate
+- **What changed:** Filled the CRUD gap in the roster layer — previously navigators could be added
+  but not edited, deactivated, or had their result cleared. Explicitly excluded fabricated
+  performance editing, permissions, and bulk operations (see §6 decisions for rationale).
+  - **`db.js`:** three new exports — `updateRosterEntry(id, patch)` (name/PIN patch),
+    `setRosterStatus(id, 'active'|'inactive')` (soft deactivation), `clearResult(navigatorId)`
+    (deletes result so navigator can retake; roster entry untouched).
+  - **`Navigators.jsx`:** rewritten. Cards are now `<div>` (not `<button>`) with an explicit "View
+    dashboard →" button inside, removing the invalid button-in-button HTML. Each card gets a
+    "Manage" button revealing: **Edit name/PIN** (inline form, pre-filled, dup check excluding self),
+    **Reset result** (only if they have a result), and **Deactivate** / **Reactivate**. All
+    destructive actions (deactivate, reset, reactivate) require an inline confirmation prompt before
+    executing. Inactive navigators shown in a separate "Inactive" section at the bottom of the tab
+    with a dashed, de-emphasised card style.
+  - **`SupervisorApp.jsx`:** four new handlers (`handleUpdateNavigator`, `handleDeactivateNavigator`,
+    `handleReactivateNavigator`, `handleResetResult`). Inactive navigators are now filtered out of
+    `activeResults` before `buildMatrixRows` — deactivated team members don't skew floor gaps,
+    can-teach tallies, or training cohorts.
+  - **`Start.jsx`:** navigator dropdown in the sign-in gate now filters out `status === 'inactive'`
+    roster members so deactivated navigators can't sign in.
+  - **`styles.css`:** new `.nav-card__footer`, `.nav-card__manage*`, `.nav-card__confirm*`,
+    `.nav-card__edit-form`, `.nav-card--inactive`, `.nav-inactive-section*` rules.
+- **Design decisions held:** score editing refused (preserves measurement integrity); permissions
+  refused (no auth system to back it); bulk actions refused (pilot scale doesn't warrant the risk);
+  activity history deferred to the quarter-over-quarter roadmap item.
+- **Files affected:** `src/lib/db.js`, `src/components/Navigators.jsx`, `src/components/SupervisorApp.jsx`,
+  `src/components/Start.jsx`, `src/styles.css`.
+- **Verification:** `npm test` → **46 passing**; `npm run build` → clean.
+- **Status:** Complete.
+
+### 2026-06-25 — Generative AI coaching (Phase 2, first feature)
+- **What changed:** Added a second coaching layer that runs Gemini asynchronously after a navigator
+  submits a check — producing a 2–3 sentence personalised coaching note per weak competency, grounded
+  in the authored option rationales (not free-form SOP knowledge). The rule-based layer is unchanged
+  and always present as the baseline/fallback.
+  - **New file:** `api/generate-coaching.js` — Gemini proxy (same key rotation + `SUPERVISOR_PASSCODE`
+    gate as `generate-scenarios`). Builds a concise digest of only the missed/partial questions with
+    their chosen rationale vs best rationale as grounding context. Calls `gemini-2.5-flash` at
+    temperature 0.4. Validates output: only known competency IDs with non-empty strings kept. Returns
+    `{ coaching: { [compId]: "note" } }`. Advisory only — never writes to Firestore or affects scores.
+  - **`server.js`:** new `POST /api/generate-coaching` route.
+  - **`Coaching.jsx`:** fires the fetch on mount; shows an `AI`-badged skeleton card while loading;
+    renders coaching notes (one item per weak competency, accent-rail style) above the per-question
+    review when ready; silently omits the section if the call fails or returns empty.
+  - **`styles.css`:** new `.coaching__ai*` rules (badge, skeleton, list, item, comp label, note).
+- **Files affected:** new `api/generate-coaching.js`; edited `server.js`, `src/components/Coaching.jsx`,
+  `src/styles.css`.
+- **Verification:** `npm test` → **46 passing**; `npm run build` → clean; `node --check
+  api/generate-coaching.js` → OK; `node --check server.js` → OK.
+- **Status:** Complete. Deploys on next push to `main`.
+
 ---
 
 ## 8. Current System State
 
 - **Working end to end (logic + UI):** supervisor adds navigators / generates+curates questions →
-  navigators sign in → take the active check → land on **coaching** → per-domain **and**
+  navigators sign in → take the active check → land on **coaching** (rule-based + AI layer) → per-domain **and**
   per-competency results persist to Firestore → supervisor matrix/overview update live (incl.
   competency distribution) → navigator/training dashboards → department switching. Build clean,
   tests green (`npm test` → **46 passing**).
 - **Existing functionality:** features F1–F14 (see [§4](#4-feature-inventory)) are **Complete** in
-  code. F11 (Vercel) + F14 (Gemini generation) need the owner's Vercel/env setup to run live.
+  code. F13 (Coaching) now includes the Phase 2 AI layer.
 - **Experimental / mockup:**
   - Training **content** is mockup (flagged in UI). Logic is real.
   - **Adult Medicine, OB/GYN, Behavioural Health** are not assessed; only **Pediatrics** is live.
 - **Test coverage:** `lib/scoring.js` is unit-tested (46 tests, incl. competency scoring). Components,
-  the role apps, and the serverless function are **not** yet tested.
+  the role apps, and the serverless functions are **not** yet tested.
 - **Incomplete areas:** no CI, no trend/history, no mentor pairing, no coverage/bus-factor view, no
-  completion tracking; no component/UI tests; open-ended/interview/generative-coaching = Phase 2.
+  completion tracking; no component/UI tests. Remaining Phase 2: open-ended AI grading, interview
+  simulation, per-signal sub-scoring.
 - **Active integrations:** **Firebase / Firestore** (live) + **Gemini via Railway Express server**
-  (code complete; `GEMINI_API_KEYS` confirmed set in Railway Variables; live on next deploy).
+  (generation + coaching both code-complete; `GEMINI_API_KEYS` set in Railway Variables).
 - **Deployment status:** **Railway** (Git-connected to `main`). Railway auto-deploys on push.
   `VITE_FIREBASE_*` and `GEMINI_API_KEYS` confirmed set in Railway Variables. No `GENERATION_SECRET`
   needed — server falls back to `SUPERVISOR_PASSCODE`.
 - **Counts (today):** 6 domains · 9 competencies · 18 seed questions (bank now grows in Firestore) ·
   4 departments (Pediatrics live) · **46** unit tests · **3** Firestore collections
-  (`roster`, `results`, `questions`) · 2 serverless functions.
+  (`roster`, `results`, `questions`) · **3** serverless functions (`generate-scenarios`, `generate-coaching`, `health`).
 
 ---
 
@@ -879,16 +939,19 @@ stateDiagram-v2
     submittedAt }`. Shares the navigator's roster UUID (a retake overwrites cleanly). Older docs may
     lack `competencyScores` (tolerated).
   - `questions/{uuid}` → the question shape above. Only `status:'active'` appears in the check.
-- **Serverless endpoint:** `POST /api/generate-scenarios` `{ domainId, count, secret }` → `{ questions }`
-  (validated drafts). `GET /api/health` → `{ ok }`.
+- **Serverless endpoints:**
+  - `POST /api/generate-scenarios` `{ domainId, count, secret }` → `{ questions }` (validated drafts).
+  - `POST /api/generate-coaching` `{ answers, questions, competencyScores, name, secret }` → `{ coaching: { [compId]: string } }` (personalised AI notes per weak competency; empty object if all at canTeach or all correct).
+  - `GET /api/health` → `{ ok }`.
 - **Env vars:** client (gitignored `.env.local`, build-time) `VITE_FIREBASE_*`; **server-only**
   (Railway service Variables — never `VITE_`-prefixed) `GEMINI_API_KEYS` (comma-separated; rotated on
   rate-limit) or single `GEMINI_API_KEY`. `GENERATION_SECRET` is optional — server falls back to
   `SUPERVISOR_PASSCODE` when not set. **VITE_FIREBASE_* must be in Railway Variables before the
   first build** — they're baked into the JS bundle at build time.
 - **db.js API** (the only Firestore surface): roster — `addToRoster`, `getRoster`,
-  `subscribeRoster(cb,onError?)`; results — `getResult`, `saveResult(navigatorId, name, scores,
-  competencyScores?)`, `subscribeResults(cb,onError?)`; questions — `subscribeQuestions(cb,onError?)`,
+  `subscribeRoster(cb,onError?)`, `updateRosterEntry(id,patch)`, `setRosterStatus(id,status)`;
+  results — `getResult`, `saveResult(navigatorId, name, scores, competencyScores?)`,
+  `clearResult(navigatorId)`, `subscribeResults(cb,onError?)`; questions — `subscribeQuestions(cb,onError?)`,
   `getActiveQuestions()`, `seedQuestionsIfEmpty(seed)`, `saveDraftQuestions(drafts, source?)`,
   `updateQuestion(id,patch)`, `activateQuestion(id)`, `archiveQuestion(id)`, `deleteQuestion(id)`.
 - **Secrets:** `SUPERVISOR_PASSCODE` is in the repo (pilot-acceptable); `GEMINI_API_KEYS` is a
@@ -1075,16 +1138,14 @@ npm run test:watch   # run Vitest in watch mode
 ## 15. Current Priorities
 
 1. **Maintain this CLAUDE.md** on every change (highest standing priority).
-2. **Verify Generate flow end-to-end:** after this push, hit `/api/health` on the Railway URL, then
-   go to Question Bank → pick a domain → Generate → confirm SOP-grounded scenarios come back →
-   review → activate → verify they appear in the check.
-3. **Component/integration tests** — highest unresolved tech debt given role-routing, the gate, the
-   coaching flow, and the question-bank UI (jsdom + Testing Library).
-4. **Phase 2 (needs the same serverless layer):** AI-graded open-ended responses, interview
-   simulation, generative coaching, finer per-signal sub-scoring.
+2. **Verify end-to-end on Railway:** `/api/health` → Generate → review → activate → check; then take
+   a check and confirm AI coaching notes appear in the coaching screen.
+3. **Component/integration tests** — highest unresolved tech debt (jsdom + Testing Library).
+4. **Remaining Phase 2:** per-signal sub-scoring (deterministic, no LLM), open-ended AI grading
+   (with rubric + supervisor override), interview simulation.
 
 **Active work items:**
-- Verify Generate → review → activate flow on Railway after this push.
+- Push to `main` → Railway auto-deploys → verify AI coaching end-to-end.
 
 **Blockers:**
 - Real per-department question content requires additional SOPs from the owner.
@@ -1096,7 +1157,8 @@ npm run test:watch   # run Vitest in watch mode
 - ✅ Competency engine + Gemini scenario generation (code) — done 2026-06-24.
 - ✅ Railway deployment: Express server + build fixes — done 2026-06-25.
 - ✅ Full SOP context + GENERATION_SECRET removed — done 2026-06-25.
-- Verify Generate → review → activate flow on Railway — next step.
+- ✅ Generative AI coaching (Phase 2, first feature) — done 2026-06-25.
+- Verify AI coaching + Generate → review → activate on Railway — next step.
 - Component/integration tests (jsdom + Testing Library) — next technical priority.
 
 ---

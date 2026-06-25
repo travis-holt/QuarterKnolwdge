@@ -102,8 +102,12 @@ function NavigatorGate({ onBack, onEnter }) {
     getRoster()
       .then((list) => {
         if (!active) return;
-        // Alphabetical for a predictable dropdown.
-        setRoster([...list].sort((a, b) => a.name.localeCompare(b.name)));
+        // Only active navigators can sign in; sort alphabetically.
+        setRoster(
+          [...list]
+            .filter((r) => r.status !== 'inactive')
+            .sort((a, b) => a.name.localeCompare(b.name))
+        );
       })
       .catch(() => active && setLoadError(true));
     return () => {

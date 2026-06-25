@@ -15,6 +15,9 @@ import {
   subscribeResults,
   subscribeRoster,
   addToRoster,
+  updateRosterEntry,
+  setRosterStatus,
+  clearResult,
   subscribeQuestions,
   seedQuestionsIfEmpty,
   saveDraftQuestions,
@@ -76,8 +79,15 @@ export default function SupervisorApp({ onSignOut }) {
   const isAssessed = selectedDept === ASSESSED_DEPT;
   const deptName = departmentName(selectedDept);
 
+  // Exclude inactive navigators from the matrix and floor stats so deactivated
+  // team members don't skew gaps, can-teach tallies, or training cohorts.
+  const activeRosterIds = new Set(
+    roster.filter((m) => m.status !== 'inactive').map((m) => m.id)
+  );
+  const activeResults = results.filter((r) => activeRosterIds.has(r.navigatorId));
+
   // The live check only scores Pediatrics, so that's where real rows come from.
-  const pediatricRows = buildMatrixRows(results, null);
+  const pediatricRows = buildMatrixRows(activeResults, null);
   // Analytics views are empty for non-assessed departments (no live check yet).
   const rows = isAssessed ? pediatricRows : [];
   // Cross-department strip: wrap each result as a single-department navigator so
@@ -99,6 +109,10 @@ export default function SupervisorApp({ onSignOut }) {
   };
 
   const handleAddNavigator = (name, pin) => addToRoster(name, pin);
+  const handleUpdateNavigator = (id, patch) => updateRosterEntry(id, patch);
+  const handleDeactivateNavigator = (id) => setRosterStatus(id, 'inactive');
+  const handleReactivateNavigator = (id) => setRosterStatus(id, 'active');
+  const handleResetResult = (id) => clearResult(id);
 
   // Generate scenarios via the serverless Gemini proxy. The function returns
   // validated draft questions; we persist them as `draft` for review (they never
@@ -192,6 +206,10 @@ export default function SupervisorApp({ onSignOut }) {
                 deptName={departmentName(ASSESSED_DEPT)}
                 onOpenNavigator={openNavigator}
                 onAddNavigator={handleAddNavigator}
+                onUpdateNavigator={handleUpdateNavigator}
+                onDeactivateNavigator={handleDeactivateNavigator}
+                onReactivateNavigator={handleReactivateNavigator}
+                onResetResult={handleResetResult}
               />
             )}
 

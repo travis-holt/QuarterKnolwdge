@@ -3,18 +3,234 @@ import { DOMAINS } from '../data/questions.js';
 import { LEVELS, LEVEL_ORDER } from '../data/config.js';
 import { findRow } from '../lib/scoring.js';
 
-// A compact level summary (counts per level) for a navigator card.
+// ─────────────────────────────────────────────────────────────────────────────
+// Navigators — supervisor's roster management tab.
+//
+// Three sections:
+//   1. Active navigators who have taken the check (clickable → dashboard)
+//   2. Active navigators who haven't taken the check yet (pending)
+//   3. Inactive navigators (collapsed section at the bottom)
+//
+// Each card exposes a Manage panel with:
+//   - Edit (name + PIN)
+//   - Reset result (allow retake) — only if they've submitted
+//   - Deactivate / Reactivate
+// All destructive actions are gated behind an inline confirmation prompt.
+// ─────────────────────────────────────────────────────────────────────────────
+
 function levelCounts(row) {
   const counts = { learning: 0, solid: 0, canTeach: 0 };
   for (const d of DOMAINS) counts[row.levels[d.id]] += 1;
   return counts;
 }
 
-// Supervisor's Navigators tab: the full roster (everyone the supervisor has
-// added) merged with results. Navigators who haven't taken the check yet show a
-// "Not yet taken" state. An Add Navigator form manages the roster.
-export default function Navigators({ rows, roster, deptName, onOpenNavigator, onAddNavigator }) {
-  const [showForm, setShowForm] = useState(false);
+export default function Navigators({
+  rows,
+  roster,
+  deptName,
+  onOpenNavigator,
+  onAddNavigator,
+  onUpdateNavigator,
+  onDeactivateNavigator,
+  onReactivateNavigator,
+  onResetResult,
+}) {
+  const [showAddForm, setShowAddForm] = useState(false);
+  // Which card has the manage panel open
+  const [managingId, setManagingId] = useState(null);
+  // Which card is in edit mode
+  const [editingId, setEditingId] = useState(null);
+  // Pending destructive action awaiting confirmation
+  const [confirm, setConfirm] = useState(null); // { id, action, label }
+  const [actionBusy, setActionBusy] = useState(false);
+
+  const activeRoster = roster.filter((m) => m.status !== 'inactive');
+  const inactiveRoster = roster.filter((m) => m.status === 'inactive');
+
+  const stopManaging = () => {
+    setManagingId(null);
+    setEditingId(null);
+    setConfirm(null);
+  };
+
+  const startConfirm = (id, action, label) => {
+    setEditingId(null);
+    setConfirm({ id, action, label });
+  };
+
+  const runConfirm = async () => {
+    if (!confirm || actionBusy) return;
+    setActionBusy(true);
+    try {
+      const { id, action } = confirm;
+      if (action === 'deactivate') await onDeactivateNavigator(id);
+      else if (action === 'reactivate') await onReactivateNavigator(id);
+      else if (action === 'reset') await onResetResult(id);
+    } finally {
+      setActionBusy(false);
+      stopManaging();
+    }
+  };
+
+  const renderCard = (member) => {
+    const row = findRow(rows, member.name);
+    const isInactive = member.status === 'inactive';
+    const isManaging = managingId === member.id;
+    const isEditing = editingId === member.id;
+    const isConfirming = confirm?.id === member.id;
+
+    const cardClass = [
+      'card nav-card',
+      isInactive && 'nav-card--inactive',
+      !row && !isInactive && 'nav-card--pending',
+    ]
+      .filter(Boolean)
+      .join(' ');
+
+    return (
+      <div key={member.id} className={cardClass}>
+        {/* Card header */}
+        <div className="nav-card__top">
+          <span className="nav-card__name">{member.name}</span>
+          {isInactive ? (
+            <span className="nav-card__status-tag nav-card__status-tag--inactive">Inactive</span>
+          ) : !row ? (
+            <span className="nav-card__pending-tag">Not yet taken</span>
+          ) : (
+            <span className="nav-card__ready">{levelCounts(row).canTeach} Can-Teach</span>
+          )}
+        </div>
+
+        {/* Domain color strip (only for navigators with results) */}
+        {row && (
+          <div className="nav-card__strip" aria-hidden="true">
+            {DOMAINS.map((d) => (
+              <span
+                key={d.id}
+                className="nav-card__cell"
+                title={`${d.name}: ${LEVELS[row.levels[d.id]].label}`}
+                style={{ background: LEVELS[row.levels[d.id]].color }}
+              />
+            ))}
+          </div>
+        )}
+
+        {/* Level counts */}
+        {row && (
+          <div className="nav-card__counts">
+            {LEVEL_ORDER.map((lvl) => (
+              <span key={lvl} className="nav-card__count">
+                <span className="legend-swatch" style={{ background: LEVELS[lvl].color }} />
+                {levelCounts(row)[lvl]} {LEVELS[lvl].label}
+              </span>
+            ))}
+          </div>
+        )}
+
+        {/* Pending note */}
+        {!row && !isInactive && (
+          <p className="nav-card__pending-note">Waiting on this navigator to complete the check.</p>
+        )}
+        {!row && !isInactive && (
+          <p className="nav-card__pin">PIN: {member.pin}</p>
+        )}
+
+        {/* ── Management panel ──────────────────────────────────────── */}
+        {isEditing ? (
+          <EditForm
+            member={member}
+            roster={roster}
+            hasResult={!!row}
+            onSave={async (patch) => {
+              await onUpdateNavigator(member.id, patch);
+              stopManaging();
+            }}
+            onCancel={stopManaging}
+          />
+        ) : isConfirming ? (
+          <ConfirmPrompt
+            label={confirm.label}
+            busy={actionBusy}
+            onConfirm={runConfirm}
+            onCancel={stopManaging}
+          />
+        ) : isManaging ? (
+          <div className="nav-card__manage">
+            <div className="nav-card__manage-actions">
+              <button
+                className="btn btn--ghost btn--sm"
+                onClick={() => setEditingId(member.id)}
+              >
+                Edit name / PIN
+              </button>
+              {row && (
+                <button
+                  className="btn btn--ghost btn--sm"
+                  onClick={() =>
+                    startConfirm(
+                      member.id,
+                      'reset',
+                      `Clear ${member.name}'s result? They can retake the check. This cannot be undone.`
+                    )
+                  }
+                >
+                  Reset result
+                </button>
+              )}
+              {isInactive ? (
+                <button
+                  className="btn btn--ghost btn--sm"
+                  onClick={() =>
+                    startConfirm(
+                      member.id,
+                      'reactivate',
+                      `Reactivate ${member.name}? They'll be able to sign in again with their existing PIN.`
+                    )
+                  }
+                >
+                  Reactivate
+                </button>
+              ) : (
+                <button
+                  className="btn btn--ghost btn--sm nav-card__action--danger"
+                  onClick={() =>
+                    startConfirm(
+                      member.id,
+                      'deactivate',
+                      `Deactivate ${member.name}? They won't be able to sign in. Their results stay in the matrix until cleared.`
+                    )
+                  }
+                >
+                  Deactivate
+                </button>
+              )}
+            </div>
+            <button className="linkbtn nav-card__manage-cancel" onClick={stopManaging}>
+              Cancel
+            </button>
+          </div>
+        ) : (
+          /* Default footer: view dashboard (if applicable) + manage button */
+          <div className="nav-card__footer">
+            {row && !isInactive && (
+              <button
+                className="btn btn--ghost btn--sm"
+                onClick={() => onOpenNavigator(row.name)}
+              >
+                View dashboard →
+              </button>
+            )}
+            <button
+              className="btn btn--ghost btn--sm"
+              onClick={() => setManagingId(member.id)}
+            >
+              Manage
+            </button>
+          </div>
+        )}
+      </div>
+    );
+  };
 
   return (
     <section className="navigators stagger">
@@ -24,19 +240,19 @@ export default function Navigators({ rows, roster, deptName, onOpenNavigator, on
             Navigators{deptName && <span className="title-dept"> · {deptName}</span>}
           </h1>
           <p className="overview__lede">
-            Everyone on the roster. Select anyone who has taken the check to open their dashboard.
+            Everyone on the roster. Select anyone who has taken the check to view their dashboard.
           </p>
         </div>
-        <button className="btn btn--primary" onClick={() => setShowForm((s) => !s)}>
-          {showForm ? 'Close' : '+ Add navigator'}
+        <button className="btn btn--primary" onClick={() => setShowAddForm((s) => !s)}>
+          {showAddForm ? 'Close' : '+ Add navigator'}
         </button>
       </header>
 
-      {showForm && (
+      {showAddForm && (
         <AddNavigatorForm
           roster={roster}
           onAdd={onAddNavigator}
-          onDone={() => setShowForm(false)}
+          onDone={() => setShowAddForm(false)}
         />
       )}
 
@@ -49,68 +265,123 @@ export default function Navigators({ rows, roster, deptName, onOpenNavigator, on
           </p>
         </div>
       ) : (
-        <div className="nav-grid">
-          {roster.map((member) => {
-            const row = findRow(rows, member.name);
-            return row ? (
-              <button
-                key={member.id}
-                className="card nav-card"
-                onClick={() => onOpenNavigator(row.name)}
-              >
-                <NavigatorCardBody row={row} />
-              </button>
-            ) : (
-              <div key={member.id} className="card nav-card nav-card--pending">
-                <div className="nav-card__top">
-                  <span className="nav-card__name">{member.name}</span>
-                  <span className="nav-card__pending-tag">Not yet taken</span>
-                </div>
-                <p className="nav-card__pending-note">
-                  Waiting on this navigator to complete the check.
-                </p>
-                <p className="nav-card__pin">PIN: {member.pin}</p>
+        <>
+          {/* Active navigators */}
+          <div className="nav-grid">
+            {activeRoster.map(renderCard)}
+          </div>
+
+          {/* Inactive navigators */}
+          {inactiveRoster.length > 0 && (
+            <div className="nav-inactive-section">
+              <h2 className="nav-inactive-section__title">
+                Inactive · {inactiveRoster.length}
+              </h2>
+              <p className="readoff__sub">
+                These navigators can't sign in. Reactivate them if they rejoin the team.
+              </p>
+              <div className="nav-grid nav-grid--compact">
+                {inactiveRoster.map(renderCard)}
               </div>
-            );
-          })}
-        </div>
+            </div>
+          )}
+        </>
       )}
     </section>
   );
 }
 
-function NavigatorCardBody({ row }) {
-  const counts = levelCounts(row);
+// ── Inline confirmation prompt ─────────────────────────────────────────────────
+function ConfirmPrompt({ label, busy, onConfirm, onCancel }) {
   return (
-    <>
-      <div className="nav-card__top">
-        <span className="nav-card__name">{row.name}</span>
-        <span className="nav-card__ready">{counts.canTeach} Can-Teach</span>
+    <div className="nav-card__confirm">
+      <p className="nav-card__confirm-label">{label}</p>
+      <div className="nav-card__confirm-actions">
+        <button
+          className="btn btn--ghost btn--sm nav-card__action--danger"
+          onClick={onConfirm}
+          disabled={busy}
+        >
+          {busy ? 'Working…' : 'Yes, confirm'}
+        </button>
+        <button className="btn btn--ghost btn--sm" onClick={onCancel} disabled={busy}>
+          Cancel
+        </button>
       </div>
-
-      <div className="nav-card__strip" aria-hidden="true">
-        {DOMAINS.map((d) => (
-          <span
-            key={d.id}
-            className="nav-card__cell"
-            title={`${d.name}: ${LEVELS[row.levels[d.id]].label}`}
-            style={{ background: LEVELS[row.levels[d.id]].color }}
-          />
-        ))}
-      </div>
-
-      <div className="nav-card__counts">
-        {LEVEL_ORDER.map((lvl) => (
-          <span key={lvl} className="nav-card__count">
-            <span className="legend-swatch" style={{ background: LEVELS[lvl].color }} />
-            {counts[lvl]} {LEVELS[lvl].label}
-          </span>
-        ))}
-      </div>
-    </>
+    </div>
   );
 }
 
+// ── Inline edit form ───────────────────────────────────────────────────────────
+function EditForm({ member, roster, hasResult, onSave, onCancel }) {
+  const [name, setName] = useState(member.name);
+  const [pin, setPin] = useState(member.pin);
+  const [error, setError] = useState('');
+  const [busy, setBusy] = useState(false);
+
+  const submit = async (e) => {
+    e.preventDefault();
+    setError('');
+    const trimmedName = name.trim();
+    const trimmedPin = pin.trim();
+    if (!trimmedName) { setError('Name cannot be empty.'); return; }
+    if (!/^\d{4}$/.test(trimmedPin)) { setError('PIN must be exactly 4 digits.'); return; }
+    // Dup check: exclude the current member
+    const dup = roster.some(
+      (r) => r.id !== member.id && r.name.toLowerCase() === trimmedName.toLowerCase()
+    );
+    if (dup) { setError('Another navigator already has that name.'); return; }
+    setBusy(true);
+    try {
+      await onSave({ name: trimmedName, pin: trimmedPin });
+    } catch {
+      setError("Couldn't save. Check the database connection and try again.");
+      setBusy(false);
+    }
+  };
+
+  return (
+    <form className="nav-card__edit-form" onSubmit={submit}>
+      <label className="gate__field">
+        <span className="gate__label">Name</span>
+        <input
+          className="gate__input gate__input--sm"
+          type="text"
+          value={name}
+          onChange={(e) => { setName(e.target.value); setError(''); }}
+        />
+      </label>
+      <label className="gate__field">
+        <span className="gate__label">PIN</span>
+        <input
+          className="gate__input gate__input--sm"
+          type="text"
+          inputMode="numeric"
+          maxLength={4}
+          value={pin}
+          onChange={(e) => { setPin(e.target.value.replace(/\D/g, '')); setError(''); }}
+        />
+      </label>
+      {hasResult && name !== member.name && (
+        <p className="nav-card__edit-note">
+          Renaming won't update their existing result — it will still appear under the old name.
+          Reset their result after saving if needed.
+        </p>
+      )}
+      {error && <p className="gate__error">{error}</p>}
+      <div className="nav-card__manage-actions">
+        <button className="btn btn--primary btn--sm" type="submit" disabled={busy}>
+          {busy ? 'Saving…' : 'Save'}
+        </button>
+        <button className="btn btn--ghost btn--sm" type="button" onClick={onCancel} disabled={busy}>
+          Cancel
+        </button>
+      </div>
+    </form>
+  );
+}
+
+// ── Add navigator form (unchanged) ─────────────────────────────────────────────
 function AddNavigatorForm({ roster, onAdd, onDone }) {
   const [name, setName] = useState('');
   const [pin, setPin] = useState('');
@@ -121,14 +392,8 @@ function AddNavigatorForm({ roster, onAdd, onDone }) {
     e.preventDefault();
     setError('');
     const trimmed = name.trim();
-    if (!trimmed) {
-      setError('Enter a name.');
-      return;
-    }
-    if (!/^\d{4}$/.test(pin.trim())) {
-      setError('PIN must be exactly 4 digits.');
-      return;
-    }
+    if (!trimmed) { setError('Enter a name.'); return; }
+    if (!/^\d{4}$/.test(pin.trim())) { setError('PIN must be exactly 4 digits.'); return; }
     if (roster.some((r) => r.name.toLowerCase() === trimmed.toLowerCase())) {
       setError('A navigator with that name already exists.');
       return;
@@ -140,7 +405,7 @@ function AddNavigatorForm({ roster, onAdd, onDone }) {
       setPin('');
       onDone();
     } catch {
-      setError('Couldn’t save. Check the database connection and try again.');
+      setError("Couldn't save. Check the database connection and try again.");
     } finally {
       setBusy(false);
     }
@@ -160,10 +425,7 @@ function AddNavigatorForm({ roster, onAdd, onDone }) {
             className="gate__input"
             type="text"
             value={name}
-            onChange={(e) => {
-              setName(e.target.value);
-              setError('');
-            }}
+            onChange={(e) => { setName(e.target.value); setError(''); }}
             placeholder="e.g. Sarah Chen"
           />
         </label>
@@ -175,10 +437,7 @@ function AddNavigatorForm({ roster, onAdd, onDone }) {
             inputMode="numeric"
             maxLength={4}
             value={pin}
-            onChange={(e) => {
-              setPin(e.target.value.replace(/\D/g, ''));
-              setError('');
-            }}
+            onChange={(e) => { setPin(e.target.value.replace(/\D/g, '')); setError(''); }}
             placeholder="e.g. 4821"
           />
         </label>

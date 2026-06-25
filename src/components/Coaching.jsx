@@ -1,20 +1,22 @@
+import { useState, useEffect } from 'react';
 import { DOMAINS } from '../data/questions.js';
 import { COMPETENCIES, competencyName } from '../data/competencies.js';
-import { LEVELS } from '../data/config.js';
+import { LEVELS, SUPERVISOR_PASSCODE } from '../data/config.js';
 import { scoreToLevel } from '../lib/scoring.js';
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Coaching — the rule-based feedback shown immediately after a check. No LLM:
-// every explanation comes from the authored `rationale` on each option plus the
-// computed competency scores. Shows (1) a competency strengths/gaps summary and
-// (2) a per-question review (your choice + the best choice + why), so the
-// navigator leaves knowing exactly what to reinforce.
+// Coaching — post-check feedback shown immediately after submit.
+//
+// Two layers:
+//   1. Rule-based (always present): competency strengths/gaps chips + per-
+//      question review built from the authored `rationale` on each option.
+//   2. AI coaching (async, optional): Gemini writes a 2–3 sentence personalized
+//      note per weak competency, grounded in the rationales above. Shown while
+//      loading as a skeleton; silently omitted if the API call fails.
 // ─────────────────────────────────────────────────────────────────────────────
 
 const domainName = (id) => DOMAINS.find((d) => d.id === id)?.name ?? id;
 
-// Tone for a chosen option, by points earned — keeps the priority encoding
-// separate from the capability (level) colours.
 function toneFor(points) {
   if (points >= 85) return 'is-good';
   if (points >= 40) return 'is-partial';
@@ -22,11 +24,40 @@ function toneFor(points) {
 }
 
 export default function Coaching({ questions, answers, competencyScores, name, onContinue }) {
+  // null = still loading, false = failed/skip, object = { [compId]: string }
+  const [aiCoaching, setAiCoaching] = useState(null);
+
+  // Fire the coaching request once on mount. 10 s hard timeout → silent
+  // fallback to rule-based coaching so the navigator is never stuck waiting.
+  useEffect(() => {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 10_000);
+
+    fetch('/api/generate-coaching', {
+      method: 'POST',
+      signal: controller.signal,
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ answers, questions, competencyScores, name, secret: SUPERVISOR_PASSCODE }),
+    })
+      .then((r) => (r.ok ? r.json() : Promise.reject()))
+      .then((data) => setAiCoaching(data?.coaching ?? {}))
+      .catch(() => setAiCoaching(false))
+      .finally(() => clearTimeout(timeout));
+
+    return () => { controller.abort(); clearTimeout(timeout); };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []); // intentionally fire once — answers/questions are stable after submit
+
   const scored = COMPETENCIES.map((c) => ({ id: c.id, pct: competencyScores?.[c.id] })).filter(
     (c) => typeof c.pct === 'number'
   );
   const strengths = scored.filter((c) => scoreToLevel(c.pct) === 'canTeach');
   const growth = scored.filter((c) => scoreToLevel(c.pct) === 'learning');
+
+  // Competencies that have an AI note to show (only when coaching loaded)
+  const aiEntries = aiCoaching && typeof aiCoaching === 'object'
+    ? Object.entries(aiCoaching).filter(([, note]) => note)
+    : [];
 
   return (
     <section className="coaching view-enter">
@@ -77,6 +108,43 @@ export default function Coaching({ questions, answers, competencyScores, name, o
           )}
         </div>
       </div>
+
+      {/* ── AI coaching notes (async, optional) ──────────────────────── */}
+      {/* Show skeleton while loading; render notes when ready; hide on failure */}
+      {aiCoaching === null && (
+        <div className="card coaching__ai">
+          <h2 className="overview__panel-title">
+            Your personalised coaching&nbsp;
+            <span className="coaching__ai-badge">AI</span>
+          </h2>
+          <div className="coaching__ai-skeleton">
+            <div className="skeleton skeleton--line" style={{ width: '60%' }} />
+            <div className="skeleton skeleton--line" style={{ width: '90%' }} />
+            <div className="skeleton skeleton--line" style={{ width: '75%' }} />
+          </div>
+        </div>
+      )}
+
+      {aiCoaching !== false && aiEntries.length > 0 && (
+        <div className="card coaching__ai">
+          <h2 className="overview__panel-title">
+            Your personalised coaching&nbsp;
+            <span className="coaching__ai-badge">AI</span>
+          </h2>
+          <p className="readoff__sub">
+            Based on your answers and the SOP rationales — grounded in what you actually saw in this
+            check.
+          </p>
+          <ul className="coaching__ai-list">
+            {aiEntries.map(([compId, note]) => (
+              <li key={compId} className="coaching__ai-item">
+                <span className="coaching__ai-comp">{competencyName(compId)}</span>
+                <p className="coaching__ai-note">{note}</p>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
 
       {/* ── Per-question review ───────────────────────────────────────── */}
       <div className="card navdetail__panel">
