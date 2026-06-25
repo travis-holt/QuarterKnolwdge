@@ -37,7 +37,7 @@ export default function NavigatorDetail({ rows, name, deptName, deptMatrix, onBa
   );
 
   return (
-    <section className="navdetail">
+    <section className="navdetail stagger">
       {onBack && (
         <button className="linkbtn navdetail__back" onClick={onBack}>← Back to navigators</button>
       )}

@@ -1,6 +1,7 @@
 import { DOMAINS } from '../data/questions.js';
 import { LEVELS, LEVEL_ORDER } from '../data/config.js';
 import { columnGaps, canTeachRoster, readinessTally } from '../lib/scoring.js';
+import Reveal from './Reveal.jsx';
 
 const domainName = (id) => DOMAINS.find((d) => d.id === id)?.name ?? id;
 
@@ -12,7 +13,7 @@ export default function Matrix({ rows, deptName, onTakeCheck, onOpenNavigator })
   const gapDomainIds = new Set(gaps.map((g) => g.domainId));
 
   return (
-    <section className="matrix-view">
+    <section className="matrix-view view-enter">
       <header className="matrix-view__head">
         <h1 className="matrix-view__title">
           Capability matrix{deptName && <span className="title-dept"> · {deptName}</span>}
@@ -95,7 +96,7 @@ export default function Matrix({ rows, deptName, onTakeCheck, onOpenNavigator })
       {/* ── The "so what" read-offs ───────────────────────────────────── */}
       <div className="readoffs">
         {/* Column gaps */}
-        <div className="card readoff">
+        <Reveal className="card readoff">
           <h2 className="readoff__title">Column gaps</h2>
           <p className="readoff__sub">Domains where most navigators are still Learning — floor-wide training priorities.</p>
           {gaps.length === 0 ? (
@@ -112,10 +113,10 @@ export default function Matrix({ rows, deptName, onTakeCheck, onOpenNavigator })
               ))}
             </ul>
           )}
-        </div>
+        </Reveal>
 
         {/* Can-Teach roster */}
-        <div className="card readoff">
+        <Reveal className="card readoff" delay={80}>
           <h2 className="readoff__title">Can-Teach roster</h2>
           <p className="readoff__sub">Who can mentor in each domain.</p>
           <ul className="readoff__list">
@@ -128,10 +129,10 @@ export default function Matrix({ rows, deptName, onTakeCheck, onOpenNavigator })
               </li>
             ))}
           </ul>
-        </div>
+        </Reveal>
 
         {/* Readiness tally */}
-        <div className="card readoff">
+        <Reveal className="card readoff" delay={160}>
           <h2 className="readoff__title">Readiness signal</h2>
           <p className="readoff__sub">Can-Teach domains per navigator — a data-backed &ldquo;who&rsquo;s ready for more.&rdquo;</p>
           <ul className="readoff__list">
@@ -151,7 +152,7 @@ export default function Matrix({ rows, deptName, onTakeCheck, onOpenNavigator })
               </li>
             ))}
           </ul>
-        </div>
+        </Reveal>
       </div>
     </section>
   );

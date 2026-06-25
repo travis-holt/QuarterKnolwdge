@@ -10,7 +10,7 @@
 > [§8 Current System State](#8-current-system-state) and [§15 Current Priorities](#15-current-priorities)
 > accurate at all times.
 >
-> **Last updated:** 2026-06-25 (Railway deployment migration + build fixes) ·
+> **Last updated:** 2026-06-25 (premium refined-light visual overhaul; Railway deployment) ·
 > **Doc maintainer:** Claude (AI agent) + repo owner. Assumptions are explicitly marked **[ASSUMPTION]**.
 
 ---
@@ -307,13 +307,16 @@ QuarterKnolwdge/
     ├── components/          # Nav, Start, Check, Coaching, Matrix, Overview, Navigators,
     │                        #   NavigatorDetail, Training, MyTraining, TrainingModule,
     │                        #   QuestionBank, QuestionEditor, DeptBar, SupervisorApp,
-    │                        #   NavigatorApp, EmptyState, Footer
+    │                        #   NavigatorApp, EmptyState, Footer,
+    │                        #   Reveal + CountUp (presentation-layer motion primitives)
     ├── data/                # config, questions (DOMAINS + SEED_QUESTIONS), competencies,
     │                        #   navigators (placeholder), training, departments
     └── lib/
         ├── firebase.js      # Firebase app init + Firestore instance (defensive)
         ├── db.js            # ALL Firestore reads/writes (roster + results + questions)
         ├── session.js       # localStorage session layer (isolated, swappable for real auth)
+        ├── useInView.js     # IntersectionObserver hook (scroll-reveal trigger)
+        ├── useCountUp.js    # rAF count-up hook (reduced-motion aware)
         ├── scoring.js       # all scoring (2 axes), read-offs, analytics, training logic
         └── scoring.test.js  # Vitest unit tests for scoring.js (46 tests)
 ```
@@ -731,6 +734,43 @@ stateDiagram-v2
   Railway build in progress (nixpacks.toml override awaiting confirmation).
 - **Status:** Code complete; awaiting Railway deploy confirmation.
 
+### 2026-06-25 — Premium "refined-light" visual overhaul (design system + motion)
+- **What changed:** A non-functional, presentation-layer redesign elevating the app to a polished
+  SaaS feel while keeping the warm ivory/clay identity (chosen over a dark theme for trust/fit).
+  No business logic, data shapes, or routing changed.
+  - **Design tokens (`styles.css` `:root`):** extended palette (surfaces, ink tiers, accent
+    strong/deep), an elevation scale (`--shadow-xs…lg`, `--shadow-glow`, focus `--ring`), gradient
+    tokens (`--grad-accent` etc.), glass tokens (`--glass-bg/border/blur`), a radius scale, and
+    motion tokens (`--ease-out/spring`, `--dur-1/2/3`). All **existing variable names preserved**
+    so the rest of the sheet kept working.
+  - **Atmosphere:** layered warm radial mesh on `body`, a slow-drifting ambient glow
+    (`body::before`, `ambient-drift`), and an ultra-faint SVG-noise overlay (`body::after`).
+  - **Type:** Inter loaded via `index.html` (system-font fallback retained); tighter display scale.
+  - **Primitives:** layered `.card` (top-sheen `::before`, `--interactive` lift, `--glass`
+    variant), gradient `.btn--primary` with spring press + `:focus-visible` ring, animated
+    `.linkbtn` underline, frosted sticky `.nav` with gradient app-mark, elevated dept pills, depth
+    on tags/chips/inputs, global input focus rings.
+  - **Motion utilities (new, dependency-free):** `src/lib/useInView.js` (IntersectionObserver),
+    `src/lib/useCountUp.js` (rAF ease-out), and components `src/components/Reveal.jsx` +
+    `CountUp.jsx`. CSS helpers `.reveal/.is-in`, `.view-enter`, `.stagger > *`. **No animation
+    library added** (bundle already large; CSS + tiny hooks cover the brief).
+  - **Screens:** Start gate (gradient hero, glass role cards w/ icons + hover reveal, staggered
+    domain list, skeleton loading state), Matrix (depth pills + cell hover, row hover, live-row
+    glow, staggered read-offs), Overview (KPI widgets with **count-up** + accent rail, gradient
+    bars), plus `view-enter`/`stagger` entrances on Navigators/NavigatorDetail/Training/MyTraining/
+    Coaching/Check/QuestionBank/TrainingModule and a premium `EmptyState` (glyph) + `.skeleton`
+    loaders.
+  - **A11y/perf:** `prefers-reduced-motion` neutralises animations **and delays**; animations use
+    transform/opacity (GPU); color still paired with text labels.
+- **Files affected:** new `src/lib/{useInView,useCountUp}.js`, `src/components/{Reveal,CountUp}.jsx`;
+  edited `index.html`, `src/styles.css`, and `src/components/{Start,Matrix,Overview,EmptyState,
+  NavigatorDetail,Navigators,Training,MyTraining,Coaching,Check,QuestionBank,TrainingModule}.jsx`
+  (Nav restyled via CSS only).
+  `lib/scoring.js`, data modules, and `scoring.test.js` untouched.
+- **Verification:** `npm test` → **46 passing**; `npm run build` → clean; built app serves 200
+  (root + CSS); new tokens/fonts confirmed in the bundle.
+- **Status:** Complete (code). Presentation-only; safe to deploy with the rest.
+
 ---
 
 ## 8. Current System State
@@ -850,16 +890,26 @@ npm run test:watch   # run Vitest in watch mode
 
 ## 10. UX/UI Documentation
 
-- **Design tone:** calm, professional, credible — an internal product explainer for management.
-- **Palette (in `config.js` `PALETTE` + CSS vars in `styles.css`):**
-  - Background ivory `#f6f1e7`; surface `#fdfaf3`; ink `#23201b`; muted `#6b6358`.
-  - Warm clay accent `#c4744f` (buttons, tags, emphasis).
+- **Design tone:** premium "refined-light" — calm, professional, credible, but visibly polished
+  (Stripe/Notion/Attio register). Elevated from the original flat look on 2026-06-25 (see §7) while
+  keeping the warm ivory/clay identity; a dark theme was explicitly rejected for trust/fit.
+- **Palette (core in `config.js` `PALETTE`; full token set in `styles.css` `:root`):**
+  - Background ivory `#f4eee1`; surface `#fffdf7` (+ `--surface-2/3`); ink `#23201b` (+ soft/faint).
+  - Warm clay accent `#c4744f` (+ `--accent-strong/deep`); used as `--grad-accent` on primary
+    buttons, the nav mark, KPI values/rails, and progress/readiness bars.
+  - **Depth system:** elevation scale (`--shadow-xs…lg`, `--shadow-glow`), focus `--ring`, glass
+    tokens (`--glass-bg/border/blur`), radius scale, and a top-sheen on cards.
+  - **Atmosphere:** warm radial mesh + slow ambient-glow drift + faint SVG noise on `body`.
 - **Level colors (traffic-light, `LEVELS`):** Learning red `#c0392b`, Solid amber `#e0b13c`,
-  Can-Teach green `#3e8e5a`.
-- **Component/style system:** single [src/styles.css](src/styles.css), BEM-ish class names
-  (`.matrix__cell`, `.kpi__value`, `.deptbar__pill`, …), CSS variables, responsive grids.
-- **Layout rules:** centered max-width container (`--maxw: 1080px`); cards with hairline borders +
-  soft shadow; the **matrix is the visual centrepiece**.
+  Can-Teach green `#3e8e5a` (unchanged — priority/level encoding kept off the brand gradient).
+- **Motion:** tokens `--ease-out/spring`, `--dur-1/2/3`; CSS helpers `.reveal/.is-in`,
+  `.view-enter`, `.stagger > *`; dependency-free hooks `useInView`/`useCountUp` + `Reveal`/`CountUp`
+  components (no animation library). KPIs count up; sections fade/stagger in on view; bars animate
+  their width. All gated by `prefers-reduced-motion` (durations **and** delays neutralised).
+- **Component/style system:** single [src/styles.css](src/styles.css) (~2.2k lines), BEM-ish class
+  names (`.matrix__cell`, `.kpi__value`, `.deptbar__pill`, …), CSS variables, responsive grids.
+- **Layout rules:** centered max-width container (`--maxw: 1100px`); layered cards with hairline
+  borders + multi-layer warm shadow; the **matrix is the visual centrepiece**.
 - **Key user flows:** see [§3](#3-product-usage) and the view diagram in [§5](#5-architecture-overview).
 - **Navigation:** top `Nav` tabs (Overview · Take the check · Matrix · Navigators · Training) +
   `DeptBar` department selector on data views.

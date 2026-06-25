@@ -11,7 +11,7 @@ export default function MyTraining({ row, onPreviewModule }) {
   const training = trainingForRow(row);
 
   return (
-    <section className="training">
+    <section className="training stagger">
       <header className="overview__head">
         <h1 className="overview__title">My training</h1>
         <p className="overview__lede">

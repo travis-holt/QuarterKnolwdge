@@ -9,7 +9,7 @@ export default function Training({ rows, deptName, onOpenNavigator, onPreviewMod
   const plan = trainingPlan(rows);
 
   return (
-    <section className="training">
+    <section className="training stagger">
       <header className="overview__head">
         <h1 className="overview__title">
           Training assignments{deptName && <span className="title-dept"> · {deptName}</span>}

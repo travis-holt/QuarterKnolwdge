@@ -34,7 +34,7 @@ export default function Check({ onSubmit, onCancel, questions = SEED_QUESTIONS, 
   };
 
   return (
-    <section className="check">
+    <section className="check view-enter">
       <div className="check__head">
         <div className="progress" aria-label={`Question ${step + 1} of ${total}`}>
           <div

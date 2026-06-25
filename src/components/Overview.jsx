@@ -10,6 +10,7 @@ import {
   canTeachRoster,
   readinessTally,
 } from '../lib/scoring.js';
+import CountUp from './CountUp.jsx';
 
 const domainName = (id) => DOMAINS.find((d) => d.id === id)?.name ?? id;
 
@@ -28,7 +29,7 @@ export default function Overview({ rows, deptName, deptMatrix, onOpenNavigator, 
     .slice(0, 3);
 
   return (
-    <section className="overview">
+    <section className="overview stagger">
       <header className="overview__head">
         <h1 className="overview__title">Team overview</h1>
         <p className="overview__lede">
@@ -97,24 +98,24 @@ export default function Overview({ rows, deptName, deptMatrix, onOpenNavigator, 
       {/* ── Headline KPIs ─────────────────────────────────────────────── */}
       <div className="kpis">
         <div className="card kpi">
-          <span className="kpi__value">{stats.solidPlusRate}%</span>
+          <span className="kpi__value"><CountUp value={stats.solidPlusRate} suffix="%" /></span>
           <span className="kpi__label">of the floor is Solid or above</span>
           <span className="kpi__sub">across all domains assessed</span>
         </div>
         <div className="card kpi">
           <span className="kpi__value">
-            {stats.coveredDomains}<span className="kpi__of">/{stats.totalDomains}</span>
+            <CountUp value={stats.coveredDomains} /><span className="kpi__of">/{stats.totalDomains}</span>
           </span>
           <span className="kpi__label">domains have a teacher</span>
           <span className="kpi__sub">at least one Can-Teach navigator</span>
         </div>
         <div className="card kpi">
-          <span className="kpi__value">{stats.avgReadiness.toFixed(1)}</span>
+          <span className="kpi__value"><CountUp value={stats.avgReadiness} decimals={1} /></span>
           <span className="kpi__label">avg Can-Teach domains / navigator</span>
           <span className="kpi__sub">team readiness depth</span>
         </div>
         <div className="card kpi">
-          <span className="kpi__value">{stats.assessed}</span>
+          <span className="kpi__value"><CountUp value={stats.assessed} /></span>
           <span className="kpi__label">navigators assessed</span>
           <span className="kpi__sub">this quarter</span>
         </div>

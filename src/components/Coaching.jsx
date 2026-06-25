@@ -29,7 +29,7 @@ export default function Coaching({ questions, answers, competencyScores, name, o
   const growth = scored.filter((c) => scoreToLevel(c.pct) === 'learning');
 
   return (
-    <section className="coaching">
+    <section className="coaching view-enter">
       <header className="coaching__head">
         <h1 className="navdetail__title">Nice work, {name} — here&rsquo;s your coaching</h1>
         <p className="navdetail__lede">

@@ -17,7 +17,7 @@ export default function Navigators({ rows, roster, deptName, onOpenNavigator, on
   const [showForm, setShowForm] = useState(false);
 
   return (
-    <section className="navigators">
+    <section className="navigators stagger">
       <header className="overview__head navigators__head">
         <div>
           <h1 className="overview__title">

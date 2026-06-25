@@ -85,7 +85,7 @@ export default function QuestionBank({ questions, onActivate, onArchive, onDelet
   };
 
   return (
-    <section className="qbank">
+    <section className="qbank view-enter">
       <header className="overview__head">
         <h1 className="overview__title">Question bank</h1>
         <p className="overview__lede">

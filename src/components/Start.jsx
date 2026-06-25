@@ -3,6 +3,7 @@ import { DOMAINS, QUESTIONS } from '../data/questions.js';
 import { SUPERVISOR_PASSCODE } from '../data/config.js';
 import { isFirebaseConfigured } from '../lib/firebase.js';
 import { getRoster } from '../lib/db.js';
+import Reveal from './Reveal.jsx';
 
 // The Start gate. Three sub-screens controlled by `mode`:
 //   'role'       — pick navigator vs supervisor
@@ -29,8 +30,10 @@ export default function Start({ onNavigatorEntry, onSupervisorEntry }) {
 // ── Role selection ─────────────────────────────────────────────────────────────
 function RoleSelect({ onPick }) {
   return (
-    <>
-      <p className="start__eyebrow">A short quarterly check</p>
+    <div className="view-enter">
+      <p className="start__eyebrow">
+        <span className="start__eyebrow-dot" /> A short quarterly check
+      </p>
       <h1 className="start__title">
         Real scenarios — <span className="accent">development and fit</span>, not pass/fail.
       </h1>
@@ -41,28 +44,43 @@ function RoleSelect({ onPick }) {
       </p>
 
       <div className="gate__roles">
-        <button className="card gate__role" onClick={() => onPick('navigator')}>
+        <button className="card card--interactive gate__role" onClick={() => onPick('navigator')}>
+          <span className="gate__role-icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M12 2l2.5 7H22l-6 4.5 2.3 7L12 16l-6.3 4.5L8 13.5 2 9h7.5z" />
+            </svg>
+          </span>
           <span className="gate__role-title">I&rsquo;m a navigator</span>
           <span className="gate__role-sub">Take the check and see my own development picture.</span>
+          <span className="gate__role-go">Start the check →</span>
         </button>
-        <button className="card gate__role" onClick={() => onPick('supervisor')}>
+        <button className="card card--interactive gate__role" onClick={() => onPick('supervisor')}>
+          <span className="gate__role-icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <rect x="3" y="3" width="7" height="9" rx="1.5" />
+              <rect x="14" y="3" width="7" height="5" rx="1.5" />
+              <rect x="14" y="12" width="7" height="9" rx="1.5" />
+              <rect x="3" y="16" width="7" height="5" rx="1.5" />
+            </svg>
+          </span>
           <span className="gate__role-title">I&rsquo;m a supervisor</span>
           <span className="gate__role-sub">Open the team capability map and dashboards.</span>
+          <span className="gate__role-go">Open the dashboard →</span>
         </button>
       </div>
 
       <div className="start__domains">
         <p className="start__domains-label">What it covers</p>
         <ul className="start__domain-list">
-          {DOMAINS.map((d) => (
-            <li key={d.id} className="start__domain">
+          {DOMAINS.map((d, i) => (
+            <Reveal as="li" key={d.id} className="start__domain" delay={i * 60}>
               <span className="tag">{d.name}</span>
               <span className="start__domain-blurb">{d.blurb}</span>
-            </li>
+            </Reveal>
           ))}
         </ul>
       </div>
-    </>
+    </div>
   );
 }
 
@@ -119,7 +137,13 @@ function NavigatorGate({ onBack, onEnter }) {
           (add the Firebase config and add navigators to the roster) before you can take it.
         </p>
       ) : roster === null ? (
-        <p className="gate__notice">Loading the navigator list…</p>
+        <div className="gate__form" aria-busy="true" aria-label="Loading the navigator list">
+          <div className="skeleton skeleton--line" style={{ width: '35%' }} />
+          <div className="skeleton skeleton--line" style={{ height: 42 }} />
+          <div className="skeleton skeleton--line" style={{ width: '35%', marginTop: 8 }} />
+          <div className="skeleton skeleton--line" style={{ height: 42 }} />
+          <div className="skeleton skeleton--line" style={{ height: 46, width: '40%' }} />
+        </div>
       ) : roster.length === 0 ? (
         <p className="gate__notice">
           No navigators have been added yet. Ask your supervisor to add you to the roster first.

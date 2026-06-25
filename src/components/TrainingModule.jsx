@@ -28,7 +28,7 @@ export default function TrainingModule({
   }
 
   return (
-    <section className="module">
+    <section className="module view-enter">
       <button className="linkbtn navdetail__back" onClick={onBack}>{backLabel}</button>
 
       <header className="module__head">
