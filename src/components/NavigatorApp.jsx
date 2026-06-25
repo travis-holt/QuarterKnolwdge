@@ -6,6 +6,7 @@ import NavigatorDetail from './NavigatorDetail.jsx';
 import MyTraining from './MyTraining.jsx';
 import TrainingModule from './TrainingModule.jsx';
 import Interview from './Interview.jsx';
+import SpotTheError from './SpotTheError.jsx';
 import EmptyState from './EmptyState.jsx';
 import Footer from './Footer.jsx';
 import {
@@ -15,7 +16,7 @@ import {
   departmentMatrix,
   findRow,
 } from '../lib/scoring.js';
-import { getResult, saveResult, subscribeResults, getActiveQuestions } from '../lib/db.js';
+import { getResult, saveResult, subscribeResults, getActiveQuestions, getCompletions } from '../lib/db.js';
 import { isFirebaseConfigured } from '../lib/firebase.js';
 import { SEED_QUESTIONS } from '../data/questions.js';
 import { ASSESSED_DEPT, departmentName } from '../data/departments.js';
@@ -26,12 +27,14 @@ import { ASSESSED_DEPT, departmentName } from '../data/departments.js';
 // name colleagues who can teach their growth domains, but those names are not
 // clickable and open nothing.)
 export default function NavigatorApp({ navigatorId, name, onSignOut }) {
-  const [view, setView] = useState('loading'); // loading · check · coaching · dashboard · training · module
+  const [view, setView] = useState('loading'); // loading · check · coaching · dashboard · training · module · audit
   const [ownResult, setOwnResult] = useState(null); // { name, navigatorId, scores, competencyScores }
   const [lastAnswers, setLastAnswers] = useState(null); // answers from the just-taken check (for coaching)
   const [questions, setQuestions] = useState(SEED_QUESTIONS); // active bank (seed fallback)
   const [results, setResults] = useState([]); // whole floor (for mentor data)
   const [moduleDomain, setModuleDomain] = useState(null);
+  const [auditDomain, setAuditDomain] = useState(null);
+  const [completedDomains, setCompletedDomains] = useState(new Set());
   const [loadError, setLoadError] = useState(false);
 
   // Decide the entry view: returning navigator → dashboard, new → check.
@@ -90,6 +93,19 @@ export default function NavigatorApp({ navigatorId, name, onSignOut }) {
     };
   }, []);
 
+  // Load the navigator's "Spot the Error" completions so MyTraining can show badges.
+  useEffect(() => {
+    if (!isFirebaseConfigured) return undefined;
+    let active = true;
+    getCompletions(navigatorId)
+      .then((list) => {
+        if (!active) return;
+        setCompletedDomains(new Set(list.map((c) => c.domainId)));
+      })
+      .catch(() => { /* completions are non-critical */ });
+    return () => { active = false; };
+  }, [navigatorId]);
+
   const handleSubmit = async (_ignoredName, answers) => {
     const scores = scorePerDomain(answers, questions);
     const competencyScores = scorePerCompetency(answers, questions);
@@ -110,6 +126,17 @@ export default function NavigatorApp({ navigatorId, name, onSignOut }) {
   const openModule = (domainId) => {
     setModuleDomain(domainId);
     setView('module');
+  };
+
+  const startAudit = (domainId) => {
+    setAuditDomain(domainId);
+    setView('audit');
+  };
+
+  // When a "Spot the Error" scenario completes, add the domain to the local Set
+  // so the badge appears immediately without waiting for a Firestore round-trip.
+  const handleAuditComplete = (domainId) => {
+    setCompletedDomains((prev) => new Set([...prev, domainId]));
   };
 
   // Merge own result into the floor results (dedup by navigatorId) so the
@@ -143,8 +170,8 @@ export default function NavigatorApp({ navigatorId, name, onSignOut }) {
   if (view === 'error') {
     return (
       <Shell role="navigator" view="dashboard" setView={() => {}} onSignOut={onSignOut}>
-        <EmptyState title="Couldn’t connect">
-          The check isn’t connected to its database yet, or the connection failed. Please let your
+        <EmptyState title="Couldn't connect">
+          The check isn't connected to its database yet, or the connection failed. Please let your
           supervisor know.
         </EmptyState>
       </Shell>
@@ -186,14 +213,19 @@ export default function NavigatorApp({ navigatorId, name, onSignOut }) {
           />
         ) : (
           <EmptyState title="No results yet">
-            It looks like your check hasn’t been recorded.{' '}
+            It looks like your check hasn't been recorded.{' '}
             <button className="linkbtn" onClick={() => setView('check')}>Take the check</button>.
           </EmptyState>
         ))}
 
       {view === 'training' &&
         (myRow ? (
-          <MyTraining row={myRow} onPreviewModule={openModule} />
+          <MyTraining
+            row={myRow}
+            onPreviewModule={openModule}
+            onStartAudit={startAudit}
+            completedDomains={completedDomains}
+          />
         ) : (
           <EmptyState title="No training yet">
             Take the check first and your training plan will appear here.
@@ -213,6 +245,16 @@ export default function NavigatorApp({ navigatorId, name, onSignOut }) {
 
       {view === 'interview' && (
         <Interview navigatorId={navigatorId} name={name} />
+      )}
+
+      {view === 'audit' && auditDomain && (
+        <SpotTheError
+          navigatorId={navigatorId}
+          name={name}
+          domainId={auditDomain}
+          onBack={() => setView('training')}
+          onComplete={handleAuditComplete}
+        />
       )}
     </Shell>
   );

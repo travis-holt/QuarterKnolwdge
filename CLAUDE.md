@@ -10,7 +10,7 @@
 > [§8 Current System State](#8-current-system-state) and [§15 Current Priorities](#15-current-priorities)
 > accurate at all times.
 >
-> **Last updated:** 2026-06-25 (interview transcripts visible in supervisor NavigatorDetail) ·
+> **Last updated:** 2026-06-25 ("Spot the Error" QA audit training + completion tracking) ·
 > **Doc maintainer:** Claude (AI agent) + repo owner. Assumptions are explicitly marked **[ASSUMPTION]**.
 
 ---
@@ -283,6 +283,34 @@ training assignments.
   "Practice sessions" panel (domain tag, caller name, response count, date; expand to read the
   full transcript). The panel is hidden in the navigator's own dashboard (no `navigatorId` passed
   from `NavigatorApp`).
+
+### F16 — "Spot the Error" QA Audit Training
+- **Purpose:** Let navigators practice domain knowledge by acting as a QA auditor — reading a
+  realistic (AI-generated) flawed agent transcript and finding the SOP violation.
+- **User benefit:** Consequence-free active learning. Finding others' mistakes internalises the
+  right behaviour faster than passive reading. An AI coach gives personalised, non-blocking feedback.
+- **Technical implementation:**
+  - `api/generate-audit.js` — Gemini generates a ~10-turn Patient/Agent transcript with exactly
+    one planted SOP violation, plus `errorIndex`, `hint`, and `modelExplanation` (structured JSON
+    schema output, temp 0.8). Validation ensures `errorIndex` always lands on an Agent turn.
+  - `api/coach-audit.js` — second Gemini call (temp 0.4) reads the navigator's written reflection
+    and returns a 2–3 sentence warm mentor reply. Advisory only; never gates completion.
+  - `src/components/SpotTheError.jsx` — phases: `loading → active (clickable transcript, wrong
+    click = shake + hint) → reflect (textarea) → coaching (skeleton) → coached (AI reply + model
+    answer) → saving → done`. 25 s / 15 s AbortController timeouts per call.
+  - **Trigger:** "Practice Scenario" button on each assigned training domain in `MyTraining.jsx`.
+  - **Completion gate:** clicking the correct bubble + submitting any reflection = done. AI coaching
+    never blocks. Completion saved to Firestore `completions` collection.
+  - **Completion tracking (supervisor):** `subscribeCompletions` in `SupervisorApp` builds
+    `completionMap: { [navigatorId]: Set<domainId> }`. "✓ Practiced" badges appear in
+    `Training.jsx` (by-navigator section) and `NavigatorDetail.jsx` (assigned training panel).
+    Navigator sees badges in `MyTraining.jsx` from their own `getCompletions` fetch.
+- **Status:** Complete.
+- **Files:** new `api/generate-audit.js`, `api/coach-audit.js`, `src/components/SpotTheError.jsx`;
+  edited `server.js`, `src/lib/db.js`, `firestore.rules`, `src/components/{MyTraining,NavigatorApp,
+  SupervisorApp,Training,NavigatorDetail}.jsx`, `src/styles.css`.
+- **Notes:** Closes the roadmapped "Training completion tracking" item. Scores never touched;
+  completion is advisory progress evidence only. One error per transcript (multi-error = v2).
 
 ### F14 — Question Bank + Gemini Scenario Generation (review gate)
 - **Purpose:** Grow the check from the SOP; questions are live Firestore data, not a static file.
@@ -903,6 +931,36 @@ stateDiagram-v2
   api/interview-turn.js` → OK.
 - **Status:** Complete (roleplay only).
 
+### 2026-06-25 — "Spot the Error" QA audit training + completion tracking (F16)
+- **What changed:** Added the "Flight Simulator" QA audit exercise to the training section.
+  Navigators read an AI-generated flawed agent transcript, click the error message, write a
+  reflection, receive AI coaching, and earn a completion badge. Supervisors see "✓ Practiced"
+  badges on the training dashboard and navigator detail panels.
+  - **New API files:** `api/generate-audit.js` (Gemini generates flawed transcript + errorIndex +
+    hint + modelExplanation via structured JSON schema, temp 0.8); `api/coach-audit.js` (Gemini
+    coaches the navigator's written reflection, temp 0.4 — advisory only, never blocks).
+  - **New component:** `src/components/SpotTheError.jsx` — 7-phase flow with shake animation on
+    wrong clicks, hint reveal, reflection textarea, AI coaching skeleton, model-answer reveal,
+    and non-blocking Firestore save.
+  - **New Firestore collection:** `completions` — `{ navigatorId, name, domainId, completedAt }`.
+    `db.js` gained `saveCompletion`, `getCompletions`, `subscribeCompletions`.
+  - **`server.js`:** two new POST routes (`/api/generate-audit`, `/api/coach-audit`).
+  - **`firestore.rules`:** `completions` + `interviews` collections added (both `allow read, write: if true`).
+  - **`MyTraining.jsx`:** rewritten to accept `onStartAudit` + `completedDomains`; each training
+    item now has "Practice Scenario" / "Practice again" button + "✓ Practiced" badge.
+  - **`NavigatorApp.jsx`:** `SpotTheError` imported + `audit` view wired; `getCompletions` fetched
+    on mount; `handleAuditComplete` updates local `completedDomains` Set immediately on done.
+  - **`SupervisorApp.jsx`:** `subscribeCompletions` live subscription added; `completionMap`
+    derived; passed to `Training` (with `roster`) and `NavigatorDetail`.
+  - **`Training.jsx`:** `completionMap` + `roster` props; `hasPracticed(name, domainId)` helper;
+    "✓ Practiced" badge in by-navigator assignments.
+  - **`NavigatorDetail.jsx`:** `completedDomains` prop; badge in "Assigned training" panel.
+  - **`styles.css`:** full SpotTheError UI (transcript bubbles, shake animation, hint box, reflect
+    panel, coaching panel, model-answer block, done screen); practiced badges.
+- **Verification:** `npm test` → 46 passing; `npm run build` → clean; `node --check` on both new
+  API files → OK.
+- **Status:** Complete.
+
 ### 2026-06-25 — Generative AI coaching (Phase 2, first feature)
 - **What changed:** Added a second coaching layer that runs Gemini asynchronously after a navigator
   submits a check — producing a 2–3 sentence personalised coaching note per weak competency, grounded
@@ -933,8 +991,8 @@ stateDiagram-v2
   per-competency results persist to Firestore → supervisor matrix/overview update live (incl.
   competency distribution) → navigator/training dashboards → department switching. Build clean,
   tests green (`npm test` → **46 passing**).
-- **Existing functionality:** features F1–F14 (see [§4](#4-feature-inventory)) are **Complete** in
-  code. F13 (Coaching) now includes the Phase 2 AI layer.
+- **Existing functionality:** features F1–F14 + F16 (see [§4](#4-feature-inventory)) are **Complete** in
+  code. F13 (Coaching) includes the Phase 2 AI layer. F16 closes the roadmapped "completion tracking" item.
 - **Experimental / mockup:**
   - Training **content** is mockup (flagged in UI). Logic is real.
   - **Adult Medicine, OB/GYN, Behavioural Health** are not assessed; only **Pediatrics** is live.
@@ -949,9 +1007,9 @@ stateDiagram-v2
   `VITE_FIREBASE_*` and `GEMINI_API_KEYS` confirmed set in Railway Variables. No `GENERATION_SECRET`
   needed — server falls back to `SUPERVISOR_PASSCODE`.
 - **Counts (today):** 6 domains · 9 competencies · 18 seed questions (bank now grows in Firestore) ·
-  4 departments (Pediatrics live) · **46** unit tests · **4** Firestore collections
-  (`roster`, `results`, `questions`, `interviews`) · **4** serverless functions
-  (`generate-scenarios`, `generate-coaching`, `interview-turn`, `health`).
+  4 departments (Pediatrics live) · **46** unit tests · **5** Firestore collections
+  (`roster`, `results`, `questions`, `interviews`, `completions`) · **6** serverless functions
+  (`generate-scenarios`, `generate-coaching`, `interview-turn`, `generate-audit`, `coach-audit`, `health`).
 
 ---
 
@@ -1018,6 +1076,8 @@ stateDiagram-v2
   - `POST /api/generate-scenarios` `{ domainId, count, secret }` → `{ questions }` (validated drafts).
   - `POST /api/generate-coaching` `{ answers, questions, competencyScores, name, secret }` → `{ coaching: { [compId]: string } }` (personalised AI notes per weak competency; empty object if all at canTeach or all correct).
   - `POST /api/interview-turn` `{ domain, secret }` (init, no scenario) → `{ scenario, callerName, reply }`. `{ domain, scenario, callerName, history, navigatorMessage, secret }` (turn) → `{ reply }`.
+  - `POST /api/generate-audit` `{ domain, secret }` → `{ transcript, errorIndex, hint, modelExplanation }` (~10-turn flawed transcript for the "Spot the Error" exercise).
+  - `POST /api/coach-audit` `{ domain, modelExplanation, navigatorAnswer, name, secret }` → `{ reply }` (warm 2–3 sentence mentor coaching note; advisory only).
   - `GET /api/health` → `{ ok }`.
 - **Env vars:** client (gitignored `.env.local`, build-time) `VITE_FIREBASE_*`; **server-only**
   (Railway service Variables — never `VITE_`-prefixed) `GEMINI_API_KEYS` (comma-separated; rotated on
@@ -1031,7 +1091,9 @@ stateDiagram-v2
   `getActiveQuestions()`, `seedQuestionsIfEmpty(seed)`, `saveDraftQuestions(drafts, source?)`,
   `updateQuestion(id,patch)`, `activateQuestion(id)`, `archiveQuestion(id)`, `deleteQuestion(id)`;
   interviews — `saveInterview(navigatorId, name, domainId, scenario, callerName, transcript)`,
-  `getInterviews(navigatorId)`.
+  `getInterviews(navigatorId)`;
+  completions — `saveCompletion(navigatorId, name, domainId)`, `getCompletions(navigatorId)`,
+  `subscribeCompletions(cb, onError?)`.
 - **Secrets:** `SUPERVISOR_PASSCODE` is in the repo (pilot-acceptable); `GEMINI_API_KEYS` is a
   server-only Railway Variable, never committed or bundled.
 
@@ -1087,7 +1149,7 @@ npm run test:watch   # run Vitest in watch mode
 
 ### Planned
 - Multi-department **live** checks (a question set per department, each from its own SOP).
-- Training **completion tracking** (Assigned → In progress → Done; in-memory for demo).
+- Training **completion tracking** ✅ done (F16 "Spot the Error" closes this item with Firestore-persisted completions + supervisor checkmarks).
 
 ### Next Priority
 - **Mentor pairing (floor-wide):** load-balanced Learning ↔ Can-Teach matches.
@@ -1237,8 +1299,9 @@ npm run test:watch   # run Vitest in watch mode
 - ✅ Full SOP context + GENERATION_SECRET removed — done 2026-06-25.
 - ✅ Generative AI coaching (Phase 2, first feature) — done 2026-06-25.
 - ✅ AI interview simulation (roleplay phase) — done 2026-06-25.
+- ✅ "Spot the Error" QA audit training + completion tracking (F16) — done 2026-06-25.
 - Phase 2 of interview simulation: criterion-based grading + supervisor override — next interview milestone.
-- Verify AI coaching + interview sim + Generate → review → activate on Railway — next step.
+- Verify "Spot the Error" end-to-end on Railway — next step.
 - Component/integration tests (jsdom + Testing Library) — next technical priority.
 
 ---

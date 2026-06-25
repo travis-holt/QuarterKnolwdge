@@ -31,6 +31,14 @@ service cloud.firestore {
     match /questions/{docId} {
       allow read, write: if true;
     }
+    // "Spot the Error" exercise completions.
+    match /completions/{docId} {
+      allow read, write: if true;
+    }
+    // Practice roleplay interview transcripts.
+    match /interviews/{docId} {
+      allow read, write: if true;
+    }
 
     // Everything else is denied.
     match /{document=**} {

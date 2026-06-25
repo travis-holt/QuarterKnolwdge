@@ -25,6 +25,7 @@ import {
   archiveQuestion,
   deleteQuestion,
   updateQuestion,
+  subscribeCompletions,
 } from '../lib/db.js';
 import { isFirebaseConfigured } from '../lib/firebase.js';
 import { SEED_QUESTIONS } from '../data/questions.js';
@@ -44,13 +45,14 @@ export default function SupervisorApp({ onSignOut }) {
   const [results, setResults] = useState([]);
   const [roster, setRoster] = useState([]);
   const [questions, setQuestions] = useState([]);
+  const [completions, setCompletions] = useState([]);
   const [selected, setSelected] = useState(null);
   const [moduleDomain, setModuleDomain] = useState(null);
   const [moduleReturn, setModuleReturn] = useState('training');
   const [selectedDept, setSelectedDept] = useState(ASSESSED_DEPT);
   const [subscribeError, setSubscribeError] = useState(false);
 
-  // Live listeners — results + roster. Unsubscribe on unmount.
+  // Live listeners — results + roster + completions. Unsubscribe on unmount.
   useEffect(() => {
     if (!isFirebaseConfigured) return undefined;
     const onError = (err) => {
@@ -59,9 +61,14 @@ export default function SupervisorApp({ onSignOut }) {
     };
     const unsubResults = subscribeResults(setResults, onError);
     const unsubRoster = subscribeRoster(setRoster, onError);
+    const unsubCompletions = subscribeCompletions(setCompletions, (err) => {
+      console.error('subscribeCompletions:', err);
+      // Non-critical — checkmarks just won't appear live.
+    });
     return () => {
       unsubResults();
       unsubRoster();
+      unsubCompletions();
     };
   }, []);
 
@@ -78,6 +85,13 @@ export default function SupervisorApp({ onSignOut }) {
 
   const isAssessed = selectedDept === ASSESSED_DEPT;
   const deptName = departmentName(selectedDept);
+
+  // Build a lookup: navigatorId → Set<domainId> for "Spot the Error" completions.
+  const completionMap = {};
+  for (const c of completions) {
+    if (!completionMap[c.navigatorId]) completionMap[c.navigatorId] = new Set();
+    completionMap[c.navigatorId].add(c.domainId);
+  }
 
   // Exclude inactive navigators from the matrix and floor stats so deactivated
   // team members don't skew gaps, can-teach tallies, or training cohorts.
@@ -222,6 +236,8 @@ export default function SupervisorApp({ onSignOut }) {
                 deptName={deptName}
                 onOpenNavigator={openNavigator}
                 onPreviewModule={(d) => openModule(d, 'training')}
+                completionMap={completionMap}
+                roster={roster}
               />
             )}
 
@@ -235,6 +251,7 @@ export default function SupervisorApp({ onSignOut }) {
                 onOpenNavigator={openNavigator}
                 onPreviewModule={(d) => openModule(d, 'navigator')}
                 navigatorId={selectedNavigatorId}
+                completedDomains={selectedNavigatorId ? (completionMap[selectedNavigatorId] ?? new Set()) : new Set()}
               />
             )}
 

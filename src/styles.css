@@ -2540,6 +2540,63 @@ textarea:focus-visible {
   gap: 14px;
 }
 
+.train-assign__top {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 4px;
+}
+
+.train-assign__actions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-shrink: 0;
+  flex-wrap: wrap;
+}
+
+.train-assign__right {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-shrink: 0;
+}
+
+.mytraining__practice-btn {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.mytraining__practice-btn:hover {
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
+}
+
+.mytraining__practiced {
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: #3e8e5a;
+  background: #e2f0e8;
+  border-radius: 999px;
+  padding: 2px 8px;
+  white-space: nowrap;
+}
+
+/* Supervisor-side practiced badge (Training + NavigatorDetail) */
+.training__practiced-badge {
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: #3e8e5a;
+  background: #e2f0e8;
+  border-radius: 999px;
+  padding: 2px 8px;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
 .takeaways {
   margin: 12px 0 0;
   padding-left: 20px;
@@ -2554,6 +2611,349 @@ textarea:focus-visible {
 
 .module__assigned {
   margin-bottom: 18px;
+}
+
+/* ── Spot the Error (QA audit training) ─────────────────────────────────── */
+.spot-error {
+  max-width: var(--maxw);
+  margin: 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.spot-error__back {
+  align-self: flex-start;
+}
+
+/* Loading skeleton card */
+.spot-error__loading-card {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 28px 24px;
+}
+
+.spot-error__loading-label {
+  margin: 8px 0 0;
+  font-size: 0.85rem;
+  color: var(--ink-faint);
+  text-align: center;
+}
+
+/* Header card */
+.spot-error__header {
+  display: flex;
+  align-items: flex-start;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
+.spot-error__header-left {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  flex: 1;
+  min-width: 0;
+}
+
+.spot-error__title {
+  font-size: 1.3rem;
+  font-weight: 700;
+  margin: 0;
+  color: var(--ink);
+}
+
+.spot-error__instructions {
+  margin: 0;
+  font-size: 0.95rem;
+  color: var(--ink-soft);
+  line-height: 1.5;
+}
+
+.spot-error__instructions--found {
+  color: #3e8e5a;
+  font-weight: 600;
+}
+
+.spot-error__hint {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  background: #fffbeb;
+  border: 1px solid #f6d860;
+  border-radius: var(--radius-sm);
+  padding: 10px 14px;
+  min-width: 220px;
+  max-width: 340px;
+  animation: fadeIn var(--dur-2) var(--ease-out);
+}
+
+.spot-error__hint-label {
+  font-size: 0.65rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: #92620a;
+}
+
+.spot-error__hint-text {
+  font-size: 0.88rem;
+  line-height: 1.45;
+  color: #5c3d06;
+}
+
+/* Transcript */
+.spot-error__transcript {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.spot-error__bubble {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  max-width: 75%;
+}
+
+.spot-error__bubble--patient {
+  align-self: flex-start;
+}
+
+.spot-error__bubble--agent {
+  align-self: flex-end;
+  align-items: flex-end;
+}
+
+.spot-error__speaker {
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--ink-faint);
+  padding: 0 4px;
+}
+
+/* The message is a <button> so the whole bubble is clickable for agents */
+.spot-error__message {
+  all: unset;
+  display: block;
+  padding: 10px 14px;
+  font-size: 0.9rem;
+  line-height: 1.5;
+  border-radius: 12px;
+  text-align: left;
+  word-break: break-word;
+}
+
+.spot-error__bubble--patient .spot-error__message {
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  border-radius: 2px 12px 12px 12px;
+  color: var(--ink);
+  cursor: default;
+}
+
+.spot-error__bubble--agent .spot-error__message {
+  background: color-mix(in srgb, var(--accent) 10%, var(--surface));
+  border: 1px solid color-mix(in srgb, var(--accent) 25%, transparent);
+  border-radius: 12px 2px 12px 12px;
+  color: var(--ink);
+}
+
+/* Clickable state — agent bubbles during 'active' phase */
+.spot-error__bubble--clickable .spot-error__message {
+  cursor: pointer;
+  transition: background var(--dur-1) var(--ease-out),
+              border-color var(--dur-1) var(--ease-out),
+              transform var(--dur-1) var(--ease-out);
+}
+
+.spot-error__bubble--clickable .spot-error__message:hover {
+  background: color-mix(in srgb, var(--accent) 18%, var(--surface));
+  border-color: var(--accent);
+  transform: translateY(-1px);
+}
+
+.spot-error__bubble--clickable .spot-error__message:active {
+  transform: translateY(0);
+}
+
+/* Correct error bubble — green highlight */
+.spot-error__bubble--found .spot-error__message {
+  background: #e2f0e8;
+  border-color: #3e8e5a;
+  border-width: 2px;
+  color: var(--ink);
+}
+
+/* Wrong click shake animation */
+@keyframes spot-shake {
+  0%, 100% { transform: translateX(0); }
+  15%       { transform: translateX(-7px); }
+  30%       { transform: translateX(7px); }
+  45%       { transform: translateX(-5px); }
+  60%       { transform: translateX(5px); }
+  75%       { transform: translateX(-3px); }
+  90%       { transform: translateX(3px); }
+}
+
+.spot-error__bubble--shake .spot-error__message {
+  animation: spot-shake 0.5s var(--ease-out);
+  border-color: #c0392b;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .spot-error__bubble--shake .spot-error__message { animation: none; }
+}
+
+/* Reflection panel */
+.spot-error__reflect {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  animation: fadeIn var(--dur-2) var(--ease-out);
+}
+
+.spot-error__textarea {
+  width: 100%;
+  min-height: 100px;
+  padding: 12px 14px;
+  font-size: 0.95rem;
+  font-family: inherit;
+  line-height: 1.55;
+  color: var(--ink);
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  resize: vertical;
+  box-sizing: border-box;
+  transition: border-color var(--dur-1) var(--ease-out),
+              box-shadow var(--dur-1) var(--ease-out);
+}
+
+.spot-error__textarea:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: var(--ring);
+}
+
+.spot-error__textarea:disabled {
+  opacity: 0.7;
+  background: var(--surface-2);
+  cursor: default;
+}
+
+.spot-error__coaching-loading {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 4px 0;
+}
+
+/* Coached panel (AI reply + model answer) */
+.spot-error__coached {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  animation: fadeIn var(--dur-2) var(--ease-out);
+}
+
+.spot-error__ai-reply {
+  border-left: 3px solid var(--accent);
+  padding: 10px 0 10px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.spot-error__ai-badge {
+  display: inline-block;
+  font-size: 0.65rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  background: var(--grad-accent);
+  color: #fff;
+  border-radius: 4px;
+  padding: 1px 6px;
+  align-self: flex-start;
+}
+
+.spot-error__ai-text {
+  margin: 0;
+  font-size: 0.95rem;
+  line-height: 1.6;
+  color: var(--ink-soft);
+}
+
+.spot-error__model-answer {
+  background: #f3f8f4;
+  border: 1px solid #c3e0cb;
+  border-radius: var(--radius-sm);
+  padding: 14px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.spot-error__model-title {
+  font-size: 0.8rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: #3e8e5a;
+  margin: 0;
+}
+
+.spot-error__model-text {
+  margin: 0;
+  font-size: 0.9rem;
+  line-height: 1.55;
+  color: var(--ink);
+}
+
+/* Done screen */
+.spot-error__done {
+  text-align: center;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 14px;
+  padding: 40px 32px;
+}
+
+.spot-error__done-glyph {
+  width: 52px;
+  height: 52px;
+  border-radius: 50%;
+  background: #ecfdf5;
+  border: 1px solid #6ee7b7;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 24px;
+  color: #3e8e5a;
+  margin: 0 auto;
+}
+
+.spot-error__done-actions {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  justify-content: center;
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(6px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .spot-error__hint,
+  .spot-error__reflect,
+  .spot-error__coached { animation: none; }
 }
 
 /* ── Responsive ──────────────────────────────────────────────────────────── */

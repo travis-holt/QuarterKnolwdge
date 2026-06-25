@@ -5,13 +5,15 @@
 // calls these helpers — never the Firestore SDK directly. This keeps the data
 // layer swappable and the rest of the app ignorant of Firestore.
 //
-// Four collections, all UUID-keyed (never name-keyed → no typo/collision risk):
-//   roster     — supervisor-managed navigator list { name, pin, createdAt }
-//   results    — check submissions { name, navigatorId, scores, competencyScores,
-//                submittedAt }
-//   questions  — supervisor-managed scenario bank { scenario, options, status, … }
-//   interviews — practice roleplay transcripts { navigatorId, name, domainId,
-//                scenario, callerName, transcript, endedAt }
+// Five collections, all UUID-keyed (never name-keyed → no typo/collision risk):
+//   roster      — supervisor-managed navigator list { name, pin, createdAt }
+//   results     — check submissions { name, navigatorId, scores, competencyScores,
+//                 submittedAt }
+//   questions   — supervisor-managed scenario bank { scenario, options, status, … }
+//   interviews  — practice roleplay transcripts { navigatorId, name, domainId,
+//                 scenario, callerName, transcript, endedAt }
+//   completions — "Spot the Error" exercise completions { navigatorId, name,
+//                 domainId, completedAt }
 //
 // Levels (learning/solid/canTeach) are NEVER stored — always derived client-side
 // by scoreToLevel(), so thresholds stay tunable without a data migration. Older
@@ -40,6 +42,7 @@ const ROSTER = 'roster';
 const RESULTS = 'results';
 const QUESTIONS_COL = 'questions';
 const INTERVIEWS = 'interviews';
+const COMPLETIONS = 'completions';
 
 // ── Roster ───────────────────────────────────────────────────────────────────
 
@@ -197,6 +200,53 @@ export async function getInterviews(navigatorId) {
     query(collection(db, INTERVIEWS), where('navigatorId', '==', navigatorId))
   );
   return snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+}
+
+// ── Completions ("Spot the Error" exercise completions) ───────────────────────
+
+/**
+ * Navigator: record that they completed a "Spot the Error" scenario for a domain.
+ * A navigator may complete the same domain multiple times; each run is its own doc.
+ * @param {string} navigatorId
+ * @param {string} name          denormalised for display
+ * @param {string} domainId
+ * @returns {Promise<string>} the new completion doc id
+ */
+export async function saveCompletion(navigatorId, name, domainId) {
+  const ref = doc(collection(db, COMPLETIONS));
+  await setDoc(ref, {
+    navigatorId,
+    name,
+    domainId,
+    completedAt: serverTimestamp(),
+  });
+  return ref.id;
+}
+
+/**
+ * One-time fetch of all "Spot the Error" completions for a navigator.
+ * @param {string} navigatorId
+ * @returns {Promise<{id:string, domainId:string, completedAt:*}[]>}
+ */
+export async function getCompletions(navigatorId) {
+  const snap = await getDocs(
+    query(collection(db, COMPLETIONS), where('navigatorId', '==', navigatorId))
+  );
+  return snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+}
+
+/**
+ * Supervisor: live subscription to ALL completions (for the training dashboard).
+ * @param {(completions:object[]) => void} cb
+ * @param {(err:Error) => void} [onError]
+ * @returns {() => void} unsubscribe
+ */
+export function subscribeCompletions(cb, onError) {
+  return onSnapshot(
+    collection(db, COMPLETIONS),
+    (snap) => cb(snap.docs.map((d) => ({ id: d.id, ...d.data() }))),
+    onError ?? ((err) => console.error('subscribeCompletions:', err))
+  );
 }
 
 // ── Questions (live, supervisor-managed bank) ──────────────────────────────────

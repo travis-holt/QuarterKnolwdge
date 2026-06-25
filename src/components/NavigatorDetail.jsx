@@ -14,7 +14,9 @@ function formatDate(ts) {
   return date.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
 }
 
-export default function NavigatorDetail({ rows, name, deptName, deptMatrix, onBack, onOpenNavigator, onPreviewModule, navigatorId }) {
+// completedDomains: Set<domainId> — domains where the navigator has practiced a
+// "Spot the Error" scenario (supervisor view passes this from completionMap).
+export default function NavigatorDetail({ rows, name, deptName, deptMatrix, onBack, onOpenNavigator, onPreviewModule, navigatorId, completedDomains = new Set() }) {
   const row = findRow(rows, name);
   const deptRow = deptMatrix?.find((r) => r.name === name);
 
@@ -225,26 +227,36 @@ export default function NavigatorDetail({ rows, name, deptName, deptMatrix, onBa
           <p className="readoff__empty">Nothing assigned — Can-Teach across the board.</p>
         ) : (
           <ul className="readoff__list">
-            {training.map((a) => (
-              <li key={a.domainId} className="train-assign train-assign--detail">
-                <span className={`cohort__tag ${a.priority === 'Required' ? 'cohort__tag--req' : 'cohort__tag--stretch'}`}>
-                  {a.priority}
-                </span>
-                <span className="train-assign__body">
-                  <button className="linkbtn train-assign__title" onClick={() => onPreviewModule(a.domainId)}>
-                    {a.module?.title ?? domainName(a.domainId)}
-                  </button>
-                  <span className="train-assign__why">
-                    Assigned because {domainName(a.domainId)} is at{' '}
-                    {LEVELS[a.level].label} · {a.goal}
-                    {a.module && ` · ~${a.module.estMinutes} min`}
+            {training.map((a) => {
+              const practiced = completedDomains.has(a.domainId);
+              return (
+                <li key={a.domainId} className="train-assign train-assign--detail">
+                  <span className={`cohort__tag ${a.priority === 'Required' ? 'cohort__tag--req' : 'cohort__tag--stretch'}`}>
+                    {a.priority}
                   </span>
-                </span>
-                <button className="btn btn--ghost btn--sm" onClick={() => onPreviewModule(a.domainId)}>
-                  Preview
-                </button>
-              </li>
-            ))}
+                  <span className="train-assign__body">
+                    <button className="linkbtn train-assign__title" onClick={() => onPreviewModule(a.domainId)}>
+                      {a.module?.title ?? domainName(a.domainId)}
+                    </button>
+                    <span className="train-assign__why">
+                      Assigned because {domainName(a.domainId)} is at{' '}
+                      {LEVELS[a.level].label} · {a.goal}
+                      {a.module && ` · ~${a.module.estMinutes} min`}
+                    </span>
+                  </span>
+                  <div className="train-assign__right">
+                    {practiced && (
+                      <span className="training__practiced-badge" title="Navigator has completed a practice scenario">
+                        ✓ Practiced
+                      </span>
+                    )}
+                    <button className="btn btn--ghost btn--sm" onClick={() => onPreviewModule(a.domainId)}>
+                      Preview
+                    </button>
+                  </div>
+                </li>
+              );
+            })}
           </ul>
         )}
       </div>

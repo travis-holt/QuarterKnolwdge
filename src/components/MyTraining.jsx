@@ -5,9 +5,11 @@ import { trainingForRow } from '../lib/scoring.js';
 const domainName = (id) => DOMAINS.find((d) => d.id === id)?.name ?? id;
 
 // The navigator's own training plan — their auto-assigned modules, each opening
-// the full lesson content. Scoped entirely to themselves; no other navigators'
-// data appears here.
-export default function MyTraining({ row, onPreviewModule }) {
+// the full lesson content. Each assigned domain also shows a "Practice Scenario"
+// button that launches the "Spot the Error" QA audit exercise.
+// completedDomains is a Set<domainId> of domains the navigator has already
+// completed at least one scenario for this quarter.
+export default function MyTraining({ row, onPreviewModule, onStartAudit, completedDomains = new Set() }) {
   const training = trainingForRow(row);
 
   return (
@@ -17,7 +19,7 @@ export default function MyTraining({ row, onPreviewModule }) {
         <p className="overview__lede">
           Auto-assigned from your check — <strong>Required</strong> where you&rsquo;re at Learning,
           <strong> Stretch</strong> where you&rsquo;re Solid and climbing toward Can-Teach. Open any
-          module to read the lessons.
+          module to read the lessons, or practice a scenario to test yourself.
         </p>
       </header>
 
@@ -31,32 +33,51 @@ export default function MyTraining({ row, onPreviewModule }) {
         </div>
       ) : (
         <ul className="readoff__list mytraining__list">
-          {training.map((a) => (
-            <li key={a.domainId} className="card train-assign train-assign--detail">
-              <span
-                className={`cohort__tag ${
-                  a.priority === 'Required' ? 'cohort__tag--req' : 'cohort__tag--stretch'
-                }`}
-              >
-                {a.priority}
-              </span>
-              <span className="train-assign__body">
-                <button
-                  className="linkbtn train-assign__title"
-                  onClick={() => onPreviewModule(a.domainId)}
-                >
-                  {a.module?.title ?? domainName(a.domainId)}
-                </button>
-                <span className="train-assign__why">
-                  Assigned because {domainName(a.domainId)} is at {LEVELS[a.level].label} · {a.goal}
-                  {a.module && ` · ~${a.module.estMinutes} min`}
+          {training.map((a) => {
+            const practiced = completedDomains.has(a.domainId);
+            return (
+              <li key={a.domainId} className="card train-assign train-assign--detail">
+                <div className="train-assign__top">
+                  <span
+                    className={`cohort__tag ${
+                      a.priority === 'Required' ? 'cohort__tag--req' : 'cohort__tag--stretch'
+                    }`}
+                  >
+                    {a.priority}
+                  </span>
+                  {practiced && (
+                    <span className="mytraining__practiced" title="You've completed a practice scenario">
+                      ✓ Practiced
+                    </span>
+                  )}
+                </div>
+                <span className="train-assign__body">
+                  <button
+                    className="linkbtn train-assign__title"
+                    onClick={() => onPreviewModule(a.domainId)}
+                  >
+                    {a.module?.title ?? domainName(a.domainId)}
+                  </button>
+                  <span className="train-assign__why">
+                    Assigned because {domainName(a.domainId)} is at {LEVELS[a.level].label} · {a.goal}
+                    {a.module && ` · ~${a.module.estMinutes} min`}
+                  </span>
                 </span>
-              </span>
-              <button className="btn btn--ghost btn--sm" onClick={() => onPreviewModule(a.domainId)}>
-                Open
-              </button>
-            </li>
-          ))}
+                <div className="train-assign__actions">
+                  <button className="btn btn--ghost btn--sm" onClick={() => onPreviewModule(a.domainId)}>
+                    Open module
+                  </button>
+                  <button
+                    className="btn btn--ghost btn--sm mytraining__practice-btn"
+                    onClick={() => onStartAudit(a.domainId)}
+                    title={`Practice a QA scenario for ${domainName(a.domainId)}`}
+                  >
+                    {practiced ? 'Practice again' : 'Practice scenario'}
+                  </button>
+                </div>
+              </li>
+            );
+          })}
         </ul>
       )}
     </section>

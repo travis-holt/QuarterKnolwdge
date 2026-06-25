@@ -3,10 +3,19 @@ import { trainingByDomain, trainingPlan, trainingStats } from '../lib/scoring.js
 
 const domainName = (id) => DOMAINS.find((d) => d.id === id)?.name ?? id;
 
-export default function Training({ rows, deptName, onOpenNavigator, onPreviewModule }) {
+// completionMap: { [navigatorId]: Set<domainId> } — who has practiced which domain.
+// roster: [{ id, name }] — used to look up navigatorId by name for the checkmark.
+export default function Training({ rows, deptName, onOpenNavigator, onPreviewModule, completionMap = {}, roster = [] }) {
   const stats = trainingStats(rows);
   const byDomain = trainingByDomain(rows);
   const plan = trainingPlan(rows);
+
+  // Look up a navigator's roster UUID by name so we can check their completions.
+  const idByName = (name) => roster.find((m) => m.name === name)?.id;
+  const hasPracticed = (name, domainId) => {
+    const id = idByName(name);
+    return id ? (completionMap[id]?.has(domainId) ?? false) : false;
+  };
 
   return (
     <section className="training stagger">
@@ -115,17 +124,25 @@ export default function Training({ rows, deptName, onOpenNavigator, onPreviewMod
               </div>
               {p.assignments.length > 0 && (
                 <ul className="train-person__list">
-                  {p.assignments.map((a) => (
-                    <li key={a.domainId} className="train-assign">
-                      <span className={`cohort__tag ${a.priority === 'Required' ? 'cohort__tag--req' : 'cohort__tag--stretch'}`}>
-                        {a.priority}
-                      </span>
-                      <button className="linkbtn train-assign__title" onClick={() => onPreviewModule(a.domainId)}>
-                        {a.module?.title ?? domainName(a.domainId)}
-                      </button>
-                      <span className="train-assign__goal">{a.goal}</span>
-                    </li>
-                  ))}
+                  {p.assignments.map((a) => {
+                    const practiced = hasPracticed(p.name, a.domainId);
+                    return (
+                      <li key={a.domainId} className="train-assign">
+                        <span className={`cohort__tag ${a.priority === 'Required' ? 'cohort__tag--req' : 'cohort__tag--stretch'}`}>
+                          {a.priority}
+                        </span>
+                        <button className="linkbtn train-assign__title" onClick={() => onPreviewModule(a.domainId)}>
+                          {a.module?.title ?? domainName(a.domainId)}
+                        </button>
+                        <span className="train-assign__goal">{a.goal}</span>
+                        {practiced && (
+                          <span className="training__practiced-badge" title="Navigator has completed a practice scenario">
+                            ✓ Practiced
+                          </span>
+                        )}
+                      </li>
+                    );
+                  })}
                 </ul>
               )}
             </div>
