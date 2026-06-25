@@ -10,7 +10,7 @@
 > [§8 Current System State](#8-current-system-state) and [§15 Current Priorities](#15-current-priorities)
 > accurate at all times.
 >
-> **Last updated:** 2026-06-25 (AI interview simulation — roleplay phase 1) ·
+> **Last updated:** 2026-06-25 (interview transcripts visible in supervisor NavigatorDetail) ·
 > **Doc maintainer:** Claude (AI agent) + repo owner. Assumptions are explicitly marked **[ASSUMPTION]**.
 
 ---
@@ -272,11 +272,17 @@ training assignments.
   Transcript saved to Firestore `interviews` collection on "End call". `saveInterview` /
   `getInterviews` added to [src/lib/db.js](src/lib/db.js) (fourth collection). "Practice" tab
   added to the navigator nav in [src/components/Nav.jsx](src/components/Nav.jsx).
-- **Status:** Complete (Phase 1 — roleplay only). Phase 2 (criterion-based grading +
-  supervisor override) is **Planned**.
+- **Status:** Complete (Phase 1 — roleplay + supervisor transcript view). Phase 2
+  (criterion-based grading + supervisor override) is **Planned**.
 - **Notes:** Open answers are advisory and qualitative — they do not feed `scorePerDomain` or
   the capability matrix. The scoring system stays fully deterministic. Grading is the hard,
   less-reliable part; the roleplay phase ships first as the high-value, low-risk piece.
+- **Supervisor access:** `SupervisorApp` looks up the selected navigator's roster UUID and passes
+  it as `navigatorId` to `NavigatorDetail`. `NavigatorDetail` fetches that navigator's interviews
+  on mount (`getInterviews(navigatorId)`), sorts newest-first, and renders a collapsible
+  "Practice sessions" panel (domain tag, caller name, response count, date; expand to read the
+  full transcript). The panel is hidden in the navigator's own dashboard (no `navigatorId` passed
+  from `NavigatorApp`).
 
 ### F14 — Question Bank + Gemini Scenario Generation (review gate)
 - **Purpose:** Grow the check from the SOP; questions are live Firestore data, not a static file.
@@ -850,6 +856,22 @@ stateDiagram-v2
 - **Files affected:** `src/lib/db.js`, `src/components/Navigators.jsx`, `src/components/SupervisorApp.jsx`,
   `src/components/Start.jsx`, `src/styles.css`.
 - **Verification:** `npm test` → **46 passing**; `npm run build` → clean.
+- **Status:** Complete.
+
+### 2026-06-25 — Interview transcripts in supervisor NavigatorDetail
+- **What changed:** Supervisors can now read a navigator's practice session transcripts from
+  within the navigator's detail panel.
+  - **`SupervisorApp.jsx`:** computes `selectedNavigatorId = roster.find(m => m.name === selected)?.id`
+    and passes it as `navigatorId` to `<NavigatorDetail>`.
+  - **`NavigatorDetail.jsx`:** accepts optional `navigatorId` prop; adds `useState`/`useEffect`
+    to fetch `getInterviews(navigatorId)` on mount (sorted newest-first). New "Practice sessions"
+    panel renders a collapsible list — domain tag, caller name, response count, date — with
+    an expandable transcript view (patient lines left, navigator lines right with accent tint).
+    Panel is hidden when `navigatorId` is absent (navigator's own dashboard in `NavigatorApp`).
+  - **`styles.css`:** `.interview-log*` rules for the supervisor panel.
+- **Files affected:** `src/components/NavigatorDetail.jsx`, `src/components/SupervisorApp.jsx`,
+  `src/styles.css`.
+- **Verification:** `npm test` → 46 passing; `npm run build` → clean.
 - **Status:** Complete.
 
 ### 2026-06-25 — AI interview simulation: roleplay phase
