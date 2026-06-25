@@ -8,6 +8,7 @@ export default function Nav({ role, view, setView, onSignOut }) {
       ? [
           { id: 'dashboard', label: 'My results' },
           { id: 'training', label: 'My training' },
+          { id: 'interview', label: 'Practice' },
         ]
       : [
           { id: 'overview', label: 'Overview' },

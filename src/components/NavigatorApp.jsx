@@ -5,6 +5,7 @@ import Coaching from './Coaching.jsx';
 import NavigatorDetail from './NavigatorDetail.jsx';
 import MyTraining from './MyTraining.jsx';
 import TrainingModule from './TrainingModule.jsx';
+import Interview from './Interview.jsx';
 import EmptyState from './EmptyState.jsx';
 import Footer from './Footer.jsx';
 import {
@@ -208,6 +209,10 @@ export default function NavigatorApp({ navigatorId, name, onSignOut }) {
           showCohort={false}
           backLabel="← Back to my training"
         />
+      )}
+
+      {view === 'interview' && (
+        <Interview navigatorId={navigatorId} name={name} />
       )}
     </Shell>
   );

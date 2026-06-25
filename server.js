@@ -15,10 +15,12 @@ app.use(express.json());
 // --- API routes (import the same handlers used on Vercel) ---
 import generateScenarios from './api/generate-scenarios.js';
 import generateCoaching from './api/generate-coaching.js';
+import interviewTurn from './api/interview-turn.js';
 import health from './api/health.js';
 
 app.post('/api/generate-scenarios', generateScenarios);
 app.post('/api/generate-coaching', generateCoaching);
+app.post('/api/interview-turn', interviewTurn);
 app.get('/api/health', health);
 
 // --- Static SPA ---

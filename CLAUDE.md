@@ -10,7 +10,7 @@
 > [§8 Current System State](#8-current-system-state) and [§15 Current Priorities](#15-current-priorities)
 > accurate at all times.
 >
-> **Last updated:** 2026-06-25 (roster CRUD: edit/deactivate/reset with confirmation gate) ·
+> **Last updated:** 2026-06-25 (AI interview simulation — roleplay phase 1) ·
 > **Doc maintainer:** Claude (AI agent) + repo owner. Assumptions are explicitly marked **[ASSUMPTION]**.
 
 ---
@@ -254,6 +254,29 @@ training assignments.
   Temperature 0.4 for consistency; only coaches competencies below `canTeach` threshold. Advisory
   only — never touches a score or Firestore.
 - **Status:** Complete (Phase 2 — first AI-in-the-live-path feature).
+
+### F15 — AI Interview Simulation (roleplay phase)
+- **Purpose:** Let navigators practice handling a patient call before a real one — low-stakes,
+  repeatable, domain-targeted.
+- **User benefit:** Gemini acts as a patient caller; the navigator types responses exactly as they
+  would on the phone. No grading — pure practice. Every call is different (randomly generated
+  scenario from the SOP).
+- **Technical implementation:** [api/interview-turn.js](api/interview-turn.js) — two-mode Gemini
+  proxy: **init** (no history) generates a caller scenario + opening line via JSON schema output;
+  **turn** (has history + navigatorMessage) continues the conversation as the patient using a
+  `system_instruction` that keeps Gemini in character. History is reconstructed into Gemini's
+  alternating `user`/`model` format with a synthetic `BEGIN_CALL` seed turn. Same key rotation as
+  other handlers. [src/components/Interview.jsx](src/components/Interview.jsx) — phases: setup
+  (domain grid) → loading → active (chat UI + typing-dots indicator) → saving → done. 20 s
+  `AbortController` timeout on each API call; chat auto-scrolls; input refocuses after each reply.
+  Transcript saved to Firestore `interviews` collection on "End call". `saveInterview` /
+  `getInterviews` added to [src/lib/db.js](src/lib/db.js) (fourth collection). "Practice" tab
+  added to the navigator nav in [src/components/Nav.jsx](src/components/Nav.jsx).
+- **Status:** Complete (Phase 1 — roleplay only). Phase 2 (criterion-based grading +
+  supervisor override) is **Planned**.
+- **Notes:** Open answers are advisory and qualitative — they do not feed `scorePerDomain` or
+  the capability matrix. The scoring system stays fully deterministic. Grading is the hard,
+  less-reliable part; the roleplay phase ships first as the high-value, low-risk piece.
 
 ### F14 — Question Bank + Gemini Scenario Generation (review gate)
 - **Purpose:** Grow the check from the SOP; questions are live Firestore data, not a static file.
@@ -829,6 +852,35 @@ stateDiagram-v2
 - **Verification:** `npm test` → **46 passing**; `npm run build` → clean.
 - **Status:** Complete.
 
+### 2026-06-25 — AI interview simulation: roleplay phase
+- **What changed:** Navigators can now practice handling a patient call in the "Practice" tab.
+  Gemini acts as a patient caller — the navigator types responses turn by turn, and Gemini stays
+  in character using a `system_instruction` seeded with the caller's scenario and SOP context.
+  - **New file:** `api/interview-turn.js` — two-mode handler: init call generates a scenario +
+    opening line via structured JSON schema (temperature 0.9 for variety); subsequent turn calls
+    reconstruct the full conversation history into Gemini's alternating `user`/`model` format
+    (with a synthetic `BEGIN_CALL` seed turn so the patient opens the call) and continue as the
+    patient at temperature 0.8.
+  - **`server.js`:** new `POST /api/interview-turn` route.
+  - **`src/components/Interview.jsx`:** setup → loading → active (chat bubbles, typing-dots
+    animation, auto-scroll, 20 s AbortController timeout per call) → saving → done. Transcript
+    saved to Firestore on "End call"; non-blocking (failure doesn't block the done screen).
+  - **`src/lib/db.js`:** `saveInterview` and `getInterviews` added; `INTERVIEWS` collection
+    constant; header comment updated to reflect all four collections.
+  - **`src/components/Nav.jsx`:** "Practice" tab added for navigator role.
+  - **`src/components/NavigatorApp.jsx`:** `Interview` imported; `interview` view wired in.
+  - **`src/styles.css`:** full chat UI — setup domain grid, header card, scrollable chat window,
+    patient/navigator bubbles (different alignment + colors), typing-dot animation,
+    input row, done screen.
+- **Design decision:** Open-answer scores are advisory only and do not feed the capability matrix.
+  Phase 2 (criterion-based grading + supervisor override) is planned but not yet built — the
+  roleplay phase ships first as the high-value, low-risk piece.
+- **Files affected:** new `api/interview-turn.js`, `src/components/Interview.jsx`; edited
+  `server.js`, `src/lib/db.js`, `src/components/{Nav,NavigatorApp}.jsx`, `src/styles.css`.
+- **Verification:** `npm test` → 46 passing; `npm run build` → clean; `node --check
+  api/interview-turn.js` → OK.
+- **Status:** Complete (roleplay only).
+
 ### 2026-06-25 — Generative AI coaching (Phase 2, first feature)
 - **What changed:** Added a second coaching layer that runs Gemini asynchronously after a navigator
   submits a check — producing a 2–3 sentence personalised coaching note per weak competency, grounded
@@ -875,8 +927,9 @@ stateDiagram-v2
   `VITE_FIREBASE_*` and `GEMINI_API_KEYS` confirmed set in Railway Variables. No `GENERATION_SECRET`
   needed — server falls back to `SUPERVISOR_PASSCODE`.
 - **Counts (today):** 6 domains · 9 competencies · 18 seed questions (bank now grows in Firestore) ·
-  4 departments (Pediatrics live) · **46** unit tests · **3** Firestore collections
-  (`roster`, `results`, `questions`) · **3** serverless functions (`generate-scenarios`, `generate-coaching`, `health`).
+  4 departments (Pediatrics live) · **46** unit tests · **4** Firestore collections
+  (`roster`, `results`, `questions`, `interviews`) · **4** serverless functions
+  (`generate-scenarios`, `generate-coaching`, `interview-turn`, `health`).
 
 ---
 
@@ -942,6 +995,7 @@ stateDiagram-v2
 - **Serverless endpoints:**
   - `POST /api/generate-scenarios` `{ domainId, count, secret }` → `{ questions }` (validated drafts).
   - `POST /api/generate-coaching` `{ answers, questions, competencyScores, name, secret }` → `{ coaching: { [compId]: string } }` (personalised AI notes per weak competency; empty object if all at canTeach or all correct).
+  - `POST /api/interview-turn` `{ domain, secret }` (init, no scenario) → `{ scenario, callerName, reply }`. `{ domain, scenario, callerName, history, navigatorMessage, secret }` (turn) → `{ reply }`.
   - `GET /api/health` → `{ ok }`.
 - **Env vars:** client (gitignored `.env.local`, build-time) `VITE_FIREBASE_*`; **server-only**
   (Railway service Variables — never `VITE_`-prefixed) `GEMINI_API_KEYS` (comma-separated; rotated on
@@ -953,7 +1007,9 @@ stateDiagram-v2
   results — `getResult`, `saveResult(navigatorId, name, scores, competencyScores?)`,
   `clearResult(navigatorId)`, `subscribeResults(cb,onError?)`; questions — `subscribeQuestions(cb,onError?)`,
   `getActiveQuestions()`, `seedQuestionsIfEmpty(seed)`, `saveDraftQuestions(drafts, source?)`,
-  `updateQuestion(id,patch)`, `activateQuestion(id)`, `archiveQuestion(id)`, `deleteQuestion(id)`.
+  `updateQuestion(id,patch)`, `activateQuestion(id)`, `archiveQuestion(id)`, `deleteQuestion(id)`;
+  interviews — `saveInterview(navigatorId, name, domainId, scenario, callerName, transcript)`,
+  `getInterviews(navigatorId)`.
 - **Secrets:** `SUPERVISOR_PASSCODE` is in the repo (pilot-acceptable); `GEMINI_API_KEYS` is a
   server-only Railway Variable, never committed or bundled.
 
@@ -1158,7 +1214,9 @@ npm run test:watch   # run Vitest in watch mode
 - ✅ Railway deployment: Express server + build fixes — done 2026-06-25.
 - ✅ Full SOP context + GENERATION_SECRET removed — done 2026-06-25.
 - ✅ Generative AI coaching (Phase 2, first feature) — done 2026-06-25.
-- Verify AI coaching + Generate → review → activate on Railway — next step.
+- ✅ AI interview simulation (roleplay phase) — done 2026-06-25.
+- Phase 2 of interview simulation: criterion-based grading + supervisor override — next interview milestone.
+- Verify AI coaching + interview sim + Generate → review → activate on Railway — next step.
 - Component/integration tests (jsdom + Testing Library) — next technical priority.
 
 ---

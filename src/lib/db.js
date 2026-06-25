@@ -5,10 +5,13 @@
 // calls these helpers — never the Firestore SDK directly. This keeps the data
 // layer swappable and the rest of the app ignorant of Firestore.
 //
-// Two collections, both keyed by UUID (never by name → no typo/collision risk):
-//   roster   — supervisor-managed navigator list { name, pin, createdAt }
-//   results  — check submissions { name, navigatorId, scores, competencyScores,
-//              submittedAt }
+// Four collections, all UUID-keyed (never name-keyed → no typo/collision risk):
+//   roster     — supervisor-managed navigator list { name, pin, createdAt }
+//   results    — check submissions { name, navigatorId, scores, competencyScores,
+//                submittedAt }
+//   questions  — supervisor-managed scenario bank { scenario, options, status, … }
+//   interviews — practice roleplay transcripts { navigatorId, name, domainId,
+//                scenario, callerName, transcript, endedAt }
 //
 // Levels (learning/solid/canTeach) are NEVER stored — always derived client-side
 // by scoreToLevel(), so thresholds stay tunable without a data migration. Older
@@ -36,6 +39,7 @@ import {
 const ROSTER = 'roster';
 const RESULTS = 'results';
 const QUESTIONS_COL = 'questions';
+const INTERVIEWS = 'interviews';
 
 // ── Roster ───────────────────────────────────────────────────────────────────
 
@@ -152,6 +156,47 @@ export function subscribeResults(cb, onError) {
     (snap) => cb(snap.docs.map((d) => ({ id: d.id, ...d.data() }))),
     onError ?? ((err) => console.error('subscribeResults:', err))
   );
+}
+
+// ── Interviews (practice roleplay transcripts) ────────────────────────────────
+
+/**
+ * Save a completed interview session. Transcript is stored as-is; criteria
+ * grades are null until grading is added in a later phase.
+ * @param {string} navigatorId
+ * @param {string} name                  denormalized for display
+ * @param {string} domainId
+ * @param {string} scenario              the navigator-facing briefing text
+ * @param {string} callerName
+ * @param {{role:'patient'|'navigator', text:string}[]} transcript
+ * @returns {Promise<string>} the new interview doc id
+ */
+export async function saveInterview(navigatorId, name, domainId, scenario, callerName, transcript) {
+  const ref = doc(collection(db, INTERVIEWS));
+  await setDoc(ref, {
+    navigatorId,
+    name,
+    domainId,
+    scenario,
+    callerName,
+    transcript,
+    endedAt: serverTimestamp(),
+    criteriaGrades: null,
+    supervisorOverrides: null,
+  });
+  return ref.id;
+}
+
+/**
+ * One-time fetch of all interviews for a navigator (for their history view).
+ * @param {string} navigatorId
+ * @returns {Promise<object[]>}
+ */
+export async function getInterviews(navigatorId) {
+  const snap = await getDocs(
+    query(collection(db, INTERVIEWS), where('navigatorId', '==', navigatorId))
+  );
+  return snap.docs.map((d) => ({ id: d.id, ...d.data() }));
 }
 
 // ── Questions (live, supervisor-managed bank) ──────────────────────────────────
