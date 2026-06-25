@@ -10,7 +10,7 @@
 > [§8 Current System State](#8-current-system-state) and [§15 Current Priorities](#15-current-priorities)
 > accurate at all times.
 >
-> **Last updated:** 2026-06-25 ("Spot the Error" QA audit training + completion tracking) ·
+> **Last updated:** 2026-06-25 (SOP replaced with Pediatrics_SOP_Updated.pdf; interview caller consistency fix; code review) ·
 > **Doc maintainer:** Claude (AI agent) + repo owner. Assumptions are explicitly marked **[ASSUMPTION]**.
 
 ---
@@ -820,28 +820,62 @@ stateDiagram-v2
 - **Status:** Complete. `GEMINI_API_KEYS` (already set in Railway) is the only server-side variable
   needed for generation to work; no `GENERATION_SECRET` required.
 
-### 2026-06-25 — Update SOP grounding to Pediatrics_SOP_Updated.pdf
-- **What changed:** `api/_sop-context.js` rewritten to reflect the updated Aizer Health Pediatric
-  SOP (`Pediatrics_SOP_Updated.pdf`). Key additions and changes vs the prior version:
-  - **Providers:** Updated roster with correct names (Dina Faiden, formerly Donna Deck; Lazar Khaimov;
-    Chana Heintz; Lily Namanworth; Tamar Dachoh; Robin Aschkenasy) and language capabilities.
-    Max patient counts, double-booking rules, and demographic comfort rules preserved.
-  - **New appointment types added:** Tongue Tie (within 5 weeks; refer out if older), Weight Check
-    (TE to Sally Carilli if PE up to date), Lactation appointments (30 min OV; Robin/Tamar/Chana
-    only), Early Intervention (TE to PEDS TELEPHONE ENCOUNTER queue), WIC forms (TE to Peds
-    Telephone Encounter queue OR OV with reason "HEMO").
-  - **TE guide expanded:** Full step-by-step routing for 9 scenarios — lab results, medical questions,
+### 2026-06-25 — SOP replaced with Pediatrics_SOP_Updated.pdf (pure replacement)
+- **What changed:** `api/_sop-context.js` fully replaced using **only** content from
+  `Pediatrics_SOP_Updated.pdf` (Aizer Health Organization Operational Procedures v1.0). No content
+  from the old `SOP Guide.pdf` is carried forward.
+  - **Providers:** Correct names and details — Dina Faiden (formerly Donna Deck, not Dick), Lazar
+    Khaimov, Robin Aschkenasy, Tamar Dachoh, Chana Heintz, Lily Namanworth — with languages and
+    patient caps exactly as in the updated document.
+  - **New appointment types:** Tongue Tie (within 5 weeks; refer out if child is older), Weight Check
+    (TE to Sally Carilli if PE up to date), Lactation (30 min OV; Robin/Tamar/Chana only), Early
+    Intervention (TE to PEDS TELEPHONE ENCOUNTER queue), WIC forms (TE or OV with reason "HEMO").
+  - **Full 9-scenario TE guide:** step-by-step for lab results (black lock rule), medical questions,
     shots/immunizations, ENT/nutritionist, referrals, controlled substance follow-ups, digital imaging,
-    specialty care (Vision/Speech/PT-OT/Podiatry → transfer only, no TE), and medication refills
-    (HIGH PRIORITY tag if patient is out). Black lock rule for lab results made explicit.
-  - **PE consequences block:** Explicit list of what navigators cannot offer when PE is not up to date.
-  - **PE frequency calculator:** 0–6 months = every 2 months; 6 mo–2 yr = every 3 months; 2 yr+ =
-    annually; Fidelis + Medicaid early exception rule.
-  - **Source file reference** in CLAUDE.md §1 updated from `SOP Guide.pdf` to `Pediatrics_SOP_Updated.pdf`.
-- **Files affected:** `api/_sop-context.js` (full rewrite), `CLAUDE.md` (§1 source reference + §7 entry).
+    specialty care (Vision/Speech/PT-OT/Podiatry = transfer only, no TE), and medication refills
+    (HIGH PRIORITY tag if patient is completely out).
+  - **PE frequency calculator and consequences block** per the new SOP.
+  - Source reference in §1 updated from `SOP Guide.pdf` to `Pediatrics_SOP_Updated.pdf`.
+- **Files affected:** `api/_sop-context.js` (full rewrite), `CLAUDE.md` (§1 + §7).
 - **Verification:** `node --check api/_sop-context.js` → OK; `npm test` → 46 passing.
 - **Status:** Complete. All AI features (scenario generation, coaching, interview, audit) now ground
-  against the updated SOP content.
+  against the updated SOP only.
+
+### 2026-06-25 — Interview caller consistency fix
+- **What changed:** Gemini was hallucinating inconsistent facts mid-call (e.g., stating a birthday
+  of August 2017 in one turn, then saying "he just turned 6" two turns later). Root cause: at
+  temperature 0.8 the model generated factual answers fresh each turn without cross-checking its own
+  history.
+  - Added a `CRITICAL` consistency rule to `buildSystemInstruction` in `api/interview-turn.js`:
+    Gemini is now explicitly told to check its prior turns before answering any factual question about
+    the caller (names, dates, ages, insurance, provider, reason for calling, etc.).
+  - Reduced turn temperature from 0.8 → 0.5 to reduce free-form generation that diverges from the
+    established conversation history.
+- **Files affected:** `api/interview-turn.js`.
+- **Verification:** `node --check api/interview-turn.js` → OK; `npm test` → 46 passing.
+- **Status:** Complete.
+
+### 2026-06-25 — Code review: findings documented
+- **What reviewed:** F13 (AI Coaching), F15 (Interview), F16 (Spot the Error + completions), Roster
+  CRUD, and the interview consistency fix. Full checklist pass across all 5 API handlers, `server.js`,
+  `db.js`, `SpotTheError`, `Interview`, `Coaching`, `MyTraining`, `firestore.rules`.
+- **No blocking findings.** Moderate and minor findings documented:
+  - **◆ Dead import** — `createRequire` imported in `server.js:6` but never used.
+  - **◆ DRY violation** — `getApiKeys`, `callGemini`, `geminiWithRotation`, and `ROTATABLE` duplicated
+    identically across all 5 `api/` handlers. Should be extracted to `api/_gemini-client.js`. The
+    `generate-coaching.js` version has richer `authFailures` tracking that the other 4 lack.
+  - **◆ Zero test coverage** for new features (F13, F15, F16): `SpotTheError`, `Interview`,
+    `Coaching`, `MyTraining`, the three new API handlers, and four new `db.js` exports.
+  - **◇ Redundant condition** in `SpotTheError.jsx:157`:
+    `if (phase === 'loading' || (phase === 'loading' && genError))` → simplifies to
+    `if (phase === 'loading')`.
+  - **◇ Prompt injection** — `navigatorAnswer` / `modelExplanation` / `name` inserted verbatim into
+    the `coach-audit` Gemini prompt. Output is advisory-only; blast radius = one coaching note
+    visible to the attacker only. Low severity for pilot; add length cap + session token before
+    production.
+- **Recommendation:** ship as-is; address DRY extraction and dead import before the next feature
+  cycle; test coverage is the highest unresolved tech debt.
+- **No files changed** (findings only — no fixes in this session).
 
 ### 2026-06-25 — Premium "refined-light" visual overhaul (design system + motion)
 - **What changed:** A non-functional, presentation-layer redesign elevating the app to a polished
@@ -1013,20 +1047,29 @@ stateDiagram-v2
 - **Working end to end (logic + UI):** supervisor adds navigators / generates+curates questions →
   navigators sign in → take the active check → land on **coaching** (rule-based + AI layer) → per-domain **and**
   per-competency results persist to Firestore → supervisor matrix/overview update live (incl.
-  competency distribution) → navigator/training dashboards → department switching. Build clean,
-  tests green (`npm test` → **46 passing**).
-- **Existing functionality:** features F1–F14 + F16 (see [§4](#4-feature-inventory)) are **Complete** in
-  code. F13 (Coaching) includes the Phase 2 AI layer. F16 closes the roadmapped "completion tracking" item.
+  competency distribution) → navigator/training dashboards → department switching → practice interview
+  (roleplay) → "Spot the Error" QA audit with completion tracking. Build clean, tests green
+  (`npm test` → **46 passing**).
+- **Existing functionality:** features F1–F16 (see [§4](#4-feature-inventory)) are **Complete** in
+  code. F13 (Coaching) includes the Phase 2 AI layer. F15 (Interview) is Phase 1 roleplay only.
+  F16 closes the roadmapped "completion tracking" item.
+- **SOP grounding:** all AI features (scenario generation, coaching, interview, Spot the Error audit)
+  are grounded against `Pediatrics_SOP_Updated.pdf` exclusively. `SOP Guide.pdf` is superseded.
+- **Interview caller consistency:** `api/interview-turn.js` turn temperature reduced to 0.5 and a
+  `CRITICAL` consistency rule added to the system instruction — callers no longer hallucinate
+  contradictory facts mid-call.
 - **Experimental / mockup:**
   - Training **content** is mockup (flagged in UI). Logic is real.
   - **Adult Medicine, OB/GYN, Behavioural Health** are not assessed; only **Pediatrics** is live.
 - **Test coverage:** `lib/scoring.js` is unit-tested (46 tests, incl. competency scoring). Components,
-  the role apps, and the serverless functions are **not** yet tested.
-- **Incomplete areas:** no CI, no trend/history, no mentor pairing, no coverage/bus-factor view, no
-  completion tracking; no component/UI tests. Remaining Phase 2: open-ended AI grading, interview
-  simulation, per-signal sub-scoring.
+  the role apps, and the serverless functions are **not** yet tested (highest unresolved tech debt).
+- **Known code quality items (non-blocking, from code review 2026-06-25):**
+  - Dead import `createRequire` in `server.js:6`.
+  - `getApiKeys`/`callGemini`/`geminiWithRotation` duplicated across all 5 `api/` handlers — should
+    be extracted to `api/_gemini-client.js`.
+  - Redundant condition in `SpotTheError.jsx:157`.
 - **Active integrations:** **Firebase / Firestore** (live) + **Gemini via Railway Express server**
-  (generation + coaching both code-complete; `GEMINI_API_KEYS` set in Railway Variables).
+  (`GEMINI_API_KEYS` set in Railway Variables; all 6 AI endpoints live).
 - **Deployment status:** **Railway** (Git-connected to `main`). Railway auto-deploys on push.
   `VITE_FIREBASE_*` and `GEMINI_API_KEYS` confirmed set in Railway Variables. No `GENERATION_SECRET`
   needed — server falls back to `SUPERVISOR_PASSCODE`.
@@ -1189,13 +1232,21 @@ npm run test:watch   # run Vitest in watch mode
 - Heatmap intensity toggle (show % inside matrix cells).
 
 ### Technical Debt
-- `lib/scoring.js` is unit-tested (Vitest, 38 tests). **Components and the App view router are
-  still untested** — add component/integration tests next (would need jsdom + Testing Library).
-- No CI/CD (manual deploys); now that a `test` script exists, a CI step could run `npm test` —
-  consider a Pages GitHub Action when token scope allows.
+- `lib/scoring.js` is unit-tested (Vitest, **46 tests**). **Components, role apps, and all API
+  handlers are untested** — highest unresolved gap. Add component/integration tests next (jsdom +
+  Testing Library). API handler pure functions (`buildPrompt`, `buildContents`, `buildDigest`,
+  `buildMessages`) can be unit-tested without hitting the real Gemini API.
+- **`getApiKeys`/`callGemini`/`geminiWithRotation` duplicated 5×** across all `api/` handlers.
+  Extract to `api/_gemini-client.js` (the `_` prefix convention is already established). The
+  `generate-coaching.js` version has richer `authFailures` tracking that the other 4 lack.
+- **Dead import:** `createRequire` imported in `server.js:6` but never used — one-line fix.
+- **Redundant condition** in `SpotTheError.jsx:157`: `if (phase === 'loading' || (phase ===
+  'loading' && genError))` simplifies to `if (phase === 'loading')`.
+- No CI/CD (manual deploys via Railway push). A GitHub Actions step running `npm test` on PR
+  would catch regressions.
 - Single large `styles.css` — fine for now; revisit if it keeps growing.
-- Repo name typo `QuarterKnolwdge` is load-bearing for the Pages `base` path — don't rename
-  casually (would break asset URLs).
+- Repo name typo `QuarterKnolwdge` is in the Railway/GitHub remote URL — don't rename without
+  updating Railway's Git integration.
 
 ---
 
@@ -1223,7 +1274,10 @@ npm run test:watch   # run Vitest in watch mode
   gh-pages step needed.
 - **Mockup departments can be mistaken for real data** if the "illustrative mockup data" note is
   overlooked. *Severity: low.* *Mitigation:* DeptBar shows the note.
-- **No known functional bugs** in scoring/read-offs (38 unit tests green).
+- **~~Interview caller hallucinating facts~~ (resolved 2026-06-25):** Gemini was generating
+  caller facts (age, birthday) fresh each turn at temperature 0.8 instead of recalling what it had
+  already stated. Fixed: consistency rule added to `buildSystemInstruction`; temperature lowered to 0.5.
+- **No known functional bugs** in scoring/read-offs (46 unit tests green).
 
 ---
 
@@ -1302,17 +1356,18 @@ npm run test:watch   # run Vitest in watch mode
 ## 15. Current Priorities
 
 1. **Maintain this CLAUDE.md** on every change (highest standing priority).
-2. **Verify end-to-end on Railway:** `/api/health` → Generate → review → activate → check; then take
-   a check and confirm AI coaching notes appear in the coaching screen.
+2. **Extract shared Gemini helpers** to `api/_gemini-client.js` — highest code-quality item from
+   the code review (5 files all duplicate `getApiKeys`/`callGemini`/`geminiWithRotation`).
 3. **Component/integration tests** — highest unresolved tech debt (jsdom + Testing Library).
-4. **Remaining Phase 2:** per-signal sub-scoring (deterministic, no LLM), open-ended AI grading
-   (with rubric + supervisor override), interview simulation.
+4. **Phase 2 of interview simulation:** criterion-based grading + supervisor override.
 
 **Active work items:**
-- Push to `main` → Railway auto-deploys → verify AI coaching end-to-end.
+- Minor code review fixes: remove dead `createRequire` import in `server.js`; simplify redundant
+  condition in `SpotTheError.jsx:157`; extract Gemini client helpers.
 
 **Blockers:**
-- Real per-department question content requires additional SOPs from the owner.
+- Real per-department question content requires additional SOPs from the owner (OB/GYN SOP is in
+  the repo as `OB GYN SOP.pdf` — could be the next department to make live).
 - Real training materials needed to replace mockup module content.
 
 **Upcoming milestones:**
@@ -1324,9 +1379,11 @@ npm run test:watch   # run Vitest in watch mode
 - ✅ Generative AI coaching (Phase 2, first feature) — done 2026-06-25.
 - ✅ AI interview simulation (roleplay phase) — done 2026-06-25.
 - ✅ "Spot the Error" QA audit training + completion tracking (F16) — done 2026-06-25.
-- Phase 2 of interview simulation: criterion-based grading + supervisor override — next interview milestone.
-- Verify "Spot the Error" end-to-end on Railway — next step.
+- ✅ SOP replaced with Pediatrics_SOP_Updated.pdf — done 2026-06-25.
+- ✅ Interview caller consistency fix — done 2026-06-25.
+- Extract shared Gemini helpers to `api/_gemini-client.js` — next code-quality step.
 - Component/integration tests (jsdom + Testing Library) — next technical priority.
+- Phase 2 of interview simulation: criterion-based grading + supervisor override.
 
 ---
 
