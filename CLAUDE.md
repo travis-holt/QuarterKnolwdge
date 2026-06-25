@@ -10,7 +10,7 @@
 > [§8 Current System State](#8-current-system-state) and [§15 Current Priorities](#15-current-priorities)
 > accurate at all times.
 >
-> **Last updated:** 2026-06-24 (competency engine + Gemini scenario generation on Vercel) ·
+> **Last updated:** 2026-06-25 (Railway deployment migration + build fixes) ·
 > **Doc maintainer:** Claude (AI agent) + repo owner. Assumptions are explicitly marked **[ASSUMPTION]**.
 
 ---
@@ -78,7 +78,7 @@
 - Analytics dashboards (team overview + per-navigator). ✅ Done.
 - Auto-assign training by weak point, with previewable mockup content. ✅ Done.
 - Department dimension (Pediatrics + 3 mockup departments). ✅ Done.
-- A persistent public deployment for showcasing. ✅ Done (GitHub Pages).
+- A persistent public deployment for showcasing. ✅ Done (Railway).
 
 ### Mid-Term Goals
 - **Multi-department live checks:** a real question set per department (each from its own SOP),
@@ -212,12 +212,23 @@ training assignments.
   selector. Live check assesses **Pediatrics only** (`ASSESSED_DEPT`); others are mockups.
 - **Status:** Complete (Pediatrics live; other 3 departments = mockup data).
 
-### F11 — Deployment (Vercel)
-- **Purpose:** Persistent public URL + a place to run serverless functions (which GitHub Pages can't).
-- **Technical implementation:** Vite served at root (`base: '/'`); `vercel.json` (framework `vite`,
-  output `dist`); `/api/*` serverless functions deploy alongside. Env vars set in the Vercel project.
-- **Status:** Complete (code). **[ASSUMPTION]** Owner links the Vercel project + sets env vars.
-- **Notes:** Replaces the prior GitHub Pages deploy; the `/QuarterKnolwdge/` base-path hack is retired.
+### F11 — Deployment (Railway)
+- **Purpose:** Persistent public URL + a place to run the Gemini proxy (which GitHub Pages can't).
+- **Technical implementation:** `server.js` — Express 5 app that serves `dist/` as static SPA and
+  mounts the `/api/*` handlers (same `(req, res)` signature as the Vercel originals; reads `PORT`
+  from env, Railway injects it automatically). `railway.toml` — Railpack config (`buildCommand: npm
+  run build`, `startCommand: npm start`, `nixpacksConfigPath: nixpacks.toml`). `nixpacks.toml` —
+  overrides Railpack's default `npm ci` to `npm install` (avoids `EBADPLATFORM` failures for
+  cross-platform optional esbuild packages). `vercel.json` kept for potential future Vercel use.
+  Env vars set in Railway service Variables: `VITE_FIREBASE_*` (build-time, baked into bundle),
+  `GEMINI_API_KEYS`, `GENERATION_SECRET` (server-only, never bundled). `"engines": { "node":
+  ">=20.0.0" }` in `package.json` tells Railpack/Nixpacks to use Node 20 (vitest@4 and vite@8
+  require it; Railway's default is Node 18).
+- **Status:** Complete (code). **[ASSUMPTION]** Owner sets env vars in Railway project Variables
+  before the first deploy (VITE_FIREBASE_* must be present at build time).
+- **Notes:** Replaced GitHub Pages (no server support) and Vercel (owner chose Railway). The
+  `/QuarterKnolwdge/` base-path hack is retired; app serves at root. For local `/api` dev, run
+  `node server.js` after `npm run build`, or just test via Railway deploy.
 
 ### F12 — Competency Axis (9 competencies)
 - **Purpose:** Measure *how* a navigator thinks/decides/communicates, across all domains.
@@ -274,15 +285,18 @@ training assignments.
 ```
 QuarterKnolwdge/
 ├── index.html               # Vite entry HTML
-├── vite.config.js           # base '/' (served at root on Vercel)
-├── vercel.json              # Vercel project config (framework vite, output dist)
-├── package.json             # scripts: dev/build/preview/test/test:watch
+├── vite.config.js           # base '/' (served at root)
+├── vercel.json              # Vercel config (kept; Railway is the active host)
+├── railway.toml             # Railway/Railpack config (build + start + nixpacksConfigPath)
+├── nixpacks.toml            # overrides npm ci → npm install (avoids EBADPLATFORM)
+├── server.js                # Express server: serves dist/ + mounts /api/* handlers
+├── package.json             # scripts: dev/build/preview/test/test:watch/start; engines node>=20
 ├── README.md                # quick-start + tweak guide
 ├── CLAUDE.md                # THIS FILE — project knowledge base
 ├── SOP Guide.pdf            # source of truth for domains/questions
 ├── .env.local.example       # Firebase + Gemini env template (copy → .env.local, gitignored)
 ├── firestore.rules          # pilot-grade Firestore security rules (roster/results/questions)
-├── api/                     # Vercel serverless functions
+├── api/                     # API handlers (originally Vercel serverless; now served by Express)
 │   ├── generate-scenarios.js#   Gemini proxy (holds GEMINI_API_KEY; validates output)
 │   ├── health.js            #   deploy/health check
 │   └── _sop-context.js      #   SOP grounding text (helper, not a route)
@@ -310,14 +324,14 @@ QuarterKnolwdge/
   `competencyScores`), and `questions` (supervisor-managed scenario bank: `draft`/`active`/
   `archived`) — all UUID-keyed. All Firestore access is isolated in [src/lib/db.js](src/lib/db.js);
   init in [src/lib/firebase.js](src/lib/firebase.js) (reads `VITE_FIREBASE_*` from `.env.local`).
-- **Serverless (Vercel functions, `/api`).** [api/generate-scenarios.js](api/generate-scenarios.js)
-  is a Gemini proxy: it holds the `GEMINI_API_KEY` **server-side only** (never bundled to the
-  browser), calls `gemini-2.5-flash` with structured-JSON output, validates/repairs each scenario,
-  and returns drafts the client persists for review. Multiple keys may be supplied
-  (`GEMINI_API_KEYS`, comma-separated); the function **rotates to the next key on 429/503** to
-  stretch the free tier. [api/health.js](api/health.js) is a deploy check. Helper modules are
-  `_`-prefixed (`api/_sop-context.js`) so Vercel doesn't route them. The endpoint is gated by
-  `GENERATION_SECRET` (supervisor passcode) — pilot-grade.
+- **Express server + `/api` handlers.** [server.js](server.js) is the Railway entry point: an
+  Express 5 app that serves `dist/` as static files (SPA catch-all via `/*splat`) and mounts
+  [api/generate-scenarios.js](api/generate-scenarios.js) and [api/health.js](api/health.js) as
+  Express routes. The handlers use the same `(req, res)` Node.js signature they had as Vercel
+  functions — no changes needed. `generate-scenarios.js` holds the `GEMINI_API_KEYS`
+  **server-side only** (never bundled), calls `gemini-2.5-flash` with structured-JSON output,
+  validates/repairs each scenario, and rotates keys on 429/503. Helper modules are `_`-prefixed
+  (`api/_sop-context.js`). The endpoint is gated by `GENERATION_SECRET` — pilot-grade.
 - **No auth system** (by design for the pilot): navigators pick their name from the roster + a
   4-digit PIN; supervisors enter `SUPERVISOR_PASSCODE`. Session persistence is localStorage only,
   isolated in [src/lib/session.js](src/lib/session.js). Security rules in `firestore.rules` are
@@ -326,15 +340,21 @@ QuarterKnolwdge/
   GitHub-Pages + Firestore pilot with no server; now Vercel + serverless for the Gemini proxy.
 
 ### Infrastructure
-- **Hosting:** **Vercel** — serves the React build at root **and** the `/api` serverless functions.
+- **Hosting:** **Railway** — runs the Express server (`server.js`) which serves the Vite build
+  and the `/api` routes from a single persistent Node.js container. Auto-deploys on push to `main`.
 - **Repo:** `github.com/travis-holt/QuarterKnolwdge` (public).
-- **Deployment:** Vercel (Git-connected or `vercel` CLI). Build `npm run build` → output `dist`.
-  Env vars (Vercel project settings): `VITE_FIREBASE_*` (client, build-time), `GEMINI_API_KEY` +
-  `GENERATION_SECRET` (server-only). **Historical:** GitHub Pages via `gh-pages` (retired).
-- **CI/CD:** None beyond Vercel's build. **[ASSUMPTION]** No GitHub Actions.
-- **Monitoring:** None.
-- **Security:** `GEMINI_API_KEY`/`GENERATION_SECRET` are server-only and never in the bundle. No
-  PII; sample/illustrative data only. Site is public to anyone with the URL.
+- **Deployment:** Railway (Git-connected to `main`). Railpack detects Node.js; `railway.toml`
+  sets `buildCommand: npm run build`, `startCommand: npm start`, and points to `nixpacks.toml`
+  which overrides the install step from `npm ci` to `npm install` (prevents `EBADPLATFORM` errors
+  for cross-platform optional esbuild packages). Requires `engines.node >=20.0.0` (set in
+  `package.json`) because vitest@4 and vite@8 require Node 20+; Railway defaults to Node 18.
+  Env vars in Railway service Variables: `VITE_FIREBASE_*` (client, build-time — must be set
+  BEFORE first build), `GEMINI_API_KEYS` + `GENERATION_SECRET` (server-only, never bundled).
+  **Historical:** GitHub Pages (retired — no server) → Vercel (owner chose Railway instead).
+- **CI/CD:** None beyond Railway's build. **[ASSUMPTION]** No GitHub Actions.
+- **Monitoring:** None (Railway console shows logs + metrics).
+- **Security:** `GEMINI_API_KEYS`/`GENERATION_SECRET` are server-only Railway env vars and never
+  in the bundle. No PII; sample/illustrative data only. Site is public to anyone with the URL.
 
 ### Component / data-flow diagram
 ```mermaid
@@ -475,20 +495,36 @@ stateDiagram-v2
 - **Impact:** `scoring.js` functions take `questions` as a param; `results` gain `competencyScores`;
   new `Coaching` view + competency panels; tests grew 38 → 46.
 
-### 2026-06-24 — Live Gemini scenario generation via a serverless proxy on Vercel
-- **Decision:** SOP→scenario generation is a live in-app feature. A Vercel serverless function holds
-  the Gemini key server-side and returns validated drafts; the question bank moves to a Firestore
+### 2026-06-24 — Live Gemini scenario generation via a serverless proxy
+- **Decision:** SOP→scenario generation is a live in-app feature. A server-side function holds
+  the Gemini key and returns validated drafts; the question bank moves to a Firestore
   `questions` collection with a supervisor **review gate** (draft → active). Hosting migrates from
-  GitHub Pages to Vercel (one platform for the SPA + `/api`).
+  GitHub Pages to a server platform (one place for the SPA + `/api`).
 - **Reasoning:** A key can't ship in a public static bundle; generation is *authoring-time* quality
-  control, so a human gate must sit between AI output and a live assessment. Vercel hosts both the
-  static app and the function on a free tier.
+  control, so a human gate must sit between AI output and a live assessment.
 - **Alternatives considered:** offline one-off generation shipped as static data (less flexible);
   client-side Gemini calls (key exposure — rejected); Cloudflare Worker / Firebase Blaze (owner
-  chose Vercel).
+  chose Railway).
 - **Impact:** New `api/*`; `db.js` gains questions CRUD; `Check`/`NavigatorApp` read the active bank
   (seed fallback); `scoring.js` is questions-parametrised. Pilot-grade endpoint auth via the
   supervisor passcode (`GENERATION_SECRET`).
+
+### 2026-06-25 — Migrate hosting to Railway (Express server wrapping the /api handlers)
+- **Decision:** Deploy on Railway instead of Vercel. Wrap the existing `api/*` handlers in an
+  Express 5 server (`server.js`) that also serves the Vite build as a static SPA. Add
+  `railway.toml` + `nixpacks.toml` for Railpack config.
+- **Reasoning:** Owner chose Railway. The `api/*` handlers use the standard Node.js `(req, res)`
+  signature which Express accepts directly — no rewrite needed. Railway runs a persistent container
+  (not serverless) so Express is the natural wrapper.
+- **Alternatives considered:** Vercel (owner chose Railway); Cloudflare Workers (different runtime,
+  would require rewriting the handlers).
+- **Impact:** New `server.js`, `railway.toml`, `nixpacks.toml`; `express` added as a dependency;
+  `"start": "node server.js"` added to package.json scripts; `"engines": { "node": ">=20.0.0" }`
+  added to signal Node 20 to Railpack (vitest@4 + vite@8 require it; Railway default is Node 18).
+  `nixpacks.toml` overrides `npm ci` → `npm install` to avoid `EBADPLATFORM` errors for
+  cross-platform optional esbuild packages (netbsd-arm64, darwin-arm64, etc.) that npm records in
+  the lockfile but can't install on Linux x64. Express 5 requires named wildcards so the SPA
+  catch-all is `/*splat` not `*`.
 
 ---
 
@@ -668,6 +704,33 @@ stateDiagram-v2
   / `GENERATION_SECRET`; until then the in-app Generate button is the only feature that needs the
   backend — the rest runs on the existing Firebase config.
 
+### 2026-06-25 — Railway deployment: Express server + build fixes
+- **What changed:** Migrated hosting from Vercel → Railway. Three rounds of build fixes were
+  needed before the Railway pipeline passed.
+  - **Migration:** `server.js` (Express 5, serves `dist/` + mounts `/api/*` handlers),
+    `railway.toml` (Railpack config: build + start + nixpacksConfigPath), `express` dep +
+    `"start"` script + `"engines": {"node":">=20.0.0"}` in `package.json`.
+  - **Express 5 wildcard fix:** SPA catch-all initially written as `app.get('*', …)`. Express 5
+    (path-to-regexp v8) rejects a bare `*` wildcard — requires a named param. Changed to
+    `app.get('/*splat', …)`.
+  - **Node version (Round 1):** Railway defaulted to Node 18; vitest@4 + vite@8 require Node 20+.
+    Fixed: added `"engines": {"node":">=20.0.0"}` to `package.json` to tell Nixpacks/Railpack to
+    select Node 20.
+  - **Lockfile sync (Round 2):** Previous partial `npm install` runs left the lockfile missing
+    esbuild@0.28.1 entries. Fixed: wiped `node_modules` + `package-lock.json` and ran a clean
+    `npm install` to fully regenerate the lockfile with both esbuild@0.21.5 (vite@5 dep) and
+    esbuild@0.28.1 (vitest@4 dep).
+  - **EBADPLATFORM (Round 3):** The clean lockfile includes all platform-specific esbuild
+    optional packages (netbsd-arm64, darwin-arm64, win32-x64, …). `npm ci` on Railway's Linux
+    x64 fails when it encounters packages for incompatible platforms, even if they're optional.
+    Fixed: `nixpacks.toml` overrides Railpack's install step from `npm ci` to `npm install`, which
+    gracefully skips incompatible optional packages.
+- **Files affected:** new `server.js`, `railway.toml`, `nixpacks.toml`; `package.json`,
+  `package-lock.json`.
+- **Verification:** `npm test` → 46 passing; `node --check server.js` OK; pushed to `main`;
+  Railway build in progress (nixpacks.toml override awaiting confirmation).
+- **Status:** Code complete; awaiting Railway deploy confirmation.
+
 ---
 
 ## 8. Current System State
@@ -686,10 +749,11 @@ stateDiagram-v2
   the role apps, and the serverless function are **not** yet tested.
 - **Incomplete areas:** no CI, no trend/history, no mentor pairing, no coverage/bus-factor view, no
   completion tracking; no component/UI tests; open-ended/interview/generative-coaching = Phase 2.
-- **Active integrations:** **Firebase / Firestore** (live) + **Gemini via Vercel serverless**
-  (code complete; awaiting owner env setup).
-- **Deployment status:** Migrating **GitHub Pages → Vercel**. **[ASSUMPTION]** Owner links the
-  Vercel project and sets env vars; the old Pages URL serves the prior build until then.
+- **Active integrations:** **Firebase / Firestore** (live) + **Gemini via Railway Express server**
+  (code complete; awaiting Railway deploy + env vars).
+- **Deployment status:** **Railway** (Git-connected to `main`). Railway auto-deploys on push.
+  **[ASSUMPTION]** Owner has set `VITE_FIREBASE_*`, `GEMINI_API_KEYS`, `GENERATION_SECRET` in
+  Railway Variables and the deploy with `nixpacks.toml` override has completed successfully.
 - **Counts (today):** 6 domains · 9 competencies · 18 seed questions (bank now grows in Firestore) ·
   4 departments (Pediatrics live) · **46** unit tests · **3** Firestore collections
   (`roster`, `results`, `questions`) · 2 serverless functions.
@@ -758,8 +822,9 @@ stateDiagram-v2
 - **Serverless endpoint:** `POST /api/generate-scenarios` `{ domainId, count, secret }` → `{ questions }`
   (validated drafts). `GET /api/health` → `{ ok }`.
 - **Env vars:** client (gitignored `.env.local`, build-time) `VITE_FIREBASE_*`; **server-only**
-  (Vercel project settings — never `VITE_`-prefixed) `GEMINI_API_KEYS` (comma-separated; rotated on
-  rate-limit) or single `GEMINI_API_KEY`, plus `GENERATION_SECRET`.
+  (Railway service Variables — never `VITE_`-prefixed) `GEMINI_API_KEYS` (comma-separated; rotated on
+  rate-limit) or single `GEMINI_API_KEY`, plus `GENERATION_SECRET`. **VITE_FIREBASE_* must be in
+  Railway Variables before the first build** — they're baked into the JS bundle at build time.
 - **db.js API** (the only Firestore surface): roster — `addToRoster`, `getRoster`,
   `subscribeRoster(cb,onError?)`; results — `getResult`, `saveResult(navigatorId, name, scores,
   competencyScores?)`, `subscribeResults(cb,onError?)`; questions — `subscribeQuestions(cb,onError?)`,
@@ -771,12 +836,14 @@ stateDiagram-v2
 ### Build & run
 ```bash
 npm install          # install deps
-npm run dev          # local dev (http://localhost:5173, base '/'); /api needs `vercel dev`
+npm run dev          # local dev (http://localhost:5173, base '/'); /api NOT available here
 npm run build        # production build to dist/ (base '/')
-npm run preview      # preview the production build
+npm start            # run the Express server locally (serves dist/ + /api); needs .env.local
+npm run preview      # preview the production build (Vite only, no /api)
 npm test             # run the Vitest suite once (CI-style)
 npm run test:watch   # run Vitest in watch mode
-# deploy: Vercel (Git-connected push, or `vercel --prod`). Set env vars in the Vercel project.
+# deploy: push to main → Railway auto-deploys. Set env vars in Railway service Variables.
+# To test /api locally: npm run build && npm start (uses server.js + .env.local for secrets)
 ```
 
 ---
@@ -854,8 +921,8 @@ npm run test:watch   # run Vitest in watch mode
   pilot.* A future toast notification would improve this.
 - **Non-assessed departments are empty:** only Pediatrics has live data; other departments show an
   empty state. *Severity: low (intended for pilot).*
-- **Pages deploy is manual:** forgetting `npx gh-pages -d dist --dotfiles` after a build leaves the
-  live site stale. *Severity: low.* *Workaround:* always run build+deploy together.
+- **~~Pages deploy is manual~~ (resolved):** Railway auto-deploys on push to `main`; no manual
+  gh-pages step needed.
 - **Mockup departments can be mistaken for real data** if the "illustrative mockup data" note is
   overlooked. *Severity: low.* *Mitigation:* DeptBar shows the note.
 - **No known functional bugs** in scoring/read-offs (38 unit tests green).
@@ -877,6 +944,17 @@ npm run test:watch   # run Vitest in watch mode
   "knowledge-only" conflicted; surfacing it avoided building a view that needed fabricated KPIs.
 - **Keep priority encoding separate from capability encoding.** Training Required/Stretch tags were
   deliberately kept off the red/amber/green scale to avoid confusion with levels.
+- **Railway defaults to Node 18; modern tooling needs 20+.** vitest@4 and vite@8 both require
+  Node 20+. Set `"engines": {"node":">=20.0.0"}` in `package.json` — Nixpacks/Railpack reads it.
+- **`npm ci` and cross-platform lockfiles don't mix.** When a lockfile is generated on one OS/CPU,
+  it records optional packages for all platforms (esbuild has ~27 platform variants). `npm ci` on
+  Railway then fails with `EBADPLATFORM` for incompatible ones. Fix: override the install command
+  to `npm install` via `nixpacks.toml` — it skips incompatible optional packages gracefully.
+- **Partial `npm install` updates don't always sync the lockfile.** After upgrading packages,
+  do a clean wipe (`rm -rf node_modules package-lock.json`) before `npm install` to guarantee
+  the lockfile reflects all transitive deps cleanly. Partial runs leave gaps.
+- **Express 5 requires named wildcards.** A bare `*` in `app.get('*', …)` crashes at startup
+  with `PathError: Missing parameter name`. Use `/*splat` (or any `/*name` form) instead.
 
 ---
 
@@ -901,8 +979,8 @@ npm run test:watch   # run Vitest in watch mode
 - **Common pitfalls:**
   - **Never** `VITE_`-prefix `GEMINI_API_KEY`/`GENERATION_SECRET` — that would bundle the key into
     the public client. They are server-only env vars used by `/api`.
-  - The `/api` functions only run under `vercel dev` or on Vercel — plain `npm run dev` won't serve
-    them, so the in-app Generate button needs `vercel dev` locally.
+  - The `/api` routes only run under `npm start` (Express) or on Railway — plain `npm run dev`
+    (Vite only) won't serve them. To test Generate locally: `npm run build && npm start`.
   - Scoring takes the active `questions` bank as a param — don't re-import a static list inside the
     scoring path; pass the bank through (seed fallback is fine).
   - Keep the two axes distinct: domains = topic, competencies = capability. Both reuse `scoreToLevel`.
@@ -911,11 +989,12 @@ npm run test:watch   # run Vitest in watch mode
 - **Required workflows:**
   1. Make the change. 2. `npm test` (green) **and** `npm run build` (clean); `node --check` any
      edited `api/*`. 3. Update **this CLAUDE.md** (relevant section + a §7 history entry). 4. Commit
-     (Co-Authored-By: Claude). 5. Push (Vercel deploys on push once linked).
+     (Co-Authored-By: Claude). 5. Push to `main` (Railway auto-deploys).
   - When you touch `lib/scoring.js` (or the data it reads), update/extend `scoring.test.js` too.
-- **Important assumptions:** Firebase pilot is live. Gemini generation is code-complete but needs the
-  owner's Vercel + env setup. No real patient data or company branding. Auth is PIN/passcode
-  (pilot-grade); endpoint auth is the supervisor passcode — must move to real auth before production.
+- **Important assumptions:** Firebase pilot is live. Gemini generation is code-complete but needs
+  Railway env vars (`GEMINI_API_KEYS`, `GENERATION_SECRET`) set before it will work. No real patient
+  data or company branding. Auth is PIN/passcode (pilot-grade); endpoint auth is the supervisor
+  passcode — must move to real auth before production.
 - **To re-key the check to a different SOP:** edit `DOMAINS` in `questions.js`, refresh
   `api/_sop-context.js`, and either edit `SEED_QUESTIONS` or generate a new bank in the Question Bank
   UI; competencies + everything else follow automatically.
@@ -925,28 +1004,29 @@ npm run test:watch   # run Vitest in watch mode
 ## 15. Current Priorities
 
 1. **Maintain this CLAUDE.md** on every change (highest standing priority).
-2. **Owner setup to go live with generation:** link the Vercel project; set `VITE_FIREBASE_*`,
-   `GEMINI_API_KEY`, `GENERATION_SECRET`; apply `firestore.rules` (now incl. `questions`); verify
-   the Generate → review → activate flow end-to-end.
+2. **Confirm Railway deployment is live:** verify the current build passed (nixpacks.toml override);
+   ensure `VITE_FIREBASE_*`, `GEMINI_API_KEYS`, `GENERATION_SECRET` are set in Railway Variables;
+   hit `/api/health` on the Railway URL; verify Generate → review → activate flow end-to-end.
 3. **Component/integration tests** — highest unresolved tech debt given role-routing, the gate, the
    coaching flow, and the question-bank UI (jsdom + Testing Library).
 4. **Phase 2 (needs the same serverless layer):** AI-graded open-ended responses, interview
    simulation, generative coaching, finer per-signal sub-scoring.
 
 **Active work items:**
-- Owner: complete the Vercel + env setup (item 2). Until then, generation is the only feature that
-  needs the backend; the rest runs on the existing Firebase config.
+- Owner: set env vars in Railway Variables (`VITE_FIREBASE_*` must be set before the build runs;
+  `GEMINI_API_KEYS` + `GENERATION_SECRET` are used at runtime). Confirm the Railway deploy is live.
 
 **Blockers:**
-- Live Gemini generation needs the owner's Vercel project + `GEMINI_API_KEY`/`GENERATION_SECRET`.
+- Live Gemini generation needs `GEMINI_API_KEYS`/`GENERATION_SECRET` in Railway Variables.
 - Real per-department question content requires additional SOPs from the owner.
 - Real training materials needed to replace mockup module content.
 
 **Upcoming milestones:**
 - ✅ First automated tests for `scoring.js` — done 2026-06-23 (Vitest, now 46 tests).
 - ✅ Firebase pilot implemented + deployed live — done 2026-06-24.
-- ✅ Competency engine + Gemini scenario generation on Vercel (code) — done 2026-06-24.
-- Vercel link + env setup → live generation — awaiting owner.
+- ✅ Competency engine + Gemini scenario generation (code) — done 2026-06-24.
+- ✅ Railway deployment: Express server + build fixes — done 2026-06-25.
+- Railway deploy confirmed live + env vars set — awaiting owner.
 - Component/integration tests (jsdom + Testing Library) — next technical priority.
 
 ---
