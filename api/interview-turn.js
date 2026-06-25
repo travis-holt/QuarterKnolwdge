@@ -74,7 +74,10 @@ Rules:
   would — ask a clarifying question or express mild confusion.
 - When the call is fully resolved (appointment confirmed, question answered, transfer completed),
   wrap up naturally ("Great, thank you so much!" / "Perfect, see you then!").
-- You are the CALLER only. Never speak as the navigator.`;
+- You are the CALLER only. Never speak as the navigator.
+- CRITICAL: Be strictly consistent with every fact you have already stated in this conversation
+  (names, dates, ages, insurance plan, provider, reason for calling, etc.). Never contradict
+  yourself. Before answering a question, mentally check your prior turns.`;
 }
 
 // ── Conversation reconstruction ───────────────────────────────────────────────
@@ -203,7 +206,7 @@ export default async function handler(req, res) {
   const body = {
     system_instruction: { parts: [{ text: buildSystemInstruction(callerName, scenario) }] },
     contents: buildContents(history, navigatorMessage.trim()),
-    generationConfig: { temperature: 0.8 },
+    generationConfig: { temperature: 0.5 },
   };
 
   const result = await geminiWithRotation(keys, body);
