@@ -1,0 +1,6 @@
+# Override Railpack/Nixpacks default install command.
+# npm ci fails on platform-specific optional packages (esbuild variants) when
+# the lockfile was generated on a different OS/CPU. npm install handles this
+# gracefully by skipping incompatible optional packages.
+[phases.install]
+cmds = ["npm install"]
