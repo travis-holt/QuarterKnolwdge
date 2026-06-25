@@ -23,8 +23,10 @@ app.get('/api/health', health);
 const distDir = join(__dirname, 'dist');
 app.use(express.static(distDir));
 
-// SPA catch-all: unknown paths → index.html
-app.get('*', (_req, res) => {
+// SPA catch-all: unknown paths → index.html.
+// Express 5 (path-to-regexp v8) no longer accepts a bare '*' — the wildcard
+// must be named, so this is '/*splat' instead of '*'.
+app.get('/*splat', (_req, res) => {
   res.sendFile(join(distDir, 'index.html'));
 });
 
