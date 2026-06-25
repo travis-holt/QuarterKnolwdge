@@ -10,7 +10,7 @@
 > [§8 Current System State](#8-current-system-state) and [§15 Current Priorities](#15-current-priorities)
 > accurate at all times.
 >
-> **Last updated:** 2026-06-25 (premium refined-light visual overhaul; Railway deployment) ·
+> **Last updated:** 2026-06-25 (full SOP context; GENERATION_SECRET removed; Gemini generation live) ·
 > **Doc maintainer:** Claude (AI agent) + repo owner. Assumptions are explicitly marked **[ASSUMPTION]**.
 
 ---
@@ -734,6 +734,26 @@ stateDiagram-v2
   Railway build in progress (nixpacks.toml override awaiting confirmation).
 - **Status:** Code complete; awaiting Railway deploy confirmation.
 
+### 2026-06-25 — Full SOP context + remove GENERATION_SECRET requirement
+- **What changed:** Two improvements to the Gemini scenario generation pipeline.
+  1. **Full SOP context (`api/_sop-context.js`):** replaced the old distilled ~50-line summary with
+     the complete final SOP ("Pediatrics Department.pdf" — 12 pages). Now includes every provider's
+     exact booking rules (slot durations, double-booking constraints, demographic comfort, specialist
+     schedules), the full referral decision tree (PE UTD/not-UTD × in/out-of-Aizer's 5 specialties ×
+     emergency/non-emergency), Sally Carilli escalation triggers, all insurance indicators and
+     plan-specific rules, immunization/lab routing with nurse schedules, arrival instruction nuances,
+     family/sibling booking mechanics, and the full contact directory. Gemini now has sufficient
+     grounding to generate high-specificity scenario questions for every domain.
+  2. **Remove GENERATION_SECRET env var requirement (`api/generate-scenarios.js`):** the server now
+     falls back to `SUPERVISOR_PASSCODE` (imported from `src/data/config.js`) when `GENERATION_SECRET`
+     is not set. The client already sends `SUPERVISOR_PASSCODE` as the secret — there was never a
+     meaningful distinction. Eliminates the need for an extra Railway Variable.
+- **Files affected:** `api/_sop-context.js` (full rewrite), `api/generate-scenarios.js`
+  (import `SUPERVISOR_PASSCODE`; fallback logic replacing the hard error).
+- **Verification:** `node --check api/generate-scenarios.js` → OK; `node --check api/_sop-context.js` → OK.
+- **Status:** Complete. `GEMINI_API_KEYS` (already set in Railway) is the only server-side variable
+  needed for generation to work; no `GENERATION_SECRET` required.
+
 ### 2026-06-25 — Premium "refined-light" visual overhaul (design system + motion)
 - **What changed:** A non-functional, presentation-layer redesign elevating the app to a polished
   SaaS feel while keeping the warm ivory/clay identity (chosen over a dark theme for trust/fit).
@@ -790,10 +810,10 @@ stateDiagram-v2
 - **Incomplete areas:** no CI, no trend/history, no mentor pairing, no coverage/bus-factor view, no
   completion tracking; no component/UI tests; open-ended/interview/generative-coaching = Phase 2.
 - **Active integrations:** **Firebase / Firestore** (live) + **Gemini via Railway Express server**
-  (code complete; awaiting Railway deploy + env vars).
+  (code complete; `GEMINI_API_KEYS` confirmed set in Railway Variables; live on next deploy).
 - **Deployment status:** **Railway** (Git-connected to `main`). Railway auto-deploys on push.
-  **[ASSUMPTION]** Owner has set `VITE_FIREBASE_*`, `GEMINI_API_KEYS`, `GENERATION_SECRET` in
-  Railway Variables and the deploy with `nixpacks.toml` override has completed successfully.
+  `VITE_FIREBASE_*` and `GEMINI_API_KEYS` confirmed set in Railway Variables. No `GENERATION_SECRET`
+  needed — server falls back to `SUPERVISOR_PASSCODE`.
 - **Counts (today):** 6 domains · 9 competencies · 18 seed questions (bank now grows in Firestore) ·
   4 departments (Pediatrics live) · **46** unit tests · **3** Firestore collections
   (`roster`, `results`, `questions`) · 2 serverless functions.
@@ -863,15 +883,16 @@ stateDiagram-v2
   (validated drafts). `GET /api/health` → `{ ok }`.
 - **Env vars:** client (gitignored `.env.local`, build-time) `VITE_FIREBASE_*`; **server-only**
   (Railway service Variables — never `VITE_`-prefixed) `GEMINI_API_KEYS` (comma-separated; rotated on
-  rate-limit) or single `GEMINI_API_KEY`, plus `GENERATION_SECRET`. **VITE_FIREBASE_* must be in
-  Railway Variables before the first build** — they're baked into the JS bundle at build time.
+  rate-limit) or single `GEMINI_API_KEY`. `GENERATION_SECRET` is optional — server falls back to
+  `SUPERVISOR_PASSCODE` when not set. **VITE_FIREBASE_* must be in Railway Variables before the
+  first build** — they're baked into the JS bundle at build time.
 - **db.js API** (the only Firestore surface): roster — `addToRoster`, `getRoster`,
   `subscribeRoster(cb,onError?)`; results — `getResult`, `saveResult(navigatorId, name, scores,
   competencyScores?)`, `subscribeResults(cb,onError?)`; questions — `subscribeQuestions(cb,onError?)`,
   `getActiveQuestions()`, `seedQuestionsIfEmpty(seed)`, `saveDraftQuestions(drafts, source?)`,
   `updateQuestion(id,patch)`, `activateQuestion(id)`, `archiveQuestion(id)`, `deleteQuestion(id)`.
-- **Secrets:** `SUPERVISOR_PASSCODE` is in the repo (pilot-acceptable); `GEMINI_API_KEY` /
-  `GENERATION_SECRET` are server-only env vars, never committed or bundled.
+- **Secrets:** `SUPERVISOR_PASSCODE` is in the repo (pilot-acceptable); `GEMINI_API_KEYS` is a
+  server-only Railway Variable, never committed or bundled.
 
 ### Build & run
 ```bash
@@ -1027,8 +1048,8 @@ npm run test:watch   # run Vitest in watch mode
 - **Architectural patterns:** single-`App` view router (string `view` state); department scope and
   `liveResult` live in `App` and flow down as props; no global store.
 - **Common pitfalls:**
-  - **Never** `VITE_`-prefix `GEMINI_API_KEY`/`GENERATION_SECRET` — that would bundle the key into
-    the public client. They are server-only env vars used by `/api`.
+  - **Never** `VITE_`-prefix `GEMINI_API_KEYS` — that would bundle the keys into the public client.
+    They are server-only env vars used by `/api`.
   - The `/api` routes only run under `npm start` (Express) or on Railway — plain `npm run dev`
     (Vite only) won't serve them. To test Generate locally: `npm run build && npm start`.
   - Scoring takes the active `questions` bank as a param — don't re-import a static list inside the
@@ -1041,10 +1062,10 @@ npm run test:watch   # run Vitest in watch mode
      edited `api/*`. 3. Update **this CLAUDE.md** (relevant section + a §7 history entry). 4. Commit
      (Co-Authored-By: Claude). 5. Push to `main` (Railway auto-deploys).
   - When you touch `lib/scoring.js` (or the data it reads), update/extend `scoring.test.js` too.
-- **Important assumptions:** Firebase pilot is live. Gemini generation is code-complete but needs
-  Railway env vars (`GEMINI_API_KEYS`, `GENERATION_SECRET`) set before it will work. No real patient
-  data or company branding. Auth is PIN/passcode (pilot-grade); endpoint auth is the supervisor
-  passcode — must move to real auth before production.
+- **Important assumptions:** Firebase pilot is live. Gemini generation is code-complete; `GEMINI_API_KEYS`
+  is set in Railway Variables — generation should be live after the next deploy. `GENERATION_SECRET`
+  is not required (server falls back to `SUPERVISOR_PASSCODE`). No real patient data or company
+  branding. Auth is PIN/passcode (pilot-grade); must move to real auth before production.
 - **To re-key the check to a different SOP:** edit `DOMAINS` in `questions.js`, refresh
   `api/_sop-context.js`, and either edit `SEED_QUESTIONS` or generate a new bank in the Question Bank
   UI; competencies + everything else follow automatically.
@@ -1054,20 +1075,18 @@ npm run test:watch   # run Vitest in watch mode
 ## 15. Current Priorities
 
 1. **Maintain this CLAUDE.md** on every change (highest standing priority).
-2. **Confirm Railway deployment is live:** verify the current build passed (nixpacks.toml override);
-   ensure `VITE_FIREBASE_*`, `GEMINI_API_KEYS`, `GENERATION_SECRET` are set in Railway Variables;
-   hit `/api/health` on the Railway URL; verify Generate → review → activate flow end-to-end.
+2. **Verify Generate flow end-to-end:** after this push, hit `/api/health` on the Railway URL, then
+   go to Question Bank → pick a domain → Generate → confirm SOP-grounded scenarios come back →
+   review → activate → verify they appear in the check.
 3. **Component/integration tests** — highest unresolved tech debt given role-routing, the gate, the
    coaching flow, and the question-bank UI (jsdom + Testing Library).
 4. **Phase 2 (needs the same serverless layer):** AI-graded open-ended responses, interview
    simulation, generative coaching, finer per-signal sub-scoring.
 
 **Active work items:**
-- Owner: set env vars in Railway Variables (`VITE_FIREBASE_*` must be set before the build runs;
-  `GEMINI_API_KEYS` + `GENERATION_SECRET` are used at runtime). Confirm the Railway deploy is live.
+- Verify Generate → review → activate flow on Railway after this push.
 
 **Blockers:**
-- Live Gemini generation needs `GEMINI_API_KEYS`/`GENERATION_SECRET` in Railway Variables.
 - Real per-department question content requires additional SOPs from the owner.
 - Real training materials needed to replace mockup module content.
 
@@ -1076,7 +1095,8 @@ npm run test:watch   # run Vitest in watch mode
 - ✅ Firebase pilot implemented + deployed live — done 2026-06-24.
 - ✅ Competency engine + Gemini scenario generation (code) — done 2026-06-24.
 - ✅ Railway deployment: Express server + build fixes — done 2026-06-25.
-- Railway deploy confirmed live + env vars set — awaiting owner.
+- ✅ Full SOP context + GENERATION_SECRET removed — done 2026-06-25.
+- Verify Generate → review → activate flow on Railway — next step.
 - Component/integration tests (jsdom + Testing Library) — next technical priority.
 
 ---

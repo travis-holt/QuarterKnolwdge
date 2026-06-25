@@ -17,6 +17,7 @@
 import { DOMAINS } from '../src/data/questions.js';
 import { COMPETENCIES } from '../src/data/competencies.js';
 import { SOP_CONTEXT } from './_sop-context.js';
+import { SUPERVISOR_PASSCODE } from '../src/data/config.js';
 
 // gemini-2.5-flash has free-tier availability on the project keys in use (2.0-flash
 // returns a free-tier limit of 0 in this region). Swap here if quota/model changes.
@@ -140,10 +141,12 @@ export default async function handler(req, res) {
   }
 
   const keys = getApiKeys();
-  const secret = process.env.GENERATION_SECRET;
-  if (keys.length === 0 || !secret) {
+  if (keys.length === 0) {
     return res.status(500).json({ error: 'Generation is not configured on the server.' });
   }
+
+  // Falls back to SUPERVISOR_PASSCODE so no separate GENERATION_SECRET env var is needed.
+  const secret = process.env.GENERATION_SECRET || SUPERVISOR_PASSCODE;
 
   const { domainId, count = 3, secret: provided } = req.body ?? {};
   if (provided !== secret) {
