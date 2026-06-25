@@ -62,9 +62,10 @@
   5. Extends the same lens across **multiple departments**.
 
 > **Context / origin.** Built from a build brief (`ClaudeCode_Build_Brief.md`) plus a team SOP
-> (`SOP Guide.pdf` — the *Aizer Health Pediatric Department* operational report). The SOP is the
-> **source of truth** for the knowledge domains and scenario questions. It is a pediatric
-> contact-centre operations document; the prototype derives 6 domains and 20 questions from it.
+> (`Pediatrics_SOP_Updated.pdf` — the *Aizer Health Pediatric Department* operational report; the
+> original `SOP Guide.pdf` is superseded by this updated version). The SOP is the **source of
+> truth** for the knowledge domains and scenario questions. It is a pediatric contact-centre
+> operations document; the prototype derives 6 domains and 20 questions from it.
 
 ---
 
@@ -818,6 +819,29 @@ stateDiagram-v2
 - **Verification:** `node --check api/generate-scenarios.js` → OK; `node --check api/_sop-context.js` → OK.
 - **Status:** Complete. `GEMINI_API_KEYS` (already set in Railway) is the only server-side variable
   needed for generation to work; no `GENERATION_SECRET` required.
+
+### 2026-06-25 — Update SOP grounding to Pediatrics_SOP_Updated.pdf
+- **What changed:** `api/_sop-context.js` rewritten to reflect the updated Aizer Health Pediatric
+  SOP (`Pediatrics_SOP_Updated.pdf`). Key additions and changes vs the prior version:
+  - **Providers:** Updated roster with correct names (Dina Faiden, formerly Donna Deck; Lazar Khaimov;
+    Chana Heintz; Lily Namanworth; Tamar Dachoh; Robin Aschkenasy) and language capabilities.
+    Max patient counts, double-booking rules, and demographic comfort rules preserved.
+  - **New appointment types added:** Tongue Tie (within 5 weeks; refer out if older), Weight Check
+    (TE to Sally Carilli if PE up to date), Lactation appointments (30 min OV; Robin/Tamar/Chana
+    only), Early Intervention (TE to PEDS TELEPHONE ENCOUNTER queue), WIC forms (TE to Peds
+    Telephone Encounter queue OR OV with reason "HEMO").
+  - **TE guide expanded:** Full step-by-step routing for 9 scenarios — lab results, medical questions,
+    shots/immunizations, ENT/nutritionist, referrals, controlled substance follow-ups, digital imaging,
+    specialty care (Vision/Speech/PT-OT/Podiatry → transfer only, no TE), and medication refills
+    (HIGH PRIORITY tag if patient is out). Black lock rule for lab results made explicit.
+  - **PE consequences block:** Explicit list of what navigators cannot offer when PE is not up to date.
+  - **PE frequency calculator:** 0–6 months = every 2 months; 6 mo–2 yr = every 3 months; 2 yr+ =
+    annually; Fidelis + Medicaid early exception rule.
+  - **Source file reference** in CLAUDE.md §1 updated from `SOP Guide.pdf` to `Pediatrics_SOP_Updated.pdf`.
+- **Files affected:** `api/_sop-context.js` (full rewrite), `CLAUDE.md` (§1 source reference + §7 entry).
+- **Verification:** `node --check api/_sop-context.js` → OK; `npm test` → 46 passing.
+- **Status:** Complete. All AI features (scenario generation, coaching, interview, audit) now ground
+  against the updated SOP content.
 
 ### 2026-06-25 — Premium "refined-light" visual overhaul (design system + motion)
 - **What changed:** A non-functional, presentation-layer redesign elevating the app to a polished
