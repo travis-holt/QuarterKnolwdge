@@ -114,8 +114,7 @@ export default function Coaching({ questions, answers, competencyScores, name, o
       {aiCoaching === null && (
         <div className="card coaching__ai">
           <h2 className="overview__panel-title">
-            Your personalised coaching&nbsp;
-            <span className="coaching__ai-badge">AI</span>
+            Your personalised coaching
           </h2>
           <div className="coaching__ai-skeleton">
             <div className="skeleton skeleton--line" style={{ width: '60%' }} />
@@ -128,8 +127,7 @@ export default function Coaching({ questions, answers, competencyScores, name, o
       {aiCoaching !== false && aiEntries.length > 0 && (
         <div className="card coaching__ai">
           <h2 className="overview__panel-title">
-            Your personalised coaching&nbsp;
-            <span className="coaching__ai-badge">AI</span>
+            Your personalised coaching
           </h2>
           <p className="readoff__sub">
             Based on your answers and the SOP rationales — grounded in what you actually saw in this

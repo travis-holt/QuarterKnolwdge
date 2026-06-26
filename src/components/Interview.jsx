@@ -281,8 +281,8 @@ export default function Interview({ navigatorId, name, department = 'pediatrics'
           <div>
             <h1 className="overview__title">Practice Call</h1>
             <p className="overview__lede">
-              Gemini plays a patient caller. You handle the call as you would normally.
-              When you&rsquo;re done, save the session to get an AI score and feedback.
+              A simulated patient caller will join. You handle the call as you would normally.
+              When you&rsquo;re done, save the session to get a score and feedback.
             </p>
           </div>
         </header>
@@ -334,7 +334,7 @@ export default function Interview({ navigatorId, name, department = 'pediatrics'
           </h2>
           <p className="readoff__sub">
             {phase === 'grading'
-              ? 'Gemini is scoring your performance against the SOP. This takes a few seconds.'
+              ? 'Reviewing your performance against the SOP. This takes a few seconds.'
               : 'Almost done…'}
           </p>
         </div>

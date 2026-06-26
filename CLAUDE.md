@@ -10,7 +10,7 @@
 > [§8 Current System State](#8-current-system-state) and [§15 Current Priorities](#15-current-priorities)
 > accurate at all times.
 >
-> **Last updated:** 2026-06-26 (OB/GYN live check — multi-department, dept-picker, scoped question banks, composite result keys) ·
+> **Last updated:** 2026-06-26 (Remove Gemini/AI branding from UI) ·
 > **Doc maintainer:** Claude (AI agent) + repo owner. Assumptions are explicitly marked **[ASSUMPTION]**.
 
 ---
@@ -919,6 +919,18 @@ stateDiagram-v2
   `src/styles.css`, `CLAUDE.md`.
 - **Verification:** `npm test` → **50 passing**; `npm run build` → clean; `node --check` on all
   4 edited API handlers → OK. OB/GYN content grep confirmed zero leaked names/phone numbers.
+- **Status:** Complete.
+
+### 2026-06-26 — Remove Gemini/AI branding from UI
+- **What changed:** Stripped all visible references to "Gemini" and "AI" from the navigator and
+  supervisor-facing UI. The underlying features are unchanged; only the labels are removed.
+  - `Coaching.jsx` — removed "AI" badge from the personalised coaching heading (skeleton + loaded state).
+  - `SpotTheError.jsx` — removed "AI Coach" badge above the coaching reply text.
+  - `Interview.jsx` — replaced "Gemini plays a patient caller" with "A simulated patient caller will join";
+    "get an AI score" → "get a score"; "Gemini is scoring your performance" → "Reviewing your performance".
+  - `QuestionBank.jsx` — removed the `via {source}` tag that showed "via gemini" on generated question cards.
+- **Files affected:** `src/components/{Coaching,Interview,SpotTheError,QuestionBank}.jsx`.
+- **Verification:** `npm run build` → clean.
 - **Status:** Complete.
 
 ### 2026-06-26 — Craft pass: shared Gemini client + latent CSS-var bug fix

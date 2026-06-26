@@ -67,7 +67,6 @@ export default function QuestionBank({ questions, selectedDept = 'pediatrics', o
           {(q.competencies ?? []).map((c) => (
             <span key={c} className="tag qbank__comp">{competencyName(c)}</span>
           ))}
-          {q.source && <span className="qbank__source">via {q.source}</span>}
         </div>
         <p className="qbank__scenario">{q.scenario}</p>
         <ul className="qbank__options">

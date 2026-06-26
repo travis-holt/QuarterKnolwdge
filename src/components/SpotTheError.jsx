@@ -305,7 +305,6 @@ export default function SpotTheError({ navigatorId, name, domainId, department =
         <div className="card spot-error__coached">
           {coachReply && (
             <div className="spot-error__ai-reply">
-              <span className="spot-error__ai-badge">AI Coach</span>
               <p className="spot-error__ai-text">{coachReply}</p>
             </div>
           )}
