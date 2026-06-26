@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { DOMAINS } from '../data/questions.js';
 import { COMPETENCIES, competencyName } from '../data/competencies.js';
+import { computeQuestionHealth } from '../lib/scoring.js';
 import QuestionEditor from './QuestionEditor.jsx';
 
 const domainName = (id) => DOMAINS.find((d) => d.id === id)?.name ?? id;
@@ -12,7 +13,7 @@ const domainName = (id) => DOMAINS.find((d) => d.id === id)?.name ?? id;
 // live assessment.
 // ─────────────────────────────────────────────────────────────────────────────
 
-export default function QuestionBank({ questions, selectedDept = 'pediatrics', onActivate, onArchive, onDelete, onSaveEdit, onGenerate }) {
+export default function QuestionBank({ questions, results = [], selectedDept = 'pediatrics', onActivate, onArchive, onDelete, onSaveEdit, onGenerate }) {
   const [editingId, setEditingId] = useState(null);
   const [genDomain, setGenDomain] = useState(DOMAINS[0].id);
   const [genCount, setGenCount] = useState(3);
@@ -26,6 +27,9 @@ export default function QuestionBank({ questions, selectedDept = 'pediatrics', o
   const drafts = byStatus('draft');
   const active = byStatus('active');
   const archived = byStatus('archived');
+
+  // Health metrics — keyed by question id; only computed for active questions.
+  const health = computeQuestionHealth(active, results);
 
   const runGenerate = async () => {
     setGenerating(true);
@@ -51,7 +55,7 @@ export default function QuestionBank({ questions, selectedDept = 'pediatrics', o
     setEditingId(null);
   };
 
-  const renderQuestion = (q, actions) => {
+  const renderQuestion = (q, actions, showHealth = false) => {
     if (editingId === q.id) {
       return (
         <li key={q.id} className="qbank__item is-editing">
@@ -60,14 +64,40 @@ export default function QuestionBank({ questions, selectedDept = 'pediatrics', o
       );
     }
     const best = q.options?.find((o) => o.id === q.correctOptionId);
+    const h = showHealth ? health[q.id] : null;
+    const pct = h ? Math.round(h.correctRate * 100) : null;
+
     return (
-      <li key={q.id} className="qbank__item">
+      <li key={q.id} className={`qbank__item${h?.status === 'review' ? ' is-flagged' : ''}`}>
         <div className="qbank__item-head">
           <span className="tag tag--accent">{domainName(q.domainId)}</span>
           {(q.competencies ?? []).map((c) => (
             <span key={c} className="tag qbank__comp">{competencyName(c)}</span>
           ))}
+          {h && (
+            <span className="qhealth" style={{ marginLeft: 'auto' }}>
+              <span className={`qhealth__dot qhealth__dot--${h.status}`} />
+              {h.status === 'insufficient' ? (
+                <span className="qhealth__label">
+                  {h.responseCount === 0 ? 'No responses yet' : `${h.responseCount} response${h.responseCount !== 1 ? 's' : ''} · needs 10+`}
+                </span>
+              ) : (
+                <span className="qhealth__label">{pct}% correct · {h.responseCount} responses</span>
+              )}
+              {h.status === 'review' && <span className="qhealth__badge">Review Required</span>}
+            </span>
+          )}
         </div>
+
+        {h?.status === 'review' && (
+          <div className="qhealth__alert">
+            <strong>SOP drift signal</strong> — only {pct}% of {h.responseCount} responses were correct.
+            {h.canTeachFailCount > 0 && (
+              <> {h.canTeachFailCount} of {h.canTeachCount} Can-Teach navigator{h.canTeachCount !== 1 ? 's' : ''} also missed this — the SOP may not match floor practice.</>
+            )}
+          </div>
+        )}
+
         <p className="qbank__scenario">{q.scenario}</p>
         <ul className="qbank__options">
           {(q.options ?? []).map((o) => (
@@ -154,7 +184,8 @@ export default function QuestionBank({ questions, selectedDept = 'pediatrics', o
             {active.map((q) =>
               renderQuestion(
                 q,
-                <button className="btn btn--ghost btn--sm" onClick={() => onArchive(q.id)}>Archive</button>
+                <button className="btn btn--ghost btn--sm" onClick={() => onArchive(q.id)}>Archive</button>,
+                true
               )
             )}
           </ul>

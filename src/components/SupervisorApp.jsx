@@ -275,6 +275,7 @@ export default function SupervisorApp({ onSignOut }) {
             {view === 'questions' && (
               <QuestionBank
                 questions={questions}
+                results={deptResults}
                 selectedDept={selectedDept}
                 onActivate={activateQuestion}
                 onArchive={archiveQuestion}

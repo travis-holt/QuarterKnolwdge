@@ -110,7 +110,7 @@ export default function NavigatorApp({ navigatorId, name, onSignOut }) {
     setLastAnswers(answers);
     setView('coaching');
     try {
-      await saveResult(navigatorId, name, scores, competencyScores, dept);
+      await saveResult(navigatorId, name, scores, competencyScores, dept, answers);
     } catch {
       // Dashboard shows from local state; a failed write means supervisor won't see it.
     }

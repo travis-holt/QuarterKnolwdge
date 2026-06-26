@@ -10,7 +10,7 @@
 > [§8 Current System State](#8-current-system-state) and [§15 Current Priorities](#15-current-priorities)
 > accurate at all times.
 >
-> **Last updated:** 2026-06-26 (Remove Gemini/AI branding from UI) ·
+> **Last updated:** 2026-06-26 (Question Health / SOP Drift flags) ·
 > **Doc maintainer:** Claude (AI agent) + repo owner. Assumptions are explicitly marked **[ASSUMPTION]**.
 
 ---
@@ -921,6 +921,36 @@ stateDiagram-v2
   4 edited API handlers → OK. OB/GYN content grep confirmed zero leaked names/phone numbers.
 - **Status:** Complete.
 
+### 2026-06-26 — Question Health / SOP Drift flags
+- **What changed:** Added automatic health indicators to every active question in the Question Bank.
+  After a question has been answered 10+ times, a colored health dot appears next to it:
+  green (healthy ≥20% correct), red (Review Required <20% correct). A question with <10 responses
+  shows a gray dot ("not enough data yet").
+  - **`saveResult` in `db.js`:** now stores an `answers: { [questionId]: optionId }` field on every
+    result doc. Legacy docs without the field are silently skipped by the health computation.
+  - **`NavigatorApp.jsx`:** passes the raw `answers` map (already available in `handleSubmit`)
+    as the new 6th argument to `saveResult`.
+  - **`computeQuestionHealth(questions, results)` in `scoring.js`:** pure function that iterates
+    result docs with `answers`, counts responses and correct picks per question, and derives
+    `{ responseCount, correctCount, correctRate, canTeachCount, canTeachFailCount, status }` for
+    each question. Also tracks "Can-Teach signal" — when navigators who scored ≥85 in that question's
+    domain also get it wrong, the alert text says "X of Y Can-Teach navigators also missed this —
+    the SOP may not match floor practice."
+  - **`QuestionBank.jsx`:** accepts new `results` prop; calls `computeQuestionHealth(active, results)`;
+    renders health indicator in each active question's header row. Flagged questions get a subtle
+    red-tint border + an alert banner above the scenario text with the specific stats.
+  - **`SupervisorApp.jsx`:** passes `deptResults` (already filtered to active roster + selected dept)
+    to `QuestionBank`.
+  - **`styles.css`:** new `.qhealth`, `.qhealth__dot--{healthy,review,insufficient}`, `.qhealth__badge`,
+    `.qhealth__alert`, `.qbank__item.is-flagged` rules.
+  - **`scoring.test.js`:** 10 new tests for `computeQuestionHealth` covering: insufficient threshold,
+    healthy boundary, review flag, legacy-doc skipping, missing-question skipping, can-teach tracking,
+    multi-question independence, empty inputs.
+- **Files affected:** `src/lib/{scoring,scoring.test,db}.js`,
+  `src/components/{NavigatorApp,QuestionBank,SupervisorApp}.jsx`, `src/styles.css`.
+- **Verification:** `npm test` → **60 passing**; `npm run build` → clean.
+- **Status:** Complete.
+
 ### 2026-06-26 — Remove Gemini/AI branding from UI
 - **What changed:** Stripped all visible references to "Gemini" and "AI" from the navigator and
   supervisor-facing UI. The underlying features are unchanged; only the labels are removed.
@@ -1220,9 +1250,13 @@ stateDiagram-v2
 - **Deployment status:** **Railway** (Git-connected to `main`). Railway auto-deploys on push.
   `VITE_FIREBASE_*` and `GEMINI_API_KEYS` confirmed set in Railway Variables. No `GENERATION_SECRET`
   needed — server falls back to `SUPERVISOR_PASSCODE`.
+- **Question health:** active questions in the Question Bank now show a colored health dot once
+  they hit 10+ responses. Sub-20% correct rate triggers a "Review Required" flag with a "Can-Teach
+  signal" if expert-level navigators are also failing — the Reverse QA feature. Raw `answers` are
+  now stored on every new result doc; legacy docs (pre-this-change) are skipped silently.
 - **Counts (today):** 6 domains (shared, dept-neutral) · 9 competencies · 18 Pediatrics + 14
   OB/GYN = **32** seed questions (bank grows in Firestore per dept) · 4 departments (**Pediatrics
-  + OB/GYN live**, 2 mockup) · **50** unit tests · **5** Firestore collections
+  + OB/GYN live**, 2 mockup) · **60** unit tests · **5** Firestore collections
   (`roster`, `results`, `questions`, `interviews`, `completions`) · **7** serverless functions
   (`generate-scenarios`, `generate-coaching`, `interview-turn`, `grade-interview`, `generate-audit`, `coach-audit`, `health`).
 
@@ -1530,6 +1564,7 @@ npm run test:watch   # run Vitest in watch mode
 - ✅ Interview discard option + AI grading after save (F15 Phase 2) — done 2026-06-25.
 - ✅ Craft pass: shared `api/_gemini-client.js` + latent CSS-var fix — done 2026-06-26.
 - ✅ OB/GYN live check (multi-department) — done 2026-06-26.
+- ✅ Question Health / SOP Drift flags — done 2026-06-26 (60 tests).
 - Component/integration tests (jsdom + Testing Library) — next technical priority.
 - Supervisor grade override for practice sessions — next interview feature.
 

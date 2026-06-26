@@ -385,6 +385,70 @@ export function trainingStats(rows) {
 }
 
 /**
+ * Compute health metrics for each question from navigator answer history.
+ *
+ * A question is "Review Required" when it has been answered at least
+ * HEALTH_MIN_RESPONSES times and fewer than HEALTH_REVIEW_THRESHOLD of those
+ * answers selected the correct option. This can signal a poorly worded question
+ * OR a real SOP/floor-practice mismatch ("Reverse QA").
+ *
+ * An extra signal — `canTeachFailCount` — surfaces when Can-Teach navigators
+ * (domain score ≥ canTeach threshold at submission time) are also missing the
+ * question, the strongest indicator that the SOP itself is the problem.
+ *
+ * Only result docs that carry an `answers` field (written by the updated client)
+ * contribute; legacy docs without it are silently skipped.
+ *
+ * @param {object[]} questions  - each needs .id, .correctOptionId, .domainId
+ * @param {object[]} results    - Firestore result docs
+ * @returns {Record<string, {
+ *   responseCount: number,
+ *   correctCount: number,
+ *   correctRate: number,
+ *   canTeachCount: number,
+ *   canTeachFailCount: number,
+ *   status: 'insufficient'|'healthy'|'review'
+ * }>}
+ */
+const HEALTH_MIN_RESPONSES = 10;
+const HEALTH_REVIEW_THRESHOLD = 0.20;
+
+export function computeQuestionHealth(questions, results) {
+  const health = {};
+  for (const q of questions) {
+    let responseCount = 0;
+    let correctCount = 0;
+    let canTeachCount = 0;
+    let canTeachFailCount = 0;
+
+    for (const r of results) {
+      if (!r.answers) continue;
+      const chosen = r.answers[q.id];
+      if (chosen === undefined) continue;
+
+      responseCount += 1;
+      const isCorrect = chosen === q.correctOptionId;
+      if (isCorrect) correctCount += 1;
+
+      const domainScore = r.scores?.[q.domainId];
+      if (typeof domainScore === 'number' && scoreToLevel(domainScore) === 'canTeach') {
+        canTeachCount += 1;
+        if (!isCorrect) canTeachFailCount += 1;
+      }
+    }
+
+    const correctRate = responseCount === 0 ? 0 : correctCount / responseCount;
+    let status;
+    if (responseCount < HEALTH_MIN_RESPONSES) status = 'insufficient';
+    else if (correctRate < HEALTH_REVIEW_THRESHOLD) status = 'review';
+    else status = 'healthy';
+
+    health[q.id] = { responseCount, correctCount, correctRate, canTeachCount, canTeachFailCount, status };
+  }
+  return health;
+}
+
+/**
  * Suggested mentors for one navigator: for each domain where they are not yet
  * Can-Teach, list colleagues who can teach it (excluding themselves).
  * @returns {{domainId:string, level:string, mentors:string[]}[]}

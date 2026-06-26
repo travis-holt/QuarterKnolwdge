@@ -3464,6 +3464,52 @@ textarea:focus-visible {
   flex-wrap: wrap;
 }
 
+/* ── Question health indicators ──────────────────────────────────────────── */
+.qbank__item.is-flagged {
+  border-color: color-mix(in srgb, var(--level-learning) 35%, transparent);
+  background: color-mix(in srgb, var(--level-learning) 3%, var(--surface));
+}
+.qhealth {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  font-size: 0.78rem;
+  flex-shrink: 0;
+}
+.qhealth__dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+.qhealth__dot--healthy     { background: var(--level-canteach); }
+.qhealth__dot--review      { background: var(--level-learning); }
+.qhealth__dot--insufficient { background: var(--ink-faint); }
+.qhealth__label {
+  color: var(--ink-soft);
+}
+.qhealth__badge {
+  font-size: 0.70rem;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  padding: 0.15em 0.5em;
+  border-radius: 999px;
+  color: var(--level-learning);
+  background: color-mix(in srgb, var(--level-learning) 10%, transparent);
+  border: 1px solid color-mix(in srgb, var(--level-learning) 30%, transparent);
+}
+.qhealth__alert {
+  font-size: 0.82rem;
+  color: var(--level-learning);
+  background: color-mix(in srgb, var(--level-learning) 7%, transparent);
+  border: 1px solid color-mix(in srgb, var(--level-learning) 22%, transparent);
+  border-radius: var(--radius);
+  padding: 0.55rem 0.75rem;
+  margin-bottom: 0.5rem;
+  line-height: 1.5;
+}
+
 /* ── Question editor form ────────────────────────────────────────────────── */
 .qedit {
   border: 1px solid var(--accent);

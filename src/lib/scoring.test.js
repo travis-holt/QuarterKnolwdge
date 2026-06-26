@@ -33,6 +33,7 @@ import {
   trainingByDomain,
   trainingStats,
   mentorSuggestions,
+  computeQuestionHealth,
 } from './scoring.js';
 
 import { THRESHOLDS, LEVELS, COLUMN_GAP_THRESHOLD } from '../data/config.js';
@@ -519,6 +520,106 @@ describe('trainingStats', () => {
 });
 
 // ── mentorSuggestions ────────────────────────────────────────────────────────
+
+// ── computeQuestionHealth ─────────────────────────────────────────────────────
+
+describe('computeQuestionHealth', () => {
+  // Minimal question shape — only the fields computeQuestionHealth needs.
+  const Q = { id: 'q1', correctOptionId: 'a', domainId: FAKE_D0 };
+
+  // Build synthetic results with an `answers` field.
+  const makeResult = (chosen, domainScore = SOLID) => ({
+    answers: { [Q.id]: chosen },
+    scores: { [FAKE_D0]: domainScore },
+  });
+
+  it('returns an entry for every question passed', () => {
+    const h = computeQuestionHealth([Q], []);
+    expect(h).toHaveProperty(Q.id);
+  });
+
+  it('returns status "insufficient" when fewer than 10 responses exist', () => {
+    const results = Array.from({ length: 9 }, () => makeResult('a'));
+    const h = computeQuestionHealth([Q], results);
+    expect(h[Q.id].status).toBe('insufficient');
+    expect(h[Q.id].responseCount).toBe(9);
+  });
+
+  it('returns status "healthy" when ≥10 responses and correctRate ≥ 0.20', () => {
+    // 4 correct + 6 wrong = 40% correct; well above the 20% threshold.
+    const results = [
+      ...Array.from({ length: 4 }, () => makeResult('a')),   // correct
+      ...Array.from({ length: 6 }, () => makeResult('b')),   // wrong
+    ];
+    const h = computeQuestionHealth([Q], results);
+    expect(h[Q.id].status).toBe('healthy');
+    expect(h[Q.id].correctRate).toBeCloseTo(0.4);
+  });
+
+  it('returns status "review" when ≥10 responses and correctRate < 0.20', () => {
+    // 1 correct + 11 wrong = ~8% correct → flag.
+    const results = [
+      makeResult('a'),
+      ...Array.from({ length: 11 }, () => makeResult('b')),
+    ];
+    const h = computeQuestionHealth([Q], results);
+    expect(h[Q.id].status).toBe('review');
+    expect(h[Q.id].correctCount).toBe(1);
+    expect(h[Q.id].responseCount).toBe(12);
+  });
+
+  it('exact 20% correct with 10 responses is "healthy" (boundary)', () => {
+    // 2 correct, 8 wrong → exactly 0.20.
+    const results = [
+      ...Array.from({ length: 2 }, () => makeResult('a')),
+      ...Array.from({ length: 8 }, () => makeResult('b')),
+    ];
+    const h = computeQuestionHealth([Q], results);
+    expect(h[Q.id].status).toBe('healthy');
+  });
+
+  it('skips results that have no answers field (legacy docs)', () => {
+    const results = [
+      { scores: { [FAKE_D0]: SOLID } }, // no answers field — skip
+      ...Array.from({ length: 12 }, () => makeResult('b')),
+    ];
+    const h = computeQuestionHealth([Q], results);
+    expect(h[Q.id].responseCount).toBe(12); // legacy doc not counted
+  });
+
+  it('skips results where the question is not present in answers (different bank)', () => {
+    const results = [{ answers: { other_q: 'a' }, scores: {} }];
+    const h = computeQuestionHealth([Q], results);
+    expect(h[Q.id].responseCount).toBe(0);
+    expect(h[Q.id].status).toBe('insufficient');
+  });
+
+  it('tracks canTeachCount and canTeachFailCount using the submission-time domain score', () => {
+    // 2 can-teach navigators, 1 of whom picks the wrong answer.
+    const results = [
+      makeResult('b', TEACH), // can-teach, wrong
+      makeResult('a', TEACH), // can-teach, correct
+      ...Array.from({ length: 8 }, () => makeResult('b', SOLID)), // solid, wrong
+    ];
+    const h = computeQuestionHealth([Q], results);
+    expect(h[Q.id].canTeachCount).toBe(2);
+    expect(h[Q.id].canTeachFailCount).toBe(1);
+  });
+
+  it('returns an empty object for an empty question list', () => {
+    expect(computeQuestionHealth([], [{ answers: { q1: 'a' }, scores: {} }])).toEqual({});
+  });
+
+  it('handles multiple questions independently', () => {
+    const Q2 = { id: 'q2', correctOptionId: 'x', domainId: FAKE_D1 };
+    const results = [
+      { answers: { q1: 'a', q2: 'y' }, scores: {} }, // q1 correct, q2 wrong
+    ];
+    const h = computeQuestionHealth([Q, Q2], results);
+    expect(h.q1.correctCount).toBe(1);
+    expect(h.q2.correctCount).toBe(0);
+  });
+});
 
 describe('mentorSuggestions', () => {
   it('suggests teachers for each non-can-teach domain, excluding self', () => {

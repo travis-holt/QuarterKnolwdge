@@ -162,7 +162,7 @@ export async function getResult(navigatorId, department = 'pediatrics') {
  * @param {Record<string,number|null>} [competencyScores]
  * @param {string} [department='pediatrics']
  */
-export async function saveResult(navigatorId, name, scores, competencyScores = {}, department = 'pediatrics') {
+export async function saveResult(navigatorId, name, scores, competencyScores = {}, department = 'pediatrics', answers = {}) {
   const compositeId = `${navigatorId}__${department}`;
   await setDoc(doc(db, RESULTS, compositeId), {
     name,
@@ -170,6 +170,7 @@ export async function saveResult(navigatorId, name, scores, competencyScores = {
     department,
     scores,
     competencyScores,
+    answers,
     submittedAt: serverTimestamp(),
   });
 }
