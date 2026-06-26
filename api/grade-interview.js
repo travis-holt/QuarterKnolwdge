@@ -11,8 +11,8 @@
 
 import { sopContextFor } from './_sop-context.js';
 import { DOMAINS } from '../src/data/questions.js';
-import { SUPERVISOR_PASSCODE } from '../src/data/config.js';
 import { getApiKeys, geminiWithRotation } from './_gemini-client.js';
+import { validateSecret } from './_auth.js';
 
 // Bound the transcript fed to Gemini: cap the number of turns and the length of
 // each message. Keeps the token budget predictable and limits the prompt-injection
@@ -93,9 +93,8 @@ export default async function handler(req, res) {
   const keys = getApiKeys();
   if (keys.length === 0) return res.status(500).json({ error: 'Grading is not configured on the server.' });
 
-  const secret = process.env.GENERATION_SECRET || SUPERVISOR_PASSCODE;
-  const { domain, scenario, transcript, name, department = 'pediatrics', secret: provided } = req.body ?? {};
-  if (provided !== secret) return res.status(401).json({ error: 'Not authorised.' });
+  if (validateSecret(req, res)) return;
+  const { domain, scenario, transcript, name, department = 'pediatrics' } = req.body ?? {};
 
   if (!domain || !scenario || !Array.isArray(transcript) || transcript.length === 0 || !name) {
     return res.status(400).json({ error: 'Missing required fields.' });

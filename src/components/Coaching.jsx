@@ -1,8 +1,9 @@
 import { useState, useEffect } from 'react';
-import { DOMAINS } from '../data/questions.js';
+import { domainName } from '../data/questions.js';
 import { COMPETENCIES, competencyName } from '../data/competencies.js';
-import { LEVELS, SUPERVISOR_PASSCODE } from '../data/config.js';
+import { LEVELS } from '../data/config.js';
 import { scoreToLevel } from '../lib/scoring.js';
+import { apiFetch } from '../lib/apiFetch.js';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Coaching — post-check feedback shown immediately after submit.
@@ -14,8 +15,6 @@ import { scoreToLevel } from '../lib/scoring.js';
 //      note per weak competency, grounded in the rationales above. Shown while
 //      loading as a skeleton; silently omitted if the API call fails.
 // ─────────────────────────────────────────────────────────────────────────────
-
-const domainName = (id) => DOMAINS.find((d) => d.id === id)?.name ?? id;
 
 function toneFor(points) {
   if (points >= 85) return 'is-good';
@@ -30,21 +29,11 @@ export default function Coaching({ questions, answers, competencyScores, name, o
   // Fire the coaching request once on mount. 10 s hard timeout → silent
   // fallback to rule-based coaching so the navigator is never stuck waiting.
   useEffect(() => {
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 10_000);
-
-    fetch('/api/generate-coaching', {
-      method: 'POST',
-      signal: controller.signal,
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ answers, questions, competencyScores, name, secret: SUPERVISOR_PASSCODE }),
-    })
-      .then((r) => (r.ok ? r.json() : Promise.reject()))
-      .then((data) => setAiCoaching(data?.coaching ?? {}))
-      .catch(() => setAiCoaching(false))
-      .finally(() => clearTimeout(timeout));
-
-    return () => { controller.abort(); clearTimeout(timeout); };
+    let cancelled = false;
+    apiFetch('/api/generate-coaching', { answers, questions, competencyScores, name }, 10_000)
+      .then((data) => { if (!cancelled) setAiCoaching(data?.coaching ?? {}); })
+      .catch(() => { if (!cancelled) setAiCoaching(false); });
+    return () => { cancelled = true; };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []); // intentionally fire once — answers/questions are stable after submit
 

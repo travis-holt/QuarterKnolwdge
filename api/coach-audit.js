@@ -11,8 +11,8 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { DOMAINS } from '../src/data/questions.js';
-import { SUPERVISOR_PASSCODE } from '../src/data/config.js';
 import { getApiKeys, geminiWithRotation } from './_gemini-client.js';
+import { validateSecret } from './_auth.js';
 
 // Cap free-text inputs interpolated into the prompt to keep the token budget
 // bounded and limit the prompt-injection surface (advisory output, but cheap insurance).
@@ -25,9 +25,8 @@ export default async function handler(req, res) {
   const keys = getApiKeys();
   if (!keys.length) return res.status(500).json({ error: 'Gemini not configured on the server.' });
 
-  const secret = process.env.GENERATION_SECRET || SUPERVISOR_PASSCODE;
-  const { domain: domainId, modelExplanation, navigatorAnswer, name, secret: provided } = req.body ?? {};
-  if (provided !== secret) return res.status(401).json({ error: 'Not authorised.' });
+  if (validateSecret(req, res)) return;
+  const { domain: domainId, modelExplanation, navigatorAnswer, name } = req.body ?? {};
 
   if (!modelExplanation || !navigatorAnswer || !name) {
     return res.status(400).json({ error: 'Missing required fields.' });

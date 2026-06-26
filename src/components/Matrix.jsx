@@ -1,9 +1,7 @@
-import { DOMAINS } from '../data/questions.js';
+import { DOMAINS, domainName } from '../data/questions.js';
 import { LEVELS, LEVEL_ORDER } from '../data/config.js';
 import { columnGaps, canTeachRoster, readinessTally } from '../lib/scoring.js';
 import Reveal from './Reveal.jsx';
-
-const domainName = (id) => DOMAINS.find((d) => d.id === id)?.name ?? id;
 
 export default function Matrix({ rows, deptName, onTakeCheck, onOpenNavigator }) {
   const hasLive = rows.some((r) => r.isLive);

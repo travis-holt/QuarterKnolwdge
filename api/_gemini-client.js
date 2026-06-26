@@ -33,6 +33,12 @@ export function getApiKeys() {
   return [...new Set(multi.length ? multi : single ? [single] : [])];
 }
 
+// Warn once at startup if no keys are configured so the problem surfaces in logs
+// immediately rather than at first Gemini call.
+if (getApiKeys().length === 0) {
+  console.warn('_gemini-client: no GEMINI_API_KEYS or GEMINI_API_KEY configured — all Gemini endpoints will fail.');
+}
+
 // One Gemini call with a given key → { ok, status, text?, detail? }.
 export async function callGemini(apiKey, body) {
   const url = `https://generativelanguage.googleapis.com/v1beta/models/${MODEL}:generateContent?key=${apiKey}`;
@@ -81,7 +87,7 @@ export async function geminiWithRotation(keys, body, { label = 'gemini' } = {}) 
       }
       continue;
     }
-    console.error(`${label}: non-rotatable error`, result.status, result.detail);
+    console.error(`${label}: non-rotatable error`, result.status, String(result.detail ?? '').slice(0, 200));
     return { ok: false, reason: 'fatal', status: result.status };
   }
 

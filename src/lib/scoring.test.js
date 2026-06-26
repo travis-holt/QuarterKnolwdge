@@ -373,10 +373,8 @@ describe('readinessTally', () => {
     expect(tally[3].canTeachCount).toBe(1);
   });
 
-  it('is sorted in non-increasing order of canTeachCount', () => {
-    const counts = readinessTally(fixtureRows()).map((t) => t.canTeachCount);
-    const sorted = [...counts].sort((a, b) => b - a);
-    expect(counts).toEqual(sorted);
+  it('returns an empty array for an empty matrix', () => {
+    expect(readinessTally([])).toEqual([]);
   });
 });
 
@@ -490,7 +488,14 @@ describe('trainingPlan', () => {
     expect(plan).toHaveLength(4);
     const counts = plan.map((p) => p.requiredCount);
     expect(counts).toEqual([...counts].sort((a, b) => b - a));
-    expect(plan[0].requiredCount).toBe(2); // Ada and Bea both have 2 Required
+    // Ada has 2 Required (D0+D5 Learning), Bea has 2 Required (D0+D4 Learning)
+    const adaEntry = plan.find((p) => p.name === 'Ada');
+    const beaEntry = plan.find((p) => p.name === 'Bea');
+    expect(adaEntry.requiredCount).toBe(2);
+    expect(beaEntry.requiredCount).toBe(2);
+    // Both should be in the top 2 slots
+    expect(plan.indexOf(adaEntry)).toBeLessThan(2);
+    expect(plan.indexOf(beaEntry)).toBeLessThan(2);
   });
 });
 
@@ -635,15 +640,67 @@ describe('mentorSuggestions', () => {
 
   it('surfaces the biggest gaps first (Learning before Solid)', () => {
     const levels = mentorSuggestions(fixtureRows(), 'Ada').map((s) => s.level);
+    // Ada fixture has both Learning (D0, D5) and Solid (D1, D4) gaps, so both levels
+    // are guaranteed to appear — the conditional guard is not needed.
+    expect(levels).toContain('learning');
+    expect(levels).toContain('solid');
     const firstSolid = levels.indexOf('solid');
     const lastLearning = levels.lastIndexOf('learning');
-    // every Learning entry precedes every Solid entry
-    if (firstSolid !== -1 && lastLearning !== -1) {
-      expect(lastLearning).toBeLessThan(firstSolid);
-    }
+    expect(lastLearning).toBeLessThan(firstSolid);
   });
 
   it('returns an empty array for an unknown navigator', () => {
     expect(mentorSuggestions(fixtureRows(), 'Nobody')).toEqual([]);
+  });
+});
+
+// ── malformed-input edge cases ────────────────────────────────────────────────
+
+describe('scorePerDomain — malformed inputs', () => {
+  it('returns 0 for all domains when passed undefined answers', () => {
+    // earnedPoints must tolerate undefined lookup key without throwing
+    const scores = scorePerDomain(undefined, FAKE_QUESTIONS);
+    expect(scores[FAKE_D0]).toBe(0);
+    expect(scores[FAKE_D1]).toBe(0);
+  });
+
+  it('returns 0 for a question whose options field is missing', () => {
+    // the options?. guard in earnedPoints should handle this
+    const qs = [{ id: 'bad', domainId: FAKE_D0, competencies: [C0], correctOptionId: 'a' }];
+    const scores = scorePerDomain({ bad: 'a' }, qs);
+    expect(scores[FAKE_D0]).toBe(0);
+  });
+
+  it('returns 0 when the chosen optionId does not exist in options', () => {
+    const scores = scorePerDomain({ fq1: 'nonexistent' }, FAKE_QUESTIONS);
+    expect(scores[FAKE_D0]).toBe(0);
+  });
+
+  it('treats a question with an unknown domainId as ignored (no crash)', () => {
+    const qs = [{ id: 'bad', domainId: 'no-such-domain', competencies: [], correctOptionId: 'a',
+      options: [{ id: 'a', text: '', points: 100 }] }];
+    expect(() => scorePerDomain({ bad: 'a' }, qs)).not.toThrow();
+  });
+});
+
+describe('scorePerCompetency — malformed inputs', () => {
+  it('returns 0 (not null) for a competency when the matching question has no options', () => {
+    const qs = [{ id: 'bad', domainId: FAKE_D0, competencies: [C0], correctOptionId: 'a' }];
+    const scores = scorePerCompetency({ bad: 'a' }, qs);
+    // C0 is tagged but has no options → earns 0 → tally exists → returns 0, not null
+    expect(scores[C0]).toBe(0);
+  });
+
+  it('ignores competency tags that reference an unknown competency id', () => {
+    const qs = [{ id: 'weird', domainId: FAKE_D0, competencies: ['ghost'], correctOptionId: 'a',
+      options: [{ id: 'a', text: '', points: 100 }] }];
+    // 'ghost' is not in COMPETENCIES — should not throw, just skip
+    expect(() => scorePerCompetency({ weird: 'a' }, qs)).not.toThrow();
+  });
+
+  it('handles missing competencies array on question (defaults to [])', () => {
+    const qs = [{ id: 'no-comp', domainId: FAKE_D0, correctOptionId: 'a',
+      options: [{ id: 'a', text: '', points: 100 }] }];
+    expect(() => scorePerCompetency({ 'no-comp': 'a' }, qs)).not.toThrow();
   });
 });

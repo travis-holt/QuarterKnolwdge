@@ -61,6 +61,8 @@ export const DOMAINS = [
   },
 ];
 
+export const domainName = (id) => DOMAINS.find((d) => d.id === id)?.name ?? id;
+
 export const SEED_QUESTIONS = [
   // ── Sites & Routing ────────────────────────────────────────────────────────
   {

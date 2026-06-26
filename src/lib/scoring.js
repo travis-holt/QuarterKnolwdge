@@ -26,7 +26,7 @@ import { DEPARTMENTS } from '../data/departments.js';
  * @returns {number} 0–100
  */
 function earnedPoints(answer, question) {
-  const opt = question.options.find((o) => o.id === answer);
+  const opt = question.options?.find((o) => o.id === answer);
   if (!opt) return 0;
   if (typeof opt.points === 'number') return opt.points;
   return answer === question.correctOptionId ? 100 : 0;
@@ -39,7 +39,7 @@ function earnedPoints(answer, question) {
  * @param {object[]} [questions] - the active question bank (defaults to the seed)
  * @returns {Record<string,number>} domainId -> score (0–100, rounded)
  */
-export function scorePerDomain(answers, questions = SEED_QUESTIONS) {
+export function scorePerDomain(answers = {}, questions = SEED_QUESTIONS) {
   const tally = {}; // domainId -> { earned, total }
   for (const domain of DOMAINS) {
     tally[domain.id] = { earned: 0, total: 0 };
@@ -68,7 +68,7 @@ export function scorePerDomain(answers, questions = SEED_QUESTIONS) {
  * @param {object[]} [questions] - the active question bank (defaults to the seed)
  * @returns {Record<string,number|null>} competencyId -> score (0–100) or null
  */
-export function scorePerCompetency(answers, questions = SEED_QUESTIONS) {
+export function scorePerCompetency(answers = {}, questions = SEED_QUESTIONS) {
   const tally = {}; // competencyId -> { earned, total }
   for (const c of COMPETENCIES) {
     tally[c.id] = { earned: 0, total: 0 };

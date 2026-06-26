@@ -12,8 +12,8 @@
 
 import { DOMAINS } from '../src/data/questions.js';
 import { sopContextFor } from './_sop-context.js';
-import { SUPERVISOR_PASSCODE } from '../src/data/config.js';
 import { getApiKeys, geminiWithRotation } from './_gemini-client.js';
+import { validateSecret } from './_auth.js';
 
 const AUDIT_SCHEMA = {
   type: 'OBJECT',
@@ -69,9 +69,8 @@ export default async function handler(req, res) {
   const keys = getApiKeys();
   if (!keys.length) return res.status(500).json({ error: 'Gemini not configured on the server.' });
 
-  const secret = process.env.GENERATION_SECRET || SUPERVISOR_PASSCODE;
-  const { domain: domainId, department = 'pediatrics', secret: provided } = req.body ?? {};
-  if (provided !== secret) return res.status(401).json({ error: 'Not authorised.' });
+  if (validateSecret(req, res)) return;
+  const { domain: domainId, department = 'pediatrics' } = req.body ?? {};
 
   const domain = DOMAINS.find((d) => d.id === domainId);
   if (!domain) return res.status(400).json({ error: 'Unknown domain.' });
