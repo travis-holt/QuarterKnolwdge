@@ -212,7 +212,11 @@ training assignments.
   `ASSESSED_DEPT` alias. [src/data/questions-obgyn.js](src/data/questions-obgyn.js) — 14 sanitized
   OB/GYN seed questions. `deptSamples()`, `departmentOverall()`, `departmentMatrix()`;
   [src/components/DeptBar.jsx](src/components/DeptBar.jsx) selector (shows "live" badge for all
-  assessed depts). Navigator picks department at check start (`deptselect` view in `NavigatorApp`).
+  assessed depts). Navigator picks department at check start (`deptselect` view in `NavigatorApp`);
+  can switch departments after without signing out via a nav pill (⇄) or by clicking assessed dept
+  cards in the "Strength across departments" strip — clicking calls `handleDeptSelect(deptId)` which
+  loads the existing result or starts the check. `NavigatorApp` pre-fetches all assessed dept results
+  on mount (`allDeptResults` state) so the strip shows real scores for completed depts immediately.
   Results keyed by composite `${navigatorId}__${department}`; `getActiveQuestions(dept)` filters
   by department field. `sopContextFor(deptId)` in `api/_sop-context.js` grounds all AI features in
   the correct SOP. **All OB/GYN content is sanitized** — generic role labels only, no real provider
@@ -1241,24 +1245,30 @@ stateDiagram-v2
   (per department) → navigators sign in → **pick department** (Pediatrics or OB/GYN) → take that
   department's active check → land on **coaching** → per-domain **and** per-competency results
   persist to Firestore (composite key `${navigatorId}__${department}`) → supervisor matrix/overview
-  update live per dept → navigator/training dashboards → department switching → practice interview
-  (SOP-grounded per dept) → "Spot the Error" QA audit (SOP-grounded per dept) with completion
-  tracking. Build clean, tests green (`npm test` → **50 passing**).
+  update live per dept → navigator/training dashboards → **switch departments** via nav pill or
+  dept cards → practice interview (SOP-grounded per dept) → "Spot the Error" QA audit (SOP-grounded
+  per dept) with completion tracking. Build clean, tests green (`npm test` → **60 passing**).
 - **Existing functionality:** features F1–F16 (see [§4](#4-feature-inventory)) are **Complete** in
-  code. F10 now includes OB/GYN as a second live department. F13 (Coaching) includes the Phase 2
-  AI layer. F15 (Interview) is Phase 1 roleplay only. F16 closes the roadmapped "completion
-  tracking" item.
+  code. F10 now includes OB/GYN as a second live department and full in-app dept switching. F13
+  (Coaching) includes the Phase 2 AI layer. F15 (Interview) is Phase 1 roleplay only. F16 closes
+  the roadmapped "completion tracking" item.
 - **SOP grounding:** Pediatrics AI features ground against `Pediatrics_SOP_Updated.pdf`; OB/GYN AI
   features ground against the sanitized `SOP_CONTEXT_OBGYN` in `api/_sop-context.js` (faithful to
   OB/GYN workflow but with generic role labels — no PII; repo is public). `SOP Guide.pdf` superseded.
 - **Interview caller consistency:** `api/interview-turn.js` turn temperature reduced to 0.5 and a
   `CRITICAL` consistency rule added to the system instruction — callers no longer hallucinate
   contradictory facts mid-call.
+- **Department switching (navigator UX):** navigators can switch departments without signing out.
+  A ⇄ pill in the nav bar (hidden mid-check) returns to the dept picker. Assessed dept cards in
+  the "Strength across departments" strip are clickable buttons — clicking jumps directly to that
+  dept's dashboard (if result exists) or check (if not). All assessed dept results are pre-fetched
+  on mount so the strip shows real scores, not "Take the check →", for depts already completed.
 - **Experimental / mockup:**
   - Training **content** is mockup (flagged in UI). Logic is real.
-  - **Adult Medicine, OB/GYN, Behavioural Health** are not assessed; only **Pediatrics** is live.
-- **Test coverage:** `lib/scoring.js` is unit-tested (46 tests, incl. competency scoring). Components,
-  the role apps, and the serverless functions are **not** yet tested (highest unresolved tech debt).
+  - **Adult Medicine and Behavioural Health** are not assessed; **Pediatrics and OB/GYN** are live.
+- **Test coverage:** `lib/scoring.js` is unit-tested (60 tests, incl. competency scoring + question
+  health). Components, the role apps, and the serverless functions are **not** yet tested (highest
+  unresolved tech debt).
 - **Known code quality items (non-blocking, from code review 2026-06-25):**
   - ~~Dead import `createRequire` in `server.js:6`~~ — **removed 2026-06-25**.
   - ~~`getApiKeys`/`callGemini`/`geminiWithRotation` duplicated across all `api/` handlers~~ —
@@ -1587,6 +1597,7 @@ npm run test:watch   # run Vitest in watch mode
 - ✅ Craft pass: shared `api/_gemini-client.js` + latent CSS-var fix — done 2026-06-26.
 - ✅ OB/GYN live check (multi-department) — done 2026-06-26.
 - ✅ Question Health / SOP Drift flags — done 2026-06-26 (60 tests).
+- ✅ Navigator department switching UX — done 2026-06-26 (nav pill + clickable dept cards + all-dept pre-fetch).
 - Component/integration tests (jsdom + Testing Library) — next technical priority.
 - Supervisor grade override for practice sessions — next interview feature.
 
