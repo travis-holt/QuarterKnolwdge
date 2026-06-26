@@ -7,9 +7,15 @@
 //
 // Five collections, all UUID-keyed (never name-keyed → no typo/collision risk):
 //   roster      — supervisor-managed navigator list { name, pin, createdAt }
-//   results     — check submissions { name, navigatorId, scores, competencyScores,
-//                 submittedAt }
-//   questions   — supervisor-managed scenario bank { scenario, options, status, … }
+//   results     — check submissions { name, navigatorId, department, scores,
+//                 competencyScores, submittedAt }. Keyed by composite
+//                 `${navigatorId}__${department}` so one navigator can hold
+//                 separate scores for each assessed department. A fallback
+//                 read against the plain navigatorId id supports legacy
+//                 Pediatrics docs created before this multi-dept migration.
+//   questions   — supervisor-managed scenario bank { scenario, options, status,
+//                 department, … }. `department` field added to support per-dept
+//                 banks. Legacy docs without `department` are treated as 'pediatrics'.
 //   interviews  — practice roleplay transcripts { navigatorId, name, domainId,
 //                 scenario, callerName, transcript, endedAt }
 //   completions — "Spot the Error" exercise completions { navigatorId, name,
@@ -87,10 +93,18 @@ export async function setRosterStatus(id, status) {
 /**
  * Supervisor: delete a navigator's result so they can retake the check.
  * The roster entry is untouched; only the submission is removed.
- * @param {string} navigatorId  roster UUID (same as the results doc id)
+ * @param {string} navigatorId  roster UUID
+ * @param {string} [department='pediatrics']
  */
-export async function clearResult(navigatorId) {
-  await deleteDoc(doc(db, RESULTS, navigatorId));
+export async function clearResult(navigatorId, department = 'pediatrics') {
+  const compositeId = `${navigatorId}__${department}`;
+  const compositeSnap = await getDoc(doc(db, RESULTS, compositeId));
+  if (compositeSnap.exists()) {
+    await deleteDoc(doc(db, RESULTS, compositeId));
+  } else {
+    // Legacy Pediatrics doc keyed by plain navigatorId.
+    await deleteDoc(doc(db, RESULTS, navigatorId));
+  }
 }
 
 /**
@@ -119,27 +133,41 @@ export function subscribeRoster(cb, onError) {
 // ── Results ──────────────────────────────────────────────────────────────────
 
 /**
- * Navigator: one-time read of their own result (decides dashboard vs. check).
- * @param {string} navigatorId  roster UUID
- * @returns {Promise<{id:string,name:string,scores:Record<string,number>}|null>}
+ * Navigator: one-time read of their own result for one department.
+ * Tries the composite id first; falls back to the legacy plain-navigatorId doc
+ * for Pediatrics so existing pilot data loads without a migration.
+ * @param {string} navigatorId
+ * @param {string} [department='pediatrics']
+ * @returns {Promise<{id:string,name:string,scores:Record<string,number>,department:string}|null>}
  */
-export async function getResult(navigatorId) {
-  const snap = await getDoc(doc(db, RESULTS, navigatorId));
-  return snap.exists() ? { id: snap.id, ...snap.data() } : null;
+export async function getResult(navigatorId, department = 'pediatrics') {
+  const compositeId = `${navigatorId}__${department}`;
+  const snap = await getDoc(doc(db, RESULTS, compositeId));
+  if (snap.exists()) return { id: snap.id, ...snap.data() };
+  // Fallback: legacy Pediatrics doc keyed by plain navigatorId.
+  if (department === 'pediatrics') {
+    const legacy = await getDoc(doc(db, RESULTS, navigatorId));
+    if (legacy.exists()) return { id: legacy.id, ...legacy.data() };
+  }
+  return null;
 }
 
 /**
- * Navigator: write (or overwrite, on retake) their result. The result document
- * shares the navigator's roster UUID as its id.
+ * Navigator: write (or overwrite on retake) their result for one department.
+ * Uses composite key `${navigatorId}__${department}` so a navigator can hold
+ * separate scores for each assessed department.
  * @param {string} navigatorId
  * @param {string} name                  denormalised for display
  * @param {Record<string,number>} scores  domainId -> percent
- * @param {Record<string,number|null>} [competencyScores]  competencyId -> percent
+ * @param {Record<string,number|null>} [competencyScores]
+ * @param {string} [department='pediatrics']
  */
-export async function saveResult(navigatorId, name, scores, competencyScores = {}) {
-  await setDoc(doc(db, RESULTS, navigatorId), {
+export async function saveResult(navigatorId, name, scores, competencyScores = {}, department = 'pediatrics') {
+  const compositeId = `${navigatorId}__${department}`;
+  await setDoc(doc(db, RESULTS, compositeId), {
     name,
     navigatorId,
+    department,
     scores,
     competencyScores,
     submittedAt: serverTimestamp(),
@@ -188,6 +216,15 @@ export async function saveInterview(navigatorId, name, domainId, scenario, calle
     supervisorOverrides: null,
   });
   return ref.id;
+}
+
+/**
+ * Store the AI grade on an interview doc after grading completes.
+ * @param {string} id   interview doc id returned by saveInterview
+ * @param {{ score:number, summary:string, strengths:string[], improvements:string[] }} grade
+ */
+export async function updateInterviewGrade(id, grade) {
+  await updateDoc(doc(db, INTERVIEWS, id), { grade });
 }
 
 /**
@@ -281,18 +318,24 @@ export function subscribeQuestions(cb, onError) {
 }
 
 /**
- * One-time fetch of the ACTIVE questions only — the live check bank.
+ * One-time fetch of active questions for a specific department.
+ * Filters client-side so no composite Firestore index is required.
+ * Legacy docs without a `department` field are treated as 'pediatrics'.
+ * @param {string} [department='pediatrics']
  * @returns {Promise<object[]>}
  */
-export async function getActiveQuestions() {
+export async function getActiveQuestions(department = 'pediatrics') {
   const snap = await getDocs(query(collection(db, QUESTIONS_COL), where('status', '==', 'active')));
-  return snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+  return snap.docs
+    .map((d) => ({ id: d.id, ...d.data() }))
+    .filter((q) => (q.department ?? 'pediatrics') === department);
 }
 
 /**
- * Seed the bank from the static seed the first time only. No-op if any question
- * already exists. Seed questions are written `active` using their stable seed id.
- * @param {object[]} seed
+ * Seed the bank from the combined seed the first time only. No-op if any
+ * question already exists. Seed questions are written `active` using their
+ * stable seed id and carry a `department` field.
+ * @param {object[]} seed  combined ALL_SEED_QUESTIONS (both departments)
  * @returns {Promise<boolean>} true if it seeded, false if the bank was non-empty
  */
 export async function seedQuestionsIfEmpty(seed) {
@@ -302,6 +345,7 @@ export async function seedQuestionsIfEmpty(seed) {
   for (const q of seed) {
     batch.set(doc(db, QUESTIONS_COL, q.id), {
       ...QUESTION_FIELDS(q),
+      department: q.department ?? 'pediatrics',
       status: 'active',
       source: 'seed',
       createdAt: serverTimestamp(),
@@ -316,9 +360,10 @@ export async function seedQuestionsIfEmpty(seed) {
  * a fresh UUID and status `draft` — never live until the supervisor activates it.
  * @param {object[]} drafts
  * @param {string} [source]  provenance tag (e.g. 'gemini', 'manual')
+ * @param {string} [department='pediatrics']
  * @returns {Promise<string[]>} the new draft ids
  */
-export async function saveDraftQuestions(drafts, source = 'gemini') {
+export async function saveDraftQuestions(drafts, source = 'gemini', department = 'pediatrics') {
   const batch = writeBatch(db);
   const ids = [];
   for (const q of drafts) {
@@ -326,6 +371,7 @@ export async function saveDraftQuestions(drafts, source = 'gemini') {
     ids.push(ref.id);
     batch.set(ref, {
       ...QUESTION_FIELDS(q),
+      department: q.department ?? department,
       status: 'draft',
       source,
       createdAt: serverTimestamp(),

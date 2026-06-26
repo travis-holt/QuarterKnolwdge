@@ -21,7 +21,7 @@ import { saveCompletion } from '../lib/db.js';
 const GENERATE_TIMEOUT_MS = 25_000;
 const COACH_TIMEOUT_MS    = 15_000;
 
-export default function SpotTheError({ navigatorId, name, domainId, onBack, onComplete }) {
+export default function SpotTheError({ navigatorId, name, domainId, department = 'pediatrics', onBack, onComplete }) {
   const [phase, setPhase] = useState('loading');
   // 'loading' | 'active' | 'reflect' | 'coaching' | 'coached' | 'saving' | 'done'
 
@@ -82,7 +82,7 @@ export default function SpotTheError({ navigatorId, name, domainId, onBack, onCo
     setReflection('');
     setCoachReply('');
     try {
-      const data = await callApi('/api/generate-audit', { domain: domainId }, GENERATE_TIMEOUT_MS);
+      const data = await callApi('/api/generate-audit', { domain: domainId, department }, GENERATE_TIMEOUT_MS);
       setTranscript(data.transcript);
       setErrorIndex(data.errorIndex);
       setHint(data.hint);
@@ -154,7 +154,7 @@ export default function SpotTheError({ navigatorId, name, domainId, onBack, onCo
 
   // ── Loading / error ──────────────────────────────────────────────────────────
 
-  if (phase === 'loading' || (phase === 'loading' && genError)) {
+  if (phase === 'loading') {
     return (
       <section className="spot-error view-enter">
         <button className="linkbtn spot-error__back" onClick={onBack}>← Back to my training</button>

@@ -38,7 +38,7 @@ import {
 import { THRESHOLDS, LEVELS, COLUMN_GAP_THRESHOLD } from '../data/config.js';
 import { DOMAINS, QUESTIONS } from '../data/questions.js';
 import { COMPETENCIES } from '../data/competencies.js';
-import { DEPARTMENTS, ASSESSED_DEPT } from '../data/departments.js';
+import { DEPARTMENTS, ASSESSED_DEPT, isAssessed } from '../data/departments.js';
 
 // ── helpers ──────────────────────────────────────────────────────────────────
 
@@ -282,15 +282,50 @@ describe('departmentMatrix', () => {
     expect(row.depts.obgyn.level).toBe('learning');
   });
 
-  it('assesses the live taker only in ASSESSED_DEPT; other departments are null', () => {
-    const live = { name: 'You', scores: makeScores({}, TEACH) };
+  it('places the live taker in the department stored on liveResult (pediatrics)', () => {
+    const live = { name: 'You', scores: makeScores({}, TEACH), department: 'pediatrics' };
     const rows = departmentMatrix(nested, live);
     const liveRow = rows[rows.length - 1];
     expect(liveRow.isLive).toBe(true);
-    expect(liveRow.depts[ASSESSED_DEPT]).not.toBeNull();
-    for (const dep of DEPARTMENTS.filter((d) => d.id !== ASSESSED_DEPT)) {
+    expect(liveRow.depts['pediatrics']).not.toBeNull();
+    for (const dep of DEPARTMENTS.filter((d) => d.id !== 'pediatrics')) {
       expect(liveRow.depts[dep.id]).toBeNull();
     }
+  });
+
+  it('places the live taker in obgyn when liveResult.department is obgyn', () => {
+    const live = { name: 'You', scores: makeScores({}, TEACH), department: 'obgyn' };
+    const rows = departmentMatrix(nested, live);
+    const liveRow = rows[rows.length - 1];
+    expect(liveRow.isLive).toBe(true);
+    expect(liveRow.depts['obgyn']).not.toBeNull();
+    expect(liveRow.depts['pediatrics']).toBeNull();
+    for (const dep of DEPARTMENTS.filter((d) => d.id !== 'obgyn')) {
+      expect(liveRow.depts[dep.id]).toBeNull();
+    }
+  });
+
+  it('defaults to pediatrics when liveResult has no department field (legacy)', () => {
+    const live = { name: 'You', scores: makeScores({}, TEACH) }; // no department field
+    const rows = departmentMatrix(nested, live);
+    const liveRow = rows[rows.length - 1];
+    expect(liveRow.depts['pediatrics']).not.toBeNull();
+    for (const dep of DEPARTMENTS.filter((d) => d.id !== 'pediatrics')) {
+      expect(liveRow.depts[dep.id]).toBeNull();
+    }
+  });
+});
+
+describe('isAssessed', () => {
+  it('returns true for assessed departments', () => {
+    expect(isAssessed('pediatrics')).toBe(true);
+    expect(isAssessed('obgyn')).toBe(true);
+  });
+
+  it('returns false for mockup departments', () => {
+    expect(isAssessed('adult')).toBe(false);
+    expect(isAssessed('behavioral')).toBe(false);
+    expect(isAssessed('unknown')).toBe(false);
   });
 });
 

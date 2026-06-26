@@ -1,7 +1,7 @@
-import { DEPARTMENTS, ASSESSED_DEPT } from '../data/departments.js';
+import { DEPARTMENTS, isAssessed } from '../data/departments.js';
 
 // Department selector — scopes the matrix, dashboards and training to one
-// department at a time. The assessed department (live check) is marked; the
+// department at a time. Assessed departments (live checks) are marked; the
 // others are illustrative mockups.
 export default function DeptBar({ selectedDept, setSelectedDept }) {
   return (
@@ -14,12 +14,12 @@ export default function DeptBar({ selectedDept, setSelectedDept }) {
             onClick={() => setSelectedDept(d.id)}
           >
             {d.name}
-            {d.id === ASSESSED_DEPT && <span className="deptbar__live">live</span>}
+            {isAssessed(d.id) && <span className="deptbar__live">live</span>}
           </button>
         ))}
       </div>
       <span className="deptbar__note">
-        {selectedDept === ASSESSED_DEPT
+        {isAssessed(selectedDept)
           ? 'Assessed by the live check'
           : 'Illustrative mockup data'}
       </span>

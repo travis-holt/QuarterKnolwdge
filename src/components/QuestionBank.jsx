@@ -12,14 +12,17 @@ const domainName = (id) => DOMAINS.find((d) => d.id === id)?.name ?? id;
 // live assessment.
 // ─────────────────────────────────────────────────────────────────────────────
 
-export default function QuestionBank({ questions, onActivate, onArchive, onDelete, onSaveEdit, onGenerate }) {
+export default function QuestionBank({ questions, selectedDept = 'pediatrics', onActivate, onArchive, onDelete, onSaveEdit, onGenerate }) {
   const [editingId, setEditingId] = useState(null);
   const [genDomain, setGenDomain] = useState(DOMAINS[0].id);
   const [genCount, setGenCount] = useState(3);
   const [generating, setGenerating] = useState(false);
   const [message, setMessage] = useState(null); // { kind: 'ok'|'err', text }
 
-  const byStatus = (s) => questions.filter((q) => (q.status ?? 'active') === s);
+  // Filter the bank to the supervisor's selected department.
+  const deptQuestions = questions.filter((q) => (q.department ?? 'pediatrics') === selectedDept);
+
+  const byStatus = (s) => deptQuestions.filter((q) => (q.status ?? 'active') === s);
   const drafts = byStatus('draft');
   const active = byStatus('active');
   const archived = byStatus('archived');

@@ -1,10 +1,17 @@
-// SOP context used to ground scenario generation. The leading underscore keeps
+// SOP contexts used to ground scenario generation. The leading underscore keeps
 // Express from turning this file into an HTTP route — it is a helper module.
 //
-// Source: Aizer Health Organization Operational Procedures SOP v1.0
-// ("Pediatrics_SOP_Updated.pdf"). Faithful to the source — no content from
-// prior SOP versions is carried forward. Organised by the six knowledge
-// domains so Gemini can generate scenarios per domain.
+// SOP_CONTEXTS is a map keyed by department id. Use sopContextFor(deptId) in
+// API handlers — it defaults to the Pediatrics context for unknown departments.
+//
+// SANITIZATION NOTE: the OB/GYN context below is faithful to the workflow but
+// uses generic role labels only (no real provider names, phone numbers, or
+// external portal credentials — the repo is public).
+//
+// Sources:
+//   Pediatrics — Aizer Health Organization Operational Procedures SOP v1.0
+//                ("Pediatrics_SOP_Updated.pdf")
+//   OB/GYN     — Aizer Health OB/GYN Department SOP (sanitized distillation)
 export const SOP_CONTEXT = `
 PEDIATRIC CONTACT-CENTRE SOP — AIZER HEALTH ORGANIZATION
 (Aizer Health Organization Operational Procedures, v1.0)
@@ -297,3 +304,205 @@ APPOINTMENT BOOKING PROCESS:
 - Appointment duration may vary — if the billing alert in ECW states the patient requires extra
   time or is a chronic patient, adjust accordingly.
 `.trim();
+
+// ─────────────────────────────────────────────────────────────────────────────
+// OB/GYN SOP GROUNDING (sanitized — generic role labels, no PII)
+// ─────────────────────────────────────────────────────────────────────────────
+const SOP_CONTEXT_OBGYN = `
+OB/GYN CONTACT-CENTRE SOP — AIZER HEALTH ORGANIZATION
+(Sanitized operational distillation — workflow-faithful, no real names or credentials)
+
+════════════════════════════════════════════════════════
+DOMAIN 1: SITES & ROUTING
+════════════════════════════════════════════════════════
+
+CALL INTAKE QUEUES:
+- PSS (Patient Scheduling Services) Queue: primary intake for all OB/GYN appointment bookings.
+  All new and return scheduling requests route through this queue.
+- OB Portal: patient-facing message channel; do not book appointments via the portal directly —
+  portal messages are triaged and routed to the appropriate owner.
+- Prevention Coordinator: handles annual GYN wellness visits, preventive screenings, and
+  patient education. Route calls about annual exams or wellness screenings here.
+- MFM Nurse (Maternal-Fetal Medicine): designated coordinator for high-risk patients,
+  MFM referrals, and complex prenatal cases. Route any call where the OB has requested
+  MFM involvement or the patient is flagged as high-risk to the MFM nurse.
+- Nursing Lead: handles clinical escalations and urgent nursing questions when the MFM nurse
+  is unavailable.
+
+ROUTING MATRIX:
+- New OB appointment → PSS Queue
+- Return prenatal visit → PSS Queue
+- Annual GYN / wellness → Prevention Coordinator
+- MFM referral / high-risk coordination → MFM Nurse
+- Lab results or clinical questions → Telephone Encounter (TE) to nursing team
+- Urgent triage (heavy bleeding, decreased fetal movement, contractions < 37 weeks) → L&D
+  (Labor and Delivery) immediately — do not route through a queue
+
+════════════════════════════════════════════════════════
+DOMAIN 2: SCHEDULING & VISIT RULES
+════════════════════════════════════════════════════════
+
+FIRST PRENATAL (NEW OB) VISIT:
+- Optimal timing: 8–12 weeks gestation (first trimester). This window aligns with the dating
+  ultrasound and viability confirmation. Before 8 weeks is too early to reliably confirm a
+  heartbeat. After 12 weeks misses first-trimester screening windows.
+
+RETURN PRENATAL VISIT (RTO) CADENCE:
+- Up to 28 weeks: every 4 weeks
+- 28–36 weeks: every 2 weeks
+- 36+ weeks until delivery: weekly
+
+GESTATIONAL-AGE-SPECIFIC TESTS (SCHEDULE IN THESE WINDOWS):
+- First-Trimester Screening / NT Scan: 11–14 weeks
+- Anatomy Scan (Level II Ultrasound): 18–22 weeks (must be with the sonography/MFM director only)
+- Glucose Challenge Test (GCT) for gestational diabetes: 24–29 weeks (routine for all patients)
+- Group B Strep (GBS) Test: 36–37 weeks (timing ensures result reflects delivery status)
+- Non-Stress Test (NST): begins at 40 weeks; performed twice weekly (every 3–4 days) until delivery
+
+ANNUAL GYN EXAM:
+- Preventive GYN exam (e.g. Pap smear, wellness) → route to Prevention Coordinator
+- GYN visit for a specific problem/complaint → standard OB/GYN appointment slot
+
+SCHEDULING NOTES:
+- Always confirm gestational age before booking gestation-specific tests.
+- If a patient is unsure of gestational age, schedule for a dating ultrasound before other tests.
+- Same-day appointments are available for urgent OB concerns but must be triaged first.
+
+════════════════════════════════════════════════════════
+DOMAIN 3: PROVIDER MATCHING
+════════════════════════════════════════════════════════
+
+PROVIDER-PROCEDURE CONSTRAINTS:
+- Anatomy Scan (Level II Ultrasound): ONLY the sonography/MFM director can perform this.
+  Do not book with any other provider regardless of availability.
+- IUD Insertion / Removal: only specific credentialed OB/GYN providers are authorised.
+  Always verify which providers in the department are credentialed before booking.
+- Nexplanon Insertion / Removal: same credentialing restriction as IUD — verify before booking.
+- Colposcopy / LEEP: only credentialed providers; verify the list before booking.
+- Kallah / Fertility Consultations: a specific subset of providers handles these; check
+  credentials and patient preference before scheduling.
+- Complex high-risk OB management: route to the MFM nurse for coordination with the MFM director.
+- All other prenatal and GYN visits: any available OB/GYN provider may be booked.
+
+MATCHING CONSIDERATIONS:
+- Patient language preference: confirm interpreter availability if needed.
+- Patient gender preference: accommodate when possible and document.
+- Continuity of care: where possible, book the patient with the provider she has been seeing.
+
+════════════════════════════════════════════════════════
+DOMAIN 4: CALL ROUTING & TRIAGE
+════════════════════════════════════════════════════════
+
+NEVER COMMUNICATE ON THE PHONE (navigator scope boundary):
+- Lab or test results — NEVER read or interpret. Create a TE to the nursing/clinical team.
+- Medication dosage, refills, or advice — NEVER provide. Create a TE.
+- Clinical assessment or advice — NEVER provide. Create a TE or direct to L&D if urgent.
+
+TELEPHONE ENCOUNTER (TE) — standard async message to clinical owner:
+- Use for: non-urgent clinical questions, refill requests, lab-result callbacks, routine concerns.
+- Never use as a substitute for an emergency referral to L&D.
+
+TRIMESTER TRIAGE LOGIC:
+
+First trimester (0–13 weeks):
+- Light spotting without pain → TE to nursing team
+- Heavy bleeding or severe cramping → direct to Emergency Room or Labor and Delivery
+- Nausea/vomiting (routine) → TE to nursing for guidance
+- Signs of ectopic pregnancy (one-sided pain + bleeding) → Emergency Room immediately
+
+Second trimester (14–27 weeks):
+- Any vaginal bleeding → TE to nursing; if significant or accompanied by pain → L&D
+- Decreased fetal movement (after 20 weeks when patient is aware of movement) → L&D immediately
+- Regular contractions before 24 weeks → TE to nursing
+- Regular contractions at 24 weeks or later → L&D immediately (possible preterm labour)
+- Leaking fluid (possible PPROM) → L&D immediately
+
+Third trimester (28+ weeks):
+- Any vaginal bleeding → L&D immediately
+- Decreased fetal movement → L&D immediately
+- Regular contractions before 37 weeks → L&D immediately (preterm labour)
+- Regular contractions at 37+ weeks → L&D (term labour evaluation)
+- Leaking fluid → L&D immediately
+- Severe headache, visual changes, swelling, or right-upper-quadrant pain (possible preeclampsia)
+  → L&D immediately
+
+GENERAL RULE: When in doubt about urgency, direct the patient to L&D rather than scheduling
+an office visit. A false alarm at L&D is always safer than a missed emergency.
+
+════════════════════════════════════════════════════════
+DOMAIN 5: INSURANCE & ELIGIBILITY
+════════════════════════════════════════════════════════
+
+ELIGIBILITY VERIFICATION:
+- Verify insurance eligibility before booking any appointment.
+- Check that the practice is in-network for the patient's plan.
+- If eligibility cannot be confirmed, inform the patient and offer a self-pay rate or advise
+  them to call their insurer.
+
+MEDICAID (MATERNITY):
+- Prenatal visits are typically covered without a copay under Medicaid maternity benefits.
+- Always verify the patient's specific Medicaid plan, but inform her that copays are likely waived.
+- Postpartum visits may have different coverage — verify separately.
+
+ANNUAL GYN EXAM BILLING:
+- Preventive annual GYN exam: usually billed as preventive care (no copay for most plans).
+- If the visit becomes a problem visit (patient raises a concern), it may be billed differently
+  and a copay may apply. Inform the patient of this possibility at booking.
+
+COMMERCIAL / PRIVATE INSURANCE:
+- Verify in-network status and any prior authorisation requirements for specialist referrals
+  (e.g. MFM, anatomy scan).
+- Ultrasounds may require prior auth — check before booking.
+
+SELF-PAY OPTIONS (same as other departments):
+- Sliding fee scale: income-based, starting at $25 per visit, valid for one year (patient must
+  apply and provide income documentation).
+- Flat self-pay rate: available for patients who do not qualify for or prefer not to apply for
+  the sliding scale.
+- Inform self-pay patients of both options; refer to the billing team for exact figures.
+
+════════════════════════════════════════════════════════
+DOMAIN 6: REGISTRATION & RECORDS
+════════════════════════════════════════════════════════
+
+ACCOUNT SEARCH:
+- Search by phone number first to identify all linked family accounts and prevent duplicate records.
+- Then confirm by name and date of birth before creating or modifying any account.
+
+LATE ARRIVAL POLICY:
+- Grace period: 10–15 minutes for a standard 30-minute OB/GYN visit.
+- Patients arriving beyond the grace period may need to be rescheduled to protect the
+  provider's remaining schedule and other patients' wait times.
+- Apply the policy courteously; acknowledge the inconvenience and offer the next available
+  appointment promptly.
+
+TRANSFER PATIENTS (from another practice):
+- Prior prenatal records are required: dating ultrasound, full prenatal lab panel, prenatal
+  flow sheet, and any specialist notes.
+- Records must be received before or at the first appointment.
+- Out-of-network or out-of-county transfers: follow the same record requirement; note any
+  insurance changes that may have occurred with the practice change.
+
+RECORDS / SCANNING:
+- All incoming paper records should be scanned into the patient's chart on the day of receipt.
+- Patient requests for records or referral letters: route to the medical records team.
+
+HOSPITAL SCHEDULE LIFECYCLE:
+- When a patient is admitted to Labor and Delivery, update her chart status accordingly.
+- After delivery, the postpartum follow-up visit is typically scheduled 4–6 weeks post-delivery.
+- Notify the scheduling team when a patient delivers so her open prenatal appointments can be
+  cancelled and the postpartum visit scheduled.
+`.trim();
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Map + accessor — used by all SOP-grounded API handlers
+// ─────────────────────────────────────────────────────────────────────────────
+export const SOP_CONTEXTS = {
+  pediatrics: SOP_CONTEXT,
+  obgyn: SOP_CONTEXT_OBGYN,
+};
+
+/** Return the SOP grounding text for a department. Falls back to Pediatrics. */
+export function sopContextFor(deptId) {
+  return SOP_CONTEXTS[deptId] ?? SOP_CONTEXTS.pediatrics;
+}

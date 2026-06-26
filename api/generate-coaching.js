@@ -13,19 +13,7 @@
 import { COMPETENCIES, competencyName } from '../src/data/competencies.js';
 import { DOMAINS } from '../src/data/questions.js';
 import { SUPERVISOR_PASSCODE, THRESHOLDS } from '../src/data/config.js';
-
-const MODEL = 'gemini-2.5-flash';
-
-// 403 means invalid/revoked key or billing — still rotate (try every key once)
-// but log separately so broken keys are diagnosable. 429/5xx are transient.
-const ROTATABLE = new Set([429, 403, 503, 500]);
-const AUTH_ERRORS = new Set([403]);
-
-function getApiKeys() {
-  const multi = (process.env.GEMINI_API_KEYS || '').split(',').map((k) => k.trim()).filter(Boolean);
-  const single = (process.env.GEMINI_API_KEY || '').trim();
-  return [...new Set(multi.length ? multi : single ? [single] : [])];
-}
+import { getApiKeys, geminiWithRotation } from './_gemini-client.js';
 
 const domainName = (id) => DOMAINS.find((d) => d.id === id)?.name ?? id;
 
@@ -92,24 +80,18 @@ Return one key per competency ID exactly as listed.`;
   return { systemInstruction, userMessage };
 }
 
-async function callGemini(apiKey, systemInstruction, userMessage, responseSchema) {
-  const url = `https://generativelanguage.googleapis.com/v1beta/models/${MODEL}:generateContent?key=${apiKey}`;
-  const resp = await fetch(url, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      system_instruction: { parts: [{ text: systemInstruction }] },
-      contents: [{ role: 'user', parts: [{ text: userMessage }] }],
-      generationConfig: {
-        responseMimeType: 'application/json',
-        responseSchema,
-        temperature: 0.4,
-      },
-    }),
-  });
-  if (!resp.ok) return { ok: false, status: resp.status, detail: await resp.text().catch(() => '') };
-  const data = await resp.json();
-  return { ok: true, text: data?.candidates?.[0]?.content?.parts?.[0]?.text };
+// Build the Gemini request body from the static system instruction + dynamic
+// user message and the per-request response schema.
+function buildBody(systemInstruction, userMessage, responseSchema) {
+  return {
+    system_instruction: { parts: [{ text: systemInstruction }] },
+    contents: [{ role: 'user', parts: [{ text: userMessage }] }],
+    generationConfig: {
+      responseMimeType: 'application/json',
+      responseSchema,
+      temperature: 0.4,
+    },
+  };
 }
 
 export default async function handler(req, res) {
@@ -140,47 +122,21 @@ export default async function handler(req, res) {
 
   const responseSchema = buildResponseSchema(weakComps);
   const { systemInstruction, userMessage } = buildMessages(name, weakComps, competencyScores, digest);
+  const body = buildBody(systemInstruction, userMessage, responseSchema);
 
-  // Rotate keys starting from a random offset to spread load.
-  const start = Math.floor(Math.random() * keys.length);
-  let text = null;
-  let rotated = 0;
-  let authFailures = 0;
-
-  for (let i = 0; i < keys.length; i++) {
-    const keyIdx = (start + i) % keys.length;
-    let result;
-    try {
-      result = await callGemini(keys[keyIdx], systemInstruction, userMessage, responseSchema);
-    } catch (err) {
-      console.error(`Coaching Gemini fetch threw on key #${keyIdx}:`, err);
-      rotated++;
-      continue;
+  const result = await geminiWithRotation(keys, body, { label: 'generate-coaching' });
+  if (!result.ok) {
+    if (result.reason === 'fatal') {
+      return res.status(502).json({ error: `Gemini request failed (${result.status}).` });
     }
-    if (result.ok) { text = result.text; break; }
-    if (ROTATABLE.has(result.status)) {
-      if (AUTH_ERRORS.has(result.status)) {
-        authFailures++;
-        console.error(`Coaching: key #${keyIdx} returned ${result.status} (auth/billing failure) — rotating.`);
-      } else {
-        console.warn(`Coaching: key #${keyIdx} returned ${result.status} — rotating.`);
-      }
-      rotated++;
-      continue;
-    }
-    // Non-rotatable error (e.g. 400 = our bug) — surface immediately.
-    console.error('Coaching Gemini error (not rotatable):', result.status, result.detail);
-    return res.status(502).json({ error: `Gemini request failed (${result.status}).` });
-  }
-
-  if (text == null) {
-    if (authFailures > 0 && authFailures === rotated) {
-      console.error(`Coaching: all ${keys.length} key(s) returned auth/billing errors.`);
+    if (result.reason === 'auth') {
       return res.status(500).json({ error: 'All Gemini keys have auth or billing failures — check Railway Variables.' });
     }
-    if (rotated >= keys.length) {
-      return res.status(429).json({ error: 'All Gemini keys are rate-limited right now. Try again shortly.' });
-    }
+    return res.status(429).json({ error: 'All Gemini keys are rate-limited right now. Try again shortly.' });
+  }
+
+  const text = result.text;
+  if (text == null) {
     return res.status(502).json({ error: 'Empty response from Gemini.' });
   }
 

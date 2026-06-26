@@ -31,6 +31,23 @@ export const LEVELS = {
 
 export const LEVEL_ORDER = ['learning', 'solid', 'canTeach'];
 
+// Interview practice-call score → colour band. This is a SEPARATE scale from the
+// capability THRESHOLDS above: an interview grade is a one-off call score (0–100),
+// not a per-domain capability level, so it gets its own bands. Colours reuse the
+// traffic-light level CSS variables (defined in styles.css :root).
+export const INTERVIEW_SCORE_BANDS = {
+  strong: 75, // >= strong → green
+  fair: 60, //   >= fair (and < strong) → amber; below fair → red
+};
+
+/** CSS colour (a level var) for an interview practice-call score. */
+export function interviewScoreColor(score) {
+  if (typeof score !== 'number') return 'var(--ink-soft)';
+  if (score >= INTERVIEW_SCORE_BANDS.strong) return 'var(--level-canteach)';
+  if (score >= INTERVIEW_SCORE_BANDS.fair) return 'var(--level-solid)';
+  return 'var(--level-learning)';
+}
+
 // A column is flagged as a floor-wide gap when this share (or more) of
 // navigators sit at "Learning" in that domain.
 export const COLUMN_GAP_THRESHOLD = 0.5; // 50%

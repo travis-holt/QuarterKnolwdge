@@ -14,7 +14,7 @@ import { THRESHOLDS, LEVELS, COLUMN_GAP_THRESHOLD, TRAINING_RULES } from '../dat
 import { DOMAINS, SEED_QUESTIONS } from '../data/questions.js';
 import { COMPETENCIES } from '../data/competencies.js';
 import { moduleForDomain } from '../data/training.js';
-import { DEPARTMENTS, ASSESSED_DEPT } from '../data/departments.js';
+import { DEPARTMENTS } from '../data/departments.js';
 
 /**
  * Points earned for one question given the chosen option.
@@ -182,10 +182,13 @@ export function departmentMatrix(samples, liveResult) {
   }));
 
   if (liveResult) {
+    // Place the live taker's row in the department they took the check for.
+    // liveResult.department defaults to 'pediatrics' for legacy callers.
+    const takerDept = liveResult.department ?? 'pediatrics';
     rows.push({
       name: liveResult.name,
       isLive: true,
-      depts: cellsFor((deptId) => (deptId === ASSESSED_DEPT ? liveResult.scores : null)),
+      depts: cellsFor((deptId) => (deptId === takerDept ? liveResult.scores : null)),
     });
   }
   return rows;

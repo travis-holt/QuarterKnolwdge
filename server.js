@@ -3,7 +3,6 @@
 // originally written as Vercel serverless functions (same req/res signature).
 
 import express from 'express';
-import { createRequire } from 'module';
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
 
@@ -16,6 +15,7 @@ app.use(express.json());
 import generateScenarios from './api/generate-scenarios.js';
 import generateCoaching from './api/generate-coaching.js';
 import interviewTurn from './api/interview-turn.js';
+import gradeInterview from './api/grade-interview.js';
 import generateAudit from './api/generate-audit.js';
 import coachAudit from './api/coach-audit.js';
 import health from './api/health.js';
@@ -23,6 +23,7 @@ import health from './api/health.js';
 app.post('/api/generate-scenarios', generateScenarios);
 app.post('/api/generate-coaching', generateCoaching);
 app.post('/api/interview-turn', interviewTurn);
+app.post('/api/grade-interview', gradeInterview);
 app.post('/api/generate-audit', generateAudit);
 app.post('/api/coach-audit', coachAudit);
 app.get('/api/health', health);

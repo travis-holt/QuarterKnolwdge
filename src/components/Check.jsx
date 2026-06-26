@@ -11,7 +11,7 @@ const domainName = (id) => DOMAINS.find((d) => d.id === id)?.name ?? id;
 // `hideName` hides the optional name field (used when the taker is already
 // identified — e.g. a signed-in navigator). `greetingName` shows a friendly
 // header in that case.
-export default function Check({ onSubmit, onCancel, questions = SEED_QUESTIONS, hideName = false, greetingName }) {
+export default function Check({ onSubmit, onCancel, questions = SEED_QUESTIONS, hideName = false, greetingName, deptName }) {
   const [name, setName] = useState('');
   const [step, setStep] = useState(0);
   const [answers, setAnswers] = useState({});
@@ -47,7 +47,7 @@ export default function Check({ onSubmit, onCancel, questions = SEED_QUESTIONS, 
             Question {step + 1} of {total}
           </span>
           {hideName ? (
-            greetingName && <span className="check__greeting">Hi {greetingName} 👋</span>
+            greetingName && <span className="check__greeting">Hi {greetingName}{deptName ? ` — ${deptName} check` : ''} 👋</span>
           ) : (
             <input
               className="check__name"

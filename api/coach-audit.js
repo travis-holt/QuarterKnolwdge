@@ -12,50 +12,12 @@
 
 import { DOMAINS } from '../src/data/questions.js';
 import { SUPERVISOR_PASSCODE } from '../src/data/config.js';
+import { getApiKeys, geminiWithRotation } from './_gemini-client.js';
 
-const MODEL = 'gemini-2.5-flash';
-const ROTATABLE = new Set([429, 403, 503, 500]);
-
-function getApiKeys() {
-  const multi = (process.env.GEMINI_API_KEYS || '').split(',').map((k) => k.trim()).filter(Boolean);
-  const single = (process.env.GEMINI_API_KEY || '').trim();
-  return [...new Set(multi.length ? multi : single ? [single] : [])];
-}
-
-async function callGemini(apiKey, body) {
-  const url = `https://generativelanguage.googleapis.com/v1beta/models/${MODEL}:generateContent?key=${apiKey}`;
-  const resp = await fetch(url, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
-  });
-  if (!resp.ok) return { ok: false, status: resp.status, detail: await resp.text().catch(() => '') };
-  const data = await resp.json();
-  return { ok: true, text: data?.candidates?.[0]?.content?.parts?.[0]?.text };
-}
-
-async function geminiWithRotation(keys, body) {
-  const start = Math.floor(Math.random() * keys.length);
-  for (let i = 0; i < keys.length; i++) {
-    const idx = (start + i) % keys.length;
-    let result;
-    try {
-      result = await callGemini(keys[idx], body);
-    } catch (err) {
-      console.error(`coach-audit: fetch threw on key #${idx}:`, err);
-      continue;
-    }
-    if (result.ok) return { ok: true, text: result.text };
-    if (ROTATABLE.has(result.status)) {
-      if (result.status === 403) console.error(`coach-audit: 403 on key #${idx} — auth/billing issue`);
-      else console.warn(`coach-audit: key #${idx} returned ${result.status} — rotating`);
-      continue;
-    }
-    console.error('coach-audit: non-rotatable error', result.status, result.detail);
-    return { ok: false, fatal: true, status: result.status };
-  }
-  return { ok: false, fatal: false };
-}
+// Cap free-text inputs interpolated into the prompt to keep the token budget
+// bounded and limit the prompt-injection surface (advisory output, but cheap insurance).
+const MAX_ANSWER_CHARS = 2000;
+const MAX_EXPLANATION_CHARS = 2000;
 
 export default async function handler(req, res) {
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
@@ -73,6 +35,8 @@ export default async function handler(req, res) {
 
   const domain = DOMAINS.find((d) => d.id === domainId);
   const domainLabel = domain?.name ?? domainId ?? 'this domain';
+  const answer = String(navigatorAnswer).slice(0, MAX_ANSWER_CHARS);
+  const explanation = String(modelExplanation).slice(0, MAX_EXPLANATION_CHARS);
 
   const systemInstruction = `You are a supportive QA coach at a pediatric contact centre. \
 Your job is to validate and encourage navigators who complete training exercises — never to grade \
@@ -82,10 +46,10 @@ or penalize. Tone: warm, specific, forward-looking mentor. Address them by first
 Domain practiced: ${domainLabel}
 
 What the agent should have done (the correct SOP answer):
-"${modelExplanation}"
+"${explanation}"
 
 What ${name} wrote in their reflection:
-"${navigatorAnswer}"
+"${answer}"
 
 Write a 2–3 sentence coaching reply that:
 - Opens by validating the strongest part of their answer
@@ -108,9 +72,9 @@ Return plain JSON: { "reply": "..." }`;
     },
   };
 
-  const result = await geminiWithRotation(keys, body);
+  const result = await geminiWithRotation(keys, body, { label: 'coach-audit' });
   if (!result.ok) {
-    return result.fatal
+    return result.reason === 'fatal'
       ? res.status(502).json({ error: 'Gemini returned an error generating coaching.' })
       : res.status(429).json({ error: 'All Gemini keys are rate-limited. Try again shortly.' });
   }

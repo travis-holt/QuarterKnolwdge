@@ -18,8 +18,14 @@ import {
 } from '../lib/scoring.js';
 import { getResult, saveResult, subscribeResults, getActiveQuestions, getCompletions } from '../lib/db.js';
 import { isFirebaseConfigured } from '../lib/firebase.js';
-import { SEED_QUESTIONS } from '../data/questions.js';
-import { ASSESSED_DEPT, departmentName } from '../data/departments.js';
+import { SEED_QUESTIONS, SEED_QUESTIONS_OBGYN } from '../data/questions.js';
+import { ASSESSED_DEPTS, departmentName } from '../data/departments.js';
+
+// Seed fallbacks keyed by department so offline mode works for both.
+const SEED_BY_DEPT = {
+  pediatrics: SEED_QUESTIONS,
+  obgyn: SEED_QUESTIONS_OBGYN,
+};
 
 // The navigator's self-contained app. They can ONLY ever see their own data:
 // there is no route to the matrix, overview, or other navigators' dashboards.
@@ -27,8 +33,9 @@ import { ASSESSED_DEPT, departmentName } from '../data/departments.js';
 // name colleagues who can teach their growth domains, but those names are not
 // clickable and open nothing.)
 export default function NavigatorApp({ navigatorId, name, onSignOut }) {
-  const [view, setView] = useState('loading'); // loading · check · coaching · dashboard · training · module · audit
-  const [ownResult, setOwnResult] = useState(null); // { name, navigatorId, scores, competencyScores }
+  const [view, setView] = useState('loading'); // loading · deptselect · check · coaching · dashboard · training · module · interview · audit
+  const [activeDept, setActiveDept] = useState(null); // chosen by navigator at deptselect
+  const [ownResult, setOwnResult] = useState(null); // { name, navigatorId, scores, competencyScores, department }
   const [lastAnswers, setLastAnswers] = useState(null); // answers from the just-taken check (for coaching)
   const [questions, setQuestions] = useState(SEED_QUESTIONS); // active bank (seed fallback)
   const [results, setResults] = useState([]); // whole floor (for mentor data)
@@ -37,34 +44,40 @@ export default function NavigatorApp({ navigatorId, name, onSignOut }) {
   const [completedDomains, setCompletedDomains] = useState(new Set());
   const [loadError, setLoadError] = useState(false);
 
-  // Decide the entry view: returning navigator → dashboard, new → check.
+  // On mount: skip straight to deptselect so the navigator picks their department.
   useEffect(() => {
-    let active = true;
     if (!isFirebaseConfigured) {
       setLoadError(true);
       setView('error');
-      return undefined;
+      return;
     }
-    getResult(navigatorId)
-      .then((res) => {
-        if (!active) return;
-        if (res) {
-          setOwnResult(res);
-          setView('dashboard');
-        } else {
-          setView('check');
-        }
-      })
-      .catch(() => {
-        if (active) {
-          setLoadError(true);
-          setView('error');
-        }
-      });
-    return () => {
-      active = false;
-    };
-  }, [navigatorId]);
+    setView('deptselect');
+  }, []);
+
+  // When a department is selected, check if this navigator already has a result there.
+  const handleDeptSelect = async (dept) => {
+    setActiveDept(dept);
+    setView('loading');
+    try {
+      const res = await getResult(navigatorId, dept);
+      if (res) {
+        setOwnResult(res);
+        // Fetch the active question bank for this department.
+        const qs = await getActiveQuestions(dept).catch(() => []);
+        if (qs.length > 0) setQuestions(qs);
+        else setQuestions(SEED_BY_DEPT[dept] ?? SEED_QUESTIONS);
+        setView('dashboard');
+      } else {
+        const qs = await getActiveQuestions(dept).catch(() => []);
+        if (qs.length > 0) setQuestions(qs);
+        else setQuestions(SEED_BY_DEPT[dept] ?? SEED_QUESTIONS);
+        setView('check');
+      }
+    } catch {
+      setLoadError(true);
+      setView('error');
+    }
+  };
 
   // Live floor results — used only to compute mentor suggestions.
   useEffect(() => {
@@ -74,23 +87,6 @@ export default function NavigatorApp({ navigatorId, name, onSignOut }) {
       // Non-critical — mentor suggestions just won't update live.
     });
     return () => unsub();
-  }, []);
-
-  // Load the active question bank; fall back to the static seed if the bank is
-  // empty (not yet seeded) or unreachable, so the check always works.
-  useEffect(() => {
-    if (!isFirebaseConfigured) return undefined;
-    let active = true;
-    getActiveQuestions()
-      .then((qs) => {
-        if (active && qs.length > 0) setQuestions(qs);
-      })
-      .catch(() => {
-        /* keep the seed fallback */
-      });
-    return () => {
-      active = false;
-    };
   }, []);
 
   // Load the navigator's "Spot the Error" completions so MyTraining can show badges.
@@ -107,19 +103,16 @@ export default function NavigatorApp({ navigatorId, name, onSignOut }) {
   }, [navigatorId]);
 
   const handleSubmit = async (_ignoredName, answers) => {
+    const dept = activeDept ?? 'pediatrics';
     const scores = scorePerDomain(answers, questions);
     const competencyScores = scorePerCompetency(answers, questions);
-    setOwnResult({ name, navigatorId, scores, competencyScores });
+    setOwnResult({ name, navigatorId, scores, competencyScores, department: dept });
     setLastAnswers(answers);
-    // Land on the coaching review first; the navigator continues to their
-    // dashboard from there.
     setView('coaching');
     try {
-      await saveResult(navigatorId, name, scores, competencyScores);
+      await saveResult(navigatorId, name, scores, competencyScores, dept);
     } catch {
-      // The dashboard already shows their result from local state; a failed
-      // write just means it won't sync to the supervisor. Surfacing a toast is
-      // a future nicety — for the pilot, local state keeps the UX intact.
+      // Dashboard shows from local state; a failed write means supervisor won't see it.
     }
   };
 
@@ -139,9 +132,7 @@ export default function NavigatorApp({ navigatorId, name, onSignOut }) {
     setCompletedDomains((prev) => new Set([...prev, domainId]));
   };
 
-  // Merge own result into the floor results (dedup by navigatorId) so the
-  // navigator's own row is present immediately after submit, before the
-  // onSnapshot listener catches up.
+  // Merge own result into the floor results for mentor suggestions.
   const merged = new Map();
   for (const r of results) merged.set(r.navigatorId ?? r.id, r);
   if (ownResult)
@@ -153,9 +144,10 @@ export default function NavigatorApp({ navigatorId, name, onSignOut }) {
     });
   const rows = buildMatrixRows([...merged.values()], null);
 
-  const deptName = departmentName(ASSESSED_DEPT);
+  const dept = activeDept ?? 'pediatrics';
+  const deptName = departmentName(dept);
   const deptMatrix = ownResult
-    ? departmentMatrix([{ name, departments: { [ASSESSED_DEPT]: ownResult.scores } }], null)
+    ? departmentMatrix([{ name, departments: { [dept]: ownResult.scores } }], null)
     : [];
   const myRow = findRow(rows, name);
 
@@ -178,15 +170,39 @@ export default function NavigatorApp({ navigatorId, name, onSignOut }) {
     );
   }
 
+  if (view === 'deptselect') {
+    return (
+      <Shell role="navigator" view="deptselect" setView={() => {}} onSignOut={onSignOut}>
+        <div className="dept-select view-enter">
+          <h2 className="dept-select__title">Which department are you taking the check for?</h2>
+          <p className="dept-select__sub">Your results are stored separately per department, so you can hold checks for multiple teams.</p>
+          <div className="dept-select__grid">
+            {ASSESSED_DEPTS.map((id) => (
+              <button
+                key={id}
+                className="dept-select__card card"
+                onClick={() => handleDeptSelect(id)}
+              >
+                <span className="dept-select__name">{departmentName(id)}</span>
+                <span className="dept-select__badge">Live check</span>
+              </button>
+            ))}
+          </div>
+        </div>
+      </Shell>
+    );
+  }
+
   return (
     <Shell role="navigator" view={view} setView={setView} onSignOut={onSignOut}>
       {view === 'check' && (
         <Check
           onSubmit={handleSubmit}
-          onCancel={onSignOut}
+          onCancel={() => setView('deptselect')}
           questions={questions}
           hideName
           greetingName={name}
+          deptName={deptName}
         />
       )}
 
@@ -244,7 +260,7 @@ export default function NavigatorApp({ navigatorId, name, onSignOut }) {
       )}
 
       {view === 'interview' && (
-        <Interview navigatorId={navigatorId} name={name} />
+        <Interview navigatorId={navigatorId} name={name} department={dept} />
       )}
 
       {view === 'audit' && auditDomain && (
@@ -252,6 +268,7 @@ export default function NavigatorApp({ navigatorId, name, onSignOut }) {
           navigatorId={navigatorId}
           name={name}
           domainId={auditDomain}
+          department={dept}
           onBack={() => setView('training')}
           onComplete={handleAuditComplete}
         />

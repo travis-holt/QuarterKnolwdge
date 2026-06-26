@@ -1,9 +1,12 @@
+// questions-obgyn.js does not import this file — no circular dependency.
+import { SEED_QUESTIONS_OBGYN } from './questions-obgyn.js';
+
 // ─────────────────────────────────────────────────────────────────────────────
 // DOMAINS + SEED QUESTIONS — the content of the check.
 //
-// Derived from the team SOP (Aizer Health Pediatric Department operational
-// report). These are SCENARIO questions: they test application ("a patient
-// calls wanting X, what do you do?"), not recall.
+// DOMAINS are shared across all departments (same 6 IDs, neutral names). Each
+// department's questions map to the same domain IDs so the scoring and matrix
+// pipeline works identically regardless of which department is active.
 //
 // SCORING MODEL (two axes):
 //   • Every question is tagged to a `domainId` (one of DOMAINS) — the topic axis.
@@ -15,9 +18,11 @@
 //     and best-answer highlighting. Partial-credit options reward defensible-but-
 //     suboptimal judgement.
 //
-// SEED vs LIVE: this array seeds the Firestore `questions` collection on first run
-// and is the offline fallback. Once seeded, the live bank is managed in Firestore
-// (supervisor can edit / generate / activate). DOMAINS stays static here.
+// SEED vs LIVE: SEED_QUESTIONS (Pediatrics) + SEED_QUESTIONS_OBGYN (from
+// questions-obgyn.js) seed the Firestore `questions` collection on first run
+// and are the offline fallback. Once seeded, the live bank is managed in
+// Firestore. Each question carries a `department` field so the active-bank
+// query can filter by department. DOMAINS stays static here.
 //
 // To edit: keep one option at `points: 100` per question, give every option a
 // `rationale`, and tag `domainId` + at least one `competencies` id.
@@ -27,32 +32,32 @@ export const DOMAINS = [
   {
     id: 'sites',
     name: 'Sites & Routing',
-    blurb: 'Which location does what — hub vs. satellites, site prefixes, on-site capabilities.',
+    blurb: 'Which location or queue handles what — site capabilities, prefixes, and owner routing.',
   },
   {
     id: 'scheduling',
     name: 'Scheduling & Visit Rules',
-    blurb: 'Well-visit timing, managed-care exceptions, newborn and tetanus protocols.',
+    blurb: 'Visit timing rules, managed-care exceptions, and procedure-specific scheduling protocols.',
   },
   {
     id: 'providers',
     name: 'Provider Matching',
-    blurb: 'Booking nuances, demographic comfort, languages, and specialist constraints.',
+    blurb: 'Booking nuances, demographic comfort, languages, credentials, and specialist constraints.',
   },
   {
     id: 'routing',
-    name: 'Call Routing & Referrals',
-    blurb: 'Who handles what — and what must never be answered on the phone.',
+    name: 'Call Routing & Triage',
+    blurb: 'Who handles what — clinical triage, escalation paths, and what must never be answered on the phone.',
   },
   {
     id: 'insurance',
     name: 'Insurance & Eligibility',
-    blurb: 'Eligibility indicators, plan-specific rules, and self-pay handling.',
+    blurb: 'Eligibility indicators, plan-specific rules, exemptions, and self-pay handling.',
   },
   {
     id: 'registration',
-    name: 'Registration & Confirmation',
-    blurb: 'Account search, arrival guidance, confirmation status, and forms/OTC handling.',
+    name: 'Registration & Records',
+    blurb: 'Account search, arrival guidance, confirmation status, records, and late/transfer policy.',
   },
 ];
 
@@ -430,6 +435,14 @@ export const SEED_QUESTIONS = [
   },
 ];
 
-// Back-compat alias: existing imports of QUESTIONS keep working until the
-// Firestore-backed bank fully supersedes the static seed.
+// Stamp department on every Pediatrics seed question (safe even if already set).
+for (const q of SEED_QUESTIONS) q.department = 'pediatrics';
+
+// Back-compat alias: existing imports of QUESTIONS keep working.
 export const QUESTIONS = SEED_QUESTIONS;
+
+// Re-export so consumers can import the OB/GYN seed directly from questions.js.
+export { SEED_QUESTIONS_OBGYN };
+
+// Combined seed for ALL assessed departments — used by seedQuestionsIfEmpty in db.js.
+export const ALL_SEED_QUESTIONS = [...SEED_QUESTIONS, ...SEED_QUESTIONS_OBGYN];

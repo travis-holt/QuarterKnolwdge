@@ -21,10 +21,9 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { DOMAINS } from '../src/data/questions.js';
-import { SOP_CONTEXT } from './_sop-context.js';
+import { sopContextFor } from './_sop-context.js';
 import { SUPERVISOR_PASSCODE } from '../src/data/config.js';
-
-const MODEL = 'gemini-2.5-flash';
+import { getApiKeys, geminiWithRotation } from './_gemini-client.js';
 
 // ── Schema for the init call ──────────────────────────────────────────────────
 
@@ -40,15 +39,15 @@ const INIT_SCHEMA = {
 
 // ── Prompts ───────────────────────────────────────────────────────────────────
 
-function buildInitPrompt(domain) {
+function buildInitPrompt(domain, department) {
   return `You are creating a realistic patient caller scenario for a contact-centre roleplay training exercise.
 
 Domain: "${domain.name}" — ${domain.blurb}
 
 Using ONLY facts grounded in the SOP reference below, generate:
-- "scenario": 2 sentences the NAVIGATOR reads before the call. Be specific: name actual providers,
-  visit types, insurance plans, or routing rules from the SOP. This tells the navigator what
-  outcome they need to reach.
+- "scenario": 2 sentences the NAVIGATOR reads before the call. Be specific: reference actual
+  visit types, timing rules, routing queues, or insurance rules from the SOP. This tells the
+  navigator what outcome they need to reach.
 - "callerName": a realistic first name for the caller (patient or caregiver).
 - "openingLine": the caller's natural first sentence when the navigator picks up. Keep it brief
   (1-2 sentences) — callers don't over-explain upfront.
@@ -57,7 +56,7 @@ Vary the difficulty. Mix normal situations, edge cases, insurance nuances, and r
 drawn from the SOP.
 
 SOP REFERENCE:
-${SOP_CONTEXT}`;
+${sopContextFor(department)}`;
 }
 
 function buildSystemInstruction(callerName, scenario) {
@@ -97,51 +96,6 @@ function buildContents(history, navigatorMessage) {
   return contents;
 }
 
-// ── Gemini helpers ────────────────────────────────────────────────────────────
-
-function getApiKeys() {
-  const multi = (process.env.GEMINI_API_KEYS || '').split(',').map((k) => k.trim()).filter(Boolean);
-  const single = (process.env.GEMINI_API_KEY || '').trim();
-  return [...new Set(multi.length ? multi : single ? [single] : [])];
-}
-
-async function callGemini(apiKey, body) {
-  const url = `https://generativelanguage.googleapis.com/v1beta/models/${MODEL}:generateContent?key=${apiKey}`;
-  const resp = await fetch(url, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
-  });
-  if (!resp.ok) return { ok: false, status: resp.status, detail: await resp.text().catch(() => '') };
-  const data = await resp.json();
-  return { ok: true, text: data?.candidates?.[0]?.content?.parts?.[0]?.text };
-}
-
-const ROTATABLE = new Set([429, 403, 503, 500]);
-
-async function geminiWithRotation(keys, body) {
-  const start = Math.floor(Math.random() * keys.length);
-  for (let i = 0; i < keys.length; i++) {
-    const idx = (start + i) % keys.length;
-    let result;
-    try {
-      result = await callGemini(keys[idx], body);
-    } catch (err) {
-      console.error(`interview-turn: fetch threw on key #${idx}:`, err);
-      continue;
-    }
-    if (result.ok) return { ok: true, text: result.text };
-    if (ROTATABLE.has(result.status)) {
-      if (result.status === 403) console.error(`interview-turn: 403 on key #${idx} — auth/billing issue`);
-      else console.warn(`interview-turn: key #${idx} returned ${result.status} — rotating`);
-      continue;
-    }
-    console.error('interview-turn: non-rotatable error', result.status, result.detail);
-    return { ok: false, fatal: true, status: result.status };
-  }
-  return { ok: false, fatal: false };
-}
-
 // ── Handler ───────────────────────────────────────────────────────────────────
 
 export default async function handler(req, res) {
@@ -157,6 +111,7 @@ export default async function handler(req, res) {
     callerName,
     history = [],
     navigatorMessage,
+    department = 'pediatrics',
     secret: provided,
   } = req.body ?? {};
 
@@ -168,7 +123,7 @@ export default async function handler(req, res) {
   // ── INIT: generate scenario + opening line ─────────────────────────────────
   if (!scenario) {
     const body = {
-      contents: [{ role: 'user', parts: [{ text: buildInitPrompt(domain) }] }],
+      contents: [{ role: 'user', parts: [{ text: buildInitPrompt(domain, department) }] }],
       generationConfig: {
         responseMimeType: 'application/json',
         responseSchema: INIT_SCHEMA,
@@ -176,9 +131,9 @@ export default async function handler(req, res) {
       },
     };
 
-    const result = await geminiWithRotation(keys, body);
+    const result = await geminiWithRotation(keys, body, { label: 'interview-turn' });
     if (!result.ok) {
-      return result.fatal
+      return result.reason === 'fatal'
         ? res.status(502).json({ error: 'Gemini returned an error generating the scenario.' })
         : res.status(429).json({ error: 'All Gemini keys are rate-limited. Try again shortly.' });
     }
@@ -209,9 +164,9 @@ export default async function handler(req, res) {
     generationConfig: { temperature: 0.5 },
   };
 
-  const result = await geminiWithRotation(keys, body);
+  const result = await geminiWithRotation(keys, body, { label: 'interview-turn' });
   if (!result.ok) {
-    return result.fatal
+    return result.reason === 'fatal'
       ? res.status(502).json({ error: 'Gemini returned an error.' })
       : res.status(429).json({ error: 'All Gemini keys are rate-limited. Try again shortly.' });
   }

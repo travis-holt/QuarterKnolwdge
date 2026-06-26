@@ -11,11 +11,9 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { DOMAINS } from '../src/data/questions.js';
-import { SOP_CONTEXT } from './_sop-context.js';
+import { sopContextFor } from './_sop-context.js';
 import { SUPERVISOR_PASSCODE } from '../src/data/config.js';
-
-const MODEL = 'gemini-2.5-flash';
-const ROTATABLE = new Set([429, 403, 503, 500]);
+import { getApiKeys, geminiWithRotation } from './_gemini-client.js';
 
 const AUDIT_SCHEMA = {
   type: 'OBJECT',
@@ -38,49 +36,8 @@ const AUDIT_SCHEMA = {
   required: ['transcript', 'errorIndex', 'hint', 'modelExplanation'],
 };
 
-function getApiKeys() {
-  const multi = (process.env.GEMINI_API_KEYS || '').split(',').map((k) => k.trim()).filter(Boolean);
-  const single = (process.env.GEMINI_API_KEY || '').trim();
-  return [...new Set(multi.length ? multi : single ? [single] : [])];
-}
-
-async function callGemini(apiKey, body) {
-  const url = `https://generativelanguage.googleapis.com/v1beta/models/${MODEL}:generateContent?key=${apiKey}`;
-  const resp = await fetch(url, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
-  });
-  if (!resp.ok) return { ok: false, status: resp.status, detail: await resp.text().catch(() => '') };
-  const data = await resp.json();
-  return { ok: true, text: data?.candidates?.[0]?.content?.parts?.[0]?.text };
-}
-
-async function geminiWithRotation(keys, body) {
-  const start = Math.floor(Math.random() * keys.length);
-  for (let i = 0; i < keys.length; i++) {
-    const idx = (start + i) % keys.length;
-    let result;
-    try {
-      result = await callGemini(keys[idx], body);
-    } catch (err) {
-      console.error(`generate-audit: fetch threw on key #${idx}:`, err);
-      continue;
-    }
-    if (result.ok) return { ok: true, text: result.text };
-    if (ROTATABLE.has(result.status)) {
-      if (result.status === 403) console.error(`generate-audit: 403 on key #${idx} — auth/billing issue`);
-      else console.warn(`generate-audit: key #${idx} returned ${result.status} — rotating`);
-      continue;
-    }
-    console.error('generate-audit: non-rotatable error', result.status, result.detail);
-    return { ok: false, fatal: true, status: result.status };
-  }
-  return { ok: false, fatal: false };
-}
-
-function buildPrompt(domain) {
-  return `You are creating a QA training exercise for contact-centre patient navigators at Aizer Health Pediatric Department.
+function buildPrompt(domain, department) {
+  return `You are creating a QA training exercise for contact-centre patient navigators.
 
 Generate a realistic 10-message chat transcript between a patient (or caregiver) and a contact-centre agent. The agent makes exactly ONE critical policy mistake that violates the SOP for the domain below.
 
@@ -103,7 +60,7 @@ FOR hint: write one sentence that steers the navigator toward the error without 
 FOR modelExplanation: write 2–3 sentences explaining exactly what the agent did wrong and what they should have said instead. Reference the specific SOP rule violated using facts from the SOP reference below.
 
 SOP REFERENCE:
-${SOP_CONTEXT}`;
+${sopContextFor(department)}`;
 }
 
 export default async function handler(req, res) {
@@ -113,14 +70,14 @@ export default async function handler(req, res) {
   if (!keys.length) return res.status(500).json({ error: 'Gemini not configured on the server.' });
 
   const secret = process.env.GENERATION_SECRET || SUPERVISOR_PASSCODE;
-  const { domain: domainId, secret: provided } = req.body ?? {};
+  const { domain: domainId, department = 'pediatrics', secret: provided } = req.body ?? {};
   if (provided !== secret) return res.status(401).json({ error: 'Not authorised.' });
 
   const domain = DOMAINS.find((d) => d.id === domainId);
   if (!domain) return res.status(400).json({ error: 'Unknown domain.' });
 
   const body = {
-    contents: [{ role: 'user', parts: [{ text: buildPrompt(domain) }] }],
+    contents: [{ role: 'user', parts: [{ text: buildPrompt(domain, department) }] }],
     generationConfig: {
       responseMimeType: 'application/json',
       responseSchema: AUDIT_SCHEMA,
@@ -128,9 +85,9 @@ export default async function handler(req, res) {
     },
   };
 
-  const result = await geminiWithRotation(keys, body);
+  const result = await geminiWithRotation(keys, body, { label: 'generate-audit' });
   if (!result.ok) {
-    return result.fatal
+    return result.reason === 'fatal'
       ? res.status(502).json({ error: 'Gemini returned an error generating the audit transcript.' })
       : res.status(429).json({ error: 'All Gemini keys are rate-limited. Try again shortly.' });
   }

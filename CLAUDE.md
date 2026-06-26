@@ -10,7 +10,7 @@
 > [§8 Current System State](#8-current-system-state) and [§15 Current Priorities](#15-current-priorities)
 > accurate at all times.
 >
-> **Last updated:** 2026-06-25 (SOP replaced with Pediatrics_SOP_Updated.pdf; interview caller consistency fix; code review) ·
+> **Last updated:** 2026-06-26 (OB/GYN live check — multi-department, dept-picker, scoped question banks, composite result keys) ·
 > **Doc maintainer:** Claude (AI agent) + repo owner. Assumptions are explicitly marked **[ASSUMPTION]**.
 
 ---
@@ -82,8 +82,8 @@
 - A persistent public deployment for showcasing. ✅ Done (Railway).
 
 ### Mid-Term Goals
-- **Multi-department live checks:** a real question set per department (each from its own SOP),
-  so all four departments become genuine live checks rather than mockups.
+- ✅ **Multi-department live checks:** Pediatrics and OB/GYN are now live checks. Adult Medicine
+  and Behavioural Health remain mockups pending their SOPs.
 - **Mentor pairing (floor-wide):** auto-match Learning ↔ Can-Teach with balanced mentor load.
 - **Coverage / bus-factor risk view:** flag domains with only 0–1 teachers (single point of failure).
 - **Training completion tracking:** Assigned → In progress → Done states (in-memory for the demo).
@@ -205,13 +205,23 @@ training assignments.
 - **Status:** Complete (content is **mockup**, flagged in-UI; swap for real materials later).
 
 ### F10 — Department Dimension
-- **Purpose:** Same domains measured across Pediatrics, Adult Medicine, OB/GYN, Behavioural Health.
-- **User benefit:** Cross-department capability view; per-department training.
-- **Technical implementation:** [src/data/departments.js](src/data/departments.js);
-  per-department scores in [src/data/navigators.js](src/data/navigators.js); `deptSamples()`,
-  `departmentOverall()`, `departmentMatrix()`; [src/components/DeptBar.jsx](src/components/DeptBar.jsx)
-  selector. Live check assesses **Pediatrics only** (`ASSESSED_DEPT`); others are mockups.
-- **Status:** Complete (Pediatrics live; other 3 departments = mockup data).
+- **Purpose:** Same domains measured across Pediatrics, OB/GYN, Adult Medicine, Behavioural Health.
+- **User benefit:** Cross-department capability view; per-department training and question banks.
+- **Technical implementation:** [src/data/departments.js](src/data/departments.js) — now exports
+  `ASSESSED_DEPTS = ['pediatrics', 'obgyn']`, `DEFAULT_DEPT`, `isAssessed(id)`, and a back-compat
+  `ASSESSED_DEPT` alias. [src/data/questions-obgyn.js](src/data/questions-obgyn.js) — 14 sanitized
+  OB/GYN seed questions. `deptSamples()`, `departmentOverall()`, `departmentMatrix()`;
+  [src/components/DeptBar.jsx](src/components/DeptBar.jsx) selector (shows "live" badge for all
+  assessed depts). Navigator picks department at check start (`deptselect` view in `NavigatorApp`).
+  Results keyed by composite `${navigatorId}__${department}`; `getActiveQuestions(dept)` filters
+  by department field. `sopContextFor(deptId)` in `api/_sop-context.js` grounds all AI features in
+  the correct SOP. **All OB/GYN content is sanitized** — generic role labels only, no real provider
+  names, phone numbers, or credentials (repo is public).
+- **Status:** Complete (**Pediatrics** and **OB/GYN** live; Adult Medicine and Behavioural Health
+  = mockup data).
+- **Notes:** The 6 domain IDs are shared across all departments; names/blurbs are now
+  department-neutral (e.g. "Scheduling & Visit Rules" covers both pediatric visit cadence and
+  OB gestational-age timing rules).
 
 ### F11 — Deployment (Railway)
 - **Purpose:** Persistent public URL + a place to run the Gemini proxy (which GitHub Pages can't).
@@ -256,34 +266,34 @@ training assignments.
   only — never touches a score or Firestore.
 - **Status:** Complete (Phase 2 — first AI-in-the-live-path feature).
 
-### F15 — AI Interview Simulation (roleplay phase)
+### F15 — AI Interview Simulation (roleplay + grading)
 - **Purpose:** Let navigators practice handling a patient call before a real one — low-stakes,
-  repeatable, domain-targeted.
+  repeatable, domain-targeted. After saving, Gemini grades the call and delivers a score + feedback.
 - **User benefit:** Gemini acts as a patient caller; the navigator types responses exactly as they
-  would on the phone. No grading — pure practice. Every call is different (randomly generated
-  scenario from the SOP).
-- **Technical implementation:** [api/interview-turn.js](api/interview-turn.js) — two-mode Gemini
-  proxy: **init** (no history) generates a caller scenario + opening line via JSON schema output;
-  **turn** (has history + navigatorMessage) continues the conversation as the patient using a
-  `system_instruction` that keeps Gemini in character. History is reconstructed into Gemini's
-  alternating `user`/`model` format with a synthetic `BEGIN_CALL` seed turn. Same key rotation as
-  other handlers. [src/components/Interview.jsx](src/components/Interview.jsx) — phases: setup
-  (domain grid) → loading → active (chat UI + typing-dots indicator) → saving → done. 20 s
-  `AbortController` timeout on each API call; chat auto-scrolls; input refocuses after each reply.
-  Transcript saved to Firestore `interviews` collection on "End call". `saveInterview` /
-  `getInterviews` added to [src/lib/db.js](src/lib/db.js) (fourth collection). "Practice" tab
-  added to the navigator nav in [src/components/Nav.jsx](src/components/Nav.jsx).
-- **Status:** Complete (Phase 1 — roleplay + supervisor transcript view). Phase 2
-  (criterion-based grading + supervisor override) is **Planned**.
-- **Notes:** Open answers are advisory and qualitative — they do not feed `scorePerDomain` or
-  the capability matrix. The scoring system stays fully deterministic. Grading is the hard,
-  less-reliable part; the roleplay phase ships first as the high-value, low-risk piece.
-- **Supervisor access:** `SupervisorApp` looks up the selected navigator's roster UUID and passes
-  it as `navigatorId` to `NavigatorDetail`. `NavigatorDetail` fetches that navigator's interviews
-  on mount (`getInterviews(navigatorId)`), sorts newest-first, and renders a collapsible
-  "Practice sessions" panel (domain tag, caller name, response count, date; expand to read the
-  full transcript). The panel is hidden in the navigator's own dashboard (no `navigatorId` passed
-  from `NavigatorApp`).
+  would on the phone. Every call is different (randomly generated scenario from the SOP). Navigators
+  can discard sessions they don't want saved, or save and receive an AI score (0–100) with specific
+  strengths and improvements grounded in the SOP.
+- **Technical implementation:**
+  - [api/interview-turn.js](api/interview-turn.js) — two-mode Gemini proxy: **init** generates
+    caller scenario + opening line; **turn** continues the call in character.
+  - [api/grade-interview.js](api/grade-interview.js) — new grading endpoint. Takes the full
+    transcript + scenario + domain, calls `gemini-2.5-flash` at temperature 0.3 grounded in
+    `SOP_CONTEXT`, returns `{ grade: { score, summary, strengths[], improvements[] } }`. Score is
+    clamped 0–100 and validated before returning.
+  - [src/components/Interview.jsx](src/components/Interview.jsx) — phases: `setup → loading →
+    active → saving → grading → reviewed` (or `discarded` if navigator chooses not to save).
+    Active phase header has two buttons: **"Save & get feedback"** (saves to Firestore, then grades)
+    and **"Discard"** (ends the call without saving anything). The reviewed screen shows the score
+    (color-coded green/amber/red), summary, strengths (green card), and improvements (amber card).
+    Grade is written back to the Firestore interview doc via `updateInterviewGrade` so supervisors
+    can see it too.
+  - `updateInterviewGrade(id, grade)` added to [src/lib/db.js](src/lib/db.js).
+- **Status:** Complete (Phase 1 roleplay + Phase 2 grading). Supervisor override is **Planned**.
+- **Notes:** Scores are advisory — they do not feed `scorePerDomain` or the capability matrix.
+- **Supervisor access:** `SupervisorApp` passes `navigatorId` to `NavigatorDetail`. The "Practice
+  sessions" panel shows each saved session; the header row now includes the score badge (color-coded).
+  Expanding a session shows the grade breakdown (summary, what went well, areas to develop) above the
+  full transcript. The panel is hidden in the navigator's own dashboard.
 
 ### F16 — "Spot the Error" QA Audit Training
 - **Purpose:** Let navigators practice domain knowledge by acting as a QA auditor — reading a
@@ -364,7 +374,13 @@ QuarterKnolwdge/
 ├── firestore.rules          # pilot-grade Firestore security rules (roster/results/questions)
 ├── api/                     # API handlers (originally Vercel serverless; now served by Express)
 │   ├── generate-scenarios.js#   Gemini proxy (holds GEMINI_API_KEY; validates output)
+│   ├── generate-coaching.js #   Gemini post-check coaching notes
+│   ├── interview-turn.js    #   Gemini roleplay (init + turn)
+│   ├── grade-interview.js   #   Gemini practice-call grading
+│   ├── generate-audit.js    #   Gemini "Spot the Error" transcript
+│   ├── coach-audit.js       #   Gemini audit-reflection coaching
 │   ├── health.js            #   deploy/health check
+│   ├── _gemini-client.js    #   shared getApiKeys/callGemini/geminiWithRotation (helper, not a route)
 │   └── _sop-context.js      #   SOP grounding text (helper, not a route)
 └── src/
     ├── main.jsx             # React root
@@ -855,6 +871,119 @@ stateDiagram-v2
 - **Verification:** `node --check api/interview-turn.js` → OK; `npm test` → 46 passing.
 - **Status:** Complete.
 
+### 2026-06-26 — OB/GYN live check: multi-department architecture (F10 Phase 2)
+- **What changed:** Made OB/GYN a genuine live check alongside Pediatrics. Navigators now pick
+  their department at check-start; results, questions, and all AI features are scoped per dept.
+  **Hard constraint met:** all authored OB/GYN content uses sanitized generic role labels only
+  (no real names, phone numbers, or portal credentials — the repo is public).
+  1. **`src/data/departments.js`:** added `ASSESSED_DEPTS = ['pediatrics', 'obgyn']`,
+     `DEFAULT_DEPT`, `isAssessed(id)` helper; kept `ASSESSED_DEPT` as back-compat alias.
+  2. **`src/data/questions.js`:** domain names/blurbs neutralized (IDs unchanged);
+     `SEED_QUESTIONS_OBGYN` imported + re-exported; `ALL_SEED_QUESTIONS` combined export added;
+     `department: 'pediatrics'` injected on all Pediatrics seed questions.
+  3. **New `src/data/questions-obgyn.js`:** 14 sanitized OB/GYN seed questions across all 6
+     domain IDs; generic role labels only ("the MFM nurse", "the MFM director", etc.).
+  4. **`api/_sop-context.js`:** added `SOP_CONTEXT_OBGYN` (sanitized OB/GYN grounding distilled
+     from the owner-provided SOP), `SOP_CONTEXTS` map, `sopContextFor(deptId)` accessor; kept
+     `SOP_CONTEXT` back-compat alias.
+  5. **`api/generate-scenarios.js`:** already used `sopContextFor` (done in previous session).
+  6. **`api/interview-turn.js`, `api/grade-interview.js`, `api/generate-audit.js`:** switched from
+     `SOP_CONTEXT` to `sopContextFor(department)`, extracted `department = 'pediatrics'` from
+     request body.
+  7. **`src/lib/db.js`:** `getActiveQuestions(dept)` filters by dept; `saveResult` and `getResult`
+     use composite key `${navigatorId}__${department}` (with Pediatrics legacy fallback);
+     `clearResult(id, dept)` likewise; `seedQuestionsIfEmpty` seeds `ALL_SEED_QUESTIONS`;
+     `saveDraftQuestions` stamps dept on each draft; all doc comments updated.
+  8. **`src/lib/scoring.js`:** `departmentMatrix` now uses `liveResult.department ?? 'pediatrics'`
+     (was hardcoded to `ASSESSED_DEPT`); removed now-unused `ASSESSED_DEPT` import.
+  9. **`src/lib/scoring.test.js`:** updated `departmentMatrix` live-taker test, added OB/GYN
+     live-taker case, legacy-no-dept case, and new `isAssessed` test suite. **46 → 50 tests**.
+  10. **`src/components/NavigatorApp.jsx`:** added `activeDept` state + `deptselect` view (dept
+      picker with "Live check" badge cards); all DB calls and API features scoped to `activeDept`;
+      seed fallback per dept via `SEED_BY_DEPT` map.
+  11. **`src/components/SupervisorApp.jsx`:** uses `deptIsAssessed(selectedDept)` and `DEFAULT_DEPT`;
+      seeds `ALL_SEED_QUESTIONS`; filters `activeResults` by dept for the matrix; `handleGenerate`
+      + `saveDraftQuestions` pass `selectedDept`; `handleResetResult` passes dept.
+  12. **`src/components/DeptBar.jsx`:** `isAssessed(d.id)` for live badge (both depts now show it);
+      updated note text.
+  13. **`src/components/QuestionBank.jsx`:** filters displayed questions by `selectedDept` prop.
+  14. **`src/components/Interview.jsx`, `SpotTheError.jsx`:** accept `department` prop and pass to
+      all API call bodies.
+  15. **`src/components/Check.jsx`:** `deptName` prop surfaces in the greeting line.
+  16. **`src/styles.css`:** `.dept-select` styles added (department picker card grid).
+- **Files affected:** `src/data/departments.js`, `src/data/questions.js`,
+  **new** `src/data/questions-obgyn.js`, `api/_sop-context.js`, `api/interview-turn.js`,
+  `api/grade-interview.js`, `api/generate-audit.js`, `api/generate-scenarios.js`,
+  `src/lib/db.js`, `src/lib/scoring.js`, `src/lib/scoring.test.js`,
+  `src/components/{NavigatorApp,SupervisorApp,DeptBar,QuestionBank,Interview,SpotTheError,Check}.jsx`,
+  `src/styles.css`, `CLAUDE.md`.
+- **Verification:** `npm test` → **50 passing**; `npm run build` → clean; `node --check` on all
+  4 edited API handlers → OK. OB/GYN content grep confirmed zero leaked names/phone numbers.
+- **Status:** Complete.
+
+### 2026-06-26 — Craft pass: shared Gemini client + latent CSS-var bug fix
+- **What changed:** A focused quality refactor from a craft review (no behaviour changes to the
+  happy path; one latent rendering bug fixed).
+  1. **Extracted `api/_gemini-client.js`** — `getApiKeys`, `callGemini`, `geminiWithRotation`, the
+     `ROTATABLE` set, and the `MODEL` constant were copy-pasted across all 6 Gemini handlers and had
+     **diverged** (two handlers had a clean `geminiWithRotation` helper; three inlined the loop; one
+     tracked auth failures the others lacked). Now one module. `geminiWithRotation(keys, body,
+     {label})` returns a normalized result the caller maps to HTTP: `{ok:true,text}` |
+     `{ok:false,reason:'fatal',status}` (→502) | `{ok:false,reason:'auth'}` (→500, used by
+     generate-coaching) | `{ok:false,reason:'exhausted'}` (→429). Every handler's existing status
+     codes and error strings were preserved. All 6 handlers (`generate-scenarios`,
+     `generate-coaching`, `interview-turn`, `grade-interview`, `generate-audit`, `coach-audit`) now
+     import from it.
+  2. **Latent CSS-var bug fixed.** The interview score colours used `var(--can-teach)` /
+     `var(--solid)` / `var(--learning)` and some new CSS used `var(--level-canteach)` etc. — **none
+     of those variables were ever defined** (the matrix colours cells via inline JS from
+     `LEVELS[…].color`, not CSS vars), so the score colours silently fell back to default text
+     colour. Fixed by defining `--level-learning/solid/canteach` in `styles.css :root` (kept in sync
+     with `LEVELS`) and routing both `Interview.jsx` and `NavigatorDetail.jsx` through a new
+     `interviewScoreColor(score)` helper in `config.js`.
+  3. **Magic score-bands centralised.** The 75/60 green/amber/red thresholds (duplicated in two
+     components) moved to `INTERVIEW_SCORE_BANDS` + `interviewScoreColor()` in `config.js`. This is a
+     separate scale from the capability `THRESHOLDS` (60/85) by design — documented in config.
+  4. **Prompt input caps.** `grade-interview.js` now caps the transcript at 40 turns × 1500 chars
+     each; `coach-audit.js` caps the reflection + model explanation at 2000 chars each. Bounds the
+     token budget and trims the prompt-injection surface (output is advisory, but cheap insurance).
+  5. **Redundant condition** `phase === 'loading' || (phase === 'loading' && genError)` in
+     `SpotTheError.jsx` simplified to `phase === 'loading'`.
+- **Files affected:** new `api/_gemini-client.js`; edited all 6 `api/*` Gemini handlers,
+  `src/data/config.js`, `src/styles.css`, `src/components/{Interview,NavigatorDetail,SpotTheError}.jsx`.
+- **Verification:** `npm test` → 46 passing; `npm run build` → clean; `node --check` on all handlers
+  → OK; runtime `import()` smoke-test of all 6 handlers + the shared client → resolves;
+  `interviewScoreColor` returns the right band var for 80/65/40/null; confirmed no `--can-teach`
+  refs remain and `--level-*` vars are in the built bundle.
+- **Status:** Complete.
+
+### 2026-06-25 — Interview discard option + AI grading after save (F15 Phase 2)
+- **What changed:** Two navigator-requested additions to the practice call feature.
+  1. **Discard option:** the single "End call" button is replaced by two header buttons —
+     **"Save & get feedback"** (primary) and **"Discard"** (ghost). Discarding shows a
+     "Session discarded — nothing was saved" screen and calls `reset()` without touching Firestore.
+  2. **AI grading:** after saving, the client calls the new `POST /api/grade-interview` endpoint
+     and transitions through a `grading` phase (spinner + "Reviewing your call…"). The `reviewed`
+     screen shows: a large color-coded score (green ≥75, amber ≥60, red <60), a 2–3 sentence
+     summary, a "What you did well" card (green left-border, 2–4 bullets), and a "What to work on"
+     card (amber left-border, 2–4 bullets). Grade is also written back to the Firestore interview
+     doc via `updateInterviewGrade` so supervisors see it in the navigator's Practice sessions panel.
+  - **New file:** `api/grade-interview.js` — Gemini proxy (temp 0.3, structured JSON schema,
+    same key rotation pattern). Grounds judgment solely in `SOP_CONTEXT`; clamps score 0–100;
+    validates output before returning `{ grade: { score, summary, strengths[], improvements[] } }`.
+  - **`server.js`:** new `POST /api/grade-interview` route; dead `createRequire` import removed.
+  - **`src/lib/db.js`:** `updateInterviewGrade(id, grade)` added.
+  - **`NavigatorDetail.jsx`:** interview-log header row shows a score badge (color-coded); expanded
+    body shows the full grade breakdown (score, summary, strengths, improvements) above the transcript.
+  - **`styles.css`:** new rules for discard glyph variant, `interview__end-actions` flex group,
+    grading spinner, review screen (`interview__review`, `interview__score-card`, `interview__feedback-card`),
+    score badge (`interview-log__score-badge`), and grade breakdown (`interview-log__grade*`).
+- **Files affected:** new `api/grade-interview.js`; edited `server.js`, `src/lib/db.js`,
+  `src/components/{Interview,NavigatorDetail}.jsx`, `src/styles.css`.
+- **Verification:** `npm test` → 46 passing; `npm run build` → clean; `node --check` on both
+  `api/grade-interview.js` and `server.js` → OK.
+- **Status:** Complete.
+
 ### 2026-06-25 — Code review: findings documented
 - **What reviewed:** F13 (AI Coaching), F15 (Interview), F16 (Spot the Error + completions), Roster
   CRUD, and the interview consistency fix. Full checklist pass across all 5 API handlers, `server.js`,
@@ -1044,17 +1173,20 @@ stateDiagram-v2
 
 ## 8. Current System State
 
-- **Working end to end (logic + UI):** supervisor adds navigators / generates+curates questions →
-  navigators sign in → take the active check → land on **coaching** (rule-based + AI layer) → per-domain **and**
-  per-competency results persist to Firestore → supervisor matrix/overview update live (incl.
-  competency distribution) → navigator/training dashboards → department switching → practice interview
-  (roleplay) → "Spot the Error" QA audit with completion tracking. Build clean, tests green
-  (`npm test` → **46 passing**).
+- **Working end to end (logic + UI):** supervisor adds navigators / generates+curates questions
+  (per department) → navigators sign in → **pick department** (Pediatrics or OB/GYN) → take that
+  department's active check → land on **coaching** → per-domain **and** per-competency results
+  persist to Firestore (composite key `${navigatorId}__${department}`) → supervisor matrix/overview
+  update live per dept → navigator/training dashboards → department switching → practice interview
+  (SOP-grounded per dept) → "Spot the Error" QA audit (SOP-grounded per dept) with completion
+  tracking. Build clean, tests green (`npm test` → **50 passing**).
 - **Existing functionality:** features F1–F16 (see [§4](#4-feature-inventory)) are **Complete** in
-  code. F13 (Coaching) includes the Phase 2 AI layer. F15 (Interview) is Phase 1 roleplay only.
-  F16 closes the roadmapped "completion tracking" item.
-- **SOP grounding:** all AI features (scenario generation, coaching, interview, Spot the Error audit)
-  are grounded against `Pediatrics_SOP_Updated.pdf` exclusively. `SOP Guide.pdf` is superseded.
+  code. F10 now includes OB/GYN as a second live department. F13 (Coaching) includes the Phase 2
+  AI layer. F15 (Interview) is Phase 1 roleplay only. F16 closes the roadmapped "completion
+  tracking" item.
+- **SOP grounding:** Pediatrics AI features ground against `Pediatrics_SOP_Updated.pdf`; OB/GYN AI
+  features ground against the sanitized `SOP_CONTEXT_OBGYN` in `api/_sop-context.js` (faithful to
+  OB/GYN workflow but with generic role labels — no PII; repo is public). `SOP Guide.pdf` superseded.
 - **Interview caller consistency:** `api/interview-turn.js` turn temperature reduced to 0.5 and a
   `CRITICAL` consistency rule added to the system instruction — callers no longer hallucinate
   contradictory facts mid-call.
@@ -1064,19 +1196,23 @@ stateDiagram-v2
 - **Test coverage:** `lib/scoring.js` is unit-tested (46 tests, incl. competency scoring). Components,
   the role apps, and the serverless functions are **not** yet tested (highest unresolved tech debt).
 - **Known code quality items (non-blocking, from code review 2026-06-25):**
-  - Dead import `createRequire` in `server.js:6`.
-  - `getApiKeys`/`callGemini`/`geminiWithRotation` duplicated across all 5 `api/` handlers — should
-    be extracted to `api/_gemini-client.js`.
-  - Redundant condition in `SpotTheError.jsx:157`.
+  - ~~Dead import `createRequire` in `server.js:6`~~ — **removed 2026-06-25**.
+  - ~~`getApiKeys`/`callGemini`/`geminiWithRotation` duplicated across all `api/` handlers~~ —
+    **extracted to `api/_gemini-client.js` 2026-06-26** (all 6 Gemini handlers now import it).
+  - ~~Redundant condition in `SpotTheError.jsx:157`~~ — **simplified 2026-06-26**.
+  - ~~Interview score colours referenced undefined CSS vars (`--can-teach`/`--solid`/`--learning`)~~
+    — **fixed 2026-06-26**: `--level-*` vars now defined in `:root`; colours come from
+    `interviewScoreColor()` in `config.js`.
 - **Active integrations:** **Firebase / Firestore** (live) + **Gemini via Railway Express server**
   (`GEMINI_API_KEYS` set in Railway Variables; all 6 AI endpoints live).
 - **Deployment status:** **Railway** (Git-connected to `main`). Railway auto-deploys on push.
   `VITE_FIREBASE_*` and `GEMINI_API_KEYS` confirmed set in Railway Variables. No `GENERATION_SECRET`
   needed — server falls back to `SUPERVISOR_PASSCODE`.
-- **Counts (today):** 6 domains · 9 competencies · 18 seed questions (bank now grows in Firestore) ·
-  4 departments (Pediatrics live) · **46** unit tests · **5** Firestore collections
-  (`roster`, `results`, `questions`, `interviews`, `completions`) · **6** serverless functions
-  (`generate-scenarios`, `generate-coaching`, `interview-turn`, `generate-audit`, `coach-audit`, `health`).
+- **Counts (today):** 6 domains (shared, dept-neutral) · 9 competencies · 18 Pediatrics + 14
+  OB/GYN = **32** seed questions (bank grows in Firestore per dept) · 4 departments (**Pediatrics
+  + OB/GYN live**, 2 mockup) · **50** unit tests · **5** Firestore collections
+  (`roster`, `results`, `questions`, `interviews`, `completions`) · **7** serverless functions
+  (`generate-scenarios`, `generate-coaching`, `interview-turn`, `grade-interview`, `generate-audit`, `coach-audit`, `health`).
 
 ---
 
@@ -1143,6 +1279,7 @@ stateDiagram-v2
   - `POST /api/generate-scenarios` `{ domainId, count, secret }` → `{ questions }` (validated drafts).
   - `POST /api/generate-coaching` `{ answers, questions, competencyScores, name, secret }` → `{ coaching: { [compId]: string } }` (personalised AI notes per weak competency; empty object if all at canTeach or all correct).
   - `POST /api/interview-turn` `{ domain, secret }` (init, no scenario) → `{ scenario, callerName, reply }`. `{ domain, scenario, callerName, history, navigatorMessage, secret }` (turn) → `{ reply }`.
+  - `POST /api/grade-interview` `{ domain, scenario, transcript, name, secret }` → `{ grade: { score:number(0–100), summary:string, strengths:string[], improvements:string[] } }`. Gemini reviews the full transcript against the SOP; temp 0.3 for consistency. Advisory only.
   - `POST /api/generate-audit` `{ domain, secret }` → `{ transcript, errorIndex, hint, modelExplanation }` (~10-turn flawed transcript for the "Spot the Error" exercise).
   - `POST /api/coach-audit` `{ domain, modelExplanation, navigatorAnswer, name, secret }` → `{ reply }` (warm 2–3 sentence mentor coaching note; advisory only).
   - `GET /api/health` → `{ ok }`.
@@ -1158,7 +1295,7 @@ stateDiagram-v2
   `getActiveQuestions()`, `seedQuestionsIfEmpty(seed)`, `saveDraftQuestions(drafts, source?)`,
   `updateQuestion(id,patch)`, `activateQuestion(id)`, `archiveQuestion(id)`, `deleteQuestion(id)`;
   interviews — `saveInterview(navigatorId, name, domainId, scenario, callerName, transcript)`,
-  `getInterviews(navigatorId)`;
+  `getInterviews(navigatorId)`, `updateInterviewGrade(id, grade)`;
   completions — `saveCompletion(navigatorId, name, domainId)`, `getCompletions(navigatorId)`,
   `subscribeCompletions(cb, onError?)`.
 - **Secrets:** `SUPERVISOR_PASSCODE` is in the repo (pilot-acceptable); `GEMINI_API_KEYS` is a
@@ -1236,12 +1373,10 @@ npm run test:watch   # run Vitest in watch mode
   handlers are untested** — highest unresolved gap. Add component/integration tests next (jsdom +
   Testing Library). API handler pure functions (`buildPrompt`, `buildContents`, `buildDigest`,
   `buildMessages`) can be unit-tested without hitting the real Gemini API.
-- **`getApiKeys`/`callGemini`/`geminiWithRotation` duplicated 5×** across all `api/` handlers.
-  Extract to `api/_gemini-client.js` (the `_` prefix convention is already established). The
-  `generate-coaching.js` version has richer `authFailures` tracking that the other 4 lack.
-- **Dead import:** `createRequire` imported in `server.js:6` but never used — one-line fix.
-- **Redundant condition** in `SpotTheError.jsx:157`: `if (phase === 'loading' || (phase ===
-  'loading' && genError))` simplifies to `if (phase === 'loading')`.
+- ~~`getApiKeys`/`callGemini`/`geminiWithRotation` duplicated 6×~~ — **extracted to
+  `api/_gemini-client.js` 2026-06-26**; all 6 Gemini handlers import it.
+- ~~**Dead import:** `createRequire` imported in `server.js:6`~~ — removed 2026-06-25.
+- ~~**Redundant condition** in `SpotTheError.jsx:157`~~ — simplified 2026-06-26.
 - No CI/CD (manual deploys via Railway push). A GitHub Actions step running `npm test` on PR
   would catch regressions.
 - Single large `styles.css` — fine for now; revisit if it keeps growing.
@@ -1356,18 +1491,17 @@ npm run test:watch   # run Vitest in watch mode
 ## 15. Current Priorities
 
 1. **Maintain this CLAUDE.md** on every change (highest standing priority).
-2. **Extract shared Gemini helpers** to `api/_gemini-client.js` — highest code-quality item from
-   the code review (5 files all duplicate `getApiKeys`/`callGemini`/`geminiWithRotation`).
-3. **Component/integration tests** — highest unresolved tech debt (jsdom + Testing Library).
-4. **Phase 2 of interview simulation:** criterion-based grading + supervisor override.
+2. **Component/integration tests** — highest unresolved tech debt (jsdom + Testing Library). The
+   API handlers' pure functions (`buildContents`, `buildDigest`, `buildMessages`, `buildBody`,
+   `sanitize`) and the new `_gemini-client.js` reason-mapping are now easy unit-test targets.
+3. **Supervisor grade override** — allow supervisors to adjust the AI-given score on a saved practice session.
 
 **Active work items:**
-- Minor code review fixes: remove dead `createRequire` import in `server.js`; simplify redundant
-  condition in `SpotTheError.jsx:157`; extract Gemini client helpers.
+- None outstanding.
 
 **Blockers:**
-- Real per-department question content requires additional SOPs from the owner (OB/GYN SOP is in
-  the repo as `OB GYN SOP.pdf` — could be the next department to make live).
+- Adult Medicine and Behavioural Health remain mockup — each needs an owner-provided SOP before
+  they can become live checks.
 - Real training materials needed to replace mockup module content.
 
 **Upcoming milestones:**
@@ -1381,9 +1515,11 @@ npm run test:watch   # run Vitest in watch mode
 - ✅ "Spot the Error" QA audit training + completion tracking (F16) — done 2026-06-25.
 - ✅ SOP replaced with Pediatrics_SOP_Updated.pdf — done 2026-06-25.
 - ✅ Interview caller consistency fix — done 2026-06-25.
-- Extract shared Gemini helpers to `api/_gemini-client.js` — next code-quality step.
+- ✅ Interview discard option + AI grading after save (F15 Phase 2) — done 2026-06-25.
+- ✅ Craft pass: shared `api/_gemini-client.js` + latent CSS-var fix — done 2026-06-26.
+- ✅ OB/GYN live check (multi-department) — done 2026-06-26.
 - Component/integration tests (jsdom + Testing Library) — next technical priority.
-- Phase 2 of interview simulation: criterion-based grading + supervisor override.
+- Supervisor grade override for practice sessions — next interview feature.
 
 ---
 

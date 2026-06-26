@@ -16,12 +16,10 @@
 
 import { DOMAINS } from '../src/data/questions.js';
 import { COMPETENCIES } from '../src/data/competencies.js';
-import { SOP_CONTEXT } from './_sop-context.js';
+import { sopContextFor } from './_sop-context.js';
 import { SUPERVISOR_PASSCODE } from '../src/data/config.js';
+import { getApiKeys, geminiWithRotation } from './_gemini-client.js';
 
-// gemini-2.5-flash has free-tier availability on the project keys in use (2.0-flash
-// returns a free-tier limit of 0 in this region). Swap here if quota/model changes.
-const MODEL = 'gemini-2.5-flash';
 const COMPETENCY_IDS = new Set(COMPETENCIES.map((c) => c.id));
 const LETTERS = ['a', 'b', 'c', 'd', 'e'];
 
@@ -51,14 +49,14 @@ const RESPONSE_SCHEMA = {
   },
 };
 
-function buildPrompt(domain, count) {
+function buildPrompt(domain, count, department) {
   const compList = COMPETENCIES.map((c) => `${c.id} (${c.name})`).join(', ');
   return `You are an instructional designer writing a competency assessment for patient
 navigators (contact-centre agents) based ONLY on the SOP reference below. Do not invent
 facts that are not supported by it.
 
 SOP REFERENCE:
-${SOP_CONTEXT}
+${sopContextFor(department)}
 
 TASK: Write ${count} scenario-based multiple-choice question(s) for the domain "${domain.name}"
 (${domain.blurb}). Mix NORMAL, EDGE-CASE, and FAILURE-STATE situations. Each question must:
@@ -107,34 +105,6 @@ function sanitize(raw, domainId) {
   };
 }
 
-// Configured keys: GEMINI_API_KEYS (comma-separated, preferred) with GEMINI_API_KEY
-// as a single-key fallback. De-duped and trimmed.
-function getApiKeys() {
-  const multi = (process.env.GEMINI_API_KEYS || '').split(',').map((k) => k.trim()).filter(Boolean);
-  const single = (process.env.GEMINI_API_KEY || '').trim();
-  return [...new Set(multi.length ? multi : single ? [single] : [])];
-}
-
-// One Gemini call with a given key → { ok, status, text?, detail? }.
-async function callGemini(apiKey, requestBody) {
-  const url = `https://generativelanguage.googleapis.com/v1beta/models/${MODEL}:generateContent?key=${apiKey}`;
-  const resp = await fetch(url, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(requestBody),
-  });
-  if (!resp.ok) {
-    return { ok: false, status: resp.status, detail: await resp.text().catch(() => '') };
-  }
-  const data = await resp.json();
-  return { ok: true, status: 200, text: data?.candidates?.[0]?.content?.parts?.[0]?.text };
-}
-
-// Per-key failures where trying a DIFFERENT key may succeed (quota / rate limit /
-// permission / transient overload). A 400 (bad request) is our bug, not the key's,
-// so it is NOT rotated — it surfaces immediately.
-const ROTATABLE = new Set([429, 403, 503, 500]);
-
 export default async function handler(req, res) {
   if (req.method !== 'POST') {
     return res.status(405).json({ error: 'Method not allowed' });
@@ -148,7 +118,7 @@ export default async function handler(req, res) {
   // Falls back to SUPERVISOR_PASSCODE so no separate GENERATION_SECRET env var is needed.
   const secret = process.env.GENERATION_SECRET || SUPERVISOR_PASSCODE;
 
-  const { domainId, count = 3, secret: provided } = req.body ?? {};
+  const { domainId, count = 3, department = 'pediatrics', secret: provided } = req.body ?? {};
   if (provided !== secret) {
     return res.status(401).json({ error: 'Not authorised.' });
   }
@@ -158,7 +128,7 @@ export default async function handler(req, res) {
   const n = Math.max(1, Math.min(8, Number(count) || 1));
 
   const requestBody = {
-    contents: [{ parts: [{ text: buildPrompt(domain, n) }] }],
+    contents: [{ parts: [{ text: buildPrompt(domain, n, department) }] }],
     generationConfig: {
       responseMimeType: 'application/json',
       responseSchema: RESPONSE_SCHEMA,
@@ -166,39 +136,16 @@ export default async function handler(req, res) {
     },
   };
 
-  // Rotate across keys: start at a random offset to spread load across the pool,
-  // and advance to the next key whenever one is rate-limited / quota-exhausted.
-  const start = Math.floor(Math.random() * keys.length);
-  let rotated = 0;
-  let text = null;
-
-  for (let i = 0; i < keys.length; i++) {
-    const keyIdx = (start + i) % keys.length;
-    let result;
-    try {
-      result = await callGemini(keys[keyIdx], requestBody);
-    } catch (err) {
-      console.error(`Gemini fetch threw on key #${keyIdx} — rotating:`, err);
-      rotated += 1;
-      continue;
+  const result = await geminiWithRotation(keys, requestBody, { label: 'generate-scenarios' });
+  if (!result.ok) {
+    if (result.reason === 'fatal') {
+      return res.status(502).json({ error: `Gemini request failed (${result.status}).` });
     }
-    if (result.ok) {
-      text = result.text;
-      break;
-    }
-    if (ROTATABLE.has(result.status)) {
-      console.warn(`Gemini key #${keyIdx} returned ${result.status} — rotating.`);
-      rotated += 1;
-      continue;
-    }
-    console.error('Gemini error (not rotatable):', result.status, result.detail);
-    return res.status(502).json({ error: `Gemini request failed (${result.status}).` });
+    return res.status(429).json({ error: 'All Gemini keys are rate-limited right now. Try again shortly.' });
   }
 
+  const text = result.text;
   if (text == null) {
-    if (rotated >= keys.length) {
-      return res.status(429).json({ error: 'All Gemini keys are rate-limited right now. Try again shortly.' });
-    }
     return res.status(502).json({ error: 'Empty response from Gemini.' });
   }
 

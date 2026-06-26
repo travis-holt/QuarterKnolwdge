@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import { DOMAINS } from '../data/questions.js';
 import { COMPETENCIES, competencyName } from '../data/competencies.js';
 import { DEPARTMENTS } from '../data/departments.js';
-import { LEVELS } from '../data/config.js';
+import { LEVELS, interviewScoreColor } from '../data/config.js';
 import { findRow, mentorSuggestions, trainingForRow } from '../lib/scoring.js';
 import { getInterviews } from '../lib/db.js';
 
@@ -309,6 +309,8 @@ export default function NavigatorDetail({ rows, name, deptName, deptMatrix, onBa
               {interviews.map((session) => {
                 const isOpen = expandedId === session.id;
                 const navTurns = session.transcript.filter((t) => t.role === 'navigator').length;
+                const g = session.grade ?? null;
+                const scoreColor = g ? interviewScoreColor(g.score) : undefined;
                 return (
                   <li key={session.id} className={`interview-log__item ${isOpen ? 'is-open' : ''}`}>
                     <button
@@ -323,6 +325,15 @@ export default function NavigatorDetail({ rows, name, deptName, deptMatrix, onBa
                       <span className="interview-log__meta">
                         {navTurns} {navTurns === 1 ? 'response' : 'responses'} · {formatDate(session.endedAt)}
                       </span>
+                      {g && (
+                        <span
+                          className="interview-log__score-badge"
+                          style={{ color: scoreColor }}
+                          title={`Score: ${g.score}/100`}
+                        >
+                          {g.score}/100
+                        </span>
+                      )}
                       <span className="interview-log__toggle" aria-hidden="true">
                         {isOpen ? '↑' : '↓'}
                       </span>
@@ -331,6 +342,35 @@ export default function NavigatorDetail({ rows, name, deptName, deptMatrix, onBa
                     {isOpen && (
                       <div className="interview-log__body">
                         <p className="interview-log__scenario">{session.scenario}</p>
+
+                        {/* Grade breakdown (if available) */}
+                        {g && (
+                          <div className="interview-log__grade">
+                            <p className="interview-log__grade-score" style={{ color: scoreColor }}>
+                              Score: <strong>{g.score}/100</strong>
+                            </p>
+                            {g.summary && (
+                              <p className="interview-log__grade-summary">{g.summary}</p>
+                            )}
+                            {g.strengths?.length > 0 && (
+                              <div className="interview-log__grade-section">
+                                <p className="interview-log__grade-heading">What went well</p>
+                                <ul>
+                                  {g.strengths.map((s, i) => <li key={i}>{s}</li>)}
+                                </ul>
+                              </div>
+                            )}
+                            {g.improvements?.length > 0 && (
+                              <div className="interview-log__grade-section">
+                                <p className="interview-log__grade-heading">Areas to develop</p>
+                                <ul>
+                                  {g.improvements.map((s, i) => <li key={i}>{s}</li>)}
+                                </ul>
+                              </div>
+                            )}
+                          </div>
+                        )}
+
                         <div className="interview-log__chat">
                           {session.transcript.map((turn, i) => (
                             <div

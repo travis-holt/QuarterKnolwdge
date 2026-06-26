@@ -28,9 +28,9 @@ import {
   subscribeCompletions,
 } from '../lib/db.js';
 import { isFirebaseConfigured } from '../lib/firebase.js';
-import { SEED_QUESTIONS } from '../data/questions.js';
+import { ALL_SEED_QUESTIONS } from '../data/questions.js';
 import { SUPERVISOR_PASSCODE } from '../data/config.js';
-import { ASSESSED_DEPT, departmentName } from '../data/departments.js';
+import { DEFAULT_DEPT, isAssessed as deptIsAssessed, departmentName } from '../data/departments.js';
 
 // Views where the DeptBar appears. The Navigators tab is intentionally NOT here:
 // roster management is global (not department-scoped), so it always shows the
@@ -49,7 +49,7 @@ export default function SupervisorApp({ onSignOut }) {
   const [selected, setSelected] = useState(null);
   const [moduleDomain, setModuleDomain] = useState(null);
   const [moduleReturn, setModuleReturn] = useState('training');
-  const [selectedDept, setSelectedDept] = useState(ASSESSED_DEPT);
+  const [selectedDept, setSelectedDept] = useState(DEFAULT_DEPT);
   const [subscribeError, setSubscribeError] = useState(false);
 
   // Live listeners — results + roster + completions. Unsubscribe on unmount.
@@ -75,7 +75,7 @@ export default function SupervisorApp({ onSignOut }) {
   // Question bank — seed once from the static seed, then live-subscribe.
   useEffect(() => {
     if (!isFirebaseConfigured) return undefined;
-    seedQuestionsIfEmpty(SEED_QUESTIONS).catch((err) => console.error('seedQuestions:', err));
+    seedQuestionsIfEmpty(ALL_SEED_QUESTIONS).catch((err) => console.error('seedQuestions:', err));
     const unsub = subscribeQuestions(setQuestions, (err) => {
       console.error('subscribeQuestions:', err);
       setSubscribeError(true);
@@ -83,7 +83,7 @@ export default function SupervisorApp({ onSignOut }) {
     return () => unsub();
   }, []);
 
-  const isAssessed = selectedDept === ASSESSED_DEPT;
+  const isAssessedDept = deptIsAssessed(selectedDept);
   const deptName = departmentName(selectedDept);
 
   // Build a lookup: navigatorId → Set<domainId> for "Spot the Error" completions.
@@ -100,14 +100,22 @@ export default function SupervisorApp({ onSignOut }) {
   );
   const activeResults = results.filter((r) => activeRosterIds.has(r.navigatorId));
 
-  // The live check only scores Pediatrics, so that's where real rows come from.
-  const pediatricRows = buildMatrixRows(activeResults, null);
-  // Analytics views are empty for non-assessed departments (no live check yet).
-  const rows = isAssessed ? pediatricRows : [];
-  // Cross-department strip: wrap each result as a single-department navigator so
-  // Pediatrics is populated and the other departments read "not assessed".
+  // Filter results by the currently selected department. Legacy docs without a
+  // `department` field are treated as 'pediatrics'.
+  const deptResults = activeResults.filter(
+    (r) => (r.department ?? 'pediatrics') === selectedDept
+  );
+
+  // Build matrix rows for the selected department (empty for non-assessed depts).
+  const deptRows = buildMatrixRows(deptResults, null);
+  const rows = isAssessedDept ? deptRows : [];
+
+  // Cross-department strip: one nav per roster row, their score in whichever dept.
   const deptMatrix = departmentMatrix(
-    results.map((r) => ({ name: r.name, departments: { [ASSESSED_DEPT]: r.scores } })),
+    activeResults.map((r) => ({
+      name: r.name,
+      departments: { [r.department ?? 'pediatrics']: r.scores },
+    })),
     null
   );
 
@@ -129,7 +137,7 @@ export default function SupervisorApp({ onSignOut }) {
   const handleUpdateNavigator = (id, patch) => updateRosterEntry(id, patch);
   const handleDeactivateNavigator = (id) => setRosterStatus(id, 'inactive');
   const handleReactivateNavigator = (id) => setRosterStatus(id, 'active');
-  const handleResetResult = (id) => clearResult(id);
+  const handleResetResult = (id) => clearResult(id, selectedDept);
 
   // Generate scenarios via the serverless Gemini proxy. The function returns
   // validated draft questions; we persist them as `draft` for review (they never
@@ -139,7 +147,7 @@ export default function SupervisorApp({ onSignOut }) {
     const res = await fetch('/api/generate-scenarios', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ domainId, count, secret: SUPERVISOR_PASSCODE }),
+      body: JSON.stringify({ domainId, count, department: selectedDept, secret: SUPERVISOR_PASSCODE }),
     });
     if (!res.ok) {
       const body = await res.json().catch(() => ({}));
@@ -147,7 +155,7 @@ export default function SupervisorApp({ onSignOut }) {
     }
     const { questions: drafts } = await res.json();
     if (!drafts?.length) throw new Error('No scenarios returned.');
-    await saveDraftQuestions(drafts, 'gemini');
+    await saveDraftQuestions(drafts, 'gemini', selectedDept);
     return drafts.length;
   };
 
@@ -161,11 +169,11 @@ export default function SupervisorApp({ onSignOut }) {
         </EmptyState>
       );
     }
-    if (!isAssessed) {
+    if (!isAssessedDept) {
       return (
         <EmptyState title={`${deptName} isn’t a live check yet`}>
-          Only <strong>Pediatrics</strong> is assessed in this pilot. Switch the department back to
-          Pediatrics up top to see live results.
+          Only <strong>Pediatrics</strong> and <strong>OB/GYN</strong> are live in this pilot.
+          Switch to one of those departments up top to see results.
         </EmptyState>
       );
     }
@@ -218,9 +226,9 @@ export default function SupervisorApp({ onSignOut }) {
 
             {view === 'navigators' && (
               <Navigators
-                rows={pediatricRows}
+                rows={deptRows}
                 roster={roster}
-                deptName={departmentName(ASSESSED_DEPT)}
+                deptName={deptName}
                 onOpenNavigator={openNavigator}
                 onAddNavigator={handleAddNavigator}
                 onUpdateNavigator={handleUpdateNavigator}
@@ -257,7 +265,7 @@ export default function SupervisorApp({ onSignOut }) {
 
             {view === 'module' && (
               <TrainingModule
-                rows={pediatricRows}
+                rows={deptRows}
                 domainId={moduleDomain}
                 onBack={() => setView(moduleReturn)}
                 onOpenNavigator={openNavigator}
@@ -267,6 +275,7 @@ export default function SupervisorApp({ onSignOut }) {
             {view === 'questions' && (
               <QuestionBank
                 questions={questions}
+                selectedDept={selectedDept}
                 onActivate={activateQuestion}
                 onArchive={archiveQuestion}
                 onDelete={deleteQuestion}

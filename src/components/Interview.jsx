@@ -1,57 +1,53 @@
 import { useState, useRef, useEffect } from 'react';
 import { DOMAINS } from '../data/questions.js';
-import { SUPERVISOR_PASSCODE } from '../data/config.js';
-import { saveInterview } from '../lib/db.js';
+import { SUPERVISOR_PASSCODE, interviewScoreColor } from '../data/config.js';
+import { saveInterview, updateInterviewGrade } from '../lib/db.js';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Interview — AI roleplay practice for navigators.
 //
-// Phase 1 (this component): Gemini acts as a patient caller; the navigator
-// handles the call by typing. No grading — pure practice.
-//
 // Flow:
-//   setup → loading-scenario → active → saving → done
+//   setup → loading-scenario → active → saving → grading → reviewed
+//                                     ↘ (discard) → discarded
 //
-// The full conversation history is kept in local React state; Firestore only
-// gets one write at the end (on "End call"). AbortController timeouts prevent
-// the UI from hanging if the API is slow.
+// After saving, the transcript is graded by Gemini (/api/grade-interview) and
+// the navigator sees a score + strengths/improvements review. Grade is also
+// written back to the Firestore interview doc so supervisors can read it.
+// Discard skips Firestore entirely — nothing is stored.
 // ─────────────────────────────────────────────────────────────────────────────
 
 const INIT_TIMEOUT_MS  = 20_000;
 const TURN_TIMEOUT_MS  = 20_000;
+const GRADE_TIMEOUT_MS = 30_000;
 
-export default function Interview({ navigatorId, name }) {
-  const [phase, setPhase] = useState('setup');
-  // 'setup' | 'loading' | 'active' | 'saving' | 'done'
-
-  const [domainId, setDomainId]       = useState('');
-  const [scenario, setScenario]       = useState('');
-  const [callerName, setCallerName]   = useState('');
+export default function Interview({ navigatorId, name, department = 'pediatrics' }) {
+  // phases: setup | loading | active | saving | grading | reviewed | discarded
+  const [phase, setPhase]           = useState('setup');
+  const [domainId, setDomainId]     = useState('');
+  const [scenario, setScenario]     = useState('');
+  const [callerName, setCallerName] = useState('');
   // [{role: 'patient'|'navigator', text: string}]
-  const [transcript, setTranscript]   = useState([]);
-  const [input, setInput]             = useState('');
-  const [busy, setBusy]               = useState(false);
-  const [error, setError]             = useState('');
+  const [transcript, setTranscript] = useState([]);
+  const [input, setInput]           = useState('');
+  const [busy, setBusy]             = useState(false);
+  const [error, setError]           = useState('');
+  const [grade, setGrade]           = useState(null); // { score, summary, strengths[], improvements[] }
 
-  const bottomRef  = useRef(null);
-  const inputRef   = useRef(null);
-  const domain     = DOMAINS.find((d) => d.id === domainId);
+  const bottomRef = useRef(null);
+  const inputRef  = useRef(null);
+  const domain    = DOMAINS.find((d) => d.id === domainId);
 
-  // Scroll to newest message whenever the transcript or busy state changes.
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [transcript, busy]);
 
-  // Refocus the input after each patient reply so the navigator can keep typing.
   useEffect(() => {
-    if (phase === 'active' && !busy) {
-      inputRef.current?.focus();
-    }
+    if (phase === 'active' && !busy) inputRef.current?.focus();
   }, [phase, busy]);
 
   // ── API helpers ─────────────────────────────────────────────────────────────
 
-  const callApi = async (body, timeoutMs) => {
+  const callTurnApi = async (body, timeoutMs) => {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), timeoutMs);
     try {
@@ -71,13 +67,13 @@ export default function Interview({ navigatorId, name }) {
     }
   };
 
-  // ── Start / setup ───────────────────────────────────────────────────────────
+  // ── Start ────────────────────────────────────────────────────────────────────
 
   const startInterview = async () => {
     setPhase('loading');
     setError('');
     try {
-      const data = await callApi({ domain: domainId }, INIT_TIMEOUT_MS);
+      const data = await callTurnApi({ domain: domainId, department }, INIT_TIMEOUT_MS);
       setScenario(data.scenario);
       setCallerName(data.callerName);
       setTranscript([{ role: 'patient', text: data.reply }]);
@@ -92,7 +88,7 @@ export default function Interview({ navigatorId, name }) {
     }
   };
 
-  // ── Send a navigator message ────────────────────────────────────────────────
+  // ── Send a navigator message ─────────────────────────────────────────────────
 
   const sendMessage = async () => {
     const text = input.trim();
@@ -100,14 +96,11 @@ export default function Interview({ navigatorId, name }) {
     setInput('');
     setBusy(true);
     setError('');
-
-    // Optimistically append the navigator's message to the transcript.
     const withNav = [...transcript, { role: 'navigator', text }];
     setTranscript(withNav);
-
     try {
-      const data = await callApi(
-        { domain: domainId, scenario, callerName, history: transcript, navigatorMessage: text },
+      const data = await callTurnApi(
+        { domain: domainId, department, scenario, callerName, history: transcript, navigatorMessage: text },
         TURN_TIMEOUT_MS
       );
       setTranscript([...withNav, { role: 'patient', text: data.reply }]);
@@ -122,20 +115,64 @@ export default function Interview({ navigatorId, name }) {
     }
   };
 
-  // ── End call ────────────────────────────────────────────────────────────────
+  // ── Save + grade ─────────────────────────────────────────────────────────────
 
-  const endInterview = async () => {
+  const saveAndGrade = async () => {
     setPhase('saving');
+    let docId = null;
     try {
-      await saveInterview(navigatorId, name, domainId, scenario, callerName, transcript);
+      docId = await saveInterview(navigatorId, name, domainId, scenario, callerName, transcript);
     } catch (err) {
       console.error('Failed to save interview:', err);
-      // Non-blocking — navigate to done regardless; transcript is in local state.
+      // Continue to grading even if save failed — navigator still sees feedback.
     }
-    setPhase('done');
+
+    setPhase('grading');
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), GRADE_TIMEOUT_MS);
+    try {
+      const res = await fetch('/api/grade-interview', {
+        method: 'POST',
+        signal: controller.signal,
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          domain: domainId,
+          department,
+          scenario,
+          transcript,
+          name,
+          secret: SUPERVISOR_PASSCODE,
+        }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        if (data.grade) {
+          setGrade(data.grade);
+          // Write grade back to the Firestore doc so supervisors can see it too.
+          if (docId) {
+            updateInterviewGrade(docId, data.grade).catch((err) =>
+              console.error('Failed to save grade to Firestore:', err)
+            );
+          }
+        }
+      }
+    } catch (err) {
+      // Silent — show the reviewed screen with whatever grade we have (null = failed).
+      console.error('Failed to grade interview:', err);
+    } finally {
+      clearTimeout(timeout);
+    }
+
+    setPhase('reviewed');
   };
 
-  // ── Reset ────────────────────────────────────────────────────────────────────
+  // ── Discard ──────────────────────────────────────────────────────────────────
+
+  const discardInterview = () => {
+    setPhase('discarded');
+  };
+
+  // ── Reset ─────────────────────────────────────────────────────────────────────
 
   const reset = () => {
     setPhase('setup');
@@ -145,28 +182,97 @@ export default function Interview({ navigatorId, name }) {
     setTranscript([]);
     setInput('');
     setError('');
+    setGrade(null);
   };
 
   // ─────────────────────────────────────────────────────────────────────────────
   // Render
   // ─────────────────────────────────────────────────────────────────────────────
 
-  if (phase === 'done') {
+  // ── Discarded ────────────────────────────────────────────────────────────────
+
+  if (phase === 'discarded') {
     return (
       <section className="interview view-enter">
-        <div className="card interview__done">
-          <span className="interview__done-glyph" aria-hidden="true">✓</span>
-          <h2 className="overview__panel-title">Practice session saved</h2>
-          <p className="readoff__sub">
-            Your transcript was saved. Start another call or switch to another tab.
-          </p>
-          <button className="btn btn--primary" onClick={reset}>
+        <div className="card interview__done interview__done--discarded">
+          <span className="interview__done-glyph" aria-hidden="true">✕</span>
+          <h2 className="overview__panel-title">Session discarded</h2>
+          <p className="readoff__sub">Nothing was saved. Start a fresh practice call whenever you&rsquo;re ready.</p>
+          <button className="btn btn--primary" onClick={reset}>Start another call</button>
+        </div>
+      </section>
+    );
+  }
+
+  // ── Reviewed (grading complete) ───────────────────────────────────────────────
+
+  if (phase === 'reviewed') {
+    const scoreColor = grade ? interviewScoreColor(grade.score) : 'var(--ink-soft)';
+
+    return (
+      <section className="interview view-enter">
+        <div className="interview__review">
+
+          {/* Score card */}
+          <div className="card interview__score-card">
+            <p className="interview__score-label">Practice call score</p>
+            {grade ? (
+              <p className="interview__score-value" style={{ color: scoreColor }}>
+                {grade.score}<span className="interview__score-denom">/100</span>
+              </p>
+            ) : (
+              <p className="interview__score-value interview__score-value--na">—</p>
+            )}
+            <p className="interview__score-domain tag">{domain?.name}</p>
+            {grade?.summary && (
+              <p className="interview__score-summary">{grade.summary}</p>
+            )}
+            {!grade && (
+              <p className="readoff__sub" style={{ marginTop: '0.75rem' }}>
+                Grading unavailable — the session was saved but couldn&rsquo;t be reviewed right now.
+              </p>
+            )}
+          </div>
+
+          {/* Strengths */}
+          {grade?.strengths?.length > 0 && (
+            <div className="card interview__feedback-card interview__feedback-card--strengths">
+              <h3 className="interview__feedback-title">
+                <span className="interview__feedback-icon" aria-hidden="true">✓</span>
+                What you did well
+              </h3>
+              <ul className="interview__feedback-list">
+                {grade.strengths.map((s, i) => (
+                  <li key={i} className="interview__feedback-item">{s}</li>
+                ))}
+              </ul>
+            </div>
+          )}
+
+          {/* Improvements */}
+          {grade?.improvements?.length > 0 && (
+            <div className="card interview__feedback-card interview__feedback-card--improvements">
+              <h3 className="interview__feedback-title">
+                <span className="interview__feedback-icon" aria-hidden="true">→</span>
+                What to work on
+              </h3>
+              <ul className="interview__feedback-list">
+                {grade.improvements.map((s, i) => (
+                  <li key={i} className="interview__feedback-item">{s}</li>
+                ))}
+              </ul>
+            </div>
+          )}
+
+          <button className="btn btn--primary" onClick={reset} style={{ alignSelf: 'flex-start' }}>
             Practice another call
           </button>
         </div>
       </section>
     );
   }
+
+  // ── Setup / loading scenario ──────────────────────────────────────────────────
 
   if (phase === 'setup' || phase === 'loading') {
     return (
@@ -175,17 +281,15 @@ export default function Interview({ navigatorId, name }) {
           <div>
             <h1 className="overview__title">Practice Call</h1>
             <p className="overview__lede">
-              Gemini plays a patient caller. You handle the call as you would normally —
-              no scoring, just practice.
+              Gemini plays a patient caller. You handle the call as you would normally.
+              When you&rsquo;re done, save the session to get an AI score and feedback.
             </p>
           </div>
         </header>
 
         <div className="card interview__setup">
           <h2 className="overview__panel-title">Choose a domain to practice</h2>
-          <p className="readoff__sub">
-            A scenario will be generated for you. Every call is different.
-          </p>
+          <p className="readoff__sub">A scenario will be generated for you. Every call is different.</p>
           <div className="interview__domain-grid">
             {DOMAINS.map((d) => (
               <button
@@ -218,11 +322,31 @@ export default function Interview({ navigatorId, name }) {
     );
   }
 
-  // ── Active / saving ─────────────────────────────────────────────────────────
+  // ── Saving / grading spinners ─────────────────────────────────────────────────
+
+  if (phase === 'saving' || phase === 'grading') {
+    return (
+      <section className="interview view-enter">
+        <div className="card interview__done">
+          <div className="interview__grading-spinner" aria-hidden="true" />
+          <h2 className="overview__panel-title">
+            {phase === 'saving' ? 'Saving your session…' : 'Reviewing your call…'}
+          </h2>
+          <p className="readoff__sub">
+            {phase === 'grading'
+              ? 'Gemini is scoring your performance against the SOP. This takes a few seconds.'
+              : 'Almost done…'}
+          </p>
+        </div>
+      </section>
+    );
+  }
+
+  // ── Active call ───────────────────────────────────────────────────────────────
 
   return (
     <section className="interview interview--active view-enter">
-      {/* Header: scenario briefing + end-call button */}
+      {/* Header: scenario briefing + end-call buttons */}
       <div className="interview__header card">
         <div className="interview__header-left">
           <span className="interview__domain-tag tag">{domain?.name}</span>
@@ -231,23 +355,28 @@ export default function Interview({ navigatorId, name }) {
             Caller: <strong>{callerName}</strong>
           </span>
         </div>
-        <button
-          className="btn btn--ghost btn--sm interview__end-btn"
-          onClick={endInterview}
-          disabled={phase === 'saving'}
-          type="button"
-        >
-          {phase === 'saving' ? 'Saving…' : 'End call'}
-        </button>
+        <div className="interview__end-actions">
+          <button
+            className="btn btn--ghost btn--sm"
+            onClick={discardInterview}
+            type="button"
+          >
+            Discard
+          </button>
+          <button
+            className="btn btn--primary btn--sm interview__end-btn"
+            onClick={saveAndGrade}
+            type="button"
+          >
+            Save &amp; get feedback
+          </button>
+        </div>
       </div>
 
       {/* Chat window */}
       <div className="interview__chat" role="log" aria-live="polite">
         {transcript.map((turn, i) => (
-          <div
-            key={i}
-            className={`interview__bubble interview__bubble--${turn.role}`}
-          >
+          <div key={i} className={`interview__bubble interview__bubble--${turn.role}`}>
             <span className="interview__bubble-label">
               {turn.role === 'patient' ? callerName : 'You'}
             </span>
@@ -255,7 +384,6 @@ export default function Interview({ navigatorId, name }) {
           </div>
         ))}
 
-        {/* Typing indicator while waiting for the patient reply */}
         {busy && (
           <div className="interview__bubble interview__bubble--patient interview__bubble--typing">
             <span className="interview__bubble-label">{callerName}</span>
@@ -281,14 +409,14 @@ export default function Interview({ navigatorId, name }) {
           type="text"
           placeholder="Type your response…"
           value={input}
-          disabled={busy || phase === 'saving'}
+          disabled={busy}
           onChange={(e) => setInput(e.target.value)}
           autoComplete="off"
         />
         <button
           className="btn btn--primary"
           type="submit"
-          disabled={!input.trim() || busy || phase === 'saving'}
+          disabled={!input.trim() || busy}
         >
           Send
         </button>

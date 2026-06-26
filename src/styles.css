@@ -33,6 +33,13 @@
   --grad-ink: linear-gradient(135deg, #34302a 0%, #23201b 100%);
   --grad-sheen: linear-gradient(180deg, rgba(255, 255, 255, 0.7) 0%, rgba(255, 255, 255, 0) 60%);
 
+  /* Traffic-light capability levels — kept in sync with LEVELS in data/config.js.
+     The matrix cells color via inline JS (LEVELS[…].color); these vars expose the
+     same palette to CSS and to the interview-score colour helper. */
+  --level-learning: #c0392b;
+  --level-solid: #e0b13c;
+  --level-canteach: #3e8e5a;
+
   /* ── Elevation scale (warm-tinted, multi-layer) ── */
   --shadow-xs: 0 1px 2px rgba(35, 32, 27, 0.05);
   --shadow-sm: 0 1px 2px rgba(35, 32, 27, 0.05), 0 2px 6px rgba(35, 32, 27, 0.05);
@@ -2534,6 +2541,193 @@ textarea:focus-visible {
   margin: 0 auto;
 }
 
+/* discard variant of the done glyph */
+.interview__done--discarded .interview__done-glyph {
+  background: #fef2f2;
+  border-color: #fca5a5;
+  color: var(--level-learning);
+}
+
+/* header end-call button group */
+.interview__end-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  flex: none;
+  align-items: stretch;
+}
+
+/* spinner shown during saving/grading phases */
+.interview__grading-spinner {
+  width: 36px;
+  height: 36px;
+  border: 3px solid var(--border);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+  margin: 0 auto 4px;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* review screen layout */
+.interview__review {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  max-width: 660px;
+  margin: 0 auto;
+}
+
+/* score card */
+.interview__score-card {
+  text-align: center;
+  padding: 32px 24px 28px;
+}
+.interview__score-label {
+  font-size: 0.8rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--ink-soft);
+  margin: 0 0 8px;
+}
+.interview__score-value {
+  font-size: 3.5rem;
+  font-weight: 800;
+  line-height: 1;
+  margin: 0 0 12px;
+}
+.interview__score-value--na {
+  color: var(--ink-faint);
+}
+.interview__score-denom {
+  font-size: 1.4rem;
+  font-weight: 500;
+  color: var(--ink-soft);
+}
+.interview__score-domain {
+  display: inline-block;
+  margin-bottom: 14px;
+}
+.interview__score-summary {
+  font-size: 0.95rem;
+  color: var(--ink-soft);
+  margin: 0;
+  line-height: 1.6;
+  max-width: 480px;
+  margin: 0 auto;
+}
+
+/* strengths / improvements cards */
+.interview__feedback-card {
+  padding: 20px 24px;
+}
+.interview__feedback-card--strengths {
+  border-left: 3px solid var(--level-canteach);
+}
+.interview__feedback-card--improvements {
+  border-left: 3px solid var(--level-solid);
+}
+.interview__feedback-title {
+  font-size: 0.9rem;
+  font-weight: 700;
+  margin: 0 0 12px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--ink);
+}
+.interview__feedback-icon {
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 13px;
+  font-weight: 700;
+  flex: none;
+}
+.interview__feedback-card--strengths .interview__feedback-icon {
+  background: #ecfdf5;
+  color: var(--level-canteach);
+}
+.interview__feedback-card--improvements .interview__feedback-icon {
+  background: #fffbeb;
+  color: var(--level-solid);
+}
+.interview__feedback-list {
+  margin: 0;
+  padding-left: 1.1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.interview__feedback-item {
+  font-size: 0.9rem;
+  color: var(--ink-soft);
+  line-height: 1.55;
+}
+
+/* score badge on interview-log header row (supervisor panel) */
+.interview-log__score-badge {
+  font-size: 0.8rem;
+  font-weight: 700;
+  padding: 2px 8px;
+  border-radius: 99px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  white-space: nowrap;
+}
+
+/* grade breakdown inside interview-log body */
+.interview-log__grade {
+  background: var(--surface-2);
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  padding: 14px 16px;
+  margin-bottom: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.interview-log__grade-score {
+  font-size: 0.85rem;
+  font-weight: 600;
+  margin: 0;
+}
+.interview-log__grade-summary {
+  font-size: 0.85rem;
+  color: var(--ink-soft);
+  margin: 0;
+  line-height: 1.55;
+}
+.interview-log__grade-section {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.interview-log__grade-heading {
+  font-size: 0.75rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  color: var(--ink-soft);
+  margin: 0;
+}
+.interview-log__grade ul {
+  margin: 2px 0 0;
+  padding-left: 1.1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.interview-log__grade li {
+  font-size: 0.83rem;
+  color: var(--ink-soft);
+  line-height: 1.5;
+}
+
 /* ── My training (navigator) ───────────────────────────────────────────────── */
 .mytraining__list {
   display: grid;
@@ -3366,4 +3560,60 @@ textarea:focus-visible {
   display: flex;
   justify-content: flex-end;
   gap: 0.5rem;
+}
+
+/* ── Department picker (navigator dept-select view) ────────────────────────── */
+.dept-select {
+  max-width: 520px;
+  margin: 4rem auto;
+  text-align: center;
+  padding: 0 1rem;
+}
+.dept-select__title {
+  font-size: 1.35rem;
+  font-weight: 700;
+  color: var(--ink);
+  margin: 0 0 0.5rem;
+}
+.dept-select__sub {
+  font-size: 0.9rem;
+  color: var(--ink-soft);
+  margin: 0 0 2rem;
+}
+.dept-select__grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 1rem;
+}
+.dept-select__card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 1.5rem 1rem;
+  background: var(--surface);
+  border: 1.5px solid var(--border);
+  border-radius: var(--radius-lg);
+  cursor: pointer;
+  transition: box-shadow var(--dur-2) var(--ease-out),
+              transform var(--dur-2) var(--ease-out);
+}
+.dept-select__card:hover {
+  box-shadow: var(--shadow-md);
+  transform: translateY(-2px);
+}
+.dept-select__name {
+  font-size: 1rem;
+  font-weight: 600;
+  color: var(--ink);
+}
+.dept-select__badge {
+  font-size: 0.72rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  padding: 0.15rem 0.55rem;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--level-canteach) 12%, transparent);
+  color: var(--level-canteach);
 }
