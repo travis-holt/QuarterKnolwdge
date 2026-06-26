@@ -1507,6 +1507,21 @@ textarea:focus-visible {
   box-shadow: inset 0 0 0 1px var(--accent);
 }
 
+.deptstrip__item.is-switchable {
+  cursor: pointer;
+  transition: border-color 0.15s, box-shadow 0.15s, transform 0.1s;
+  text-align: left;
+  width: 100%;
+}
+.deptstrip__item.is-switchable:hover {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent), var(--shadow-xs);
+  transform: translateY(-1px);
+}
+.deptstrip__item.is-switchable:active {
+  transform: translateY(0);
+}
+
 .deptstrip__name {
   font-size: 13px;
   font-weight: 600;
@@ -1912,6 +1927,28 @@ textarea:focus-visible {
 .nav__signout {
   margin-left: 8px;
   border: 1px solid var(--line);
+}
+
+.nav__dept-switch {
+  margin-left: 4px;
+  padding: 3px 10px;
+  border-radius: 99px;
+  border: 1px solid color-mix(in srgb, var(--accent) 35%, transparent);
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+  color: var(--accent-strong, var(--accent));
+  font-size: 0.72rem;
+  font-weight: 650;
+  letter-spacing: 0.01em;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  transition: background 0.15s, border-color 0.15s;
+  white-space: nowrap;
+}
+.nav__dept-switch:hover {
+  background: color-mix(in srgb, var(--accent) 18%, transparent);
+  border-color: color-mix(in srgb, var(--accent) 50%, transparent);
 }
 
 .check__greeting {

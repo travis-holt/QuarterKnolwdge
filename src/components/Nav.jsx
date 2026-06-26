@@ -1,8 +1,10 @@
 // Top nav. Two variants by role:
 //   supervisor — Overview · Matrix · Navigators · Training   + Sign out
-//   navigator  — My results · My training                    + Switch user
+//   navigator  — My results · My training · Practice         + dept pill + Switch user
 // The navigator variant has no route to team-wide views by construction.
-export default function Nav({ role, view, setView, onSignOut }) {
+// activeDeptName / onChangeDept: when set, renders a clickable dept pill so navigators
+// can switch departments without signing out (hidden during check + coaching views).
+export default function Nav({ role, view, setView, onSignOut, activeDeptName, onChangeDept }) {
   const tabs =
     role === 'navigator'
       ? [
@@ -40,6 +42,11 @@ export default function Nav({ role, view, setView, onSignOut }) {
             {t.label}
           </button>
         ))}
+        {role === 'navigator' && activeDeptName && onChangeDept && (
+          <button className="nav__dept-switch" onClick={onChangeDept} title="Switch department">
+            {activeDeptName} <span aria-hidden="true">⇄</span>
+          </button>
+        )}
         <button className="nav__link nav__signout" onClick={onSignOut}>
           {signOutLabel}
         </button>

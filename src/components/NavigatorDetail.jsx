@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { DOMAINS } from '../data/questions.js';
 import { COMPETENCIES, competencyName } from '../data/competencies.js';
-import { DEPARTMENTS } from '../data/departments.js';
+import { DEPARTMENTS, isAssessed } from '../data/departments.js';
 import { LEVELS, interviewScoreColor } from '../data/config.js';
 import { findRow, mentorSuggestions, trainingForRow } from '../lib/scoring.js';
 import { getInterviews } from '../lib/db.js';
@@ -16,7 +16,9 @@ function formatDate(ts) {
 
 // completedDomains: Set<domainId> — domains where the navigator has practiced a
 // "Spot the Error" scenario (supervisor view passes this from completionMap).
-export default function NavigatorDetail({ rows, name, deptName, deptMatrix, onBack, onOpenNavigator, onPreviewModule, navigatorId, completedDomains = new Set() }) {
+// onChangeDept(deptId): optional — when provided (navigator context only), assessed dept cards
+// become clickable buttons that jump straight to that dept's dashboard or check.
+export default function NavigatorDetail({ rows, name, deptName, deptMatrix, onBack, onOpenNavigator, onPreviewModule, navigatorId, completedDomains = new Set(), onChangeDept }) {
   const row = findRow(rows, name);
   const deptRow = deptMatrix?.find((r) => r.name === name);
 
@@ -109,22 +111,38 @@ export default function NavigatorDetail({ rows, name, deptName, deptMatrix, onBa
             {DEPARTMENTS.map((d) => {
               const cell = deptRow.depts[d.id];
               const isCurrent = d.name === deptName;
+              const canSwitch = !isCurrent && isAssessed(d.id) && onChangeDept;
+              const Tag = canSwitch ? 'button' : 'div';
+              const switchProps = canSwitch
+                ? { onClick: () => onChangeDept(d.id), title: `Switch to ${d.name}` }
+                : {};
+
               if (!cell) {
                 return (
-                  <div key={d.id} className={`deptstrip__item ${isCurrent ? 'is-current' : ''}`}>
+                  <Tag
+                    key={d.id}
+                    className={`deptstrip__item${isCurrent ? ' is-current' : ''}${canSwitch ? ' is-switchable' : ''}`}
+                    {...switchProps}
+                  >
                     <span className="deptstrip__name">{d.name}</span>
-                    <span className="deptcell deptcell--na">— not assessed</span>
-                  </div>
+                    <span className="deptcell deptcell--na">
+                      {canSwitch ? 'Take the check →' : '— not assessed'}
+                    </span>
+                  </Tag>
                 );
               }
               const level = LEVELS[cell.level];
               return (
-                <div key={d.id} className={`deptstrip__item ${isCurrent ? 'is-current' : ''}`}>
+                <Tag
+                  key={d.id}
+                  className={`deptstrip__item${isCurrent ? ' is-current' : ''}${canSwitch ? ' is-switchable' : ''}`}
+                  {...switchProps}
+                >
                   <span className="deptstrip__name">{d.name}</span>
                   <span className="deptcell" style={{ background: level.color, color: level.text }}>
                     {cell.overall}% <span className="deptcell__lvl">{level.label}</span>
                   </span>
-                </div>
+                </Tag>
               );
             })}
           </div>

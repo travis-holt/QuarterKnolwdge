@@ -10,7 +10,7 @@
 > [§8 Current System State](#8-current-system-state) and [§15 Current Priorities](#15-current-priorities)
 > accurate at all times.
 >
-> **Last updated:** 2026-06-26 (Question Health / SOP Drift flags) ·
+> **Last updated:** 2026-06-26 (Navigator department switcher UX fix) ·
 > **Doc maintainer:** Claude (AI agent) + repo owner. Assumptions are explicitly marked **[ASSUMPTION]**.
 
 ---
@@ -949,6 +949,28 @@ stateDiagram-v2
 - **Files affected:** `src/lib/{scoring,scoring.test,db}.js`,
   `src/components/{NavigatorApp,QuestionBank,SupervisorApp}.jsx`, `src/styles.css`.
 - **Verification:** `npm test` → **60 passing**; `npm run build` → clean.
+- **Status:** Complete.
+
+### 2026-06-26 — Navigator department switcher UX fix
+- **What changed:** Navigators were previously locked to the department they picked at login —
+  there was no way to switch to another department (e.g., to see OB/GYN results after taking
+  Pediatrics) without signing out and back in. Fixed in two layers:
+  1. **Nav pill:** `Nav.jsx` accepts `activeDeptName` + `onChangeDept` props and renders a small
+     pill button (warm clay accent style) showing the current dept name with a ⇄ icon. Hidden
+     during `check` and `coaching` views so navigators can't abandon mid-quiz. `NavigatorApp.jsx`
+     passes these through an updated `Shell` component; clicking calls `handleChangeDept` which
+     resets dept-specific state and returns to `deptselect`.
+  2. **Clickable dept cards:** `NavigatorDetail.jsx` accepts a new `onChangeDept(deptId)` prop.
+     In the "Strength across departments" `deptstrip`, assessed non-current dept cards render as
+     `<button>` elements (`is-switchable` class) — clicking jumps directly to that dept via
+     `handleDeptSelect`, which checks for an existing result and lands on `dashboard` or `check`.
+     Non-assessed depts stay as `<div>` (not clickable). An assessed dept with no result yet
+     shows "Take the check →" as its label instead of "— not assessed". `isAssessed` imported
+     from `departments.js` in `NavigatorDetail`.
+  - **`styles.css`:** `.nav__dept-switch` pill + `.deptstrip__item.is-switchable` hover/press
+    states (lift + accent border on hover).
+- **Files affected:** `src/components/{Nav,NavigatorDetail,NavigatorApp}.jsx`, `src/styles.css`.
+- **Verification:** `npm test` → 60 passing; `npm run build` → clean.
 - **Status:** Complete.
 
 ### 2026-06-26 — Remove Gemini/AI branding from UI

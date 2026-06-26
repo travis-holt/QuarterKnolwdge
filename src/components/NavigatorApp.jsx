@@ -43,8 +43,13 @@ export default function NavigatorApp({ navigatorId, name, onSignOut }) {
   const [auditDomain, setAuditDomain] = useState(null);
   const [completedDomains, setCompletedDomains] = useState(new Set());
   const [loadError, setLoadError] = useState(false);
+  // Cross-dept scores keyed by deptId — populated on mount + updated after each check.
+  // Feeds deptMatrix so the "Strength across departments" strip shows real data for
+  // every dept the navigator has taken, not just the currently active one.
+  const [allDeptResults, setAllDeptResults] = useState({});
 
   // On mount: skip straight to deptselect so the navigator picks their department.
+  // Also pre-fetch results for all assessed depts to power the cross-dept matrix.
   useEffect(() => {
     if (!isFirebaseConfigured) {
       setLoadError(true);
@@ -52,7 +57,19 @@ export default function NavigatorApp({ navigatorId, name, onSignOut }) {
       return;
     }
     setView('deptselect');
-  }, []);
+    Promise.all(
+      ASSESSED_DEPTS.map(async (deptId) => {
+        const res = await getResult(navigatorId, deptId).catch(() => null);
+        return { deptId, scores: res?.scores ?? null };
+      })
+    ).then((entries) => {
+      const map = {};
+      for (const { deptId, scores } of entries) {
+        if (scores) map[deptId] = scores;
+      }
+      setAllDeptResults(map);
+    });
+  }, [navigatorId]);
 
   // When a department is selected, check if this navigator already has a result there.
   const handleDeptSelect = async (dept) => {
@@ -62,6 +79,7 @@ export default function NavigatorApp({ navigatorId, name, onSignOut }) {
       const res = await getResult(navigatorId, dept);
       if (res) {
         setOwnResult(res);
+        setAllDeptResults((prev) => ({ ...prev, [dept]: res.scores }));
         // Fetch the active question bank for this department.
         const qs = await getActiveQuestions(dept).catch(() => []);
         if (qs.length > 0) setQuestions(qs);
@@ -107,6 +125,7 @@ export default function NavigatorApp({ navigatorId, name, onSignOut }) {
     const scores = scorePerDomain(answers, questions);
     const competencyScores = scorePerCompetency(answers, questions);
     setOwnResult({ name, navigatorId, scores, competencyScores, department: dept });
+    setAllDeptResults((prev) => ({ ...prev, [dept]: scores }));
     setLastAnswers(answers);
     setView('coaching');
     try {
@@ -114,6 +133,13 @@ export default function NavigatorApp({ navigatorId, name, onSignOut }) {
     } catch {
       // Dashboard shows from local state; a failed write means supervisor won't see it.
     }
+  };
+
+  const handleChangeDept = () => {
+    setActiveDept(null);
+    setOwnResult(null);
+    setLastAnswers(null);
+    setView('deptselect');
   };
 
   const openModule = (domainId) => {
@@ -146,8 +172,13 @@ export default function NavigatorApp({ navigatorId, name, onSignOut }) {
 
   const dept = activeDept ?? 'pediatrics';
   const deptName = departmentName(dept);
-  const deptMatrix = ownResult
-    ? departmentMatrix([{ name, departments: { [dept]: ownResult.scores } }], null)
+  // Include allDeptResults so the strip shows real scores for every dept taken,
+  // not just the currently active one. Merge ownResult in case it's fresher.
+  const deptScoresMap = ownResult?.scores
+    ? { ...allDeptResults, [dept]: ownResult.scores }
+    : allDeptResults;
+  const deptMatrix = Object.keys(deptScoresMap).length > 0
+    ? departmentMatrix([{ name, departments: deptScoresMap }], null)
     : [];
   const myRow = findRow(rows, name);
 
@@ -193,8 +224,18 @@ export default function NavigatorApp({ navigatorId, name, onSignOut }) {
     );
   }
 
+  // Only show dept switcher outside the check itself — switching mid-quiz would lose progress.
+  const showDeptSwitcher = activeDept && view !== 'check' && view !== 'coaching';
+
   return (
-    <Shell role="navigator" view={view} setView={setView} onSignOut={onSignOut}>
+    <Shell
+      role="navigator"
+      view={view}
+      setView={setView}
+      onSignOut={onSignOut}
+      activeDeptName={showDeptSwitcher ? deptName : null}
+      onChangeDept={handleChangeDept}
+    >
       {view === 'check' && (
         <Check
           onSubmit={handleSubmit}
@@ -226,6 +267,7 @@ export default function NavigatorApp({ navigatorId, name, onSignOut }) {
             onBack={null}
             onOpenNavigator={null}
             onPreviewModule={openModule}
+            onChangeDept={handleDeptSelect}
           />
         ) : (
           <EmptyState title="No results yet">
@@ -278,10 +320,17 @@ export default function NavigatorApp({ navigatorId, name, onSignOut }) {
 }
 
 // Shared shell for the navigator: nav + main + footer.
-function Shell({ role, view, setView, onSignOut, children }) {
+function Shell({ role, view, setView, onSignOut, activeDeptName, onChangeDept, children }) {
   return (
     <div className="app">
-      <Nav role={role} view={view} setView={setView} onSignOut={onSignOut} />
+      <Nav
+        role={role}
+        view={view}
+        setView={setView}
+        onSignOut={onSignOut}
+        activeDeptName={activeDeptName}
+        onChangeDept={onChangeDept}
+      />
       <main className="main">{children}</main>
       <Footer />
     </div>
