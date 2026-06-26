@@ -2,7 +2,7 @@
 export default function Footer() {
   return (
     <footer className="footer">
-      Quarterly Knowledge Check · development and fit, not pass/fail
+      Cruciby · Forged Under Pressure
     </footer>
   );
 }

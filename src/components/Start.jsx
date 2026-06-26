@@ -32,7 +32,7 @@ function RoleSelect({ onPick }) {
   return (
     <div className="view-enter">
       <p className="start__eyebrow">
-        <span className="start__eyebrow-dot" /> A short quarterly check
+        <span className="start__eyebrow-dot" /> Cruciby — Forged Under Pressure
       </p>
       <h1 className="start__title">
         Real scenarios — <span className="accent">development and fit</span>, not pass/fail.

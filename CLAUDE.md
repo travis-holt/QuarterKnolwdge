@@ -1,4 +1,4 @@
-# CLAUDE.md — Quarterly Knowledge Check (Project Knowledge Base)
+# CLAUDE.md — Cruciby (Project Knowledge Base)
 
 > **Purpose of this file.** This is the single source of truth for the project: product
 > spec, architecture reference, development journal, decision log, and onboarding doc in one.
@@ -10,7 +10,7 @@
 > [§8 Current System State](#8-current-system-state) and [§15 Current Priorities](#15-current-priorities)
 > accurate at all times.
 >
-> **Last updated:** 2026-06-26 (Navigator department switcher UX fix) ·
+> **Last updated:** 2026-06-26 (Rebrand to Cruciby — Forged Under Pressure) ·
 > **Doc maintainer:** Claude (AI agent) + repo owner. Assumptions are explicitly marked **[ASSUMPTION]**.
 
 ---
@@ -36,7 +36,7 @@
 
 ## 1. Project Overview
 
-- **Project name:** Quarterly Knowledge Check (repo: `QuarterKnolwdge`).
+- **Project name:** Cruciby — Forged Under Pressure (repo: `QuarterKnolwdge`).
 - **Product description:** A self-contained web app that runs a quarterly "knowledge check" for
   **patient navigators** (contact-centre agents who handle patient calls) and renders the
   **capability map** it produces. The check asks scenario questions ("a patient calls wanting X,
@@ -975,6 +975,21 @@ stateDiagram-v2
     states (lift + accent border on hover).
 - **Files affected:** `src/components/{Nav,NavigatorDetail,NavigatorApp}.jsx`, `src/styles.css`.
 - **Verification:** `npm test` → 60 passing; `npm run build` → clean.
+- **Status:** Complete.
+
+### 2026-06-26 — Rebrand to Cruciby — Forged Under Pressure
+- **What changed:** Full product rebrand. The app's displayed name changes from "Quarterly Knowledge
+  Check" to **Cruciby** with tagline **"Forged Under Pressure"**. The git repo name (`QuarterKnolwdge`)
+  is unchanged (renaming would break Railway's Git integration).
+  - `index.html` — `<title>` updated to `Cruciby`.
+  - `Nav.jsx` — nav brand button updated to `Cruciby`.
+  - `Footer.jsx` — footer line updated to `Cruciby · Forged Under Pressure`.
+  - `Start.jsx` — eyebrow updated to `Cruciby — Forged Under Pressure`.
+  - `styles.css` — file header comment updated.
+  - `CLAUDE.md` — project name updated throughout (§1, header, this entry).
+- **Files affected:** `index.html`, `src/components/{Nav,Footer,Start}.jsx`, `src/styles.css`,
+  `CLAUDE.md`.
+- **Verification:** `npm run build` → clean.
 - **Status:** Complete.
 
 ### 2026-06-26 — Remove Gemini/AI branding from UI
