@@ -247,15 +247,30 @@ button {
 .nav__brand:hover {
   opacity: 0.7;
 }
-/* Compact gradient app mark before the brand name. */
-.nav__brand::before {
-  content: '';
-  width: 22px;
-  height: 22px;
+/* Image logo replaces the gradient mark. */
+.nav__logo {
+  width: 28px;
+  height: 28px;
   border-radius: 7px;
-  background: var(--grad-accent);
-  box-shadow: var(--shadow-glow), inset 0 1px 0 rgba(255, 255, 255, 0.4);
   flex: 0 0 auto;
+  object-fit: cover;
+  mix-blend-mode: multiply;
+  animation: logo-float 4s ease-in-out infinite alternate;
+}
+
+.start__logo {
+  width: 56px;
+  height: 56px;
+  margin-bottom: 16px;
+  border-radius: 12px;
+  object-fit: cover;
+  mix-blend-mode: multiply;
+  animation: logo-float 4s ease-in-out infinite alternate;
+}
+
+@keyframes logo-float {
+  0% { transform: translateY(0); filter: drop-shadow(0 4px 6px rgba(196, 116, 79, 0.1)); }
+  100% { transform: translateY(-4px); filter: drop-shadow(0 8px 12px rgba(196, 116, 79, 0.25)); }
 }
 
 .nav__links {

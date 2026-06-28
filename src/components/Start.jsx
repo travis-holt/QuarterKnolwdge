@@ -31,6 +31,7 @@ export default function Start({ onNavigatorEntry, onSupervisorEntry }) {
 function RoleSelect({ onPick }) {
   return (
     <div className="view-enter">
+      <img src="/logo.png" alt="Cruciby" className="start__logo" />
       <p className="start__eyebrow">
         <span className="start__eyebrow-dot" /> Cruciby — Forged Under Pressure
       </p>

@@ -30,6 +30,7 @@ export default function Nav({ role, view, setView, onSignOut, activeDeptName, on
   return (
     <header className="nav">
       <button className="nav__brand" onClick={() => setView(home)}>
+        <img src="/logo.png" alt="Cruciby" className="nav__logo" />
         Cruciby
       </button>
       <nav className="nav__links">
