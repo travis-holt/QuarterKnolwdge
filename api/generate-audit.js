@@ -63,6 +63,41 @@ SOP REFERENCE:
 ${sopContextFor(department)}`;
 }
 
+/**
+ * Validate and sanitise a raw Gemini audit response.
+ * Pure — no I/O. Returns { data } on success, { error } on failure.
+ * @param {any} parsed  The result of JSON.parse(gemini response text)
+ */
+export function validateAuditResponse(parsed) {
+  const { transcript, errorIndex, hint, modelExplanation } = parsed ?? {};
+  if (!Array.isArray(transcript) || transcript.length < 4)
+    return { error: 'Gemini returned an incomplete transcript.' };
+  if (typeof errorIndex !== 'number' || errorIndex < 0 || errorIndex >= transcript.length)
+    return { error: 'Gemini returned an invalid error index.' };
+
+  let resolvedIndex = errorIndex;
+  if (transcript[resolvedIndex]?.speaker !== 'Agent') {
+    // Shift to the nearest Agent turn so we never expose a Patient error index.
+    const fallback = transcript.findIndex((t, i) => i !== 0 && t.speaker === 'Agent');
+    if (fallback === -1) return { error: 'No Agent turn found in transcript.' };
+    resolvedIndex = fallback;
+  }
+  if (!hint || !modelExplanation)
+    return { error: 'Gemini returned an incomplete audit response.' };
+
+  return {
+    data: {
+      transcript: transcript.map((t) => ({
+        speaker: String(t.speaker ?? '').trim(),
+        message: String(t.message ?? '').trim(),
+      })),
+      errorIndex:       resolvedIndex,
+      hint:             String(hint).trim(),
+      modelExplanation: String(modelExplanation).trim(),
+    },
+  };
+}
+
 export default async function handler(req, res) {
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
 
@@ -99,34 +134,8 @@ export default async function handler(req, res) {
     return res.status(502).json({ error: 'Gemini returned invalid JSON.' });
   }
 
-  // Validate the response shape and that the errorIndex lands on an Agent turn.
-  const { transcript, errorIndex, hint, modelExplanation } = parsed ?? {};
-  if (!Array.isArray(transcript) || transcript.length < 4) {
-    return res.status(502).json({ error: 'Gemini returned an incomplete transcript.' });
-  }
-  if (typeof errorIndex !== 'number' || errorIndex < 0 || errorIndex >= transcript.length) {
-    return res.status(502).json({ error: 'Gemini returned an invalid error index.' });
-  }
-  if (transcript[errorIndex]?.speaker !== 'Agent') {
-    // Shift to the nearest Agent turn so we never expose a Patient error index.
-    const fallback = transcript.findIndex((t, i) => i !== 0 && t.speaker === 'Agent');
-    if (fallback === -1) return res.status(502).json({ error: 'No Agent turn found in transcript.' });
-    parsed.errorIndex = fallback;
-  }
-  if (!hint || !modelExplanation) {
-    return res.status(502).json({ error: 'Gemini returned an incomplete audit response.' });
-  }
+  const validation = validateAuditResponse(parsed);
+  if (validation.error) return res.status(502).json({ error: validation.error });
 
-  // Sanitise transcript entries — keep only speaker + message.
-  parsed.transcript = transcript.map((t) => ({
-    speaker: String(t.speaker ?? '').trim(),
-    message: String(t.message ?? '').trim(),
-  }));
-
-  return res.status(200).json({
-    transcript:       parsed.transcript,
-    errorIndex:       parsed.errorIndex,
-    hint:             String(hint).trim(),
-    modelExplanation: String(modelExplanation).trim(),
-  });
+  return res.status(200).json(validation.data);
 }

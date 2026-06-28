@@ -992,6 +992,19 @@ stateDiagram-v2
 - **Verification:** `npm run build` → clean.
 - **Status:** Complete.
 
+### 2026-06-28 — First API-handler unit tests + `generate-audit` refactor
+- **What changed:** Extracted the response-validation logic of `api/generate-audit.js` into a pure,
+  exported `validateAuditResponse(parsed)` helper (returns `{ data }` | `{ error }`; no I/O), and
+  routed the handler through it — behaviour and status codes unchanged. Added the first unit tests
+  for the `api/` layer: `api/generate-audit.test.js` (covers `validateAuditResponse` — valid shape,
+  incomplete transcript, bad/missing errorIndex, Patient-turn fallback to nearest Agent turn,
+  sanitisation) and `api/_gemini-client.test.js` (`getApiKeys` env parsing + `geminiWithRotation`
+  with a stubbed `fetch`). Tests **60 → 88**.
+- **Files affected:** `api/generate-audit.js`; **new** `api/generate-audit.test.js`,
+  `api/_gemini-client.test.js`; `package-lock.json` (lockfile metadata only).
+- **Verification:** `npm test` → **88 passing**; `npm run build` → clean.
+- **Status:** Complete. Begins paying down the "all API handlers untested" tech-debt item.
+
 ### 2026-06-26 — Remove Gemini/AI branding from UI
 - **What changed:** Stripped all visible references to "Gemini" and "AI" from the navigator and
   supervisor-facing UI. The underlying features are unchanged; only the labels are removed.
@@ -1276,7 +1289,7 @@ stateDiagram-v2
   persist to Firestore (composite key `${navigatorId}__${department}`) → supervisor matrix/overview
   update live per dept → navigator/training dashboards → **switch departments** via nav pill or
   dept cards → practice interview (SOP-grounded per dept) → "Spot the Error" QA audit (SOP-grounded
-  per dept) with completion tracking. Build clean, tests green (`npm test` → **60 passing**).
+  per dept) with completion tracking. Build clean, tests green (`npm test` → **88 passing**).
 - **Existing functionality:** features F1–F16 (see [§4](#4-feature-inventory)) are **Complete** in
   code. F10 now includes OB/GYN as a second live department and full in-app dept switching. F13
   (Coaching) includes the Phase 2 AI layer. F15 (Interview) is Phase 1 roleplay only. F16 closes
@@ -1295,9 +1308,10 @@ stateDiagram-v2
 - **Experimental / mockup:**
   - Training **content** is mockup (flagged in UI). Logic is real.
   - **Adult Medicine and Behavioural Health** are not assessed; **Pediatrics and OB/GYN** are live.
-- **Test coverage:** `lib/scoring.js` is unit-tested (60 tests, incl. competency scoring + question
-  health). Components, the role apps, and the serverless functions are **not** yet tested (highest
-  unresolved tech debt).
+- **Test coverage:** `lib/scoring.js` is unit-tested, plus the pure helpers in two API handlers —
+  `validateAuditResponse` (`generate-audit.js`) and `getApiKeys`/`geminiWithRotation`
+  (`_gemini-client.js`). **88 tests total.** Components, the role apps, and the rest of the
+  serverless handlers are **not** yet tested (highest unresolved tech debt).
 - **Known code quality items (non-blocking, from code review 2026-06-25):**
   - ~~Dead import `createRequire` in `server.js:6`~~ — **removed 2026-06-25**.
   - ~~`getApiKeys`/`callGemini`/`geminiWithRotation` duplicated across all `api/` handlers~~ —
@@ -1317,7 +1331,7 @@ stateDiagram-v2
   now stored on every new result doc; legacy docs (pre-this-change) are skipped silently.
 - **Counts (today):** 6 domains (shared, dept-neutral) · 9 competencies · 18 Pediatrics + 14
   OB/GYN = **32** seed questions (bank grows in Firestore per dept) · 4 departments (**Pediatrics
-  + OB/GYN live**, 2 mockup) · **60** unit tests · **5** Firestore collections
+  + OB/GYN live**, 2 mockup) · **88** unit tests · **5** Firestore collections
   (`roster`, `results`, `questions`, `interviews`, `completions`) · **7** serverless functions
   (`generate-scenarios`, `generate-coaching`, `interview-turn`, `grade-interview`, `generate-audit`, `coach-audit`, `health`).
 
