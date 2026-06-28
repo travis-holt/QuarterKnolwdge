@@ -2,3 +2,10 @@ node_modules
 dist
 .vite
 *.local
+
+# Agent tooling (ponytail plugin) — not part of the app
+.agents/
+.claude-plugin/
+skills/
+AGENTS.md
+gemini-extension.json
