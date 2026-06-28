@@ -1,7 +1,5 @@
-import { DOMAINS } from '../data/questions.js';
+import { domainName } from '../data/questions.js';
 import { trainingByDomain, trainingPlan, trainingStats } from '../lib/scoring.js';
-
-const domainName = (id) => DOMAINS.find((d) => d.id === id)?.name ?? id;
 
 // completionMap: { [navigatorId]: Set<domainId> } — who has practiced which domain.
 // roster: [{ id, name }] — used to look up navigatorId by name for the checkmark.

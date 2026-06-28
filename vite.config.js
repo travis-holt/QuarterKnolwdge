@@ -8,4 +8,8 @@ import react from '@vitejs/plugin-react';
 export default defineConfig({
   base: '/',
   plugins: [react()],
+  test: {
+    // jest-dom matchers for component tests (used by files with @vitest-environment jsdom)
+    setupFiles: ['./src/test-setup.js'],
+  },
 });

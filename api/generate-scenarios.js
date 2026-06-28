@@ -17,8 +17,8 @@
 import { DOMAINS } from '../src/data/questions.js';
 import { COMPETENCIES } from '../src/data/competencies.js';
 import { sopContextFor } from './_sop-context.js';
-import { SUPERVISOR_PASSCODE } from '../src/data/config.js';
 import { getApiKeys, geminiWithRotation } from './_gemini-client.js';
+import { validateSecret } from './_auth.js';
 
 const COMPETENCY_IDS = new Set(COMPETENCIES.map((c) => c.id));
 const LETTERS = ['a', 'b', 'c', 'd', 'e'];
@@ -73,7 +73,7 @@ Option ids must be "a","b","c","d". Do not include a domain field. Return ONLY t
 
 // Coerce one raw model question into the strict app shape, or return null if it
 // cannot be repaired into something valid.
-function sanitize(raw, domainId) {
+export function sanitize(raw, domainId) {
   if (!raw || typeof raw.scenario !== 'string' || !raw.scenario.trim()) return null;
   if (!Array.isArray(raw.options) || raw.options.length < 2) return null;
 
@@ -115,13 +115,8 @@ export default async function handler(req, res) {
     return res.status(500).json({ error: 'Generation is not configured on the server.' });
   }
 
-  // Falls back to SUPERVISOR_PASSCODE so no separate GENERATION_SECRET env var is needed.
-  const secret = process.env.GENERATION_SECRET || SUPERVISOR_PASSCODE;
-
-  const { domainId, count = 3, department = 'pediatrics', secret: provided } = req.body ?? {};
-  if (provided !== secret) {
-    return res.status(401).json({ error: 'Not authorised.' });
-  }
+  if (validateSecret(req, res)) return;
+  const { domainId, count = 3, department = 'pediatrics' } = req.body ?? {};
 
   const domain = DOMAINS.find((d) => d.id === domainId);
   if (!domain) return res.status(400).json({ error: 'Unknown domain.' });

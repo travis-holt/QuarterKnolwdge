@@ -1,10 +1,8 @@
 import { useState } from 'react';
-import { DOMAINS } from '../data/questions.js';
+import { DOMAINS, domainName } from '../data/questions.js';
 import { COMPETENCIES, competencyName } from '../data/competencies.js';
 import { computeQuestionHealth } from '../lib/scoring.js';
 import QuestionEditor from './QuestionEditor.jsx';
-
-const domainName = (id) => DOMAINS.find((d) => d.id === id)?.name ?? id;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Question Bank — the supervisor's review gate. Generated scenarios land as

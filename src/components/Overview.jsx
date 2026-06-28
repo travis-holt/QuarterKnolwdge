@@ -1,4 +1,4 @@
-import { DOMAINS } from '../data/questions.js';
+import { DOMAINS, domainName } from '../data/questions.js';
 import { COMPETENCIES, competencyName } from '../data/competencies.js';
 import { DEPARTMENTS } from '../data/departments.js';
 import { LEVELS, LEVEL_ORDER } from '../data/config.js';
@@ -11,8 +11,6 @@ import {
   readinessTally,
 } from '../lib/scoring.js';
 import CountUp from './CountUp.jsx';
-
-const domainName = (id) => DOMAINS.find((d) => d.id === id)?.name ?? id;
 
 export default function Overview({ rows, deptName, deptMatrix, onOpenNavigator, onViewMatrix }) {
   const stats = floorStats(rows);

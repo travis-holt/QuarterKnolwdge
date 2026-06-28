@@ -1,8 +1,6 @@
-import { DOMAINS } from '../data/questions.js';
+import { domainName } from '../data/questions.js';
 import { moduleForDomain } from '../data/training.js';
 import { trainingByDomain } from '../lib/scoring.js';
-
-const domainName = (id) => DOMAINS.find((d) => d.id === id)?.name ?? id;
 
 // Preview of a single training module: the mockup lesson content plus, for
 // supervisors, the auto-assigned cohort (who needs it, and why). Navigators pass

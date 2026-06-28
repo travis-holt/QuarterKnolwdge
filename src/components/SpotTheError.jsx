@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { DOMAINS } from '../data/questions.js';
-import { SUPERVISOR_PASSCODE } from '../data/config.js';
 import { saveCompletion } from '../lib/db.js';
+import { apiFetch } from '../lib/apiFetch.js';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // SpotTheError — "Flight Simulator" QA audit training exercise.
@@ -53,25 +53,7 @@ export default function SpotTheError({ navigatorId, name, domainId, department =
 
   // ── API helpers ─────────────────────────────────────────────────────────────
 
-  const callApi = async (endpoint, body, timeoutMs) => {
-    const controller = new AbortController();
-    const tid = setTimeout(() => controller.abort(), timeoutMs);
-    try {
-      const res = await fetch(endpoint, {
-        method:  'POST',
-        signal:  controller.signal,
-        headers: { 'Content-Type': 'application/json' },
-        body:    JSON.stringify({ ...body, secret: SUPERVISOR_PASSCODE }),
-      });
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({}));
-        throw new Error(err.error || `Request failed (${res.status})`);
-      }
-      return await res.json();
-    } finally {
-      clearTimeout(tid);
-    }
-  };
+  const callApi = (endpoint, body, timeoutMs) => apiFetch(endpoint, body, timeoutMs);
 
   // ── Generate ─────────────────────────────────────────────────────────────────
 

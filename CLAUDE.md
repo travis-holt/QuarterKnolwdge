@@ -10,7 +10,7 @@
 > [§8 Current System State](#8-current-system-state) and [§15 Current Priorities](#15-current-priorities)
 > accurate at all times.
 >
-> **Last updated:** 2026-06-26 (Rebrand to Cruciby — Forged Under Pressure) ·
+> **Last updated:** 2026-06-28 (generate-audit validation refactor + extra API-handler tests; 158 tests) ·
 > **Doc maintainer:** Claude (AI agent) + repo owner. Assumptions are explicitly marked **[ASSUMPTION]**.
 
 ---
@@ -992,18 +992,67 @@ stateDiagram-v2
 - **Verification:** `npm run build` → clean.
 - **Status:** Complete.
 
-### 2026-06-28 — First API-handler unit tests + `generate-audit` refactor
+### 2026-06-28 — `generate-audit` validation refactor + extra API-handler tests
 - **What changed:** Extracted the response-validation logic of `api/generate-audit.js` into a pure,
   exported `validateAuditResponse(parsed)` helper (returns `{ data }` | `{ error }`; no I/O), and
-  routed the handler through it — behaviour and status codes unchanged. Added the first unit tests
-  for the `api/` layer: `api/generate-audit.test.js` (covers `validateAuditResponse` — valid shape,
-  incomplete transcript, bad/missing errorIndex, Patient-turn fallback to nearest Agent turn,
-  sanitisation) and `api/_gemini-client.test.js` (`getApiKeys` env parsing + `geminiWithRotation`
-  with a stubbed `fetch`). Tests **60 → 88**.
+  routed the handler through it — behaviour and status codes unchanged. Added two more `api/` test
+  files on top of the 2026-06-26 audit pass: `api/generate-audit.test.js` (covers
+  `validateAuditResponse` — valid shape, incomplete transcript, bad/missing errorIndex, Patient-turn
+  fallback to nearest Agent turn, sanitisation) and `api/_gemini-client.test.js` (`getApiKeys` env
+  parsing + `geminiWithRotation` with a stubbed `fetch`). Tests **130 → 158** (7 test files).
+  Also added the ponytail agent-tooling files to `.gitignore`.
 - **Files affected:** `api/generate-audit.js`; **new** `api/generate-audit.test.js`,
-  `api/_gemini-client.test.js`; `package-lock.json` (lockfile metadata only).
-- **Verification:** `npm test` → **88 passing**; `npm run build` → clean.
-- **Status:** Complete. Begins paying down the "all API handlers untested" tech-debt item.
+  `api/_gemini-client.test.js`; `.gitignore`; `package-lock.json`.
+- **Verification:** `npm test` → **158 passing**; `npm run build` → clean.
+- **Status:** Complete.
+
+### 2026-06-26 — Code-audit pass: DRY cleanup, test coverage expansion, Vite CVE patch
+- **What changed:** Systematic code-quality pass driven by a 6-agent audit. All 16 tasks completed.
+  1. **`src/data/questions.js`:** exported `domainName(id)` helper; removed 9 identical inline copies
+     from 9 component files (`Coaching`, `Check`, `Matrix`, `MyTraining`, `NavigatorDetail`,
+     `Overview`, `QuestionBank`, `Training`, `TrainingModule`).
+  2. **`src/lib/scoring.js`:** `scorePerDomain` and `scorePerCompetency` now default `answers` to `{}`
+     (previously crashed on `undefined` input). `earnedPoints` already had an `options?.` guard
+     (added in prior session). Fixes a latent crash if called with no arguments.
+  3. **`src/lib/apiFetch.js` (new):** shared client helper encapsulating AbortController timeout,
+     Content-Type header, `SUPERVISOR_PASSCODE` injection, error-body parsing, and `AbortError` name
+     preservation. Used by `Interview.jsx`, `SpotTheError.jsx`, `Coaching.jsx`, `SupervisorApp.jsx`.
+  4. **`api/_auth.js` (new):** `validateSecret(req, res)` — shared secret-validation helper for all
+     6 Gemini handlers (replaces the identical 3-line block copy-pasted across them). The
+     `GENERATION_SECRET || SUPERVISOR_PASSCODE` fallback now lives in one place.
+  5. **`api/_gemini-client.js`:** added startup validation (warn if no keys configured); truncates
+     error-body before logging to cap log noise.
+  6. **`Coaching.jsx`:** standardised from `.then()/.catch()` to `async/await` for consistency with
+     the rest of the codebase; replaced raw fetch with `apiFetch`.
+  7. **Vite:** upgraded from 5.4.11 → **5.4.21** (latest v5 patch — fixes 3 CVEs: `server.fs.deny`
+     bypass, path traversal, NTLMv2 hash disclosure).
+  8. **Test coverage (130 tests, 5 test files):**
+     - `scoring.test.js`: 9 new malformed-input edge-case tests (`undefined answers`, missing
+       `options` field, unknown `domainId`, unknown competency tag, etc.).
+     - `src/lib/session.test.js` (new, 12 tests): localStorage round-trips, overwrite behaviour,
+       corrupt JSON graceful return, unavailability handling via `vi.stubGlobal`.
+     - `api/api-handlers.test.js` (new, 30 tests): `sanitize` (generate-scenarios), `buildDigest`
+       (generate-coaching), `buildSystemInstruction` + `buildContents` (interview-turn) — all now
+       exported with `export` keyword.
+     - `src/components/components.test.jsx` (new, 15 tests, `@vitest-environment jsdom`):
+       `EmptyState` pure render, `Footer` pure render, `Nav` supervisor/navigator tabs, active-state
+       class, click handlers, dept-switch pill show/hide.
+     - `src/lib/db.test.js` (new, 18 tests): Firebase + Firestore fully mocked via `vi.hoisted()`;
+       tests composite-key construction in `saveResult`/`clearResult`, data shapes, legacy fallback
+       reads, `subscribeRoster` mapping and error-callback routing.
+  9. **Test infrastructure:** `@testing-library/react`, `@testing-library/jest-dom`, `jsdom` added
+     as devDeps; `src/test-setup.js` (jest-dom/vitest extension + `afterEach(cleanup)`); `test`
+     config in `vite.config.js` (`setupFiles`); `@vitest-environment jsdom` pragma in component tests.
+  10. **Fragile test fixes** (from prior audit): `readinessTally` empty-matrix case, `trainingPlan`
+      named-navigator positional assertion, `mentorSuggestions` redundant `if` guard removed.
+- **Files affected:** `src/data/questions.js`; `src/lib/{scoring,scoring.test,session.test,db.test}.js`;
+  **new** `src/lib/{apiFetch,session.test,db.test}.js`; **new** `api/{_auth,api-handlers.test}.js`;
+  **new** `src/components/components.test.jsx`, `src/test-setup.js`; edited
+  `src/components/{Coaching,Interview,SpotTheError,SupervisorApp}.jsx`; all 6 Gemini `api/*.js`
+  handlers; `api/_gemini-client.js`; `vite.config.js`; `package.json`/`package-lock.json`.
+- **Verification:** `npm test` → **130 passing** (5 test files); `npm run build` → clean;
+  `node --check` on all 6 Gemini handlers + `_auth.js` → OK.
+- **Status:** Complete.
 
 ### 2026-06-26 — Remove Gemini/AI branding from UI
 - **What changed:** Stripped all visible references to "Gemini" and "AI" from the navigator and
@@ -1308,10 +1357,20 @@ stateDiagram-v2
 - **Experimental / mockup:**
   - Training **content** is mockup (flagged in UI). Logic is real.
   - **Adult Medicine and Behavioural Health** are not assessed; **Pediatrics and OB/GYN** are live.
-- **Test coverage:** `lib/scoring.js` is unit-tested, plus the pure helpers in two API handlers —
-  `validateAuditResponse` (`generate-audit.js`) and `getApiKeys`/`geminiWithRotation`
-  (`_gemini-client.js`). **88 tests total.** Components, the role apps, and the rest of the
-  serverless handlers are **not** yet tested (highest unresolved tech debt).
+- **Test coverage:** significantly expanded by code-audit pass (2026-06-26) + extra API tests
+  (2026-06-28). **158 tests** across 7 test files: `scoring.test.js` (pure scoring + question health
+  + malformed-input edge cases), `session.test.js` (localStorage session round-trips, unavailability
+  handling), `db.test.js` (Firestore calls mocked via `vi.hoisted`, tests composite key construction,
+  data shapes, legacy fallbacks, subscription mapping), `api/api-handlers.test.js` (`sanitize`,
+  `buildDigest`, `buildSystemInstruction`, `buildContents`), `api/generate-audit.test.js`
+  (`validateAuditResponse`), `api/_gemini-client.test.js` (`getApiKeys`, `geminiWithRotation`), and
+  `src/components/components.test.jsx` (jsdom, EmptyState/Footer/Nav pure-render + stateful Nav
+  tab/pill behaviour). Role-app integration tests remain the only untested area.
+- **Client fetch layer:** `src/lib/apiFetch.js` — shared helper for all `/api` calls (AbortController
+  timeout, SUPERVISOR_PASSCODE injection, Content-Type, error-body parsing). Used by Interview.jsx,
+  SpotTheError.jsx, Coaching.jsx, and SupervisorApp.jsx.
+- **Server secret validation:** `api/_auth.js` — shared `validateSecret(req, res)` helper used by
+  all 6 Gemini handlers; centralises the `GENERATION_SECRET || SUPERVISOR_PASSCODE` fallback logic.
 - **Known code quality items (non-blocking, from code review 2026-06-25):**
   - ~~Dead import `createRequire` in `server.js:6`~~ — **removed 2026-06-25**.
   - ~~`getApiKeys`/`callGemini`/`geminiWithRotation` duplicated across all `api/` handlers~~ —
@@ -1320,6 +1379,10 @@ stateDiagram-v2
   - ~~Interview score colours referenced undefined CSS vars (`--can-teach`/`--solid`/`--learning`)~~
     — **fixed 2026-06-26**: `--level-*` vars now defined in `:root`; colours come from
     `interviewScoreColor()` in `config.js`.
+  - ~~`SUPERVISOR_PASSCODE` duplicated across 6 handlers~~ — **extracted to `api/_auth.js` 2026-06-26**.
+  - ~~AbortController/fetch pattern duplicated across 4 client components~~ — **extracted to
+    `src/lib/apiFetch.js` 2026-06-26**.
+  - ~~Mixed `.then()` vs `async/await` in Coaching.jsx~~ — **standardised to `async/await` 2026-06-26**.
 - **Active integrations:** **Firebase / Firestore** (live) + **Gemini via Railway Express server**
   (`GEMINI_API_KEYS` set in Railway Variables; all 6 AI endpoints live).
 - **Deployment status:** **Railway** (Git-connected to `main`). Railway auto-deploys on push.
@@ -1331,9 +1394,11 @@ stateDiagram-v2
   now stored on every new result doc; legacy docs (pre-this-change) are skipped silently.
 - **Counts (today):** 6 domains (shared, dept-neutral) · 9 competencies · 18 Pediatrics + 14
   OB/GYN = **32** seed questions (bank grows in Firestore per dept) · 4 departments (**Pediatrics
-  + OB/GYN live**, 2 mockup) · **88** unit tests · **5** Firestore collections
+  + OB/GYN live**, 2 mockup) · **158** unit tests (7 test files) · **5** Firestore collections
   (`roster`, `results`, `questions`, `interviews`, `completions`) · **7** serverless functions
-  (`generate-scenarios`, `generate-coaching`, `interview-turn`, `grade-interview`, `generate-audit`, `coach-audit`, `health`).
+  (`generate-scenarios`, `generate-coaching`, `interview-turn`, `grade-interview`, `generate-audit`, `coach-audit`, `health`)
+  · **2** shared API helpers (`api/_gemini-client.js`, `api/_auth.js`) · **1** shared client
+  fetch helper (`src/lib/apiFetch.js`).
 
 ---
 
@@ -1490,14 +1555,16 @@ npm run test:watch   # run Vitest in watch mode
 - Heatmap intensity toggle (show % inside matrix cells).
 
 ### Technical Debt
-- `lib/scoring.js` is unit-tested (Vitest, **46 tests**). **Components, role apps, and all API
-  handlers are untested** — highest unresolved gap. Add component/integration tests next (jsdom +
-  Testing Library). API handler pure functions (`buildPrompt`, `buildContents`, `buildDigest`,
-  `buildMessages`) can be unit-tested without hitting the real Gemini API.
+- **130 tests** across 5 test files as of 2026-06-26. **Role-app integration tests** (`SupervisorApp`,
+  `NavigatorApp`, `App`) remain the only untested area — adding those is the next coverage priority.
+- ~~Components, role apps, and API handlers untested~~ — **resolved 2026-06-26**: component tests
+  (jsdom + Testing Library), API handler pure-function tests, and db.js mocked tests all added.
 - ~~`getApiKeys`/`callGemini`/`geminiWithRotation` duplicated 6×~~ — **extracted to
   `api/_gemini-client.js` 2026-06-26**; all 6 Gemini handlers import it.
 - ~~**Dead import:** `createRequire` imported in `server.js:6`~~ — removed 2026-06-25.
 - ~~**Redundant condition** in `SpotTheError.jsx:157`~~ — simplified 2026-06-26.
+- ~~`SUPERVISOR_PASSCODE` secret validation duplicated 6×~~ — **extracted to `api/_auth.js` 2026-06-26**.
+- ~~AbortController/fetch pattern duplicated 4×~~ — **extracted to `src/lib/apiFetch.js` 2026-06-26**.
 - No CI/CD (manual deploys via Railway push). A GitHub Actions step running `npm test` on PR
   would catch regressions.
 - Single large `styles.css` — fine for now; revisit if it keeps growing.
@@ -1612,9 +1679,8 @@ npm run test:watch   # run Vitest in watch mode
 ## 15. Current Priorities
 
 1. **Maintain this CLAUDE.md** on every change (highest standing priority).
-2. **Component/integration tests** — highest unresolved tech debt (jsdom + Testing Library). The
-   API handlers' pure functions (`buildContents`, `buildDigest`, `buildMessages`, `buildBody`,
-   `sanitize`) and the new `_gemini-client.js` reason-mapping are now easy unit-test targets.
+2. **Role-app integration tests** — the only remaining coverage gap. `SupervisorApp`, `NavigatorApp`,
+   and `App` are the untested area; adding those is the next coverage milestone.
 3. **Supervisor grade override** — allow supervisors to adjust the AI-given score on a saved practice session.
 
 **Active work items:**
@@ -1641,7 +1707,10 @@ npm run test:watch   # run Vitest in watch mode
 - ✅ OB/GYN live check (multi-department) — done 2026-06-26.
 - ✅ Question Health / SOP Drift flags — done 2026-06-26 (60 tests).
 - ✅ Navigator department switching UX — done 2026-06-26 (nav pill + clickable dept cards + all-dept pre-fetch).
-- Component/integration tests (jsdom + Testing Library) — next technical priority.
+- ✅ Code-audit pass: DRY cleanup + test coverage expansion — done 2026-06-26 (130 tests, 5 test files,
+  `apiFetch` helper, `_auth.js` helper, Vite v5.4.21 CVE patch, `scorePerDomain/scorePerCompetency`
+  default-args defensive fix).
+- Role-app integration tests (`SupervisorApp`, `NavigatorApp`, `App`) — next coverage priority.
 - Supervisor grade override for practice sessions — next interview feature.
 
 ---

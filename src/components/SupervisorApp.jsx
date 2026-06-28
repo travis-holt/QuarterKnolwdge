@@ -29,8 +29,8 @@ import {
 } from '../lib/db.js';
 import { isFirebaseConfigured } from '../lib/firebase.js';
 import { ALL_SEED_QUESTIONS } from '../data/questions.js';
-import { SUPERVISOR_PASSCODE } from '../data/config.js';
 import { DEFAULT_DEPT, isAssessed as deptIsAssessed, departmentName } from '../data/departments.js';
+import { apiFetch } from '../lib/apiFetch.js';
 
 // Views where the DeptBar appears. The Navigators tab is intentionally NOT here:
 // roster management is global (not department-scoped), so it always shows the
@@ -144,19 +144,10 @@ export default function SupervisorApp({ onSignOut }) {
   // go live until activated). The supervisor passcode gates the endpoint
   // (pilot-grade — see firestore.rules / CLAUDE.md security notes).
   const handleGenerate = async ({ domainId, count }) => {
-    const res = await fetch('/api/generate-scenarios', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ domainId, count, department: selectedDept, secret: SUPERVISOR_PASSCODE }),
-    });
-    if (!res.ok) {
-      const body = await res.json().catch(() => ({}));
-      throw new Error(body.error || `Generation failed (${res.status})`);
-    }
-    const { questions: drafts } = await res.json();
-    if (!drafts?.length) throw new Error('No scenarios returned.');
-    await saveDraftQuestions(drafts, 'gemini', selectedDept);
-    return drafts.length;
+    const data = await apiFetch('/api/generate-scenarios', { domainId, count, department: selectedDept }, 60_000);
+    if (!data.questions?.length) throw new Error('No scenarios returned.');
+    await saveDraftQuestions(data.questions, 'gemini', selectedDept);
+    return data.questions.length;
   };
 
   // Decide whether a data view should be replaced by an empty state.

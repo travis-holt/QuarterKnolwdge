@@ -22,8 +22,8 @@
 
 import { DOMAINS } from '../src/data/questions.js';
 import { sopContextFor } from './_sop-context.js';
-import { SUPERVISOR_PASSCODE } from '../src/data/config.js';
 import { getApiKeys, geminiWithRotation } from './_gemini-client.js';
+import { validateSecret } from './_auth.js';
 
 // ── Schema for the init call ──────────────────────────────────────────────────
 
@@ -59,7 +59,7 @@ SOP REFERENCE:
 ${sopContextFor(department)}`;
 }
 
-function buildSystemInstruction(callerName, scenario) {
+export function buildSystemInstruction(callerName, scenario) {
   return `You are ${callerName}, a patient or caregiver calling Aizer Health Pediatric Department's contact centre.
 
 Your situation: ${scenario}
@@ -84,7 +84,7 @@ Rules:
 // Converts client-side history [{role:'patient'|'navigator', text}] into Gemini's
 // alternating user/model format, prepending a synthetic BEGIN_CALL user turn so
 // the conversation can open with a model (patient) line.
-function buildContents(history, navigatorMessage) {
+export function buildContents(history, navigatorMessage) {
   const contents = [{ role: 'user', parts: [{ text: 'BEGIN_CALL' }] }];
   for (const turn of history) {
     contents.push({
@@ -104,7 +104,7 @@ export default async function handler(req, res) {
   const keys = getApiKeys();
   if (!keys.length) return res.status(500).json({ error: 'Gemini not configured on the server.' });
 
-  const secret = process.env.GENERATION_SECRET || SUPERVISOR_PASSCODE;
+  if (validateSecret(req, res)) return;
   const {
     domain: domainId,
     scenario,
@@ -112,10 +112,7 @@ export default async function handler(req, res) {
     history = [],
     navigatorMessage,
     department = 'pediatrics',
-    secret: provided,
   } = req.body ?? {};
-
-  if (provided !== secret) return res.status(401).json({ error: 'Not authorised.' });
 
   const domain = DOMAINS.find((d) => d.id === domainId);
   if (!domain) return res.status(400).json({ error: 'Unknown domain.' });

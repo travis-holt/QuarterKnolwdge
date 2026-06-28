@@ -1,7 +1,5 @@
 import { useState } from 'react';
-import { SEED_QUESTIONS, DOMAINS } from '../data/questions.js';
-
-const domainName = (id) => DOMAINS.find((d) => d.id === id)?.name ?? id;
+import { SEED_QUESTIONS, domainName } from '../data/questions.js';
 
 // Stepped flow: one scenario per step, with a progress bar. The taker can move
 // back and forth and must answer before advancing past each step.

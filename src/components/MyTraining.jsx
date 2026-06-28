@@ -1,8 +1,6 @@
-import { DOMAINS } from '../data/questions.js';
+import { domainName } from '../data/questions.js';
 import { LEVELS } from '../data/config.js';
 import { trainingForRow } from '../lib/scoring.js';
-
-const domainName = (id) => DOMAINS.find((d) => d.id === id)?.name ?? id;
 
 // The navigator's own training plan — their auto-assigned modules, each opening
 // the full lesson content. Each assigned domain also shows a "Practice Scenario"

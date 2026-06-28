@@ -12,8 +12,9 @@
 
 import { COMPETENCIES, competencyName } from '../src/data/competencies.js';
 import { DOMAINS } from '../src/data/questions.js';
-import { SUPERVISOR_PASSCODE, THRESHOLDS } from '../src/data/config.js';
+import { THRESHOLDS } from '../src/data/config.js';
 import { getApiKeys, geminiWithRotation } from './_gemini-client.js';
+import { validateSecret } from './_auth.js';
 
 const domainName = (id) => DOMAINS.find((d) => d.id === id)?.name ?? id;
 
@@ -34,7 +35,7 @@ function buildResponseSchema(weakComps) {
 // Digest of only the questions the navigator answered below 100 pts — these
 // are the learning moments that ground the coaching. Capped at 10 to stay
 // within the token budget.
-function buildDigest(questions, answers) {
+export function buildDigest(questions, answers) {
   return questions
     .map((q) => {
       const chosenId = answers?.[q.id];
@@ -100,9 +101,8 @@ export default async function handler(req, res) {
   const keys = getApiKeys();
   if (keys.length === 0) return res.status(500).json({ error: 'Coaching is not configured on the server.' });
 
-  const secret = process.env.GENERATION_SECRET || SUPERVISOR_PASSCODE;
-  const { answers, questions, competencyScores, name, secret: provided } = req.body ?? {};
-  if (provided !== secret) return res.status(401).json({ error: 'Not authorised.' });
+  if (validateSecret(req, res)) return;
+  const { answers, questions, competencyScores, name } = req.body ?? {};
 
   if (!answers || !questions || !competencyScores || !name) {
     return res.status(400).json({ error: 'Missing required fields.' });

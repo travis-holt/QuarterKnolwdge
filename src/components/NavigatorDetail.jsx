@@ -1,12 +1,10 @@
 import { useState, useEffect } from 'react';
-import { DOMAINS } from '../data/questions.js';
+import { DOMAINS, domainName } from '../data/questions.js';
 import { COMPETENCIES, competencyName } from '../data/competencies.js';
 import { DEPARTMENTS, isAssessed } from '../data/departments.js';
 import { LEVELS, interviewScoreColor } from '../data/config.js';
 import { findRow, mentorSuggestions, trainingForRow } from '../lib/scoring.js';
 import { getInterviews } from '../lib/db.js';
-
-const domainName = (id) => DOMAINS.find((d) => d.id === id)?.name ?? id;
 
 function formatDate(ts) {
   if (!ts) return '—';

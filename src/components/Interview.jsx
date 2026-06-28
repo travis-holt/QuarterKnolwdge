@@ -1,7 +1,8 @@
 import { useState, useRef, useEffect } from 'react';
 import { DOMAINS } from '../data/questions.js';
-import { SUPERVISOR_PASSCODE, interviewScoreColor } from '../data/config.js';
+import { interviewScoreColor } from '../data/config.js';
 import { saveInterview, updateInterviewGrade } from '../lib/db.js';
+import { apiFetch } from '../lib/apiFetch.js';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Interview — AI roleplay practice for navigators.
@@ -47,25 +48,7 @@ export default function Interview({ navigatorId, name, department = 'pediatrics'
 
   // ── API helpers ─────────────────────────────────────────────────────────────
 
-  const callTurnApi = async (body, timeoutMs) => {
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), timeoutMs);
-    try {
-      const res = await fetch('/api/interview-turn', {
-        method: 'POST',
-        signal: controller.signal,
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ...body, secret: SUPERVISOR_PASSCODE }),
-      });
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({}));
-        throw new Error(err.error || `Request failed (${res.status})`);
-      }
-      return await res.json();
-    } finally {
-      clearTimeout(timeout);
-    }
-  };
+  const callTurnApi = (body, timeoutMs) => apiFetch('/api/interview-turn', body, timeoutMs);
 
   // ── Start ────────────────────────────────────────────────────────────────────
 
@@ -128,39 +111,24 @@ export default function Interview({ navigatorId, name, department = 'pediatrics'
     }
 
     setPhase('grading');
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), GRADE_TIMEOUT_MS);
     try {
-      const res = await fetch('/api/grade-interview', {
-        method: 'POST',
-        signal: controller.signal,
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          domain: domainId,
-          department,
-          scenario,
-          transcript,
-          name,
-          secret: SUPERVISOR_PASSCODE,
-        }),
-      });
-      if (res.ok) {
-        const data = await res.json();
-        if (data.grade) {
-          setGrade(data.grade);
-          // Write grade back to the Firestore doc so supervisors can see it too.
-          if (docId) {
-            updateInterviewGrade(docId, data.grade).catch((err) =>
-              console.error('Failed to save grade to Firestore:', err)
-            );
-          }
+      const data = await apiFetch(
+        '/api/grade-interview',
+        { domain: domainId, department, scenario, transcript, name },
+        GRADE_TIMEOUT_MS,
+      );
+      if (data.grade) {
+        setGrade(data.grade);
+        // Write grade back to the Firestore doc so supervisors can see it too.
+        if (docId) {
+          updateInterviewGrade(docId, data.grade).catch((err) =>
+            console.error('Failed to save grade to Firestore:', err)
+          );
         }
       }
     } catch (err) {
       // Silent — show the reviewed screen with whatever grade we have (null = failed).
       console.error('Failed to grade interview:', err);
-    } finally {
-      clearTimeout(timeout);
     }
 
     setPhase('reviewed');
