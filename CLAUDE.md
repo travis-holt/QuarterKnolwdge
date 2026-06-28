@@ -1252,6 +1252,20 @@ stateDiagram-v2
   api/generate-coaching.js` → OK; `node --check server.js` → OK.
 - **Status:** Complete. Deploys on next push to `main`.
 
+### 2026-06-28 — Branding integration: Logo and favicon (UI only)
+- **What changed:** Replaced the placeholder gradient block in the nav bar with a high-end, animated
+  icon-only logo that strictly adheres to the "warm ivory + clay" identity (`#c4744f` and `#23201b`).
+  - Generated a text-less crucible/spark icon to match the SaaS aesthetic.
+  - Sourced the icon as both `public/logo.png` and `public/favicon.png`, and added a favicon `<link>`
+    to `index.html`.
+  - Updated `Nav.jsx` and `Start.jsx` to render the `<img className="nav__logo">` and `start__logo`.
+  - Added `@keyframes logo-float` to `styles.css`, giving the icon a gentle hover animation and a
+    dynamic drop-shadow glow. Used `mix-blend-mode: multiply` so the logo's background blends
+    seamlessly with the warm ivory (`#f4eee1`) canvas.
+- **Files affected:** `public/logo.png`, `public/favicon.png`, `index.html`, `src/styles.css`,
+  `src/components/Nav.jsx`, `src/components/Start.jsx`.
+- **Status:** Complete.
+
 ---
 
 ## 8. Current System State
