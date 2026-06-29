@@ -620,6 +620,20 @@ stateDiagram-v2
 
 ## 7. Development History
 
+### 2026-06-29 — Fix: navigator duplicated in supervisor cross-department strip
+- **What changed:** The "Strength by department" strip (`departmentMatrix`) in the supervisor
+  Overview listed a navigator who took two departments as **two separate rows** (one per result
+  doc). Root cause: `SupervisorApp` mapped *each* `activeResults` doc into its own `departmentMatrix`
+  sample, and a navigator with two dept checks has two result docs (composite keys
+  `${navigatorId}__pediatrics` and `${navigatorId}__obgyn`). Fixed by grouping `activeResults` by
+  `navigatorId` and merging each navigator's dept scores into a single sample before calling
+  `departmentMatrix` — so one navigator = one row with all their department columns populated.
+- **Scope note:** The main capability Matrix (`deptRows`/`buildMatrixRows`) was already correct —
+  it filters to one department, so it never double-listed. Only the cross-department strip was affected.
+- **Files affected:** `src/components/SupervisorApp.jsx`.
+- **Verification:** `npm test` → 158 passing; `npm run build` → clean.
+- **Status:** Complete.
+
 ### 2026-06-23 — Initial prototype build
 - **What changed:** Scaffolded Vite+React app; data layer (`config`, `questions`, `navigators`);
   `scoring.js`; components Start/Check/Results/Matrix/Nav; full stylesheet; README.
