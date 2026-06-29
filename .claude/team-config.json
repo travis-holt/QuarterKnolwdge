@@ -1,0 +1,121 @@
+{
+  "_comment": "Knowledge Check project config. Real values — no placeholders.",
+
+  "project": {
+    "name": "Knowledge Check",
+    "short_name": "KCK",
+    "repo": "github.com/travis-holt/QuarterKnolwdge",
+    "domain": "healthcare / patient navigator training",
+    "github_org": "travis-holt",
+    "company": "personal project"
+  },
+
+  "workflow": {
+    "main_branch": "main",
+    "branch_format": "type/short-description",
+    "commit_format": "type(scope): description",
+    "merge_strategy": "rebase-and-merge",
+    "branch_types": ["feat", "fix", "chore", "docs", "test"],
+    "commit_types": ["feat", "fix", "refactor", "test", "docs", "chore"]
+  },
+
+  "quality_gates": {
+    "unit_tests": {
+      "command": "npm test",
+      "required": true,
+      "current_count": 158,
+      "stage": "pre-commit"
+    },
+    "build": {
+      "command": "npm run build",
+      "required": true,
+      "stage": "pre-commit"
+    },
+    "api_syntax": {
+      "command": "node --check api/*.js",
+      "required": true,
+      "when": "any api/ file changed",
+      "stage": "pre-commit"
+    }
+  },
+
+  "agents": {
+    "fe-developer": {
+      "name": "Frontend Developer",
+      "config_file": ".claude/agents/fe-developer.md",
+      "category": "implementation",
+      "description": "React/Vite/CSS UI implementation, scoring logic, component work",
+      "validation_command": "npm test && npm run build"
+    },
+    "qas": {
+      "name": "Quality Assurance Specialist",
+      "config_file": ".claude/agents/qas.md",
+      "category": "quality",
+      "description": "Test coverage, acceptance criteria validation, Vitest suite",
+      "gate_owner": true,
+      "exit_state": "QAS Approved — tests green, ACs verified, no regressions"
+    },
+    "system-architect": {
+      "name": "System Architect",
+      "config_file": ".claude/agents/system-architect.md",
+      "category": "quality",
+      "description": "Pattern validation, architectural review, security sanity check",
+      "exit_state": "Stage 1 Approved — patterns correct, CLAUDE.md will be updated"
+    },
+    "tech-writer": {
+      "name": "Technical Writer",
+      "config_file": ".claude/agents/tech-writer.md",
+      "category": "quality",
+      "description": "CLAUDE.md maintenance, history entries, inline docs"
+    },
+    "rte": {
+      "name": "Release Train Engineer",
+      "config_file": ".claude/agents/rte.md",
+      "category": "release",
+      "description": "PR creation, Railway deploy monitoring, final push",
+      "exit_state": "PR created. Railway auto-deploys on merge."
+    }
+  },
+
+  "review_stages": {
+    "stage_1": {
+      "name": "System Architect review",
+      "focus": "Pattern and architectural compliance"
+    },
+    "stage_2": {
+      "name": "HITL — owner merge",
+      "reviewer": "travis-holt",
+      "focus": "Final merge authority"
+    }
+  },
+
+  "infrastructure": {
+    "hosting": "Railway (Express + Vite build, auto-deploys on push to main)",
+    "database": "Cloud Firestore (Spark free tier)",
+    "ai": "Gemini 2.5 Flash via GEMINI_API_KEYS Railway Variable",
+    "health_endpoint": "/api/health",
+    "env_vars": {
+      "build_time": ["VITE_FIREBASE_API_KEY", "VITE_FIREBASE_AUTH_DOMAIN", "VITE_FIREBASE_PROJECT_ID", "VITE_FIREBASE_STORAGE_BUCKET", "VITE_FIREBASE_MESSAGING_SENDER_ID", "VITE_FIREBASE_APP_ID"],
+      "server_only": ["GEMINI_API_KEYS", "GENERATION_SECRET"]
+    }
+  },
+
+  "paths": {
+    "project_knowledge": "CLAUDE.md",
+    "agent_configs": ".claude/agents/",
+    "skills": ".claude/skills/",
+    "commands": ".claude/commands/",
+    "scoring_logic": "src/lib/scoring.js",
+    "db_layer": "src/lib/db.js",
+    "api_handlers": "api/",
+    "components": "src/components/",
+    "data_modules": "src/data/",
+    "styles": "src/styles.css"
+  },
+
+  "documentation": {
+    "single_source_of_truth": "CLAUDE.md",
+    "mandatory_always": ["CLAUDE.md"],
+    "update_rule": "No change is done until CLAUDE.md §7 has a dated history entry and §8 reflects current state"
+  }
+}

@@ -1,0 +1,65 @@
+{
+  "hooks": {
+    "UserPromptSubmit": [
+      {
+        "matcher": ".*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "BRANCH=$(git branch --show-current 2>/dev/null); if [ \"$BRANCH\" = 'main' ]; then echo '⚠️  REMINDER: You are on main. Create a feature branch before making changes: git checkout -b feat/description'; fi",
+            "description": "Warn when working directly on main"
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "Bash.*git\\s+commit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "echo '📝 REMINDER: Commit format: type(scope): description\\nTypes: feat fix refactor test docs chore\\nAlso update CLAUDE.md §7 before this session ends.'",
+            "description": "Remind about commit format and CLAUDE.md"
+          }
+        ]
+      },
+      {
+        "matcher": "Bash.*git\\s+push",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "BRANCH=$(git branch --show-current 2>/dev/null); if [ \"$BRANCH\" = 'main' ]; then echo '❌ BLOCKER: Cannot push directly to main. Create a feature branch first.'; exit 1; fi",
+            "description": "Block direct push to main"
+          },
+          {
+            "type": "command",
+            "command": "if git status --porcelain | grep -q .; then echo '❌ BLOCKER: Uncommitted changes. Commit before pushing.'; exit 1; fi",
+            "description": "Block push with uncommitted changes"
+          }
+        ]
+      },
+      {
+        "matcher": "Bash.*gh\\s+pr\\s+create",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "echo '📋 REMINDER: Run /pre-pr first to verify all gates pass before creating the PR.'",
+            "description": "Remind to run /pre-pr before creating a PR"
+          }
+        ]
+      }
+    ],
+    "SessionEnd": [
+      {
+        "matcher": ".*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "git status --porcelain | grep -q . && echo '⚠️  Session ending with uncommitted changes. Run /end-work to finish cleanly.' || echo '✅ Clean session end — no uncommitted changes.'",
+            "description": "Check for uncommitted work at session end"
+          }
+        ]
+      }
+    ]
+  }
+}
