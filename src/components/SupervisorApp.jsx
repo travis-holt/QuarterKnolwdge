@@ -110,12 +110,16 @@ export default function SupervisorApp({ onSignOut }) {
   const deptRows = buildMatrixRows(deptResults, null);
   const rows = isAssessedDept ? deptRows : [];
 
-  // Cross-department strip: one nav per roster row, their score in whichever dept.
+  // Cross-department strip: one row per navigator, merging all their dept results
+  // (a navigator who took two departments has two result docs — merge, don't split).
   const deptMatrix = departmentMatrix(
-    activeResults.map((r) => ({
-      name: r.name,
-      departments: { [r.department ?? 'pediatrics']: r.scores },
-    })),
+    Object.values(
+      activeResults.reduce((acc, r) => {
+        const sample = (acc[r.navigatorId] ??= { name: r.name, departments: {} });
+        sample.departments[r.department ?? 'pediatrics'] = r.scores;
+        return acc;
+      }, {})
+    ),
     null
   );
 

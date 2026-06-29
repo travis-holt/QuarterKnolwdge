@@ -10,7 +10,8 @@
 > [§8 Current System State](#8-current-system-state) and [§15 Current Priorities](#15-current-priorities)
 > accurate at all times.
 >
-> **Last updated:** 2026-06-29 (Rename back to Knowledge Check — Cruciby branding removed) ·
+> **Last updated:** 2026-06-29 (SAFe Agentic Workflow harness installed in `.claude/` — agent
+> tooling, not an app change) ·
 > **Doc maintainer:** Claude (AI agent) + repo owner. Assumptions are explicitly marked **[ASSUMPTION]**.
 
 ---
@@ -619,6 +620,20 @@ stateDiagram-v2
 
 ## 7. Development History
 
+### 2026-06-29 — Fix: navigator duplicated in supervisor cross-department strip
+- **What changed:** The "Strength by department" strip (`departmentMatrix`) in the supervisor
+  Overview listed a navigator who took two departments as **two separate rows** (one per result
+  doc). Root cause: `SupervisorApp` mapped *each* `activeResults` doc into its own `departmentMatrix`
+  sample, and a navigator with two dept checks has two result docs (composite keys
+  `${navigatorId}__pediatrics` and `${navigatorId}__obgyn`). Fixed by grouping `activeResults` by
+  `navigatorId` and merging each navigator's dept scores into a single sample before calling
+  `departmentMatrix` — so one navigator = one row with all their department columns populated.
+- **Scope note:** The main capability Matrix (`deptRows`/`buildMatrixRows`) was already correct —
+  it filters to one department, so it never double-listed. Only the cross-department strip was affected.
+- **Files affected:** `src/components/SupervisorApp.jsx`.
+- **Verification:** `npm test` → 158 passing; `npm run build` → clean.
+- **Status:** Complete.
+
 ### 2026-06-23 — Initial prototype build
 - **What changed:** Scaffolded Vite+React app; data layer (`config`, `questions`, `navigators`);
   `scoring.js`; components Start/Check/Results/Matrix/Nav; full stylesheet; README.
@@ -1058,6 +1073,55 @@ stateDiagram-v2
     rules from the 2026-06-28 commit — harmless but can be cleaned up.
 - **Files affected:** `index.html`, `src/components/{Nav,Footer,Start}.jsx`, `CLAUDE.md`.
 - **Verification:** `npm run build` → clean.
+- **Status:** Complete.
+
+### 2026-06-29 — ponytail agent tooling installed (local only — NOT an app change)
+- **What changed:** Installed the **ponytail** token-reduction plugin
+  (github.com/DietrichGebert/ponytail) for the repo owner's Claude Code environment. **No repo/app
+  file changed** — it lives entirely in `~/.claude/` (runtime in `~/.claude/plugins/ponytail/`,
+  hook wiring in `~/.claude/settings.json`). The app's `.gitignore` already treats ponytail as
+  "agent tooling, not part of the app." Documented here only so future agents know it's active.
+  - **Mechanism:** a `SessionStart` hook injects ponytail's "laziness ladder" ruleset (favour
+    reuse / stdlib / one-liners over new abstractions) into context **autonomously every session**
+    — no trigger needed; default mode `full`. A `UserPromptSubmit` hook tracks mode.
+  - **Control (typed as a normal prompt):** `/ponytail lite|full|ultra|off`, or `stop ponytail`
+    / `normal mode` to disable. Statusline shows `[PONYTAIL:<MODE>]`.
+- **Files affected:** none in-repo (this §7 note + the §14 bullet are the only repo edits).
+- **Status:** Complete. See also the `ponytail-installed` agent memory.
+
+### 2026-06-29 — SAFe Agentic Workflow harness installed (in-repo `.claude/`, tailored to this stack)
+- **What changed:** Installed a tailored adaptation of the **SAFe Agentic Workflow** harness
+  (github.com/bybren-llc/safe-agentic-workflow) into the repo's `.claude/` directory. This is
+  **agent-workflow tooling, not an app change** — no `src/`, `api/`, or build file was touched.
+  SAW ships for a Linear + Docker + Postgres-RLS + Stripe + multi-reviewer team stack; every piece
+  was rewritten for this project's actual stack (React/Vite + Firebase + Railway + Vitest, solo dev,
+  `main` branch, gates `npm test` / `npm run build`). ~40 irrelevant SAW files (Linear sync, Docker
+  deploy, RLS/Stripe skills, remote-rollback, etc.) were intentionally **not** copied.
+  - **Commands (8)** in `.claude/commands/`: `start-work`, `end-work`, `pre-pr`, `check-workflow`,
+    `quick-fix`, `retro`, `search-pattern`, `update-docs` — all reference npm gates and `main`, no Linear.
+  - **Agents (5)** in `.claude/agents/`: `fe-developer`, `qas`, `system-architect`, `tech-writer`,
+    `rte` — grounded in this codebase's modules, conventions, and the CLAUDE.md-update rule.
+  - **Skills (4)** in `.claude/skills/`: `safe-workflow`, `pattern-discovery`, `testing-patterns`,
+    `git-advanced` — added alongside the existing BizOps/dev skills already in that dir (untouched).
+    `.gitignore` line 9 (`skills/`) normally keeps skills out of git by repo convention, but for
+    codespace-migration safety they were **force-added** (`git add -f .claude/skills`) in a follow-up
+    commit, so all 57 skill files (the 4 harness skills + existing BizOps/dev packs) are now committed.
+  - **Config:** `.claude/team-config.json` (real values, no placeholders), `.claude/settings.json`
+    (guardrail hooks: warn on `main`, block push-to-`main`, block push with uncommitted changes,
+    remind `/pre-pr` before `gh pr create`, session-end uncommitted-work check), `.claude/README.md`.
+  - **Incidental fix:** `src/components/components.test.jsx` Footer test still asserted the old
+    "Cruciby" brand name (stale since the 2026-06-29 rename) — updated to "Knowledge Check".
+  - **Sensitive files excluded + gitignored:** `roo-code-settings.json` (holds a live Cloudflare
+    API key) and `OB GYN SOP.pdf` / `Pediatrics_SOP_Updated.pdf` (likely patient/provider PII) were
+    **not** committed — this is a public repo. All three were added to `.gitignore` and must be
+    preserved by manual download before the codespace expires. (`SOP Guide.pdf` was already tracked
+    pre-session and is left as-is.)
+- **Files affected:** new `.claude/{README.md,team-config.json,settings.json}`,
+  `.claude/commands/*.md` (8), `.claude/agents/*.md` (5), `.claude/skills/**` (4 harness skills +
+  existing packs, force-added); edited `.gitignore`,
+  `src/components/components.test.jsx` (Cruciby→Knowledge Check), `CLAUDE.md`.
+- **Delivery:** branch `chore/install-saw-harness` → PR #1 (3 commits: harness, skills, gitignore).
+- **Verification:** `npm test` → **158 passing** (Footer test fixed); harness is config/docs only.
 - **Status:** Complete.
 
 ### 2026-06-26 — Remove Gemini/AI branding from UI
@@ -1639,6 +1703,20 @@ npm run test:watch   # run Vitest in watch mode
 ## 14. AI Agent Context
 
 **Read this before changing anything.**
+
+- **Active tooling (not part of the app):** the repo owner runs **ponytail** (token-reduction
+  "lazy senior dev" plugin) in their Claude Code environment — installed user-level in `~/.claude/`,
+  not in this repo. It auto-injects a "favour reuse / stdlib / one-liners over new abstractions"
+  ruleset every session (default mode `full`). Adjust via `/ponytail lite|full|ultra|off` or disable
+  with `stop ponytail`. It shapes *how* code is written here; it changes nothing about the app.
+
+- **In-repo harness (`.claude/`):** this repo carries a tailored **SAFe Agentic Workflow** harness
+  (commands, agents, skills, guardrail hooks) — see the 2026-06-29 §7 entry and
+  [.claude/README.md](.claude/README.md). It's workflow scaffolding for AI sessions, not app code.
+  Key touch-points: `/start-work`, `/pre-pr`, `/end-work` commands; `fe-developer`/`qas`/
+  `tech-writer`/`system-architect`/`rte` agents; auto-loaded `safe-workflow`/`pattern-discovery`/
+  `testing-patterns`/`git-advanced` skills; and hooks in `.claude/settings.json` that block
+  push-to-`main` and push-with-uncommitted-changes. All gates are `npm test` + `npm run build`.
 
 - **Project conventions:**
   - All tunable values live in [src/data/config.js](src/data/config.js). Prefer editing data files

@@ -36,7 +36,7 @@ describe('EmptyState', () => {
 describe('Footer', () => {
   it('renders the brand name', () => {
     render(<Footer />);
-    expect(screen.getByText(/Cruciby/)).toBeInTheDocument();
+    expect(screen.getByText(/Knowledge Check/)).toBeInTheDocument();
   });
 
   it('renders inside a <footer> element', () => {

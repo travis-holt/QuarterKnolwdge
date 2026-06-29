@@ -9,3 +9,8 @@ dist
 skills/
 AGENTS.md
 gemini-extension.json
+
+# Sensitive — never commit to this public repo (live API key / patient PII)
+roo-code-settings.json
+OB GYN SOP.pdf
+Pediatrics_SOP_Updated.pdf
