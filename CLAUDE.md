@@ -295,6 +295,8 @@ training assignments.
   - `updateInterviewGrade(id, grade)` added to [src/lib/db.js](src/lib/db.js).
 - **Status:** Complete (Phase 1 roleplay + Phase 2 grading). Supervisor override is **Planned**.
 - **Notes:** Scores are advisory — they do not feed `scorePerDomain` or the capability matrix.
+  The navigator no longer picks a domain at setup (removed 2026-06-29 to cut choice friction);
+  `startInterview` picks a random domain just to anchor the AI scenario, then goes straight to the call.
 - **Supervisor access:** `SupervisorApp` passes `navigatorId` to `NavigatorDetail`. The "Practice
   sessions" panel shows each saved session; the header row now includes the score badge (color-coded).
   Expanding a session shows the grade breakdown (summary, what went well, areas to develop) above the
@@ -619,6 +621,20 @@ stateDiagram-v2
 ---
 
 ## 7. Development History
+
+### 2026-06-29 — Practice call: remove the domain picker (choice-friction cleanup)
+- **What changed:** The Practice call (`Interview.jsx`) setup screen used to make the navigator pick
+  one of 6 domains before starting. Removed the picker — the setup screen is now just a one-line
+  description + "Start practice call". `startInterview` picks a random domain client-side purely to
+  anchor the AI scenario (the API still requires a valid `domainId`; practice scores are advisory and
+  never feed the matrix, so the specific domain is cosmetic). First of a planned set of
+  choice-friction cleanups requested by the owner.
+- **Scope note:** "Spot the Error" was intentionally left alone — its domain comes from the
+  navigator's training plan context (a "Practice scenario" button per assigned weak domain), which is
+  meaningful, not a free picker.
+- **Files affected:** `src/components/Interview.jsx`, `CLAUDE.md`.
+- **Verification:** `npm run build` → clean.
+- **Status:** Complete.
 
 ### 2026-06-29 — Fix: navigator duplicated in supervisor cross-department strip
 - **What changed:** The "Strength by department" strip (`departmentMatrix`) in the supervisor
