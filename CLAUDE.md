@@ -1043,14 +1043,19 @@ stateDiagram-v2
   `node --check` on all 6 Gemini handlers + `_auth.js` → OK.
 - **Status:** Complete.
 
-### 2026-06-29 — Rename back to Knowledge Check (Cruciby branding removed)
-- **What changed:** Reverted the 2026-06-26 Cruciby rebrand. The displayed product name is now
-  **Knowledge Check** everywhere in the UI. The git repo name (`QuarterKnolwdge`) is unchanged.
-  - `index.html` — `<title>` → `Knowledge Check`.
-  - `Nav.jsx` — nav brand button → `Knowledge Check`.
+### 2026-06-29 — Rename back to Knowledge Check; logo removed
+- **What changed:** Reverted the 2026-06-26 Cruciby rebrand and the 2026-06-28 logo addition.
+  The displayed product name is **Knowledge Check** everywhere; no logo image is rendered. The
+  git repo name (`QuarterKnolwdge`) is unchanged. During the push a rebase conflict was resolved:
+  the remote had added a favicon link alongside the Cruciby title — the favicon was kept, the name
+  was changed.
+  - `index.html` — `<title>` → `Knowledge Check`; favicon `<link>` retained from remote commit.
+  - `Nav.jsx` — logo `<img>` removed; brand button text → `Knowledge Check`.
   - `Footer.jsx` — footer line → `Knowledge Check` (tagline removed).
-  - `Start.jsx` — eyebrow → `Knowledge Check` (tagline removed).
+  - `Start.jsx` — logo `<img>` removed; eyebrow → `Knowledge Check` (tagline removed).
   - `CLAUDE.md` — header, §1, §7 rebrand entry updated.
+  - **Note:** `styles.css` retains dead `@keyframes logo-float` / `.start__logo` / `.nav__logo`
+    rules from the 2026-06-28 commit — harmless but can be cleaned up.
 - **Files affected:** `index.html`, `src/components/{Nav,Footer,Start}.jsx`, `CLAUDE.md`.
 - **Verification:** `npm run build` → clean.
 - **Status:** Complete.
@@ -1315,19 +1320,12 @@ stateDiagram-v2
   api/generate-coaching.js` → OK; `node --check server.js` → OK.
 - **Status:** Complete. Deploys on next push to `main`.
 
-### 2026-06-28 — Branding integration: Logo and favicon (UI only)
-- **What changed:** Replaced the placeholder gradient block in the nav bar with a high-end, animated
-  icon-only logo that strictly adheres to the "warm ivory + clay" identity (`#c4744f` and `#23201b`).
-  - Generated a text-less crucible/spark icon to match the SaaS aesthetic.
-  - Sourced the icon as both `public/logo.png` and `public/favicon.png`, and added a favicon `<link>`
-    to `index.html`.
-  - Updated `Nav.jsx` and `Start.jsx` to render the `<img className="nav__logo">` and `start__logo`.
-  - Added `@keyframes logo-float` to `styles.css`, giving the icon a gentle hover animation and a
-    dynamic drop-shadow glow. Used `mix-blend-mode: multiply` so the logo's background blends
-    seamlessly with the warm ivory (`#f4eee1`) canvas.
-- **Files affected:** `public/logo.png`, `public/favicon.png`, `index.html`, `src/styles.css`,
-  `src/components/Nav.jsx`, `src/components/Start.jsx`.
-- **Status:** Complete.
+### 2026-06-28 — Branding integration: Logo and favicon *(logo reverted 2026-06-29)*
+- **What changed:** Added a favicon (`public/favicon.png`) + logo (`public/logo.png`) for the
+  Cruciby branding. Favicon link added to `index.html`; logo `<img>` tags added to `Nav.jsx` and
+  `Start.jsx`; `@keyframes logo-float` + `.start__logo`/`.nav__logo` CSS added to `styles.css`.
+- **Status:** Partially reverted 2026-06-29 — favicon retained; logo `<img>` tags removed from
+  Nav.jsx and Start.jsx; `public/logo.png` and the float CSS remain in the repo (orphaned).
 
 ---
 
@@ -1372,6 +1370,10 @@ stateDiagram-v2
   SpotTheError.jsx, Coaching.jsx, and SupervisorApp.jsx.
 - **Server secret validation:** `api/_auth.js` — shared `validateSecret(req, res)` helper used by
   all 6 Gemini handlers; centralises the `GENERATION_SECRET || SUPERVISOR_PASSCODE` fallback logic.
+- **Branding:** product name is **Knowledge Check** everywhere in the UI. `public/favicon.png`
+  is active (linked in `index.html`). `public/logo.png` exists in the repo but is no longer
+  referenced. `styles.css` has orphaned `.start__logo`/`.nav__logo`/`logo-float` rules from
+  the 2026-06-28 commit — safe to delete in a future cleanup pass.
 - **Known code quality items (non-blocking, from code review 2026-06-25):**
   - ~~Dead import `createRequire` in `server.js:6`~~ — **removed 2026-06-25**.
   - ~~`getApiKeys`/`callGemini`/`geminiWithRotation` duplicated across all `api/` handlers~~ —
