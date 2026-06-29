@@ -1089,19 +1089,24 @@ stateDiagram-v2
     `rte` — grounded in this codebase's modules, conventions, and the CLAUDE.md-update rule.
   - **Skills (4)** in `.claude/skills/`: `safe-workflow`, `pattern-discovery`, `testing-patterns`,
     `git-advanced` — added alongside the existing BizOps/dev skills already in that dir (untouched).
-    **Local-only:** `.gitignore` line 9 (`skills/`, under "Agent tooling — not part of the app")
-    keeps all skills out of git by repo convention, so these 4 are not committed — they auto-load
-    locally. The committed commands/agents reference them; a fresh clone won't have them unless
-    `git add -f` is used.
+    `.gitignore` line 9 (`skills/`) normally keeps skills out of git by repo convention, but for
+    codespace-migration safety they were **force-added** (`git add -f .claude/skills`) in a follow-up
+    commit, so all 57 skill files (the 4 harness skills + existing BizOps/dev packs) are now committed.
   - **Config:** `.claude/team-config.json` (real values, no placeholders), `.claude/settings.json`
     (guardrail hooks: warn on `main`, block push-to-`main`, block push with uncommitted changes,
     remind `/pre-pr` before `gh pr create`, session-end uncommitted-work check), `.claude/README.md`.
   - **Incidental fix:** `src/components/components.test.jsx` Footer test still asserted the old
     "Cruciby" brand name (stale since the 2026-06-29 rename) — updated to "Knowledge Check".
+  - **Sensitive files excluded + gitignored:** `roo-code-settings.json` (holds a live Cloudflare
+    API key) and `OB GYN SOP.pdf` / `Pediatrics_SOP_Updated.pdf` (likely patient/provider PII) were
+    **not** committed — this is a public repo. All three were added to `.gitignore` and must be
+    preserved by manual download before the codespace expires. (`SOP Guide.pdf` was already tracked
+    pre-session and is left as-is.)
 - **Files affected:** new `.claude/{README.md,team-config.json,settings.json}`,
-  `.claude/commands/*.md` (8), `.claude/agents/*.md` (5), `.claude/skills/{safe-workflow,
-  pattern-discovery,testing-patterns,git-advanced}/SKILL.md` (4); edited
+  `.claude/commands/*.md` (8), `.claude/agents/*.md` (5), `.claude/skills/**` (4 harness skills +
+  existing packs, force-added); edited `.gitignore`,
   `src/components/components.test.jsx` (Cruciby→Knowledge Check), `CLAUDE.md`.
+- **Delivery:** branch `chore/install-saw-harness` → PR #1 (3 commits: harness, skills, gitignore).
 - **Verification:** `npm test` → **158 passing** (Footer test fixed); harness is config/docs only.
 - **Status:** Complete.
 
