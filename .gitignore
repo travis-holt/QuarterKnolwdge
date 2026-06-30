@@ -7,7 +7,6 @@ dist
 .agents/
 .claude-plugin/
 skills/
-AGENTS.md
 gemini-extension.json
 
 # Sensitive — never commit to this public repo (live API key / patient PII)

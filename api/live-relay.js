@@ -9,7 +9,8 @@
 // lives), so the client only sends mic audio + the scenario it was given.
 //
 // Protocol (all JSON over the browser socket):
-//   client → relay   { type:'start', secret, callerName, scenario }   (first msg)
+//   client → relay   { type:'start', secret, callerName, scenario,
+//                      department, openingLine }                      (first msg)
 //                    { type:'audio', data }   base64 PCM16 mono @16kHz mic frames
 //   relay  → client  { type:'ready' }                                 (call can begin)
 //                    { type:'audio', data }   base64 PCM16 mono @24kHz caller voice
@@ -91,7 +92,12 @@ function bridge(client) {
           model: `models/${LIVE_MODEL}`,
           generationConfig: { responseModalities: ['AUDIO'] },
           systemInstruction: {
-            parts: [{ text: buildSystemInstruction(startMsg.callerName || 'the caller', startMsg.scenario || '') }],
+            parts: [{
+              text: buildSystemInstruction(startMsg.callerName || 'the caller', startMsg.scenario || '', {
+                department: startMsg.department || 'pediatrics',
+                openingLine: startMsg.openingLine || '',
+              }),
+            }],
           },
           inputAudioTranscription: {},
           outputAudioTranscription: {},

@@ -10,7 +10,7 @@
 > [§8 Current System State](#8-current-system-state) and [§15 Current Priorities](#15-current-priorities)
 > accurate at all times.
 >
-> **Last updated:** 2026-06-30 (bugfix pass: dev paths/action center/sequence auth/docs) ·
+> **Last updated:** 2026-06-30 (Live voice call freshness: opener + dept-aware prompt) ·
 > **Doc maintainer:** Claude (AI agent) + repo owner. Assumptions are explicitly marked **[ASSUMPTION]**.
 
 ---
@@ -433,18 +433,21 @@ training assignments.
     (`BidiGenerateContent` over WSS). The relay holds the key (never exposed to the browser),
     validates the secret via `isValidSecret()` (new non-Express helper in `_auth.js`), and builds
     the patient persona server-side with `buildSystemInstruction()` (reused from `interview-turn.js`).
+    The relay start payload includes the selected department and the generated opening line so the
+    Live session starts from the same fresh scenario/init output instead of inventing a colder opener.
     Model: **`gemini-3.1-flash-live-preview`** — the gemini-3 Live model, verified to open a session
     on the project keys (a `bidiGenerateContent` model; text flash models like `gemini-3.5-flash`
     can't do the real-time call). Enables `inputAudioTranscription` + `outputAudioTranscription`
     so the relay can forward a text transcript for grading. Protocol is small JSON both ways
     (`start` / `audio` / `ready` / `transcript` / `interrupted` / `turnComplete` / `error`).
-  - **Client — `src/components/VoiceCall.jsx`:** gets the scenario+callerName from the existing
-    `/api/interview-turn` init, opens the relay socket, captures mic via
+  - **Client — `src/components/VoiceCall.jsx`:** gets the scenario+callerName+opening line from the
+    existing `/api/interview-turn` init, opens the relay socket, captures mic via
     `getUserMedia({echoCancellation,noiseSuppression,autoGainControl})` → `ScriptProcessorNode`
     → downsample to 16kHz PCM16 → base64 → relay. Caller audio (24kHz PCM16) is decoded into
     scheduled `AudioBufferSource`s on a 24kHz `AudioContext` for gapless playback; an `interrupted`
-    message flushes the queue (barge-in). An animated orb shows speaking/listening state. End call →
-    coalesced transcript → `saveInterview` → `/api/grade-interview` → same reviewed screen as chat.
+    message flushes the queue (barge-in). An animated orb shows speaking/listening state. Live
+    transcript fragments are whitespace-normalized before captions/grading. End call → coalesced
+    transcript → `saveInterview` → `/api/grade-interview` → same reviewed screen as chat.
   - **Entry chooser:** `PracticeChooser` in `NavigatorApp.jsx` — the Practice tab shows two cards
     (Voice call / Text chat); `practiceMode` state routes to `<VoiceCall>` or `<Interview>` and
     resets when the navigator leaves the tab.
@@ -778,6 +781,37 @@ stateDiagram-v2
 ---
 
 ## 7. Development History
+
+### 2026-06-30 — Live voice call freshness pass: opener, department, transcript quality
+- **What changed:** The real-time voice call now carries the generated `openingLine` from
+  `/api/interview-turn` into the `/api/live` WebSocket start payload, and the relay includes it in
+  the Gemini Live system instruction. `buildSystemInstruction()` is now department-aware, so OB/GYN
+  voice calls no longer inherit the old pediatric-hardcoded caller context. `VoiceCall.jsx` also
+  normalizes streaming transcription fragments before showing captions or saving/grading the call,
+  avoiding glued-together words from raw Live API transcript chunks.
+- **Why:** The call could feel stale because the init endpoint generated a fresh opener that the
+  Live session ignored, forcing Gemini to invent a second opener from colder context. Department
+  hardcoding also made non-pediatric calls feel less current. Cleaner transcript assembly improves
+  both live captions and the transcript sent to grading.
+- **Files affected:** `api/interview-turn.js`, `api/live-relay.js`, `src/components/VoiceCall.jsx`,
+  `api/api-handlers.test.js`, `CLAUDE.md`.
+- **Verification:** `node --check api/interview-turn.js`; `node --check api/live-relay.js`;
+  `npm test` → **210 passing** (8 test files). Browser mic/playback still needs Chrome/Edge
+  confirmation because Web Audio capture is not verifiable in the headless codespace.
+- **Status:** Complete.
+
+### 2026-06-30 — Add Codex bootstrap file for new-chat context
+- **What changed:** Added a tracked root `AGENTS.md` that tells new Codex sessions to read
+  `CLAUDE.md` first, treat it as the project source of truth, inspect relevant live files before
+  editing, preserve the main architecture boundaries, and update `CLAUDE.md` with any project
+  change. Removed `AGENTS.md` from `.gitignore` so this bootstrap travels with the repo instead of
+  being a fragile local-only file.
+- **Why:** New chats do not automatically inherit conversation memory. A Codex-native bootstrap
+  file gives each fresh session a reliable first instruction without duplicating the full project
+  knowledge base.
+- **Files affected:** `AGENTS.md`, `.gitignore`, `CLAUDE.md`.
+- **Verification:** Docs/bootstrap-only change; no runtime tests needed.
+- **Status:** Complete.
 
 ### 2026-06-30 — Fix: dev-path/action-center contract bugs + stale README claims
 - **What changed:** Fixed several follow-on issues discovered during a full repo orientation pass:
@@ -1794,7 +1828,9 @@ stateDiagram-v2
   OB/GYN workflow but with generic role labels — no PII; repo is public). `SOP Guide.pdf` superseded.
 - **Interview caller consistency:** `api/interview-turn.js` turn temperature reduced to 0.5 and a
   `CRITICAL` consistency rule added to the system instruction — callers no longer hallucinate
-  contradictory facts mid-call.
+  contradictory facts mid-call. The shared caller system prompt is department-aware; the voice-call
+  relay also passes the generated opening line into Gemini Live so the spoken opener matches the
+  fresh scenario init.
 - **Department switching (navigator UX):** navigators can switch departments without signing out.
   A ⇄ pill in the nav bar (hidden mid-check) returns to the dept picker. Assessed dept cards in
   the "Strength across departments" strip are clickable buttons — clicking jumps directly to that
@@ -1803,7 +1839,7 @@ stateDiagram-v2
 - **Experimental / mockup:**
   - Training **content** is mockup (flagged in UI). Logic is real.
   - **Adult Medicine and Behavioural Health** are not assessed; **Pediatrics and OB/GYN** are live.
-- **Test coverage:** **208 tests** across **8 test files**: `scoring.test.js` (all 22 exports
+- **Test coverage:** **210 tests** across **8 test files**: `scoring.test.js` (all 22 exports
   including F17–F21 functions: buildTrend, trainingImpact, teamTrend, buildDossier, buildActionCenter,
   buildDevPath, buildMentorMatches, pairingOutcomes + malformed-input edge cases), `session.test.js`,
   `db.test.js`, `api/api-handlers.test.js`, `api/generate-audit.test.js`,
@@ -1844,7 +1880,7 @@ stateDiagram-v2
   now stored on every new result doc; legacy docs (pre-this-change) are skipped silently.
 - **Counts (today):** 6 domains (shared, dept-neutral) · 9 competencies · 18 Pediatrics + 14
   OB/GYN = **32** seed questions (bank grows in Firestore per dept) · 4 departments (**Pediatrics
-  + OB/GYN live**, 2 mockup) · **206** unit tests (8 test files) · **7** Firestore collections
+  + OB/GYN live**, 2 mockup) · **210** unit tests (8 test files) · **7** Firestore collections
   (`roster`, `results`, `resultHistory`, `questions`, `interviews`, `completions`, `pairings`) ·
   **8** REST serverless functions (`generate-scenarios`, `generate-coaching`, `interview-turn`,
   `grade-interview`, `generate-audit`, `coach-audit`, `sequence-path`, `health`) + **1** WebSocket
@@ -1922,10 +1958,11 @@ stateDiagram-v2
   - `GET /api/health` → `{ ok }`.
 - **WebSocket endpoint:**
   - `WS /api/live` — real-time voice practice call relay (F22). Client sends `{type:'start',
-    secret, callerName, scenario}` then streams `{type:'audio', data}` (base64 PCM16 @16kHz mic
-    frames); relay forwards to Gemini Live and streams back `{type:'ready'|'audio'|'transcript'|
-    'interrupted'|'turnComplete'|'error'}`. Key held server-side; persona built via
-    `buildSystemInstruction()`. Model `gemini-3.1-flash-live-preview`.
+    secret, callerName, scenario, department, openingLine}` then streams `{type:'audio', data}`
+    (base64 PCM16 @16kHz mic frames); relay forwards to Gemini Live and streams back
+    `{type:'ready'|'audio'|'transcript'|'interrupted'|'turnComplete'|'error'}`. Key held
+    server-side; persona built via `buildSystemInstruction()`. Model
+    `gemini-3.1-flash-live-preview`.
 - **Env vars:** client (gitignored `.env.local`, build-time) `VITE_FIREBASE_*`; **server-only**
   (Railway service Variables — never `VITE_`-prefixed) `GEMINI_API_KEYS` (comma-separated; rotated on
   rate-limit) or single `GEMINI_API_KEY`. `GENERATION_SECRET` is optional — server falls back to

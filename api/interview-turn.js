@@ -21,6 +21,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { DOMAINS } from '../src/data/questions.js';
+import { departmentName } from '../src/data/departments.js';
 import { sopContextFor } from './_sop-context.js';
 import { getApiKeys, geminiWithRotation } from './_gemini-client.js';
 import { validateSecret } from './_auth.js';
@@ -59,14 +60,21 @@ SOP REFERENCE:
 ${sopContextFor(department)}`;
 }
 
-export function buildSystemInstruction(callerName, scenario) {
-  return `You are ${callerName}, a patient or caregiver calling Aizer Health Pediatric Department's contact centre.
+export function buildSystemInstruction(callerName, scenario, options = {}) {
+  const department = options.department ?? 'pediatrics';
+  const deptName = departmentName(department);
+  const openingLine = options.openingLine?.trim();
+
+  return `You are ${callerName}, a patient, parent/guardian, or caregiver calling the Aizer Health ${deptName} contact centre.
 
 Your situation: ${scenario}
+Department: ${deptName}
+${openingLine ? `Opening line: when the call begins, your first spoken turn must be this line or a natural very close variation: "${openingLine}"` : ''}
 
 Rules:
 - Stay in character as the caller throughout. Never break character or acknowledge this is training.
 - Keep responses short and realistic (1-3 sentences) — this is a phone call.
+- Sound current and unscripted: vary your phrasing, include small realistic details when asked, and do not repeat the scenario back verbatim.
 - Reveal information only when the navigator asks for it. Don't volunteer everything at once.
 - React naturally: if the navigator is helpful and accurate, be cooperative and appreciative. If
   they give wrong information, skip a required step, or seem confused, react as a real caller
@@ -156,7 +164,7 @@ export default async function handler(req, res) {
   }
 
   const body = {
-    system_instruction: { parts: [{ text: buildSystemInstruction(callerName, scenario) }] },
+    system_instruction: { parts: [{ text: buildSystemInstruction(callerName, scenario, { department }) }] },
     contents: buildContents(history, navigatorMessage.trim()),
     generationConfig: { temperature: 0.5 },
   };

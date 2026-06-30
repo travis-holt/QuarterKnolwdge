@@ -194,6 +194,20 @@ describe('buildSystemInstruction', () => {
     const si = buildSystemInstruction('Maria', 'A scenario');
     expect(si.toUpperCase()).toContain('CRITICAL');
   });
+
+  it('uses the selected department in the caller context', () => {
+    const si = buildSystemInstruction('Maria', 'A scenario', { department: 'obgyn' });
+    expect(si).toContain('Aizer Health OB/GYN contact centre');
+    expect(si).toContain('Department: OB/GYN');
+  });
+
+  it('includes the generated opening line when provided', () => {
+    const si = buildSystemInstruction('Maria', 'A scenario', {
+      openingLine: 'Hi, I need help scheduling my prenatal visit.',
+    });
+    expect(si).toContain('Hi, I need help scheduling my prenatal visit.');
+    expect(si).toContain('first spoken turn');
+  });
 });
 
 // ── buildContents ─────────────────────────────────────────────────────────────

@@ -59,6 +59,15 @@ function b64ToInt16(b64) {
   return new Int16Array(bytes.buffer);
 }
 
+function appendTranscriptFragment(existing, fragment) {
+  const text = String(fragment || '').replace(/\s+/g, ' ');
+  if (!text.trim()) return existing;
+  if (!existing) return text.trimStart();
+  const next = text.trimStart();
+  const needsSpace = !/\s$/.test(existing) && !/^[.,!?;:)]/.test(next);
+  return `${existing}${needsSpace ? ' ' : ''}${next}`;
+}
+
 export default function VoiceCall({ navigatorId, name, department = 'pediatrics', onExit }) {
   // phases: setup | connecting | active | grading | reviewed | discarded | error
   const [phase, setPhase]         = useState('setup');
@@ -126,8 +135,8 @@ export default function VoiceCall({ navigatorId, name, department = 'pediatrics'
   function addTranscript(role, text) {
     const segs = segmentsRef.current;
     const last = segs[segs.length - 1];
-    if (last && last.role === role) last.text += text;
-    else segs.push({ role, text });
+    if (last && last.role === role) last.text = appendTranscriptFragment(last.text, text);
+    else segs.push({ role, text: appendTranscriptFragment('', text) });
     setCaptions(segs.map((s) => ({ role: s.role, text: s.text }))); // mirror to UI
   }
 
@@ -141,10 +150,11 @@ export default function VoiceCall({ navigatorId, name, department = 'pediatrics'
     // 1) Generate the scenario + caller name (reuses the existing chat init path).
     const pick = DOMAINS[Math.floor(Math.random() * DOMAINS.length)].id;
     setDomainId(pick);
-    let scen, caller;
+    let scen, caller, opener = '';
     try {
       const data = await apiFetch('/api/interview-turn', { domain: pick, department }, 20_000);
       scen = data.scenario; caller = data.callerName;
+      opener = data.reply || '';
       setScenario(scen); setCallerName(caller);
     } catch {
       setError('Could not set up the call scenario. Try again.');
@@ -197,7 +207,14 @@ export default function VoiceCall({ navigatorId, name, department = 'pediatrics'
     wsRef.current = ws;
 
     ws.onopen = () => {
-      ws.send(JSON.stringify({ type: 'start', secret: SUPERVISOR_PASSCODE, callerName: caller, scenario: scen }));
+      ws.send(JSON.stringify({
+        type: 'start',
+        secret: SUPERVISOR_PASSCODE,
+        callerName: caller,
+        scenario: scen,
+        department,
+        openingLine: opener,
+      }));
     };
     ws.onmessage = (ev) => {
       const m = JSON.parse(ev.data);
