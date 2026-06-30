@@ -62,6 +62,19 @@ export const TRAINING_RULES = {
   canTeach: { assign: false },
 };
 
+// Mentor matching: max pairings a single mentor can carry at one time.
+export const MENTOR_MAX_LOAD = 3;
+
+// Adaptive dev paths: size and pass threshold for domain mini-checks.
+// MINICHECK_SIZE: how many questions to pull per domain.
+// MINICHECK_PASS: minimum score to count as passed (reuses the Solid threshold).
+export const MINICHECK_SIZE = 4;
+export const MINICHECK_PASS = 60; // same as THRESHOLDS.learning — passing means escaping Learning
+
+// Longitudinal trends: how many synthetic illustrative leading points to prepend
+// when a navigator has fewer than 2 real history snapshots (for demo purposes).
+export const TREND_SYNTH_POINTS = 2;
+
 // Warm, understated palette (also surfaced as CSS variables in styles.css).
 export const PALETTE = {
   bg: '#f6f1e7', // soft ivory

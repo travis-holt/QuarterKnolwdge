@@ -10,8 +10,8 @@
 > [§8 Current System State](#8-current-system-state) and [§15 Current Priorities](#15-current-priorities)
 > accurate at all times.
 >
-> **Last updated:** 2026-06-29 (SAFe Agentic Workflow harness installed in `.claude/` — agent
-> tooling, not an app change) ·
+> **Last updated:** 2026-06-29 (F17–F21: longitudinal trends, dossier, action center, adaptive
+> dev paths, mentor matching engine — full builds) ·
 > **Doc maintainer:** Claude (AI agent) + repo owner. Assumptions are explicitly marked **[ASSUMPTION]**.
 
 ---
@@ -295,6 +295,8 @@ training assignments.
   - `updateInterviewGrade(id, grade)` added to [src/lib/db.js](src/lib/db.js).
 - **Status:** Complete (Phase 1 roleplay + Phase 2 grading). Supervisor override is **Planned**.
 - **Notes:** Scores are advisory — they do not feed `scorePerDomain` or the capability matrix.
+  The navigator no longer picks a domain at setup (removed 2026-06-29 to cut choice friction);
+  `startInterview` picks a random domain just to anchor the AI scenario, then goes straight to the call.
 - **Supervisor access:** `SupervisorApp` passes `navigatorId` to `NavigatorDetail`. The "Practice
   sessions" panel shows each saved session; the header row now includes the score badge (color-coded).
   Expanding a session shows the grade breakdown (summary, what went well, areas to develop) above the
@@ -327,6 +329,90 @@ training assignments.
   SupervisorApp,Training,NavigatorDetail}.jsx`, `src/styles.css`.
 - **Notes:** Closes the roadmapped "Training completion tracking" item. Scores never touched;
   completion is advisory progress evidence only. One error per transcript (multi-error = v2).
+
+### F17 — Longitudinal Capability Trends & Training Impact
+- **Purpose:** Quarter-over-quarter trend views for domain/competency scores and training impact.
+- **User benefit:** Supervisors and navigators see whether scores are growing; training ROI is
+  quantified per domain.
+- **Technical implementation:** New `resultHistory` Firestore collection (append-only snapshot on
+  every `saveResult`). Pure functions in `scoring.js`: `buildTrend(history, { synthesize })` →
+  per-domain and overall sparkline series (prepends `TREND_SYNTH_POINTS` illustrative leading points
+  when real history < 2); `trainingImpact(history, completions, domainId)` → before/after/delta;
+  `teamTrend(allHistory)` → floor solidPlusRate + avgReadiness per time bucket.
+  UI: `src/components/Sparkline.jsx` (inline SVG polyline, no dep); trend panel in
+  `NavigatorDetail.jsx` (per-domain sparklines + delta badges, fetched via `getResultHistory`);
+  team-trend widget in `Overview.jsx` (solidPlusRate + avgReadiness over time via `subscribeResultHistory`).
+- **Status:** Complete.
+- **Files:** new `src/components/Sparkline.jsx`; edited `src/lib/scoring.js`, `src/lib/scoring.test.js`,
+  `src/lib/db.js`, `src/components/{NavigatorDetail,Overview,NavigatorApp,SupervisorApp}.jsx`.
+
+### F18 — Evidence-Based Competency Dossier
+- **Purpose:** Per-navigator view tying each competency rating to the exact SOP scenarios they
+  answered — what they chose, what was best, and the authored rationale.
+- **User benefit:** Turns "you're Learning in Escalation" into a specific, coaching-ready evidence
+  record — "here are the 4 questions that drove that rating and what you got wrong."
+- **Technical implementation:** `buildDossier(row, answers, questions, interviews, completions)` in
+  `scoring.js` → `{ byCompetency, byDomain }`. Competency cards in `NavigatorDetail.jsx` are now
+  expandable (clicking the header reveals the question-level evidence). `answers` and `questions`
+  props thread from both role apps; `answers` is stored on the result doc by `saveResult`.
+- **Status:** Complete.
+- **Files:** edited `src/lib/scoring.js`, `src/lib/scoring.test.js`,
+  `src/components/{NavigatorDetail,NavigatorApp,SupervisorApp}.jsx`, `src/styles.css`.
+
+### F19 — Supervisor Action Center
+- **Purpose:** Unified dashboard aggregating who needs attention and why.
+- **User benefit:** Supervisors open one tab and see ranked: critical gaps, training overdue,
+  declining trends, failed practice, and navigators ready for more. Each row is clickable.
+- **Technical implementation:** `buildActionCenter(rows, { history, interviews, completions })` in
+  `scoring.js` → five category arrays. New `src/components/ActionCenter.jsx`. Supervisor tab
+  `action` + nav entry "Action Center" + render block in `SupervisorApp.jsx`. New
+  `subscribeInterviews(cb, onError)` live subscription in `db.js`; passes `allInterviews` +
+  `deptHistory` to ActionCenter.
+- **Status:** Complete.
+- **Files:** new `src/components/ActionCenter.jsx`; edited `src/lib/{scoring,scoring.test,db}.js`,
+  `src/components/{SupervisorApp,Nav}.jsx`, `src/styles.css`.
+
+### F20 — Adaptive, AI-Personalized Development Paths
+- **Purpose:** Per-domain 5-step development sequences (coaching → practice → module → mini-check)
+  with AI reordering via Gemini.
+- **User benefit:** Navigator follows a clear step-by-step path per weak domain. A "Personalize my
+  path" button calls Gemini to reorder + annotate the steps based on their actual score profile.
+  Mini re-check validates mastery in 4 domain-filtered questions; on completion, a new history
+  snapshot is appended (moves the trend line).
+- **Technical implementation:**
+  - `buildDevPath(row, completions, interviews)` in `scoring.js` → per-domain `{ domainId, steps:
+    [{kind, status}], percentComplete }`. Status derived from completions (by kind) + interview grades.
+  - New `api/sequence-path.js` — Gemini proxy (temp 0.3, structured JSON, `validateSequenceResponse`
+    exported helper). Mounted in `server.js` as `POST /api/sequence-path`. Advisory: falls back to
+    rule-based order on failure.
+  - `src/components/MyTraining.jsx` rewritten: flat list → path stepper per domain; "Personalize my
+    path" button calls `/api/sequence-path` and merges AI step order with computed status.
+  - Mini-check mode in `src/components/Check.jsx`: `miniDomain` + `limit` props filter questions to
+    one domain (using `useMemo`). On submit, writes `saveCompletion(.., kind:'minicheck')` and
+    optionally `saveResult` (to add a trend point on pass).
+  - `MINICHECK_SIZE = 4`, `MINICHECK_PASS = 60` in `config.js`.
+- **Status:** Complete.
+- **Files:** new `api/sequence-path.js`, `api/sequence-path.test.js`; edited `server.js`,
+  `src/lib/{scoring,scoring.test}.js`, `src/data/config.js`, `src/components/{MyTraining,Check,NavigatorApp}.jsx`,
+  `src/styles.css`.
+
+### F21 — Mentor Matching Engine (persisted pairings + outcomes)
+- **Purpose:** Load-balanced mentor-mentee pairings with Firestore persistence and outcome delta tracking.
+- **User benefit:** Supervisor sees suggested pairings (Learning/Solid mentees → least-loaded Can-Teach
+  mentors, capped at `MENTOR_MAX_LOAD`), assigns with one click, and tracks score improvement over time.
+- **Technical implementation:**
+  - `buildMentorMatches(rows, { maxLoad })` in `scoring.js` → `{ pairings, load, unmatched }`.
+    Learning mentees prioritized over Solid; least-loaded mentor first; unmatched when no teacher
+    or mentor at cap.
+  - `pairingOutcomes(savedPairings, rows)` → enriches each pairing with `{ currentScore, delta, improved }`.
+  - New `pairings` Firestore collection + `db.js` exports: `savePairing`, `subscribePairings`,
+    `updatePairingStatus`. Collection rule added to `firestore.rules` (Phase 0).
+  - New `src/components/Mentorship.jsx`: suggested pairings grid (Assign button → `savePairing`),
+    active pairings list with delta badges, mentor capacity read-off.
+  - Supervisor tab `mentorship` + nav entry "Mentorship" + render block in `SupervisorApp.jsx`.
+- **Status:** Complete.
+- **Files:** new `src/components/Mentorship.jsx`; edited `src/lib/{scoring,scoring.test,db}.js`,
+  `src/components/{SupervisorApp,Nav}.jsx`, `firestore.rules`, `src/styles.css`.
 
 ### F14 — Question Bank + Gemini Scenario Generation (review gate)
 - **Purpose:** Grow the check from the SOP; questions are live Firestore data, not a static file.
@@ -619,6 +705,57 @@ stateDiagram-v2
 ---
 
 ## 7. Development History
+
+### 2026-06-29 — F17–F21: Longitudinal trends, dossier, action center, adaptive dev paths, mentor matching
+- **What changed:** Five new capability-platform features turning Knowledge Check into the standing
+  quarterly instrument described in the vision. All builds are complete; no mockup stubs.
+  - **F17 — Longitudinal trends:** new `resultHistory` Firestore collection (append-only snapshot
+    on every `saveResult`); `buildTrend`, `trainingImpact`, `teamTrend` pure functions; `Sparkline.jsx`
+    (inline SVG, no dep); trend panel in `NavigatorDetail` (per-domain sparklines + delta badges,
+    lazy-fetched on mount); team-trend widget in `Overview` (floor solidPlusRate + avgReadiness);
+    `subscribeResultHistory` live subscription wired into `SupervisorApp`.
+  - **F18 — Evidence dossier:** `buildDossier` maps each answered question to its competency,
+    recording what was chosen vs best answer + rationale; competency cards in `NavigatorDetail` are
+    now expandable; `answers` + `questions` threaded from both role apps.
+  - **F19 — Action center:** `buildActionCenter` produces 5 category arrays (critical gaps, training
+    overdue, declining trends, failed practice, ready-for-more); new `ActionCenter.jsx` supervisor
+    tab + `subscribeInterviews` live subscription in `SupervisorApp`.
+  - **F20 — Adaptive dev paths:** `buildDevPath` computes 5-step paths per weak domain (coaching →
+    practice → module → mini-check) with done/next/todo status; `MyTraining.jsx` rewritten as a
+    path stepper with "Personalize my path" button that calls the new `api/sequence-path.js` Gemini
+    endpoint (temp 0.3, structured JSON, `validateSequenceResponse` tested); mini-check mode in
+    `Check.jsx` via `miniDomain` + `limit` props (domain-filtered, saves completion + history point
+    on pass); `minicheck` view wired in `NavigatorApp`.
+  - **F21 — Mentor matching:** `buildMentorMatches` load-balances Learning/Solid mentees to
+    least-loaded Can-Teach mentors (capped at `MENTOR_MAX_LOAD = 3`); `pairingOutcomes` enriches
+    saved pairings with score delta; `pairings` Firestore collection + `savePairing` /
+    `subscribePairings` / `updatePairingStatus`; new `Mentorship.jsx` supervisor tab.
+  - **Foundation (Phase 0):** `resultHistory` + `pairings` Firestore rules added; `MENTOR_MAX_LOAD`,
+    `MINICHECK_SIZE`, `MINICHECK_PASS`, `TREND_SYNTH_POINTS` added to `config.js`.
+  - **Tests:** 197 → **206** (8 test files); added `sequence-path.test.js` (9 tests for
+    `validateSequenceResponse`); 9 new `buildTrend`/`trainingImpact`/`teamTrend` tests; 5 dossier
+    tests; 8 action-center tests; 6 dev-path tests; 5 mentor-match tests; 3 pairing-outcomes tests.
+- **Files affected:** new `src/components/{Sparkline,ActionCenter,Mentorship}.jsx`,
+  `api/sequence-path.js`, `api/sequence-path.test.js`; edited `src/lib/{scoring,scoring.test,db}.js`,
+  `src/data/config.js`, `src/components/{NavigatorDetail,Overview,MyTraining,Check,NavigatorApp,SupervisorApp,Nav}.jsx`,
+  `src/styles.css`, `firestore.rules`, `server.js`.
+- **Verification:** `npm test` → **206 passing** (8 test files); `npm run build` → clean;
+  `node --check api/sequence-path.js` → OK.
+- **Status:** Complete.
+
+### 2026-06-29 — Practice call: remove the domain picker (choice-friction cleanup)
+- **What changed:** The Practice call (`Interview.jsx`) setup screen used to make the navigator pick
+  one of 6 domains before starting. Removed the picker — the setup screen is now just a one-line
+  description + "Start practice call". `startInterview` picks a random domain client-side purely to
+  anchor the AI scenario (the API still requires a valid `domainId`; practice scores are advisory and
+  never feed the matrix, so the specific domain is cosmetic). First of a planned set of
+  choice-friction cleanups requested by the owner.
+- **Scope note:** "Spot the Error" was intentionally left alone — its domain comes from the
+  navigator's training plan context (a "Practice scenario" button per assigned weak domain), which is
+  meaningful, not a free picker.
+- **Files affected:** `src/components/Interview.jsx`, `CLAUDE.md`.
+- **Verification:** `npm run build` → clean.
+- **Status:** Complete.
 
 ### 2026-06-29 — Fix: navigator duplicated in supervisor cross-department strip
 - **What changed:** The "Strength by department" strip (`departmentMatrix`) in the supervisor
@@ -1398,14 +1535,15 @@ stateDiagram-v2
 - **Working end to end (logic + UI):** supervisor adds navigators / generates+curates questions
   (per department) → navigators sign in → **pick department** (Pediatrics or OB/GYN) → take that
   department's active check → land on **coaching** → per-domain **and** per-competency results
-  persist to Firestore (composite key `${navigatorId}__${department}`) → supervisor matrix/overview
-  update live per dept → navigator/training dashboards → **switch departments** via nav pill or
-  dept cards → practice interview (SOP-grounded per dept) → "Spot the Error" QA audit (SOP-grounded
-  per dept) with completion tracking. Build clean, tests green (`npm test` → **88 passing**).
-- **Existing functionality:** features F1–F16 (see [§4](#4-feature-inventory)) are **Complete** in
-  code. F10 now includes OB/GYN as a second live department and full in-app dept switching. F13
-  (Coaching) includes the Phase 2 AI layer. F15 (Interview) is Phase 1 roleplay only. F16 closes
-  the roadmapped "completion tracking" item.
+  persist to Firestore (composite key `${navigatorId}__${department}`) **and** to the append-only
+  `resultHistory` collection (powers trend views) → supervisor matrix/overview update live per dept
+  → navigator/training dashboards → **switch departments** → practice interview → "Spot the Error"
+  QA audit → path stepper + mini re-check per weak domain → supervisor Action Center + Mentorship
+  tabs. Build clean, tests green (`npm test` → **206 passing**, 8 test files).
+- **Existing functionality:** features F1–F21 (see [§4](#4-feature-inventory)) are **Complete** in
+  code. F17 adds longitudinal trends + Sparkline. F18 adds dossier evidence per competency. F19
+  adds the supervisor Action Center. F20 adds AI-sequenced dev paths + mini re-check. F21 adds
+  the mentor matching engine with persisted pairings + outcome tracking.
 - **SOP grounding:** Pediatrics AI features ground against `Pediatrics_SOP_Updated.pdf`; OB/GYN AI
   features ground against the sanitized `SOP_CONTEXT_OBGYN` in `api/_sop-context.js` (faithful to
   OB/GYN workflow but with generic role labels — no PII; repo is public). `SOP Guide.pdf` superseded.
@@ -1420,15 +1558,12 @@ stateDiagram-v2
 - **Experimental / mockup:**
   - Training **content** is mockup (flagged in UI). Logic is real.
   - **Adult Medicine and Behavioural Health** are not assessed; **Pediatrics and OB/GYN** are live.
-- **Test coverage:** significantly expanded by code-audit pass (2026-06-26) + extra API tests
-  (2026-06-28). **158 tests** across 7 test files: `scoring.test.js` (pure scoring + question health
-  + malformed-input edge cases), `session.test.js` (localStorage session round-trips, unavailability
-  handling), `db.test.js` (Firestore calls mocked via `vi.hoisted`, tests composite key construction,
-  data shapes, legacy fallbacks, subscription mapping), `api/api-handlers.test.js` (`sanitize`,
-  `buildDigest`, `buildSystemInstruction`, `buildContents`), `api/generate-audit.test.js`
-  (`validateAuditResponse`), `api/_gemini-client.test.js` (`getApiKeys`, `geminiWithRotation`), and
-  `src/components/components.test.jsx` (jsdom, EmptyState/Footer/Nav pure-render + stateful Nav
-  tab/pill behaviour). Role-app integration tests remain the only untested area.
+- **Test coverage:** **206 tests** across **8 test files**: `scoring.test.js` (all 22 exports
+  including F17–F21 functions: buildTrend, trainingImpact, teamTrend, buildDossier, buildActionCenter,
+  buildDevPath, buildMentorMatches, pairingOutcomes + malformed-input edge cases), `session.test.js`,
+  `db.test.js`, `api/api-handlers.test.js`, `api/generate-audit.test.js`,
+  `api/_gemini-client.test.js`, `api/sequence-path.test.js` (9 tests for `validateSequenceResponse`),
+  `src/components/components.test.jsx`. Role-app integration tests remain the only untested area.
 - **Client fetch layer:** `src/lib/apiFetch.js` — shared helper for all `/api` calls (AbortController
   timeout, SUPERVISOR_PASSCODE injection, Content-Type, error-body parsing). Used by Interview.jsx,
   SpotTheError.jsx, Coaching.jsx, and SupervisorApp.jsx.
@@ -1461,11 +1596,12 @@ stateDiagram-v2
   now stored on every new result doc; legacy docs (pre-this-change) are skipped silently.
 - **Counts (today):** 6 domains (shared, dept-neutral) · 9 competencies · 18 Pediatrics + 14
   OB/GYN = **32** seed questions (bank grows in Firestore per dept) · 4 departments (**Pediatrics
-  + OB/GYN live**, 2 mockup) · **158** unit tests (7 test files) · **5** Firestore collections
-  (`roster`, `results`, `questions`, `interviews`, `completions`) · **7** serverless functions
-  (`generate-scenarios`, `generate-coaching`, `interview-turn`, `grade-interview`, `generate-audit`, `coach-audit`, `health`)
-  · **2** shared API helpers (`api/_gemini-client.js`, `api/_auth.js`) · **1** shared client
-  fetch helper (`src/lib/apiFetch.js`).
+  + OB/GYN live**, 2 mockup) · **206** unit tests (8 test files) · **7** Firestore collections
+  (`roster`, `results`, `resultHistory`, `questions`, `interviews`, `completions`, `pairings`) ·
+  **8** serverless functions (`generate-scenarios`, `generate-coaching`, `interview-turn`,
+  `grade-interview`, `generate-audit`, `coach-audit`, `sequence-path`, `health`) · **2** shared API
+  helpers (`api/_gemini-client.js`, `api/_auth.js`) · **1** shared client fetch helper
+  (`src/lib/apiFetch.js`).
 
 ---
 
@@ -1765,7 +1901,7 @@ npm run test:watch   # run Vitest in watch mode
 3. **Supervisor grade override** — allow supervisors to adjust the AI-given score on a saved practice session.
 
 **Active work items:**
-- None outstanding.
+- None outstanding (F17–F21 complete as of 2026-06-29).
 
 **Blockers:**
 - Adult Medicine and Behavioural Health remain mockup — each needs an owner-provided SOP before
@@ -1791,6 +1927,8 @@ npm run test:watch   # run Vitest in watch mode
 - ✅ Code-audit pass: DRY cleanup + test coverage expansion — done 2026-06-26 (130 tests, 5 test files,
   `apiFetch` helper, `_auth.js` helper, Vite v5.4.21 CVE patch, `scorePerDomain/scorePerCompetency`
   default-args defensive fix).
+- ✅ F17–F21: longitudinal trends, dossier, action center, adaptive dev paths, mentor matching — done
+  2026-06-29 (206 tests, 8 test files, new `sequence-path` endpoint, `resultHistory` + `pairings` collections).
 - Role-app integration tests (`SupervisorApp`, `NavigatorApp`, `App`) — next coverage priority.
 - Supervisor grade override for practice sessions — next interview feature.
 

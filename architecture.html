@@ -1,0 +1,759 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Knowledge Check — Architecture Map</title>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  :root {
+    --bg:       #f4eee1;
+    --surface:  #fffdf7;
+    --ink:      #23201b;
+    --ink-soft: #6b6358;
+    --accent:   #c4744f;
+    --line:     #e4dccb;
+    --green:    #3e8e5a;
+    --amber:    #b07a1a;
+    --blue:     #2f6db5;
+    --purple:   #6b46b5;
+    --red:      #b53a3a;
+    --shadow:   0 2px 8px rgba(35,32,27,.10);
+    --shadow-lg:0 6px 24px rgba(35,32,27,.13);
+    --radius:   12px;
+    --radius-sm:8px;
+  }
+
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    background: var(--bg);
+    color: var(--ink);
+    padding: 40px 24px 80px;
+    line-height: 1.5;
+  }
+
+  /* ── page header ──────────────────────────────────────────── */
+  .page-title {
+    text-align: center;
+    margin-bottom: 36px;
+  }
+  .page-title h1 {
+    font-size: 1.75rem;
+    font-weight: 700;
+    letter-spacing: -.02em;
+  }
+  .page-title p {
+    color: var(--ink-soft);
+    font-size: .9rem;
+    margin-top: 4px;
+  }
+
+  /* ── legend ────────────────────────────────────────────────── */
+  .legend {
+    display: flex;
+    gap: 20px;
+    flex-wrap: wrap;
+    justify-content: center;
+    margin-bottom: 36px;
+  }
+  .legend-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: .8rem;
+    color: var(--ink-soft);
+  }
+  .legend-dot {
+    width: 12px; height: 12px;
+    border-radius: 3px;
+    flex-shrink: 0;
+  }
+
+  /* ── main diagram wrapper ───────────────────────────────────── */
+  .diagram {
+    max-width: 980px;
+    margin: 0 auto;
+    display: flex;
+    flex-direction: column;
+    gap: 0;
+  }
+
+  /* ── cards ──────────────────────────────────────────────────── */
+  .card {
+    background: var(--surface);
+    border-radius: var(--radius);
+    box-shadow: var(--shadow);
+    padding: 20px 22px;
+    position: relative;
+  }
+  .card-label {
+    font-size: .68rem;
+    font-weight: 700;
+    letter-spacing: .08em;
+    text-transform: uppercase;
+    margin-bottom: 12px;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .card-label .dot {
+    width: 10px; height: 10px;
+    border-radius: 50%;
+    display: inline-block;
+  }
+
+  /* ── browser layer ──────────────────────────────────────────── */
+  .browser-layer {
+    border: 2px solid #d4c8b0;
+    background: #faf7f0;
+    border-radius: var(--radius);
+    padding: 20px;
+  }
+  .browser-layer > .card-label {
+    color: #7a6e5c;
+  }
+  .browser-inner {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 12px;
+  }
+  .browser-inner .full { grid-column: 1 / -1; }
+
+  /* ── sub-cards ──────────────────────────────────────────────── */
+  .sub-card {
+    border-radius: var(--radius-sm);
+    padding: 14px 16px;
+    font-size: .875rem;
+  }
+  .sub-card h3 {
+    font-size: .85rem;
+    font-weight: 700;
+    margin-bottom: 6px;
+  }
+  .sub-card .file-ref {
+    font-size: .72rem;
+    font-family: monospace;
+    opacity: .7;
+    margin-bottom: 8px;
+    display: block;
+  }
+  .sub-card ul {
+    list-style: none;
+    padding: 0;
+    font-size: .78rem;
+    color: var(--ink-soft);
+  }
+  .sub-card ul li::before { content: '· '; }
+
+  .sub-supervisor { background: #eaf2ff; border: 1px solid #c0d9f5; }
+  .sub-navigator  { background: #edfbf1; border: 1px solid #b6e6c8; }
+  .sub-db         { background: #fff5e8; border: 1px solid #f0d8b0; }
+  .sub-scoring    { background: #f0ebff; border: 1px solid #cfc0f0; }
+
+  /* ── connector ──────────────────────────────────────────────── */
+  .connector-row {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 40px;
+    padding: 0 60px;
+    position: relative;
+  }
+  .connector-row::before {
+    content: '';
+    position: absolute;
+    left: 50%;
+    top: 0; bottom: 0;
+    width: 1px;
+    border-left: 1px dashed var(--line);
+    transform: translateX(-50%);
+    pointer-events: none;
+  }
+
+  .arrow-col {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding: 8px 0 0;
+    gap: 4px;
+  }
+  .arrow-col .arrow-line {
+    width: 2px;
+    height: 32px;
+    background: var(--line);
+  }
+  .arrow-col .arrow-label {
+    font-size: .7rem;
+    color: var(--ink-soft);
+    text-align: center;
+    white-space: nowrap;
+    background: var(--bg);
+    padding: 1px 6px;
+    border-radius: 4px;
+    border: 1px solid var(--line);
+  }
+  .arrow-col .arrowhead {
+    width: 0; height: 0;
+    border-left: 6px solid transparent;
+    border-right: 6px solid transparent;
+    border-top: 8px solid var(--line);
+  }
+
+  /* ── infra row ──────────────────────────────────────────────── */
+  .infra-row {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 20px;
+  }
+
+  .card-firestore {
+    border-left: 4px solid var(--blue);
+  }
+  .card-railway {
+    border-left: 4px solid var(--purple);
+  }
+  .card-gemini {
+    border-left: 4px solid #e85d9c;
+    margin-top: 12px;
+  }
+
+  /* ── collection chips ───────────────────────────────────────── */
+  .chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-top: 10px;
+  }
+  .chip {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 10px;
+    border-radius: 20px;
+    font-size: .78rem;
+    cursor: pointer;
+    border: 1px solid transparent;
+    transition: transform .15s, box-shadow .15s;
+    position: relative;
+  }
+  .chip:hover { transform: translateY(-1px); box-shadow: var(--shadow); }
+  .chip .chip-icon { font-size: .9rem; }
+  .chip .chip-name { font-weight: 600; }
+  .chip .chip-desc { color: var(--ink-soft); font-size: .7rem; }
+
+  .chip-roster      { background: #fff3ea; border-color: #f0c898; }
+  .chip-results     { background: #eaf2ff; border-color: #bfd4f5; }
+  .chip-questions   { background: #edfbf1; border-color: #b6e6c8; }
+  .chip-interviews  { background: #f0ebff; border-color: #cfc0f0; }
+  .chip-completions { background: #fff8e0; border-color: #f0dfa0; }
+
+  /* tooltip */
+  .chip [data-tip] {
+    display: none;
+  }
+  .chip:hover::after {
+    content: attr(data-tip);
+    position: absolute;
+    bottom: calc(100% + 8px);
+    left: 50%;
+    transform: translateX(-50%);
+    background: var(--ink);
+    color: #fff;
+    font-size: .72rem;
+    padding: 6px 10px;
+    border-radius: 6px;
+    white-space: nowrap;
+    pointer-events: none;
+    z-index: 10;
+    max-width: 260px;
+    white-space: normal;
+    text-align: center;
+    line-height: 1.4;
+  }
+
+  /* ── endpoint list ──────────────────────────────────────────── */
+  .endpoint-list {
+    list-style: none;
+    padding: 0;
+    margin-top: 10px;
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+  }
+  .endpoint-list li {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: .78rem;
+  }
+  .method {
+    font-family: monospace;
+    font-size: .7rem;
+    font-weight: 700;
+    padding: 2px 6px;
+    border-radius: 4px;
+    min-width: 34px;
+    text-align: center;
+  }
+  .method-post { background: #fff0e0; color: #b05000; }
+  .method-get  { background: #e8f4ff; color: #1a60a8; }
+  .endpoint-path { font-family: monospace; color: var(--ink-soft); font-size: .75rem; }
+  .endpoint-note { color: var(--ink-soft); font-style: italic; font-size: .72rem; margin-left: auto; }
+
+  /* ── railway right sub-section ──────────────────────────────── */
+  .railway-col {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
+  .sop-note {
+    background: #fdf6ff;
+    border: 1px dashed #c5a8e0;
+    border-radius: var(--radius-sm);
+    padding: 10px 14px;
+    font-size: .78rem;
+  }
+  .sop-note strong { display: block; margin-bottom: 2px; font-size: .8rem; }
+  .sop-note span { color: var(--ink-soft); }
+
+  /* ── gemini arrow ───────────────────────────────────────────── */
+  .gemini-arrow-row {
+    display: flex;
+    align-items: flex-start;
+    gap: 12px;
+    margin-top: 4px;
+  }
+  .gemini-arrow-row .arrow-right {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    margin-top: 14px;
+  }
+  .arrow-right .line-h {
+    width: 32px;
+    height: 2px;
+    background: var(--line);
+  }
+  .arrow-right .head-r {
+    width: 0; height: 0;
+    border-top: 5px solid transparent;
+    border-bottom: 5px solid transparent;
+    border-left: 7px solid var(--line);
+  }
+
+  /* ── data flow section ──────────────────────────────────────── */
+  .section-title {
+    font-size: 1rem;
+    font-weight: 700;
+    color: var(--ink);
+    margin: 40px 0 16px;
+    padding-bottom: 8px;
+    border-bottom: 1px solid var(--line);
+    max-width: 980px;
+    margin-left: auto;
+    margin-right: auto;
+  }
+
+  .flow-steps {
+    max-width: 980px;
+    margin: 0 auto;
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+    gap: 12px;
+  }
+  .flow-step {
+    background: var(--surface);
+    border-radius: var(--radius-sm);
+    padding: 14px 16px;
+    box-shadow: var(--shadow);
+    font-size: .82rem;
+    position: relative;
+  }
+  .flow-step .step-num {
+    width: 24px; height: 24px;
+    background: var(--accent);
+    color: #fff;
+    border-radius: 50%;
+    font-size: .72rem;
+    font-weight: 700;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    margin-bottom: 8px;
+  }
+  .flow-step h4 { font-size: .82rem; margin-bottom: 4px; }
+  .flow-step p { color: var(--ink-soft); font-size: .76rem; line-height: 1.4; }
+
+  /* ── env-var table ──────────────────────────────────────────── */
+  .env-table-wrap {
+    max-width: 980px;
+    margin: 0 auto;
+    overflow-x: auto;
+  }
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: .82rem;
+    background: var(--surface);
+    border-radius: var(--radius);
+    overflow: hidden;
+    box-shadow: var(--shadow);
+  }
+  th {
+    background: var(--ink);
+    color: #fff;
+    padding: 10px 14px;
+    text-align: left;
+    font-size: .75rem;
+    letter-spacing: .05em;
+  }
+  td {
+    padding: 9px 14px;
+    border-bottom: 1px solid var(--line);
+    vertical-align: top;
+  }
+  tr:last-child td { border-bottom: none; }
+  tr:hover td { background: #faf5ec; }
+  td code {
+    font-family: monospace;
+    font-size: .8rem;
+    background: #f0ece3;
+    padding: 1px 5px;
+    border-radius: 3px;
+  }
+  .badge {
+    display: inline-block;
+    padding: 2px 7px;
+    border-radius: 10px;
+    font-size: .7rem;
+    font-weight: 600;
+  }
+  .badge-server   { background: #f0ebff; color: #6b46b5; }
+  .badge-buildtime{ background: #fff0e0; color: #b05000; }
+  .badge-client   { background: #eaf2ff; color: #2f6db5; }
+</style>
+</head>
+<body>
+
+<div class="page-title">
+  <h1>Knowledge Check — Architecture Map</h1>
+  <p>Where everything lives, how it connects, and how data flows end to end.</p>
+</div>
+
+<div class="legend">
+  <div class="legend-item"><div class="legend-dot" style="background:#2f6db5"></div> Firestore / Database</div>
+  <div class="legend-item"><div class="legend-dot" style="background:#6b46b5"></div> Railway Express Server</div>
+  <div class="legend-item"><div class="legend-dot" style="background:#e85d9c"></div> Google Gemini AI</div>
+  <div class="legend-item"><div class="legend-dot" style="background:#3e8e5a"></div> Pure client-side logic</div>
+  <div class="legend-item"><div class="legend-dot" style="background:#b07a1a"></div> Config / SOP text</div>
+</div>
+
+<!-- ════════════════════════ DIAGRAM ════════════════════════ -->
+<div class="diagram">
+
+  <!-- BROWSER LAYER -->
+  <div class="browser-layer">
+    <div class="card-label" style="color:#7a6e5c">
+      <div class="dot" style="background:#c4744f"></div>
+      Browser — React SPA &nbsp;·&nbsp; built by Vite, served as static files from Railway
+    </div>
+    <div class="browser-inner">
+
+      <div class="sub-card sub-supervisor">
+        <h3>🧑‍💼 SupervisorApp</h3>
+        <span class="file-ref">src/components/SupervisorApp.jsx</span>
+        <ul>
+          <li>Overview (floor KPIs)</li>
+          <li>Capability Matrix</li>
+          <li>Navigators tab + detail</li>
+          <li>Training dashboard</li>
+          <li>Question Bank + editor</li>
+        </ul>
+      </div>
+
+      <div class="sub-card sub-navigator">
+        <h3>🧭 NavigatorApp</h3>
+        <span class="file-ref">src/components/NavigatorApp.jsx</span>
+        <ul>
+          <li>Department picker</li>
+          <li>Assessment check (MCQ)</li>
+          <li>Personal dashboard</li>
+          <li>My Training tab</li>
+          <li>Practice interview</li>
+        </ul>
+      </div>
+
+      <div class="sub-card sub-db full">
+        <h3>🔌 src/lib/db.js — Firestore Surface</h3>
+        <span class="file-ref">The only file that touches the Firebase SDK. Everything else calls these helpers.</span>
+        <ul style="columns:2; gap:24px">
+          <li>addToRoster / updateRosterEntry / setRosterStatus</li>
+          <li>getRoster / subscribeRoster</li>
+          <li>saveResult / getResult / clearResult / subscribeResults</li>
+          <li>saveInterview / getInterviews / updateInterviewGrade</li>
+          <li>saveCompletion / getCompletions / subscribeCompletions</li>
+          <li>getActiveQuestions / seedQuestionsIfEmpty / saveDraftQuestions</li>
+          <li>activateQuestion / archiveQuestion / deleteQuestion / updateQuestion</li>
+        </ul>
+      </div>
+
+      <div class="sub-card sub-scoring full">
+        <h3>📊 src/lib/scoring.js — Analytics Engine</h3>
+        <span class="file-ref">Pure functions — runs entirely in-browser. No server call. Recomputes on every Firestore snapshot.</span>
+        <ul style="columns:2; gap:24px">
+          <li>scorePerDomain · scorePerCompetency · scoreToLevel</li>
+          <li>buildMatrixRows · columnGaps · canTeachRoster · readinessTally</li>
+          <li>floorStats · domainDistribution · competencyDistribution</li>
+          <li>departmentMatrix (merges per-navigator dept results)</li>
+          <li>trainingPlan · trainingByDomain · trainingStats</li>
+          <li>mentorSuggestions · computeQuestionHealth</li>
+        </ul>
+      </div>
+
+    </div><!-- /.browser-inner -->
+  </div><!-- /.browser-layer -->
+
+  <!-- CONNECTORS -->
+  <div class="connector-row">
+    <div class="arrow-col">
+      <div class="arrow-line"></div>
+      <div class="arrow-label">Firebase SDK · HTTPS</div>
+      <div class="arrow-line"></div>
+      <div class="arrowhead"></div>
+    </div>
+    <div class="arrow-col">
+      <div class="arrow-line"></div>
+      <div class="arrow-label">apiFetch.js · HTTP POST</div>
+      <div class="arrow-line"></div>
+      <div class="arrowhead"></div>
+    </div>
+  </div>
+
+  <!-- INFRA ROW -->
+  <div class="infra-row">
+
+    <!-- FIRESTORE -->
+    <div class="card card-firestore">
+      <div class="card-label" style="color:var(--blue)">
+        <div class="dot" style="background:var(--blue)"></div>
+        Google Cloud Firestore &nbsp;·&nbsp; Project: quarterly-knowledge-check
+      </div>
+      <p style="font-size:.78rem;color:var(--ink-soft);margin-bottom:4px">
+        Free Spark tier. 5 collections, all UUID-keyed. Levels are never stored — always derived client-side.
+      </p>
+      <div class="chips">
+
+        <div class="chip chip-roster"
+          data-tip="Stores navigator name, 4-digit PIN (plain text), and active/inactive status. Key: Firestore auto UUID.">
+          <span class="chip-icon">📋</span>
+          <div>
+            <div class="chip-name">roster</div>
+            <div class="chip-desc">Navigator accounts</div>
+          </div>
+        </div>
+
+        <div class="chip chip-results"
+          data-tip="Assessment scores per domain + per competency + raw answers. Key: navigatorId__department (e.g. abc123__pediatrics). Levels derived at read time, never stored.">
+          <span class="chip-icon">📊</span>
+          <div>
+            <div class="chip-name">results</div>
+            <div class="chip-desc">Check submissions · per dept</div>
+          </div>
+        </div>
+
+        <div class="chip chip-questions"
+          data-tip="The live question bank. Statuses: draft (awaiting review) → active (in the check) → archived. Supervisors generate via Gemini; must activate before navigators see them.">
+          <span class="chip-icon">❓</span>
+          <div>
+            <div class="chip-name">questions</div>
+            <div class="chip-desc">Scenario bank · draft / active / archived</div>
+          </div>
+        </div>
+
+        <div class="chip chip-interviews"
+          data-tip="Practice roleplay transcripts. Each doc stores the full turn-by-turn conversation plus the AI grade (score, summary, strengths, improvements) written after grading.">
+          <span class="chip-icon">💬</span>
+          <div>
+            <div class="chip-name">interviews</div>
+            <div class="chip-desc">Practice call transcripts + grades</div>
+          </div>
+        </div>
+
+        <div class="chip chip-completions"
+          data-tip="Append-only 'Spot the Error' completions. One doc per exercise run. Supervisors see ✓ Practiced badges from this collection.">
+          <span class="chip-icon">✅</span>
+          <div>
+            <div class="chip-name">completions</div>
+            <div class="chip-desc">QA audit exercise badges</div>
+          </div>
+        </div>
+
+      </div>
+    </div><!-- /.card-firestore -->
+
+    <!-- RAILWAY + GEMINI -->
+    <div class="railway-col">
+      <div class="card card-railway">
+        <div class="card-label" style="color:var(--purple)">
+          <div class="dot" style="background:var(--purple)"></div>
+          Railway Express Server &nbsp;·&nbsp; server.js &nbsp;·&nbsp; auto-deploys on push to main
+        </div>
+        <p style="font-size:.78rem;color:var(--ink-soft);margin-bottom:8px">
+          Serves the SPA from <code>dist/</code> and proxies all Gemini calls. Never reads from Firestore.
+        </p>
+
+        <ul class="endpoint-list">
+          <li>
+            <span class="method method-post">POST</span>
+            <span class="endpoint-path">/api/generate-scenarios</span>
+            <span class="endpoint-note">AI question drafts for supervisor review</span>
+          </li>
+          <li>
+            <span class="method method-post">POST</span>
+            <span class="endpoint-path">/api/generate-coaching</span>
+            <span class="endpoint-note">Personalised post-check coaching notes</span>
+          </li>
+          <li>
+            <span class="method method-post">POST</span>
+            <span class="endpoint-path">/api/interview-turn</span>
+            <span class="endpoint-note">Gemini acts as patient caller (roleplay)</span>
+          </li>
+          <li>
+            <span class="method method-post">POST</span>
+            <span class="endpoint-path">/api/grade-interview</span>
+            <span class="endpoint-note">AI score + feedback on a practice call</span>
+          </li>
+          <li>
+            <span class="method method-post">POST</span>
+            <span class="endpoint-path">/api/generate-audit</span>
+            <span class="endpoint-note">Flawed transcript for "Spot the Error"</span>
+          </li>
+          <li>
+            <span class="method method-post">POST</span>
+            <span class="endpoint-path">/api/coach-audit</span>
+            <span class="endpoint-note">AI mentor reply to navigator's reflection</span>
+          </li>
+          <li>
+            <span class="method method-get">GET</span>
+            <span class="endpoint-path">/api/health</span>
+            <span class="endpoint-note">Deploy health check</span>
+          </li>
+          <li>
+            <span class="method method-get">GET</span>
+            <span class="endpoint-path">/*</span>
+            <span class="endpoint-note">SPA catch-all → index.html</span>
+          </li>
+        </ul>
+
+        <div class="sop-note" style="margin-top:12px">
+          <strong>📄 api/_sop-context.js — SOP text (server-side only)</strong>
+          <span>Never sent to the client. Two grounding contexts: <em>Pediatrics</em> (from updated SOP PDF) and
+          <em>OB/GYN</em> (sanitized — no real names/numbers). All Gemini calls are grounded in the correct SOP via
+          <code>sopContextFor(dept)</code>.</span>
+        </div>
+      </div>
+
+      <!-- GEMINI -->
+      <div class="card card-gemini">
+        <div class="card-label" style="color:#b0308a">
+          <div class="dot" style="background:#e85d9c"></div>
+          Google Gemini API &nbsp;·&nbsp; model: gemini-2.5-flash
+        </div>
+        <p style="font-size:.78rem;color:var(--ink-soft)">
+          Key stored only in Railway env vars (<code>GEMINI_API_KEYS</code>). Rotated automatically on rate-limit (429/503).
+          All output is advisory — never writes to Firestore directly.
+        </p>
+      </div>
+    </div><!-- /.railway-col -->
+
+  </div><!-- /.infra-row -->
+</div><!-- /.diagram -->
+
+
+<!-- ════════════ DATA FLOW ════════════ -->
+<div class="section-title">Assessment Data Flow — Navigator Submits a Check</div>
+<div class="flow-steps">
+  <div class="flow-step">
+    <div class="step-num">1</div>
+    <h4>Sign in</h4>
+    <p>Navigator picks their name from a dropdown and enters a 4-digit PIN.
+       Roster fetched from Firestore once; PIN validated client-side.</p>
+  </div>
+  <div class="flow-step">
+    <div class="step-num">2</div>
+    <h4>Pick department</h4>
+    <p>Navigator chooses Pediatrics or OB/GYN. Active questions for that department
+       are fetched from Firestore (seed fallback if empty).</p>
+  </div>
+  <div class="flow-step">
+    <div class="step-num">3</div>
+    <h4>Take the check</h4>
+    <p>Navigator answers ~14–20 scenario MCQs. Answers held in local React state
+       only — nothing is written to the database mid-check.</p>
+  </div>
+  <div class="flow-step">
+    <div class="step-num">4</div>
+    <h4>Score &amp; save</h4>
+    <p>On submit: <code>scorePerDomain</code> and <code>scorePerCompetency</code> run in the browser.
+       Result written to Firestore (<code>results</code> collection, composite key).</p>
+  </div>
+  <div class="flow-step">
+    <div class="step-num">5</div>
+    <h4>AI coaching</h4>
+    <p>Browser calls <code>POST /api/generate-coaching</code>. Railway sends missed
+       questions + rationales to Gemini. Personalised coaching notes returned and
+       rendered. Nothing written to Firestore.</p>
+  </div>
+  <div class="flow-step">
+    <div class="step-num">6</div>
+    <h4>Supervisor sees it live</h4>
+    <p>SupervisorApp has a live <code>onSnapshot</code> subscription. The matrix, floor
+       KPIs, training assignments, and question health dots all update automatically
+       — no page refresh needed.</p>
+  </div>
+</div>
+
+
+<!-- ════════════ ENV VARS ════════════ -->
+<div class="section-title" style="margin-top:44px">Environment Variables</div>
+<div class="env-table-wrap">
+  <table>
+    <thead>
+      <tr>
+        <th>Variable</th>
+        <th>Where set</th>
+        <th>When used</th>
+        <th>Notes</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><code>VITE_FIREBASE_API_KEY</code><br><code>VITE_FIREBASE_AUTH_DOMAIN</code><br><code>VITE_FIREBASE_PROJECT_ID</code><br><code>VITE_FIREBASE_STORAGE_BUCKET</code><br><code>VITE_FIREBASE_MESSAGING_SENDER_ID</code><br><code>VITE_FIREBASE_APP_ID</code></td>
+        <td>Railway build-time env</td>
+        <td><span class="badge badge-buildtime">Build time</span> baked into the JS bundle by Vite</td>
+        <td>Must exist in Railway <em>before</em> the first deploy — changing them requires a rebuild</td>
+      </tr>
+      <tr>
+        <td><code>GEMINI_API_KEYS</code></td>
+        <td>Railway runtime env</td>
+        <td><span class="badge badge-server">Server only</span> never in the client bundle</td>
+        <td>Comma-separated; rotated automatically on 429/503. Single key also accepted as <code>GEMINI_API_KEY</code></td>
+      </tr>
+      <tr>
+        <td><code>GENERATION_SECRET</code></td>
+        <td>Railway runtime env (optional)</td>
+        <td><span class="badge badge-server">Server only</span></td>
+        <td>Not required — server falls back to <code>SUPERVISOR_PASSCODE</code> from config.js</td>
+      </tr>
+      <tr>
+        <td><code>SUPERVISOR_PASSCODE</code></td>
+        <td>Hardcoded in <code>src/data/config.js</code></td>
+        <td><span class="badge badge-client">Client &amp; server</span></td>
+        <td>In the public repo — pilot-acceptable. Move to an env var before production.</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+</body>
+</html>

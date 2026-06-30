@@ -53,10 +53,13 @@ export default function Interview({ navigatorId, name, department = 'pediatrics'
   // ── Start ────────────────────────────────────────────────────────────────────
 
   const startInterview = async () => {
+    // ponytail: random domain just anchors the AI scenario; navigator no longer picks one.
+    const pick = DOMAINS[Math.floor(Math.random() * DOMAINS.length)].id;
+    setDomainId(pick);
     setPhase('loading');
     setError('');
     try {
-      const data = await callTurnApi({ domain: domainId, department }, INIT_TIMEOUT_MS);
+      const data = await callTurnApi({ domain: pick, department }, INIT_TIMEOUT_MS);
       setScenario(data.scenario);
       setCallerName(data.callerName);
       setTranscript([{ role: 'patient', text: data.reply }]);
@@ -256,30 +259,14 @@ export default function Interview({ navigatorId, name, department = 'pediatrics'
         </header>
 
         <div className="card interview__setup">
-          <h2 className="overview__panel-title">Choose a domain to practice</h2>
+          <h2 className="overview__panel-title">Ready when you are</h2>
           <p className="readoff__sub">A scenario will be generated for you. Every call is different.</p>
-          <div className="interview__domain-grid">
-            {DOMAINS.map((d) => (
-              <button
-                key={d.id}
-                className={[
-                  'card card--interactive interview__domain-btn',
-                  domainId === d.id ? 'interview__domain-btn--selected' : '',
-                ].join(' ')}
-                onClick={() => setDomainId(d.id)}
-                type="button"
-              >
-                <span className="interview__domain-name">{d.name}</span>
-                <span className="interview__domain-blurb">{d.blurb}</span>
-              </button>
-            ))}
-          </div>
 
           {error && <p className="gate__error">{error}</p>}
 
           <button
             className="btn btn--primary"
-            disabled={!domainId || phase === 'loading'}
+            disabled={phase === 'loading'}
             onClick={startInterview}
             type="button"
           >

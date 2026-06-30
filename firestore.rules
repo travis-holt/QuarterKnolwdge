@@ -39,6 +39,14 @@ service cloud.firestore {
     match /interviews/{docId} {
       allow read, write: if true;
     }
+    // Append-only score history snapshots for longitudinal trends.
+    match /resultHistory/{docId} {
+      allow read, write: if true;
+    }
+    // Supervisor-managed mentor-mentee pairings.
+    match /pairings/{docId} {
+      allow read, write: if true;
+    }
 
     // Everything else is denied.
     match /{document=**} {

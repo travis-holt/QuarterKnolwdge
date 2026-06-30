@@ -16,7 +16,8 @@ import {
   departmentMatrix,
   findRow,
 } from '../lib/scoring.js';
-import { getResult, saveResult, subscribeResults, getActiveQuestions, getCompletions } from '../lib/db.js';
+import { getResult, saveResult, subscribeResults, getActiveQuestions, getCompletions, saveCompletion } from '../lib/db.js';
+import { MINICHECK_SIZE, MINICHECK_PASS } from '../data/config.js';
 import { isFirebaseConfigured } from '../lib/firebase.js';
 import { SEED_QUESTIONS, SEED_QUESTIONS_OBGYN } from '../data/questions.js';
 import { ASSESSED_DEPTS, departmentName } from '../data/departments.js';
@@ -33,7 +34,7 @@ const SEED_BY_DEPT = {
 // name colleagues who can teach their growth domains, but those names are not
 // clickable and open nothing.)
 export default function NavigatorApp({ navigatorId, name, onSignOut }) {
-  const [view, setView] = useState('loading'); // loading · deptselect · check · coaching · dashboard · training · module · interview · audit
+  const [view, setView] = useState('loading'); // loading · deptselect · check · coaching · dashboard · training · module · interview · audit · minicheck
   const [activeDept, setActiveDept] = useState(null); // chosen by navigator at deptselect
   const [ownResult, setOwnResult] = useState(null); // { name, navigatorId, scores, competencyScores, department }
   const [lastAnswers, setLastAnswers] = useState(null); // answers from the just-taken check (for coaching)
@@ -41,6 +42,7 @@ export default function NavigatorApp({ navigatorId, name, onSignOut }) {
   const [results, setResults] = useState([]); // whole floor (for mentor data)
   const [moduleDomain, setModuleDomain] = useState(null);
   const [auditDomain, setAuditDomain] = useState(null);
+  const [miniCheckDomain, setMiniCheckDomain] = useState(null);
   const [completedDomains, setCompletedDomains] = useState(new Set());
   const [loadError, setLoadError] = useState(false);
   // Cross-dept scores keyed by deptId — populated on mount + updated after each check.
@@ -150,6 +152,11 @@ export default function NavigatorApp({ navigatorId, name, onSignOut }) {
   const startAudit = (domainId) => {
     setAuditDomain(domainId);
     setView('audit');
+  };
+
+  const startMiniCheck = (domainId) => {
+    setMiniCheckDomain(domainId);
+    setView('minicheck');
   };
 
   // When a "Spot the Error" scenario completes, add the domain to the local Set
@@ -263,11 +270,15 @@ export default function NavigatorApp({ navigatorId, name, onSignOut }) {
             rows={rows}
             name={name}
             deptName={deptName}
+            dept={activeDept ?? 'pediatrics'}
             deptMatrix={deptMatrix}
             onBack={null}
             onOpenNavigator={null}
             onPreviewModule={openModule}
             onChangeDept={handleDeptSelect}
+            navigatorId={navigatorId}
+            answers={ownResult?.answers ?? lastAnswers}
+            questions={questions}
           />
         ) : (
           <EmptyState title="No results yet">
@@ -282,7 +293,9 @@ export default function NavigatorApp({ navigatorId, name, onSignOut }) {
             row={myRow}
             onPreviewModule={openModule}
             onStartAudit={startAudit}
+            onStartMiniCheck={startMiniCheck}
             completedDomains={completedDomains}
+            department={activeDept ?? 'pediatrics'}
           />
         ) : (
           <EmptyState title="No training yet">
@@ -313,6 +326,36 @@ export default function NavigatorApp({ navigatorId, name, onSignOut }) {
           department={dept}
           onBack={() => setView('training')}
           onComplete={handleAuditComplete}
+        />
+      )}
+
+      {view === 'minicheck' && miniCheckDomain && (
+        <Check
+          onSubmit={async (_n, answers) => {
+            const scores = scorePerDomain(answers, questions);
+            const domainScore = scores[miniCheckDomain] ?? 0;
+            const passed = domainScore >= MINICHECK_PASS;
+            // Always record the minicheck completion regardless of pass/fail
+            try {
+              await saveCompletion(navigatorId, name, miniCheckDomain, 'minicheck');
+              setCompletedDomains((prev) => new Set([...prev, miniCheckDomain]));
+            } catch {/* non-critical */}
+            if (passed) {
+              // Re-save result with updated scores so the trend chart gains a new point
+              const allScores = { ...(ownResult?.scores ?? {}), [miniCheckDomain]: domainScore };
+              const competencyScores = scorePerCompetency(answers, questions);
+              try {
+                await saveResult(navigatorId, name, allScores, competencyScores, dept, answers);
+              } catch {/* non-critical */}
+            }
+            setView('training');
+          }}
+          onCancel={() => setView('training')}
+          questions={questions}
+          hideName
+          greetingName={name}
+          miniDomain={miniCheckDomain}
+          limit={MINICHECK_SIZE}
         />
       )}
     </Shell>

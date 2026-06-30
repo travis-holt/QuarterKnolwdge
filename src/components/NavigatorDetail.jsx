@@ -3,8 +3,9 @@ import { DOMAINS, domainName } from '../data/questions.js';
 import { COMPETENCIES, competencyName } from '../data/competencies.js';
 import { DEPARTMENTS, isAssessed } from '../data/departments.js';
 import { LEVELS, interviewScoreColor } from '../data/config.js';
-import { findRow, mentorSuggestions, trainingForRow } from '../lib/scoring.js';
-import { getInterviews } from '../lib/db.js';
+import { findRow, mentorSuggestions, trainingForRow, buildTrend, trainingImpact, buildDossier } from '../lib/scoring.js';
+import { getInterviews, getResultHistory } from '../lib/db.js';
+import Sparkline from './Sparkline.jsx';
 
 function formatDate(ts) {
   if (!ts) return '—';
@@ -16,13 +17,20 @@ function formatDate(ts) {
 // "Spot the Error" scenario (supervisor view passes this from completionMap).
 // onChangeDept(deptId): optional — when provided (navigator context only), assessed dept cards
 // become clickable buttons that jump straight to that dept's dashboard or check.
-export default function NavigatorDetail({ rows, name, deptName, deptMatrix, onBack, onOpenNavigator, onPreviewModule, navigatorId, completedDomains = new Set(), onChangeDept }) {
+// dept: the active department string (needed for getResultHistory).
+// answers: the navigator's raw answers map {questionId: optionId} (for dossier).
+// questions: the active question bank (for dossier).
+export default function NavigatorDetail({ rows, name, deptName, dept, deptMatrix, onBack, onOpenNavigator, onPreviewModule, navigatorId, completedDomains = new Set(), onChangeDept, answers, questions }) {
   const row = findRow(rows, name);
   const deptRow = deptMatrix?.find((r) => r.name === name);
 
-  // Practice interview sessions — only fetched when supervisors have the navigatorId.
+  // Practice interview sessions — only fetched when navigatorId is provided.
   const [interviews, setInterviews] = useState(null); // null = loading
   const [expandedId, setExpandedId] = useState(null);
+  // Score history for trend sparklines
+  const [history, setHistory] = useState(null); // null = not loaded yet
+  // Per-competency dossier expanded state
+  const [expandedComp, setExpandedComp] = useState(null);
 
   useEffect(() => {
     if (!navigatorId) return;
@@ -44,7 +52,16 @@ export default function NavigatorDetail({ rows, name, deptName, deptMatrix, onBa
       });
   }, [navigatorId]);
 
+  useEffect(() => {
+    if (!navigatorId) return;
+    setHistory(null);
+    getResultHistory(navigatorId, dept ?? 'pediatrics')
+      .then(setHistory)
+      .catch(() => setHistory([]));
+  }, [navigatorId, dept]);
+
   const toggleExpand = (id) => setExpandedId((prev) => (prev === id ? null : id));
+  const toggleComp = (id) => setExpandedComp((prev) => (prev === id ? null : id));
 
   if (!row) {
     return (
@@ -71,6 +88,12 @@ export default function NavigatorDetail({ rows, name, deptName, deptMatrix, onBa
   const orderedComps = COMPETENCIES.filter((c) => typeof competencyScores[c.id] === 'number').sort(
     (a, b) => competencyScores[a.id] - competencyScores[b.id]
   );
+
+  // Trend data (computed when history is loaded)
+  const trend = history?.length ? buildTrend(history) : null;
+
+  // Dossier (computed when answers + questions are provided)
+  const dossier = answers && questions?.length ? buildDossier(row, answers, questions, interviews ?? []) : null;
 
   return (
     <section className="navdetail stagger">
@@ -179,6 +202,49 @@ export default function NavigatorDetail({ rows, name, deptName, deptMatrix, onBa
         </div>
       </div>
 
+      {/* ── Longitudinal trend (when history is available) ───────────── */}
+      {trend && (
+        <div className="card navdetail__panel">
+          <h2 className="overview__panel-title">Progress over time</h2>
+          <p className="readoff__sub">
+            Score trajectory across checks.
+            {trend.points.some((p) => p.simulated) && (
+              <span className="trend__synth-note"> Illustrative leading points shown (dashed) — will be replaced by future checks.</span>
+            )}
+          </p>
+
+          {/* Overall sparkline */}
+          <div className="trend__overall">
+            <span className="trend__label">Overall</span>
+            <Sparkline values={trend.overallSeries} color="var(--accent)" height={36} />
+            <span className="trend__pct">{Math.round(trend.overallSeries[trend.overallSeries.length - 1])}%</span>
+          </div>
+
+          {/* Per-domain sparklines */}
+          <div className="trend__domains">
+            {DOMAINS.map((d) => {
+              const series = trend.domainSeries[d.id];
+              if (!series) return null;
+              const impact = training.find((t) => t.domainId === d.id)
+                ? trainingImpact(history, [], d.id) // completions not wired here — placeholder
+                : null;
+              return (
+                <div key={d.id} className="trend__domain-row">
+                  <span className="trend__domain-name">{domainName(d.id)}</span>
+                  <Sparkline values={series} color={LEVELS[row.levels[d.id]]?.color ?? 'var(--accent)'} />
+                  <span className="trend__domain-pct">{Math.round(series[series.length - 1])}%</span>
+                  {impact?.delta != null && (
+                    <span className={`trend__delta ${impact.delta >= 0 ? 'trend__delta--up' : 'trend__delta--down'}`}>
+                      {impact.delta >= 0 ? '+' : ''}{Math.round(impact.delta)}
+                    </span>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
       {/* ── Per-domain breakdown ──────────────────────────────────────── */}
       <div className="card navdetail__panel">
         <h2 className="overview__panel-title">Per-domain detail</h2>
@@ -204,30 +270,65 @@ export default function NavigatorDetail({ rows, name, deptName, deptMatrix, onBa
         </div>
       </div>
 
-      {/* ── Per-competency breakdown ──────────────────────────────────── */}
+      {/* ── Per-competency breakdown (with dossier evidence) ─────────── */}
       {orderedComps.length > 0 && (
         <div className="card navdetail__panel">
           <h2 className="overview__panel-title">Competency breakdown</h2>
           <p className="readoff__sub">
             How {row.name} thinks, decides, and communicates — measured across every scenario, not
-            tied to one topic.
+            tied to one topic. {dossier && 'Expand any competency to see the evidence behind the rating.'}
           </p>
           <div className="results__grid navdetail__grid">
             {orderedComps.map((c) => {
               const pct = competencyScores[c.id];
               const level = LEVELS[competencyLevels[c.id]];
+              const isOpen = expandedComp === c.id;
+              const evidence = dossier?.byCompetency?.find((b) => b.competencyId === c.id)?.evidence ?? [];
               return (
-                <div key={c.id} className="result-card navdetail__card">
-                  <div className="result-card__top">
+                <div key={c.id} className={`result-card navdetail__card ${isOpen ? 'is-open' : ''}`}>
+                  <div
+                    className="result-card__top"
+                    style={{ cursor: dossier ? 'pointer' : 'default' }}
+                    onClick={dossier ? () => toggleComp(c.id) : undefined}
+                  >
                     <span className="result-card__domain">{competencyName(c.id)}</span>
                     <span className="level-chip" style={{ background: level.color, color: level.text }}>
                       {level.label}
                     </span>
+                    {dossier && <span className="interview-log__toggle" aria-hidden="true">{isOpen ? '↑' : '↓'}</span>}
                   </div>
                   <div className="result-card__bar">
                     <div className="result-card__bar-fill" style={{ width: `${pct}%`, background: level.color }} />
                   </div>
                   <div className="result-card__pct">{pct}% capability</div>
+
+                  {/* Dossier evidence panel */}
+                  {isOpen && evidence.length > 0 && (
+                    <div className="dossier">
+                      {evidence.map((e) => (
+                        <div key={e.questionId} className={`dossier__item ${e.isCorrect ? 'dossier__item--correct' : 'dossier__item--wrong'}`}>
+                          <p className="dossier__scenario">{e.scenario}</p>
+                          <div className="dossier__row">
+                            <span className="dossier__label">Chosen:</span>
+                            <span className="dossier__text">{e.chosenText}</span>
+                            <span className="dossier__pts">{e.points}/100</span>
+                          </div>
+                          {!e.isCorrect && (
+                            <div className="dossier__row dossier__row--best">
+                              <span className="dossier__label">Best answer:</span>
+                              <span className="dossier__text">{e.bestText}</span>
+                            </div>
+                          )}
+                          {e.chosenRationale && (
+                            <p className="dossier__rationale">{e.chosenRationale}</p>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                  {isOpen && evidence.length === 0 && (
+                    <p className="dossier__empty">No question-level evidence available yet.</p>
+                  )}
                 </div>
               );
             })}

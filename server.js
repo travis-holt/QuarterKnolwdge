@@ -18,6 +18,7 @@ import interviewTurn from './api/interview-turn.js';
 import gradeInterview from './api/grade-interview.js';
 import generateAudit from './api/generate-audit.js';
 import coachAudit from './api/coach-audit.js';
+import sequencePath from './api/sequence-path.js';
 import health from './api/health.js';
 
 app.post('/api/generate-scenarios', generateScenarios);
@@ -26,6 +27,7 @@ app.post('/api/interview-turn', interviewTurn);
 app.post('/api/grade-interview', gradeInterview);
 app.post('/api/generate-audit', generateAudit);
 app.post('/api/coach-audit', coachAudit);
+app.post('/api/sequence-path', sequencePath);
 app.get('/api/health', health);
 
 // --- Static SPA ---

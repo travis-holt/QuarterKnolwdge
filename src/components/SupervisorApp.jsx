@@ -8,6 +8,8 @@ import NavigatorDetail from './NavigatorDetail.jsx';
 import Training from './Training.jsx';
 import TrainingModule from './TrainingModule.jsx';
 import QuestionBank from './QuestionBank.jsx';
+import ActionCenter from './ActionCenter.jsx';
+import Mentorship from './Mentorship.jsx';
 import EmptyState from './EmptyState.jsx';
 import Footer from './Footer.jsx';
 import { buildMatrixRows, departmentMatrix } from '../lib/scoring.js';
@@ -26,6 +28,11 @@ import {
   deleteQuestion,
   updateQuestion,
   subscribeCompletions,
+  subscribeResultHistory,
+  subscribeInterviews,
+  subscribePairings,
+  savePairing,
+  updatePairingStatus,
 } from '../lib/db.js';
 import { isFirebaseConfigured } from '../lib/firebase.js';
 import { ALL_SEED_QUESTIONS } from '../data/questions.js';
@@ -46,6 +53,9 @@ export default function SupervisorApp({ onSignOut }) {
   const [roster, setRoster] = useState([]);
   const [questions, setQuestions] = useState([]);
   const [completions, setCompletions] = useState([]);
+  const [resultHistory, setResultHistory] = useState([]); // append-only history for trends
+  const [allInterviews, setAllInterviews] = useState([]); // all interview sessions for action center
+  const [pairings, setPairings] = useState([]); // active/completed mentor pairings
   const [selected, setSelected] = useState(null);
   const [moduleDomain, setModuleDomain] = useState(null);
   const [moduleReturn, setModuleReturn] = useState('training');
@@ -63,12 +73,23 @@ export default function SupervisorApp({ onSignOut }) {
     const unsubRoster = subscribeRoster(setRoster, onError);
     const unsubCompletions = subscribeCompletions(setCompletions, (err) => {
       console.error('subscribeCompletions:', err);
-      // Non-critical — checkmarks just won't appear live.
+    });
+    const unsubHistory = subscribeResultHistory(setResultHistory, (err) => {
+      console.error('subscribeResultHistory:', err);
+    });
+    const unsubInterviews = subscribeInterviews(setAllInterviews, (err) => {
+      console.error('subscribeInterviews:', err);
+    });
+    const unsubPairings = subscribePairings(setPairings, (err) => {
+      console.error('subscribePairings:', err);
     });
     return () => {
       unsubResults();
       unsubRoster();
       unsubCompletions();
+      unsubHistory();
+      unsubInterviews();
+      unsubPairings();
     };
   }, []);
 
@@ -142,6 +163,8 @@ export default function SupervisorApp({ onSignOut }) {
   const handleDeactivateNavigator = (id) => setRosterStatus(id, 'inactive');
   const handleReactivateNavigator = (id) => setRosterStatus(id, 'active');
   const handleResetResult = (id) => clearResult(id, selectedDept);
+  const handleSavePairing = (pairing) => savePairing(pairing);
+  const handleUpdatePairing = (id, status) => updatePairingStatus(id, status);
 
   // Generate scenarios via the serverless Gemini proxy. The function returns
   // validated draft questions; we persist them as `draft` for review (they never
@@ -182,6 +205,13 @@ export default function SupervisorApp({ onSignOut }) {
 
   const showEmpty = DATA_VIEWS.includes(view) && rows.length === 0;
 
+  // Find the selected navigator's result doc (for answers + dossier)
+  const selectedResult = selected
+    ? deptResults.find((r) => r.name === selected)
+    : null;
+  // Dept-filtered history for the trend/action center
+  const deptHistory = resultHistory.filter((h) => (h.department ?? 'pediatrics') === selectedDept);
+
   return (
     <div className="app">
       <Nav role="supervisor" view={view} setView={setView} onSignOut={onSignOut} />
@@ -207,6 +237,7 @@ export default function SupervisorApp({ onSignOut }) {
                 deptMatrix={deptMatrix}
                 onOpenNavigator={openNavigator}
                 onViewMatrix={() => setView('matrix')}
+                teamHistory={deptHistory}
               />
             )}
 
@@ -249,12 +280,15 @@ export default function SupervisorApp({ onSignOut }) {
                 rows={rows}
                 name={selected}
                 deptName={deptName}
+                dept={selectedDept}
                 deptMatrix={deptMatrix}
                 onBack={() => setView('navigators')}
                 onOpenNavigator={openNavigator}
                 onPreviewModule={(d) => openModule(d, 'navigator')}
                 navigatorId={selectedNavigatorId}
                 completedDomains={selectedNavigatorId ? (completionMap[selectedNavigatorId] ?? new Set()) : new Set()}
+                answers={selectedResult?.answers}
+                questions={questions.filter((q) => q.status === 'active')}
               />
             )}
 
@@ -263,6 +297,26 @@ export default function SupervisorApp({ onSignOut }) {
                 rows={deptRows}
                 domainId={moduleDomain}
                 onBack={() => setView(moduleReturn)}
+                onOpenNavigator={openNavigator}
+              />
+            )}
+
+            {view === 'action' && (
+              <ActionCenter
+                rows={rows}
+                history={deptHistory}
+                interviews={allInterviews.filter((iv) => (iv.department ?? 'pediatrics') === selectedDept)}
+                completions={completions}
+                onOpenNavigator={openNavigator}
+              />
+            )}
+
+            {view === 'mentorship' && (
+              <Mentorship
+                rows={rows}
+                savedPairings={pairings}
+                onSavePairing={handleSavePairing}
+                onUpdatePairing={handleUpdatePairing}
                 onOpenNavigator={openNavigator}
               />
             )}

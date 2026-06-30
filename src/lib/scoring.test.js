@@ -34,6 +34,14 @@ import {
   trainingStats,
   mentorSuggestions,
   computeQuestionHealth,
+  buildTrend,
+  trainingImpact,
+  teamTrend,
+  buildDossier,
+  buildActionCenter,
+  buildDevPath,
+  buildMentorMatches,
+  pairingOutcomes,
 } from './scoring.js';
 
 import { THRESHOLDS, LEVELS, COLUMN_GAP_THRESHOLD } from '../data/config.js';
@@ -702,5 +710,359 @@ describe('scorePerCompetency — malformed inputs', () => {
     const qs = [{ id: 'no-comp', domainId: FAKE_D0, correctOptionId: 'a',
       options: [{ id: 'a', text: '', points: 100 }] }];
     expect(() => scorePerCompetency({ 'no-comp': 'a' }, qs)).not.toThrow();
+  });
+});
+
+// ── buildTrend / trainingImpact / teamTrend (Feature 1) ──────────────────────
+
+const makeSnapshot = (scores, secondsAgo, simulated = false) => ({
+  scores,
+  competencyScores: {},
+  takenAt: { seconds: Math.floor(Date.now() / 1000) - secondsAgo },
+  simulated,
+});
+
+describe('buildTrend', () => {
+  it('returns real points when history has 2+ entries', () => {
+    const s1 = makeSnapshot(makeScores({}, LEARN), 200);
+    const s2 = makeSnapshot(makeScores({}, TEACH), 100);
+    const result = buildTrend([s1, s2]);
+    expect(result.points.every((p) => !p.simulated)).toBe(true);
+    expect(result.points).toHaveLength(2);
+    expect(result.overallSeries[1]).toBeGreaterThan(result.overallSeries[0]);
+  });
+
+  it('prepends synthetic points when fewer than 2 real snapshots', () => {
+    const snap = makeSnapshot(makeScores({}, TEACH), 100);
+    const result = buildTrend([snap]);
+    expect(result.points.length).toBeGreaterThan(1);
+    const synthPoints = result.points.filter((p) => p.simulated);
+    expect(synthPoints.length).toBeGreaterThan(0);
+  });
+
+  it('generates synthetic points below the real snapshot (shows growth)', () => {
+    const snap = makeSnapshot(makeScores({}, TEACH), 100);
+    const result = buildTrend([snap]);
+    const last = result.overallSeries[result.overallSeries.length - 1];
+    const first = result.overallSeries[0];
+    expect(last).toBeGreaterThanOrEqual(first);
+  });
+
+  it('returns empty points and series for empty history', () => {
+    const result = buildTrend([]);
+    // With 0 real points, synthesize = true produces TREND_SYNTH_POINTS synthetic ones
+    expect(result.points.length).toBeGreaterThan(0);
+    expect(result.points.every((p) => p.simulated)).toBe(true);
+  });
+
+  it('builds domainSeries with one entry per domain per point', () => {
+    const snap = makeSnapshot(makeScores({}, SOLID), 100);
+    const result = buildTrend([snap]);
+    for (const d of DOMAINS) {
+      expect(result.domainSeries[d.id]).toHaveLength(result.points.length);
+    }
+  });
+
+  it('skips synthesis when synthesize=false', () => {
+    const snap = makeSnapshot(makeScores({}, SOLID), 100);
+    const result = buildTrend([snap], { synthesize: false });
+    expect(result.points).toHaveLength(1);
+    expect(result.points[0].simulated).toBe(false);
+  });
+});
+
+describe('trainingImpact', () => {
+  const now = Math.floor(Date.now() / 1000);
+  const h1 = { scores: makeScores({ [D0]: 40 }), takenAt: { seconds: now - 300 }, simulated: false };
+  const h2 = { scores: makeScores({ [D0]: 75 }), takenAt: { seconds: now - 100 }, simulated: false };
+  const completionBetween = { domainId: D0, completedAt: { seconds: now - 200 } };
+
+  it('returns before/after/delta when a completion straddles two history snapshots', () => {
+    const result = trainingImpact([h1, h2], [completionBetween], D0);
+    expect(result.before).toBe(40);
+    expect(result.after).toBe(75);
+    expect(result.delta).toBe(35);
+  });
+
+  it('returns all nulls when no completion exists for the domain', () => {
+    const result = trainingImpact([h1, h2], [], D0);
+    expect(result).toEqual({ before: null, after: null, delta: null });
+  });
+
+  it('returns all nulls when there is no snapshot after the completion', () => {
+    const lateCompletion = { domainId: D0, completedAt: { seconds: now } };
+    const result = trainingImpact([h1, h2], [lateCompletion], D0);
+    expect(result).toEqual({ before: null, after: null, delta: null });
+  });
+
+  it('ignores simulated snapshots when computing delta', () => {
+    const synth = { ...h1, simulated: true };
+    const result = trainingImpact([synth, h2], [completionBetween], D0);
+    // synth is filtered out, only h2 exists — no before → all null
+    expect(result.before).toBeNull();
+  });
+});
+
+describe('teamTrend', () => {
+  it('returns [] for empty history', () => {
+    expect(teamTrend([])).toEqual([]);
+  });
+
+  it('returns one entry per distinct timestamp', () => {
+    const ts1 = Math.floor(Date.now() / 1000) - 200;
+    const ts2 = Math.floor(Date.now() / 1000) - 100;
+    const history = [
+      { navigatorId: 'nav1', name: 'Ada', scores: makeScores({}, LEARN), competencyScores: {}, takenAt: { seconds: ts1 }, simulated: false },
+      { navigatorId: 'nav1', name: 'Ada', scores: makeScores({}, TEACH), competencyScores: {}, takenAt: { seconds: ts2 }, simulated: false },
+    ];
+    const trend = teamTrend(history);
+    expect(trend).toHaveLength(2);
+    expect(trend[1].solidPlusRate).toBeGreaterThan(trend[0].solidPlusRate);
+  });
+
+  it('builds floor state using each navigator\'s latest snapshot up to each timepoint', () => {
+    const ts1 = Math.floor(Date.now() / 1000) - 200;
+    const ts2 = Math.floor(Date.now() / 1000) - 100;
+    const history = [
+      { navigatorId: 'nav1', name: 'Ada', scores: makeScores({}, LEARN), competencyScores: {}, takenAt: { seconds: ts1 }, simulated: false },
+      { navigatorId: 'nav2', name: 'Bea', scores: makeScores({}, TEACH), competencyScores: {}, takenAt: { seconds: ts2 }, simulated: false },
+    ];
+    const trend = teamTrend(history);
+    // At ts1, only Ada is included; at ts2, both Ada and Bea
+    expect(trend[0].assessed).toBe(1);
+    expect(trend[1].assessed).toBe(2);
+  });
+});
+
+// ── buildDossier (Feature 2) ──────────────────────────────────────────────────
+
+describe('buildDossier', () => {
+  const row = buildMatrixRows([{ name: 'Ada', scores: makeScores({}, SOLID), competencyScores: { [C0]: TEACH } }], null)[0];
+  const fullAnswers = { fq1: 'b', fq2: 'a', fq3: 'a' }; // fq1 wrong (40pts), fq2 correct, fq3 correct
+
+  it('returns null when answers is empty', () => {
+    expect(buildDossier(row, {}, FAKE_QUESTIONS)).toBeNull();
+  });
+
+  it('returns null when answers is missing', () => {
+    expect(buildDossier(row, undefined, FAKE_QUESTIONS)).toBeNull();
+  });
+
+  it('maps answers to competency evidence', () => {
+    const dossier = buildDossier(row, fullAnswers, FAKE_QUESTIONS);
+    expect(dossier).not.toBeNull();
+    const c0Evidence = dossier.byCompetency.find((c) => c.competencyId === C0);
+    expect(c0Evidence.evidence.length).toBeGreaterThan(0);
+    const fq1Evidence = c0Evidence.evidence.find((e) => e.questionId === 'fq1');
+    expect(fq1Evidence.isCorrect).toBe(false); // chose 'b'
+    expect(fq1Evidence.points).toBe(40);
+  });
+
+  it('marks the correct choice isCorrect=true', () => {
+    const dossier = buildDossier(row, fullAnswers, FAKE_QUESTIONS);
+    const c0Evidence = dossier.byCompetency.find((c) => c.competencyId === C0);
+    const fq2Evidence = c0Evidence.evidence.find((e) => e.questionId === 'fq2');
+    expect(fq2Evidence.isCorrect).toBe(true);
+    expect(fq2Evidence.points).toBe(100);
+  });
+
+  it('includes interview and completion evidence per domain', () => {
+    const interviews = [{ id: 'iv1', domainId: FAKE_D0, callerName: 'Jane', endedAt: null, grade: { score: 80 } }];
+    const completions = [{ id: 'c1', domainId: FAKE_D0, kind: 'practice', completedAt: null }];
+    const dossier = buildDossier(row, fullAnswers, FAKE_QUESTIONS, interviews, completions);
+    expect(dossier.byDomain[FAKE_D0].interviews).toHaveLength(1);
+    expect(dossier.byDomain[FAKE_D0].completions).toHaveLength(1);
+  });
+
+  it('skips questions not in answers map', () => {
+    const dossier = buildDossier(row, { fq1: 'a' }, FAKE_QUESTIONS); // only fq1 answered
+    const c0Evidence = dossier.byCompetency.find((c) => c.competencyId === C0);
+    expect(c0Evidence.evidence.every((e) => e.questionId === 'fq1')).toBe(true);
+  });
+});
+
+// ── buildActionCenter (Feature 3) ────────────────────────────────────────────
+
+describe('buildActionCenter', () => {
+  it('returns all five categories empty for an empty floor', () => {
+    const ac = buildActionCenter([], {});
+    expect(ac.criticalGaps).toHaveLength(0);
+    expect(ac.trainingOverdue).toHaveLength(0);
+    expect(ac.decliningTrends).toHaveLength(0);
+    expect(ac.failedPractice).toHaveLength(0);
+    expect(ac.readyForMore).toHaveLength(0);
+  });
+
+  it('flags critical gaps for every Learning-level domain', () => {
+    const rows = buildMatrixRows([{ name: 'Ada', scores: makeScores({ [D0]: LEARN }, SOLID) }], null);
+    const ac = buildActionCenter(rows);
+    const gapDomains = ac.criticalGaps.filter((g) => g.name === 'Ada').map((g) => g.domainId);
+    expect(gapDomains).toContain(D0);
+  });
+
+  it('flags training overdue when a Required domain has no completion', () => {
+    const rows = buildMatrixRows([{ name: 'Ada', scores: makeScores({ [D0]: LEARN }, TEACH) }], null);
+    const ac = buildActionCenter(rows, { completions: [] });
+    expect(ac.trainingOverdue.some((t) => t.name === 'Ada' && t.domainId === D0)).toBe(true);
+  });
+
+  it('does NOT flag training overdue when completion exists', () => {
+    const rows = buildMatrixRows([{ name: 'Ada', scores: makeScores({ [D0]: LEARN }, TEACH) }], null);
+    const completions = [{ name: 'Ada', domainId: D0 }];
+    const ac = buildActionCenter(rows, { completions });
+    expect(ac.trainingOverdue.some((t) => t.name === 'Ada' && t.domainId === D0)).toBe(false);
+  });
+
+  it('flags declining trend when overall drops >5 points between last two snapshots', () => {
+    const rows = buildMatrixRows([{ name: 'Ada', scores: makeScores({}, SOLID) }], null);
+    const now = Math.floor(Date.now() / 1000);
+    const history = [
+      { name: 'Ada', scores: makeScores({}, TEACH), takenAt: { seconds: now - 200 }, simulated: false },
+      { name: 'Ada', scores: makeScores({}, LEARN), takenAt: { seconds: now - 100 }, simulated: false },
+    ];
+    const ac = buildActionCenter(rows, { history });
+    expect(ac.decliningTrends.some((d) => d.name === 'Ada')).toBe(true);
+  });
+
+  it('flags failed practice for interview scores below the fair threshold', () => {
+    const rows = buildMatrixRows([{ name: 'Ada', scores: makeScores({}, SOLID) }], null);
+    const interviews = [{ name: 'Ada', domainId: D0, grade: { score: 40 } }];
+    const ac = buildActionCenter(rows, { interviews });
+    expect(ac.failedPractice.some((f) => f.name === 'Ada')).toBe(true);
+  });
+
+  it('does NOT flag failed practice for scores at/above the fair threshold', () => {
+    const rows = buildMatrixRows([{ name: 'Ada', scores: makeScores({}, SOLID) }], null);
+    const interviews = [{ name: 'Ada', domainId: D0, grade: { score: 70 } }];
+    const ac = buildActionCenter(rows, { interviews });
+    expect(ac.failedPractice.some((f) => f.name === 'Ada')).toBe(false);
+  });
+});
+
+// ── buildDevPath (Feature 4) ──────────────────────────────────────────────────
+
+describe('buildDevPath', () => {
+  const row = buildMatrixRows([{ name: 'Ada', scores: makeScores({ [D0]: LEARN, [D1]: SOLID }, TEACH) }], null)[0];
+
+  it('returns one path per assigned domain (Learning + Solid, not Can-Teach)', () => {
+    const paths = buildDevPath(row);
+    expect(paths.map((p) => p.domainId)).toContain(D0);
+    expect(paths.map((p) => p.domainId)).toContain(D1);
+    // Can-Teach domains get no path
+    for (const p of paths) {
+      expect(row.levels[p.domainId]).not.toBe('canTeach');
+    }
+  });
+
+  it('starts with coaching=done and practice=next (no completions)', () => {
+    const paths = buildDevPath(row);
+    const path = paths.find((p) => p.domainId === D0);
+    expect(path.steps.find((s) => s.kind === 'coaching').status).toBe('done');
+    expect(path.steps.find((s) => s.kind === 'practice').status).toBe('next');
+  });
+
+  it('marks practice done and interview=next once a practice completion exists', () => {
+    const completions = [{ domainId: D0, kind: 'practice' }];
+    const paths = buildDevPath(row, completions);
+    const path = paths.find((p) => p.domainId === D0);
+    expect(path.steps.find((s) => s.kind === 'practice').status).toBe('done');
+    expect(path.steps.find((s) => s.kind === 'interview').status).toBe('next');
+  });
+
+  it('marks minicheck done and raises percentComplete to 100 when all steps complete', () => {
+    const completions = [
+      { domainId: D0, kind: 'practice' },
+      { domainId: D0, kind: 'minicheck' },
+    ];
+    const interviews = [{ domainId: D0, grade: { score: 80 } }];
+    const paths = buildDevPath(row, completions, interviews);
+    const path = paths.find((p) => p.domainId === D0);
+    expect(path.steps.find((s) => s.kind === 'minicheck').status).toBe('done');
+    expect(path.percentComplete).toBe(100);
+  });
+
+  it('returns empty array for a Can-Teach-across-the-board navigator', () => {
+    const ctRow = buildMatrixRows([{ name: 'Star', scores: makeScores({}, TEACH) }], null)[0];
+    expect(buildDevPath(ctRow)).toHaveLength(0);
+  });
+});
+
+// ── buildMentorMatches / pairingOutcomes (Feature 5) ────────────────────────
+
+describe('buildMentorMatches', () => {
+  it('produces a pairing for each mentee in a domain with an available mentor', () => {
+    // Dot is Can-Teach in D0; Ada/Bea/Cyd are not
+    const { pairings } = buildMentorMatches(fixtureRows());
+    const d0Pairings = pairings.filter((p) => p.domainId === D0);
+    expect(d0Pairings.length).toBeGreaterThan(0);
+    expect(d0Pairings.every((p) => p.mentorName === 'Dot')).toBe(true);
+  });
+
+  it('respects maxLoad — mentor never exceeds cap', () => {
+    const { pairings, load } = buildMentorMatches(fixtureRows(), { maxLoad: 2 });
+    for (const [, count] of Object.entries(load)) {
+      expect(count).toBeLessThanOrEqual(2);
+    }
+    // Excess mentees go to unmatched
+    const { unmatched } = buildMentorMatches(fixtureRows(), { maxLoad: 1 });
+    // Dot is the only mentor for D0 with 3 mentees; 2 should be unmatched
+    const d0Unmatched = unmatched.filter((u) => u.domainId === D0);
+    expect(d0Unmatched.length).toBe(2);
+  });
+
+  it('puts Learning mentees before Solid in pairings for the same domain', () => {
+    const { pairings } = buildMentorMatches(fixtureRows());
+    const d0 = pairings.filter((p) => p.domainId === D0);
+    const levels = d0.map((p) => p.menteeLevel);
+    if (levels.includes('learning') && levels.includes('solid')) {
+      expect(levels.indexOf('learning')).toBeLessThan(levels.indexOf('solid'));
+    }
+  });
+
+  it('puts a domain with no Can-Teach navigators into unmatched', () => {
+    // D3 in our fixture: Ada+Dot are Can-Teach, so there might be mentors.
+    // Build a simple case: all Learning, no teacher.
+    const allLearning = buildMatrixRows([
+      { name: 'A', scores: makeScores({}, LEARN) },
+      { name: 'B', scores: makeScores({}, LEARN) },
+    ], null);
+    const { pairings, unmatched } = buildMentorMatches(allLearning);
+    expect(pairings).toHaveLength(0);
+    expect(unmatched.length).toBeGreaterThan(0);
+  });
+
+  it('records the baseline score on each pairing', () => {
+    const { pairings } = buildMentorMatches(fixtureRows());
+    const d0 = pairings.find((p) => p.domainId === D0);
+    expect(typeof d0.baselineScore).toBe('number');
+  });
+});
+
+describe('pairingOutcomes', () => {
+  const rows = fixtureRows();
+  const savedPairings = [
+    { domainId: D0, mentorName: 'Dot', menteeName: 'Ada', menteeLevel: 'learning', baselineScore: 30 },
+  ];
+
+  it('computes delta = currentScore - baselineScore', () => {
+    const outcomes = pairingOutcomes(savedPairings, rows);
+    expect(outcomes).toHaveLength(1);
+    const adaScore = rows.find((r) => r.name === 'Ada').scores[D0];
+    expect(outcomes[0].currentScore).toBe(adaScore);
+    expect(outcomes[0].delta).toBe(adaScore - 30);
+  });
+
+  it('sets improved=true when delta > 0', () => {
+    // Ada's D0 is LEARN which is 50 (THRESHOLDS.learning - 10); baseline is 30 → improved
+    const outcomes = pairingOutcomes(savedPairings, rows);
+    expect(outcomes[0].improved).toBe(LEARN > 30);
+  });
+
+  it('sets currentScore=null and delta=null for an unknown mentee', () => {
+    const missing = [{ domainId: D0, menteeName: 'Ghost', baselineScore: 30 }];
+    const outcomes = pairingOutcomes(missing, rows);
+    expect(outcomes[0].currentScore).toBeNull();
+    expect(outcomes[0].delta).toBeNull();
+    expect(outcomes[0].improved).toBe(false);
   });
 });

@@ -9,10 +9,14 @@ import {
   columnGaps,
   canTeachRoster,
   readinessTally,
+  teamTrend,
 } from '../lib/scoring.js';
 import CountUp from './CountUp.jsx';
+import Sparkline from './Sparkline.jsx';
 
-export default function Overview({ rows, deptName, deptMatrix, onOpenNavigator, onViewMatrix }) {
+// teamHistory: flat array of resultHistory docs (all navigators, all times).
+export default function Overview({ rows, deptName, deptMatrix, onOpenNavigator, onViewMatrix, teamHistory = [] }) {
+  const floorTrend = teamHistory.length ? teamTrend(teamHistory) : [];
   const stats = floorStats(rows);
   const dist = domainDistribution(rows);
   const compDist = competencyDistribution(rows);
@@ -118,6 +122,31 @@ export default function Overview({ rows, deptName, deptMatrix, onOpenNavigator, 
           <span className="kpi__sub">this quarter</span>
         </div>
       </div>
+
+      {/* ── Floor trend (when history is available) ───────────────────── */}
+      {floorTrend.length > 1 && (
+        <div className="card overview__panel">
+          <h2 className="overview__panel-title">Floor trend over time</h2>
+          <p className="readoff__sub">
+            Solid-or-above rate and average readiness across all navigators, per check cycle.
+          </p>
+          <div className="trend__overall">
+            <span className="trend__label">Solid+ rate</span>
+            <Sparkline values={floorTrend.map((t) => t.solidPlusRate)} color="var(--accent)" height={36} />
+            <span className="trend__pct">{Math.round(floorTrend[floorTrend.length - 1].solidPlusRate)}%</span>
+          </div>
+          <div className="trend__overall" style={{ marginTop: '0.5rem' }}>
+            <span className="trend__label">Avg readiness</span>
+            <Sparkline values={floorTrend.map((t) => t.avgReadiness)} color="var(--level-canteach)" height={36} />
+            <span className="trend__pct">{floorTrend[floorTrend.length - 1].avgReadiness.toFixed(1)}</span>
+          </div>
+          <div className="trend__tick-row">
+            {floorTrend.map((t) => (
+              <span key={t.ts} className="trend__tick">{t.label}</span>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* ── Domain capability distribution ────────────────────────────── */}
       <div className="card overview__panel">

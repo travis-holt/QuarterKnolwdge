@@ -21,6 +21,8 @@ export default function Nav({ role, view, setView, onSignOut, activeDeptName, on
             active: view === 'navigators' || view === 'navigator',
           },
           { id: 'training', label: 'Training' },
+          { id: 'action', label: 'Action Center' },
+          { id: 'mentorship', label: 'Mentorship' },
           { id: 'questions', label: 'Questions' },
         ];
 
