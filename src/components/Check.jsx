@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useMemo } from 'react';
 import { SEED_QUESTIONS, domainName } from '../data/questions.js';
 
 // Stepped flow: one scenario per step, with a progress bar. The taker can move
@@ -9,13 +9,24 @@ import { SEED_QUESTIONS, domainName } from '../data/questions.js';
 // `hideName` hides the optional name field (used when the taker is already
 // identified — e.g. a signed-in navigator). `greetingName` shows a friendly
 // header in that case.
-export default function Check({ onSubmit, onCancel, questions = SEED_QUESTIONS, hideName = false, greetingName, deptName }) {
+//
+// Mini-check mode: pass `miniDomain` (a domainId string) + `limit` (default 4)
+// to run a short re-validation for a single domain only.
+export default function Check({ onSubmit, onCancel, questions = SEED_QUESTIONS, hideName = false, greetingName, deptName, miniDomain, limit }) {
   const [name, setName] = useState('');
   const [step, setStep] = useState(0);
   const [answers, setAnswers] = useState({});
 
-  const q = questions[step];
-  const total = questions.length;
+  // In mini-check mode, filter to the target domain and cap at `limit` questions.
+  const activeQuestions = useMemo(() => {
+    if (!miniDomain) return questions;
+    const filtered = questions.filter((q) => q.domainId === miniDomain);
+    return limit ? filtered.slice(0, limit) : filtered;
+  }, [questions, miniDomain, limit]);
+
+  const isMini = Boolean(miniDomain);
+  const q = activeQuestions[step];
+  const total = activeQuestions.length;
   const isLast = step === total - 1;
   const answeredCurrent = answers[q.id] != null;
   const answeredCount = Object.keys(answers).length;
@@ -45,7 +56,13 @@ export default function Check({ onSubmit, onCancel, questions = SEED_QUESTIONS, 
             Question {step + 1} of {total}
           </span>
           {hideName ? (
-            greetingName && <span className="check__greeting">Hi {greetingName}{deptName ? ` — ${deptName} check` : ''} 👋</span>
+            greetingName && (
+              <span className="check__greeting">
+                {isMini
+                  ? `Re-check: ${domainName(miniDomain)}`
+                  : `Hi ${greetingName}${deptName ? ` — ${deptName} check` : ''} 👋`}
+              </span>
+            )
           ) : (
             <input
               className="check__name"

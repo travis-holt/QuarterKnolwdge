@@ -5,21 +5,27 @@
 // calls these helpers — never the Firestore SDK directly. This keeps the data
 // layer swappable and the rest of the app ignorant of Firestore.
 //
-// Five collections, all UUID-keyed (never name-keyed → no typo/collision risk):
-//   roster      — supervisor-managed navigator list { name, pin, createdAt }
-//   results     — check submissions { name, navigatorId, department, scores,
-//                 competencyScores, submittedAt }. Keyed by composite
-//                 `${navigatorId}__${department}` so one navigator can hold
-//                 separate scores for each assessed department. A fallback
-//                 read against the plain navigatorId id supports legacy
-//                 Pediatrics docs created before this multi-dept migration.
-//   questions   — supervisor-managed scenario bank { scenario, options, status,
-//                 department, … }. `department` field added to support per-dept
-//                 banks. Legacy docs without `department` are treated as 'pediatrics'.
-//   interviews  — practice roleplay transcripts { navigatorId, name, domainId,
-//                 scenario, callerName, transcript, endedAt }
-//   completions — "Spot the Error" exercise completions { navigatorId, name,
-//                 domainId, completedAt }
+// Seven collections, all UUID-keyed (never name-keyed → no typo/collision risk):
+//   roster        — supervisor-managed navigator list { name, pin, createdAt }
+//   results       — check submissions { name, navigatorId, department, scores,
+//                   competencyScores, answers, submittedAt }. Keyed by composite
+//                   `${navigatorId}__${department}` so one navigator can hold
+//                   separate scores for each assessed department. A fallback
+//                   read against the plain navigatorId id supports legacy
+//                   Pediatrics docs created before this multi-dept migration.
+//   resultHistory — append-only score snapshots (one per submission/retake) for
+//                   longitudinal trends. { navigatorId, name, department, scores,
+//                   competencyScores, takenAt, simulated }. Never overwritten.
+//   questions     — supervisor-managed scenario bank { scenario, options, status,
+//                   department, … }. `department` field added to support per-dept
+//                   banks. Legacy docs without `department` are treated as 'pediatrics'.
+//   interviews    — practice roleplay transcripts { navigatorId, name, domainId,
+//                   scenario, callerName, transcript, endedAt }
+//   completions   — exercise completions { navigatorId, name, domainId, kind,
+//                   completedAt }. `kind` defaults to 'practice' for legacy docs.
+//   pairings      — mentor-mentee pairings { domainId, mentorId, mentorName,
+//                   menteeId, menteeName, menteeLevel, baselineScore, status,
+//                   createdAt }
 //
 // Levels (learning/solid/canTeach) are NEVER stored — always derived client-side
 // by scoreToLevel(), so thresholds stay tunable without a data migration. Older
@@ -46,9 +52,11 @@ import {
 
 const ROSTER = 'roster';
 const RESULTS = 'results';
+const RESULT_HISTORY = 'resultHistory';
 const QUESTIONS_COL = 'questions';
 const INTERVIEWS = 'interviews';
 const COMPLETIONS = 'completions';
+const PAIRINGS = 'pairings';
 
 // ── Roster ───────────────────────────────────────────────────────────────────
 
@@ -153,7 +161,8 @@ export async function getResult(navigatorId, department = 'pediatrics') {
 }
 
 /**
- * Navigator: write (or overwrite on retake) their result for one department.
+ * Navigator: write (or overwrite on retake) their result for one department,
+ * AND append an immutable snapshot to resultHistory for trend tracking.
  * Uses composite key `${navigatorId}__${department}` so a navigator can hold
  * separate scores for each assessed department.
  * @param {string} navigatorId
@@ -161,6 +170,7 @@ export async function getResult(navigatorId, department = 'pediatrics') {
  * @param {Record<string,number>} scores  domainId -> percent
  * @param {Record<string,number|null>} [competencyScores]
  * @param {string} [department='pediatrics']
+ * @param {Record<string,string>} [answers]  questionId -> optionId (for question health)
  */
 export async function saveResult(navigatorId, name, scores, competencyScores = {}, department = 'pediatrics', answers = {}) {
   const compositeId = `${navigatorId}__${department}`;
@@ -172,6 +182,16 @@ export async function saveResult(navigatorId, name, scores, competencyScores = {
     competencyScores,
     answers,
     submittedAt: serverTimestamp(),
+  });
+  // Append an immutable history snapshot for longitudinal trends.
+  await addDoc(collection(db, RESULT_HISTORY), {
+    navigatorId,
+    name,
+    department,
+    scores,
+    competencyScores,
+    takenAt: serverTimestamp(),
+    simulated: false,
   });
 }
 
@@ -187,6 +207,43 @@ export function subscribeResults(cb, onError) {
     collection(db, RESULTS),
     (snap) => cb(snap.docs.map((d) => ({ id: d.id, ...d.data() }))),
     onError ?? ((err) => console.error('subscribeResults:', err))
+  );
+}
+
+// ── Result History (longitudinal trends) ─────────────────────────────────────
+
+/**
+ * One-time fetch of all historical snapshots for a navigator in one department,
+ * sorted oldest → newest by takenAt. Used for per-navigator trend charts.
+ * @param {string} navigatorId
+ * @param {string} [department='pediatrics']
+ * @returns {Promise<{id:string, scores:*, competencyScores:*, takenAt:*, simulated:boolean}[]>}
+ */
+export async function getResultHistory(navigatorId, department = 'pediatrics') {
+  const snap = await getDocs(
+    query(
+      collection(db, RESULT_HISTORY),
+      where('navigatorId', '==', navigatorId),
+      where('department', '==', department)
+    )
+  );
+  return snap.docs
+    .map((d) => ({ id: d.id, ...d.data() }))
+    .sort((a, b) => (a.takenAt?.seconds ?? 0) - (b.takenAt?.seconds ?? 0));
+}
+
+/**
+ * Supervisor: live subscription to ALL result history snapshots.
+ * Used by the supervisor action center and team-trend view.
+ * @param {(history:object[]) => void} cb
+ * @param {(err:Error) => void} [onError]
+ * @returns {() => void} unsubscribe
+ */
+export function subscribeResultHistory(cb, onError) {
+  return onSnapshot(
+    collection(db, RESULT_HISTORY),
+    (snap) => cb(snap.docs.map((d) => ({ id: d.id, ...d.data() }))),
+    onError ?? ((err) => console.error('subscribeResultHistory:', err))
   );
 }
 
@@ -240,31 +297,51 @@ export async function getInterviews(navigatorId) {
   return snap.docs.map((d) => ({ id: d.id, ...d.data() }));
 }
 
-// ── Completions ("Spot the Error" exercise completions) ───────────────────────
+/**
+ * Supervisor: live subscription to ALL interview sessions across all navigators.
+ * Used by the action center (failed practice detection).
+ * @param {(interviews:object[]) => void} cb
+ * @param {(err:Error) => void} [onError]
+ * @returns {() => void} unsubscribe
+ */
+export function subscribeInterviews(cb, onError) {
+  return onSnapshot(
+    collection(db, INTERVIEWS),
+    (snap) => cb(snap.docs.map((d) => ({ id: d.id, ...d.data() }))),
+    onError ?? ((err) => console.error('subscribeInterviews:', err))
+  );
+}
+
+// ── Completions (exercise completions) ───────────────────────────────────────
 
 /**
- * Navigator: record that they completed a "Spot the Error" scenario for a domain.
+ * Navigator: record that they completed a practice exercise for a domain.
  * A navigator may complete the same domain multiple times; each run is its own doc.
+ * `kind` distinguishes between exercise types:
+ *   'practice'  — "Spot the Error" QA audit (default, legacy docs)
+ *   'minicheck' — domain mini-check re-validation
  * @param {string} navigatorId
  * @param {string} name          denormalised for display
  * @param {string} domainId
+ * @param {string} [kind='practice']
  * @returns {Promise<string>} the new completion doc id
  */
-export async function saveCompletion(navigatorId, name, domainId) {
+export async function saveCompletion(navigatorId, name, domainId, kind = 'practice') {
   const ref = doc(collection(db, COMPLETIONS));
   await setDoc(ref, {
     navigatorId,
     name,
     domainId,
+    kind,
     completedAt: serverTimestamp(),
   });
   return ref.id;
 }
 
 /**
- * One-time fetch of all "Spot the Error" completions for a navigator.
+ * One-time fetch of all exercise completions for a navigator.
  * @param {string} navigatorId
- * @returns {Promise<{id:string, domainId:string, completedAt:*}[]>}
+ * @returns {Promise<{id:string, domainId:string, kind:string, completedAt:*}[]>}
  */
 export async function getCompletions(navigatorId) {
   const snap = await getDocs(
@@ -400,4 +477,44 @@ export async function archiveQuestion(id) {
 /** Supervisor: permanently delete a question. */
 export async function deleteQuestion(id) {
   await deleteDoc(doc(db, QUESTIONS_COL, id));
+}
+
+// ── Pairings (mentor-mentee assignments) ──────────────────────────────────────
+
+/**
+ * Supervisor: save a mentor-mentee pairing for a domain.
+ * @param {{ domainId, mentorId, mentorName, menteeId, menteeName, menteeLevel, baselineScore }} pairing
+ * @returns {Promise<string>} the new pairing doc id
+ */
+export async function savePairing(pairing) {
+  const ref = doc(collection(db, PAIRINGS));
+  await setDoc(ref, {
+    ...pairing,
+    status: 'active',
+    createdAt: serverTimestamp(),
+  });
+  return ref.id;
+}
+
+/**
+ * Supervisor: update the status of a pairing (e.g. 'active' | 'completed' | 'cancelled').
+ * @param {string} id
+ * @param {string} status
+ */
+export async function updatePairingStatus(id, status) {
+  await updateDoc(doc(db, PAIRINGS, id), { status });
+}
+
+/**
+ * Supervisor: live subscription to ALL pairings.
+ * @param {(pairings:object[]) => void} cb
+ * @param {(err:Error) => void} [onError]
+ * @returns {() => void} unsubscribe
+ */
+export function subscribePairings(cb, onError) {
+  return onSnapshot(
+    collection(db, PAIRINGS),
+    (snap) => cb(snap.docs.map((d) => ({ id: d.id, ...d.data() }))),
+    onError ?? ((err) => console.error('subscribePairings:', err))
+  );
 }

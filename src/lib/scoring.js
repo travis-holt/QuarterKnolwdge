@@ -10,7 +10,7 @@
 // THRESHOLDS in data/config.js so the bands are easy to change in one place.
 // ─────────────────────────────────────────────────────────────────────────────
 
-import { THRESHOLDS, LEVELS, COLUMN_GAP_THRESHOLD, TRAINING_RULES } from '../data/config.js';
+import { THRESHOLDS, LEVELS, COLUMN_GAP_THRESHOLD, TRAINING_RULES, TREND_SYNTH_POINTS, MENTOR_MAX_LOAD, INTERVIEW_SCORE_BANDS } from '../data/config.js';
 import { DOMAINS, SEED_QUESTIONS } from '../data/questions.js';
 import { COMPETENCIES } from '../data/competencies.js';
 import { moduleForDomain } from '../data/training.js';
@@ -466,4 +466,410 @@ export function mentorSuggestions(rows, name) {
     .filter((x) => x.mentors.length > 0)
     // surface the biggest gaps first (Learning before Solid)
     .sort((a, b) => (a.level === 'learning' ? -1 : 1) - (b.level === 'learning' ? -1 : 1));
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// LONGITUDINAL TRENDS (Feature 1)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** Mean of all domain scores, or 0 if empty. */
+function computeOverall(scores) {
+  if (!scores) return 0;
+  const vals = DOMAINS.map((d) => scores[d.id]).filter((v) => typeof v === 'number');
+  if (vals.length === 0) return 0;
+  return Math.round(vals.reduce((a, b) => a + b, 0) / vals.length);
+}
+
+function formatTrendLabel(ts) {
+  if (!ts) return '—';
+  const date = typeof ts.toDate === 'function' ? ts.toDate() : new Date((ts.seconds ?? 0) * 1000);
+  return date.toLocaleDateString(undefined, { month: 'short', year: 'numeric' });
+}
+
+/**
+ * Build a trend series from a navigator's result history snapshots.
+ * If fewer than TREND_SYNTH_POINTS real snapshots exist, prepend illustrative
+ * synthetic points (clearly flagged simulated:true) so the chart is never empty.
+ *
+ * @param {object[]} history  getResultHistory() output, sorted oldest→newest
+ * @param {{ synthesize?: boolean }} [opts]
+ * @returns {{
+ *   points: { label:string, scores:object, competencyScores:object, overall:number, simulated:boolean }[],
+ *   domainSeries: Record<string, number[]>,
+ *   overallSeries: number[],
+ * }}
+ */
+export function buildTrend(history, { synthesize = true } = {}) {
+  const realPoints = history.map((h) => ({
+    label: formatTrendLabel(h.takenAt),
+    scores: h.scores ?? {},
+    competencyScores: h.competencyScores ?? {},
+    overall: computeOverall(h.scores),
+    simulated: h.simulated ?? false,
+  }));
+
+  const syntheticPoints = [];
+  if (synthesize && realPoints.length < TREND_SYNTH_POINTS) {
+    const needed = TREND_SYNTH_POINTS - realPoints.length;
+    const baseScores = realPoints[0]?.scores ?? {};
+    // Scale factors create a visible upward trend toward current snapshot.
+    const factors = [0.60, 0.78].slice(0, needed);
+    const labels = ['Q−2 (illustrative)', 'Q−1 (illustrative)'].slice(TREND_SYNTH_POINTS - needed);
+    for (let i = 0; i < needed; i++) {
+      const f = factors[i] ?? 0.65;
+      const synScores = {};
+      for (const d of DOMAINS) synScores[d.id] = Math.round((baseScores[d.id] ?? 50) * f);
+      syntheticPoints.push({
+        label: labels[i],
+        scores: synScores,
+        competencyScores: {},
+        overall: computeOverall(synScores),
+        simulated: true,
+      });
+    }
+  }
+
+  const points = [...syntheticPoints, ...realPoints];
+  const domainSeries = {};
+  for (const d of DOMAINS) domainSeries[d.id] = points.map((p) => p.scores[d.id] ?? 0);
+  return { points, domainSeries, overallSeries: points.map((p) => p.overall) };
+}
+
+/**
+ * Pre/post training impact for one domain: score before vs after the first
+ * completion of any practice exercise in that domain.
+ * Returns { before, after, delta } or nulls if not enough history.
+ *
+ * @param {object[]} history     sorted oldest→newest
+ * @param {object[]} completions all completions for this navigator
+ * @param {string}   domainId
+ * @returns {{ before:number|null, after:number|null, delta:number|null }}
+ */
+export function trainingImpact(history, completions, domainId) {
+  const firstTs = completions
+    .filter((c) => c.domainId === domainId)
+    .map((c) => c.completedAt?.seconds ?? 0)
+    .sort((a, b) => a - b)[0];
+
+  if (firstTs == null) return { before: null, after: null, delta: null };
+
+  const realHistory = history.filter((h) => !h.simulated);
+  const before = [...realHistory].filter((h) => (h.takenAt?.seconds ?? 0) <= firstTs).pop();
+  const after = realHistory.find((h) => (h.takenAt?.seconds ?? 0) > firstTs);
+
+  const b = before?.scores?.[domainId] ?? null;
+  const a = after?.scores?.[domainId] ?? null;
+  if (b === null || a === null) return { before: null, after: null, delta: null };
+  return { before: b, after: a, delta: a - b };
+}
+
+/**
+ * Floor-level trend: solidPlusRate and avgReadiness over time.
+ * Groups all history snapshots chronologically; for each distinct timestamp,
+ * builds the floor state using each navigator's latest snapshot up to that point.
+ *
+ * @param {object[]} allHistory  subscribeResultHistory() output (all navigators)
+ * @returns {{ ts:number, label:string, solidPlusRate:number, avgReadiness:number, assessed:number }[]}
+ */
+export function teamTrend(allHistory) {
+  if (allHistory.length === 0) return [];
+  const timePoints = [...new Set(allHistory.map((h) => h.takenAt?.seconds ?? 0))].sort((a, b) => a - b);
+  const navIds = [...new Set(allHistory.map((h) => h.navigatorId))];
+
+  return timePoints.map((ts) => {
+    const snapshots = navIds
+      .map((navId) =>
+        allHistory
+          .filter((h) => h.navigatorId === navId && (h.takenAt?.seconds ?? 0) <= ts)
+          .sort((a, b) => (b.takenAt?.seconds ?? 0) - (a.takenAt?.seconds ?? 0))[0]
+      )
+      .filter(Boolean);
+
+    if (snapshots.length === 0) return null;
+    const rows = snapshots.map((s) => ({
+      name: s.name,
+      isLive: false,
+      scores: s.scores ?? {},
+      levels: Object.fromEntries(DOMAINS.map((d) => [d.id, scoreToLevel(s.scores?.[d.id] ?? 0)])),
+      competencyScores: s.competencyScores ?? {},
+      competencyLevels: {},
+    }));
+    const stats = floorStats(rows);
+    return {
+      ts,
+      label: formatTrendLabel({ seconds: ts }),
+      solidPlusRate: stats.solidPlusRate,
+      avgReadiness: parseFloat(stats.avgReadiness.toFixed(1)),
+      assessed: stats.assessed,
+    };
+  }).filter(Boolean);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// EVIDENCE DOSSIER (Feature 2)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Build an evidence dossier tying each competency rating to the concrete
+ * question answers that produced it, plus domain-level practice evidence
+ * (interviews and completions).
+ *
+ * Returns null when `answers` is empty/absent (legacy result docs without
+ * the answers field — same tolerance as computeQuestionHealth).
+ *
+ * @param {object}   row         matrix row for this navigator
+ * @param {object}   answers     result.answers: { questionId → optionId }
+ * @param {object[]} questions   active question bank
+ * @param {object[]} [interviews]  all interviews for this navigator
+ * @param {object[]} [completions] all completions for this navigator
+ * @returns {{ byCompetency: object[], byDomain: object } | null}
+ */
+export function buildDossier(row, answers, questions, interviews = [], completions = []) {
+  if (!answers || Object.keys(answers).length === 0) return null;
+
+  const byCompetency = {};
+  for (const c of COMPETENCIES) {
+    byCompetency[c.id] = {
+      competencyId: c.id,
+      score: row.competencyScores?.[c.id] ?? null,
+      level: row.competencyLevels?.[c.id] ?? null,
+      evidence: [],
+    };
+  }
+
+  for (const q of questions) {
+    const chosen = answers[q.id];
+    if (chosen === undefined) continue;
+    const chosenOpt = q.options?.find((o) => o.id === chosen);
+    const bestOpt = q.options?.find((o) => o.id === q.correctOptionId);
+    if (!chosenOpt) continue;
+    const isCorrect = chosen === q.correctOptionId;
+    const points = typeof chosenOpt.points === 'number' ? chosenOpt.points : (isCorrect ? 100 : 0);
+    const item = {
+      questionId: q.id,
+      domainId: q.domainId,
+      scenario: q.scenario,
+      chosenText: chosenOpt.text,
+      chosenRationale: chosenOpt.rationale ?? null,
+      bestText: bestOpt?.text ?? null,
+      bestRationale: bestOpt?.rationale ?? null,
+      points,
+      isCorrect,
+    };
+    for (const cid of q.competencies ?? []) {
+      if (byCompetency[cid]) byCompetency[cid].evidence.push(item);
+    }
+  }
+
+  const byDomain = {};
+  for (const d of DOMAINS) {
+    byDomain[d.id] = {
+      domainId: d.id,
+      interviews: interviews
+        .filter((iv) => iv.domainId === d.id)
+        .map((iv) => ({ id: iv.id, callerName: iv.callerName, endedAt: iv.endedAt, grade: iv.grade ?? null })),
+      completions: completions
+        .filter((c) => c.domainId === d.id)
+        .map((c) => ({ id: c.id, kind: c.kind ?? 'practice', completedAt: c.completedAt })),
+    };
+  }
+
+  return { byCompetency: Object.values(byCompetency), byDomain };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// ACTION CENTER (Feature 3)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Build a prioritized supervisor action center from the current floor state.
+ * Returns five categorized lists; each item identifies the navigator and reason.
+ *
+ * @param {object[]} rows      buildMatrixRows output
+ * @param {{ history?: object[], interviews?: object[], completions?: object[] }} [opts]
+ * @returns {{
+ *   criticalGaps:   {name,reason,domainId,severity}[],
+ *   trainingOverdue:{name,reason,domainId,severity}[],
+ *   decliningTrends:{name,reason,delta,severity}[],
+ *   failedPractice: {name,reason,domainId,severity}[],
+ *   readyForMore:   {name,reason,severity}[],
+ * }}
+ */
+export function buildActionCenter(rows, { history = [], interviews = [], completions = [] } = {}) {
+  const criticalGaps = [];
+  const trainingOverdue = [];
+  const decliningTrends = [];
+  const failedPractice = [];
+  const readyForMore = [];
+
+  const tally = readinessTally(rows);
+
+  for (const row of rows) {
+    for (const d of DOMAINS) {
+      if (row.levels[d.id] === 'learning') {
+        criticalGaps.push({ name: row.name, reason: `Learning in ${d.id}`, domainId: d.id, severity: 'high' });
+      }
+    }
+
+    const training = trainingForRow(row);
+    const navCompleted = new Set(
+      completions.filter((c) => c.name === row.name).map((c) => c.domainId)
+    );
+    for (const a of training) {
+      if (a.priority === 'Required' && !navCompleted.has(a.domainId)) {
+        trainingOverdue.push({ name: row.name, reason: `Required training pending: ${a.domainId}`, domainId: a.domainId, severity: 'medium' });
+      }
+    }
+
+    const navHistory = history
+      .filter((h) => h.name === row.name && !h.simulated)
+      .sort((a, b) => (a.takenAt?.seconds ?? 0) - (b.takenAt?.seconds ?? 0));
+    if (navHistory.length >= 2) {
+      const prev = computeOverall(navHistory[navHistory.length - 2].scores);
+      const curr = computeOverall(navHistory[navHistory.length - 1].scores);
+      if (curr < prev - 5) {
+        decliningTrends.push({ name: row.name, reason: `Overall dropped ${prev - curr} points`, delta: curr - prev, severity: 'medium' });
+      }
+    }
+  }
+
+  for (const iv of interviews) {
+    if (iv.grade?.score != null && iv.grade.score < INTERVIEW_SCORE_BANDS.fair) {
+      const row = rows.find((r) => r.name === iv.name);
+      if (row) {
+        failedPractice.push({ name: iv.name, reason: `Practice score ${iv.grade.score}/100`, domainId: iv.domainId, severity: 'medium' });
+      }
+    }
+  }
+
+  const avgCanTeach = tally.length > 0 ? tally.reduce((s, t) => s + t.canTeachCount, 0) / tally.length : 0;
+  for (const t of tally) {
+    if (t.canTeachCount >= Math.ceil(avgCanTeach) + 1 && t.canTeachCount >= 3) {
+      readyForMore.push({ name: t.name, reason: `Can-Teach in ${t.canTeachCount} of ${DOMAINS.length} domains`, severity: 'info' });
+    }
+  }
+
+  return { criticalGaps, trainingOverdue, decliningTrends, failedPractice, readyForMore };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// ADAPTIVE DEV PATHS (Feature 4)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Build a per-domain development path for a navigator, tracking progress
+ * through 5 ordered steps: coaching → practice → interview → module → mini-check.
+ * Step status derives from existing completions and graded interviews.
+ *
+ * @param {object}   row         matrix row
+ * @param {object[]} completions all completions for this navigator
+ * @param {object[]} interviews  all interviews for this navigator
+ * @returns {{
+ *   domainId:string, level:string, priority:string, percentComplete:number,
+ *   steps:{kind:string, label:string, status:'done'|'next'|'todo'}[],
+ * }[]}
+ */
+export function buildDevPath(row, completions = [], interviews = []) {
+  return trainingForRow(row).map(({ domainId, level, priority }) => {
+    const hasPractice = completions.some((c) => c.domainId === domainId && (!c.kind || c.kind === 'practice'));
+    const hasInterview = interviews.some((iv) => iv.domainId === domainId && iv.grade?.score != null);
+    const hasMiniCheck = completions.some((c) => c.domainId === domainId && c.kind === 'minicheck');
+
+    const steps = [
+      { kind: 'coaching',   label: 'Review coaching notes',     status: 'done' },
+      { kind: 'practice',   label: 'Spot the Error scenario',   status: hasPractice ? 'done' : 'next' },
+      { kind: 'interview',  label: 'Practice call',             status: hasInterview ? 'done' : hasPractice ? 'next' : 'todo' },
+      { kind: 'module',     label: 'Training module',           status: hasMiniCheck ? 'done' : (hasPractice || hasInterview) ? 'next' : 'todo' },
+      { kind: 'minicheck',  label: 'Mini domain check',         status: hasMiniCheck ? 'done' : (hasPractice || hasInterview) ? 'next' : 'todo' },
+    ];
+
+    return {
+      domainId,
+      level,
+      priority,
+      steps,
+      percentComplete: Math.round((steps.filter((s) => s.status === 'done').length / steps.length) * 100),
+    };
+  });
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// MENTOR MATCHING (Feature 5)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Build load-balanced mentor-mentee pairings for all domains.
+ * Assigns each Learning/Solid navigator to the least-loaded Can-Teach mentor,
+ * capped at maxLoad. Learning navigators are prioritized over Solid.
+ *
+ * @param {object[]} rows
+ * @param {{ maxLoad?: number }} [opts]
+ * @returns {{
+ *   pairings: {domainId, mentorName, menteeName, menteeLevel, baselineScore}[],
+ *   load: Record<string, number>,
+ *   unmatched: {domainId, menteeName, menteeLevel}[],
+ * }}
+ */
+export function buildMentorMatches(rows, { maxLoad = MENTOR_MAX_LOAD } = {}) {
+  const pairings = [];
+  const unmatched = [];
+  const load = {}; // mentorName → total pairings assigned
+
+  for (const d of DOMAINS) {
+    const mentors = rows.filter((r) => r.levels[d.id] === 'canTeach').map((r) => r.name);
+    const mentees = rows
+      .filter((r) => r.levels[d.id] !== 'canTeach')
+      .sort((a, b) => {
+        const order = { learning: 0, solid: 1 };
+        return (order[a.levels[d.id]] ?? 2) - (order[b.levels[d.id]] ?? 2);
+      });
+
+    if (mentors.length === 0) {
+      for (const mentee of mentees) {
+        unmatched.push({ domainId: d.id, menteeName: mentee.name, menteeLevel: mentee.levels[d.id] });
+      }
+      continue;
+    }
+
+    for (const mentee of mentees) {
+      const available = mentors
+        .map((m) => ({ name: m, currentLoad: load[m] ?? 0 }))
+        .filter((m) => m.currentLoad < maxLoad)
+        .sort((a, b) => a.currentLoad - b.currentLoad);
+
+      if (available.length === 0) {
+        unmatched.push({ domainId: d.id, menteeName: mentee.name, menteeLevel: mentee.levels[d.id] });
+        continue;
+      }
+
+      const mentor = available[0];
+      load[mentor.name] = (load[mentor.name] ?? 0) + 1;
+      pairings.push({
+        domainId: d.id,
+        mentorName: mentor.name,
+        menteeName: mentee.name,
+        menteeLevel: mentee.levels[d.id],
+        baselineScore: mentee.scores?.[d.id] ?? 0,
+      });
+    }
+  }
+
+  return { pairings, load, unmatched };
+}
+
+/**
+ * For each saved Firestore pairing, compute how the mentee's domain score has
+ * changed since the baseline was recorded.
+ *
+ * @param {object[]} savedPairings  from subscribePairings()
+ * @param {object[]} rows           current matrix rows
+ * @returns {object[]} pairings enriched with { currentScore, delta, improved }
+ */
+export function pairingOutcomes(savedPairings, rows) {
+  return savedPairings.map((p) => {
+    const menteeRow = findRow(rows, p.menteeName);
+    const currentScore = menteeRow?.scores?.[p.domainId] ?? null;
+    const delta = currentScore !== null ? currentScore - (p.baselineScore ?? 0) : null;
+    return { ...p, currentScore, delta, improved: delta !== null && delta > 0 };
+  });
 }

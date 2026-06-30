@@ -3715,3 +3715,255 @@ textarea:focus-visible {
   background: color-mix(in srgb, var(--level-canteach) 12%, transparent);
   color: var(--level-canteach);
 }
+
+/* ── Sparkline ──────────────────────────────────────────────────────────── */
+.sparkline {
+  display: block;
+  flex: 1;
+  min-width: 60px;
+  height: 28px;
+}
+
+/* ── Trend panel ────────────────────────────────────────────────────────── */
+.trend__synth-note {
+  color: var(--ink-faint);
+  font-style: italic;
+  font-size: 0.8rem;
+}
+.trend__overall {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.5rem 0;
+}
+.trend__label {
+  font-size: 0.82rem;
+  color: var(--ink-soft);
+  min-width: 90px;
+}
+.trend__pct {
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: var(--ink);
+  min-width: 42px;
+  text-align: right;
+}
+.trend__domains {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  margin-top: 0.5rem;
+}
+.trend__domain-row {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+}
+.trend__domain-name {
+  font-size: 0.8rem;
+  color: var(--ink-soft);
+  min-width: 160px;
+}
+.trend__domain-pct {
+  font-size: 0.8rem;
+  font-weight: 600;
+  min-width: 38px;
+  text-align: right;
+}
+.trend__delta {
+  font-size: 0.78rem;
+  font-weight: 700;
+  min-width: 44px;
+  text-align: right;
+}
+.trend__delta--up { color: var(--level-canteach); }
+.trend__delta--down { color: var(--level-learning); }
+.trend__tick-row {
+  display: flex;
+  justify-content: space-between;
+  margin-top: 0.35rem;
+}
+.trend__tick {
+  font-size: 0.72rem;
+  color: var(--ink-faint);
+}
+
+/* ── Dossier (competency evidence) ──────────────────────────────────────── */
+.dossier {
+  margin-top: 0.75rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+.dossier__item {
+  border-radius: var(--radius-sm);
+  padding: 0.65rem 0.85rem;
+  border-left: 3px solid var(--line);
+}
+.dossier__item--correct { border-left-color: var(--level-canteach); background: color-mix(in srgb, var(--level-canteach) 5%, var(--surface)); }
+.dossier__item--wrong { border-left-color: var(--level-learning); background: color-mix(in srgb, var(--level-learning) 5%, var(--surface)); }
+.dossier__scenario {
+  font-size: 0.82rem;
+  color: var(--ink-soft);
+  margin: 0 0 0.35rem;
+}
+.dossier__row {
+  display: flex;
+  gap: 0.5rem;
+  align-items: baseline;
+  font-size: 0.82rem;
+  margin-bottom: 0.2rem;
+}
+.dossier__label { font-weight: 600; color: var(--ink-soft); min-width: 80px; }
+.dossier__text { flex: 1; color: var(--ink); }
+.dossier__pts { font-size: 0.78rem; color: var(--ink-soft); }
+.dossier__row--best .dossier__label { color: var(--level-canteach); }
+.dossier__rationale { font-size: 0.78rem; color: var(--ink-faint); font-style: italic; margin: 0.25rem 0 0; }
+.dossier__empty { font-size: 0.82rem; color: var(--ink-faint); margin: 0.5rem 0; }
+
+/* ── Action Center ──────────────────────────────────────────────────────── */
+.ac {}
+.ac__badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--accent);
+  color: #fff;
+  font-size: 0.72rem;
+  font-weight: 700;
+  border-radius: 999px;
+  padding: 0 0.45rem;
+  min-width: 1.4rem;
+  height: 1.4rem;
+  margin-left: 0.5rem;
+  vertical-align: middle;
+}
+.ac__grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 1rem;
+}
+.ac__card {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+.ac__title {
+  font-size: 0.9rem;
+  font-weight: 700;
+  margin: 0 0 0.25rem;
+  color: var(--ink);
+}
+.ac__list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+.ac__row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+}
+.ac__name {
+  font-weight: 600;
+}
+.ac__chip {
+  font-size: 0.72rem;
+  padding: 0.15rem 0.55rem;
+  border-radius: 999px;
+}
+.ac__note {
+  font-size: 0.8rem;
+  color: var(--ink-soft);
+}
+.ac__note--positive { color: var(--level-canteach); font-weight: 600; }
+.ac__score { font-weight: 700; font-size: 0.85rem; }
+.ac__delta { font-weight: 700; font-size: 0.82rem; }
+.ac__delta--up { color: var(--level-canteach); }
+.ac__delta--down { color: var(--level-learning); }
+
+/* ── Mentorship ─────────────────────────────────────────────────────────── */
+.mentorship {}
+.mentorship__grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: 0.75rem;
+  margin-bottom: 0.5rem;
+}
+.mentorship__pair {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  padding: 1rem;
+}
+.mentorship__pair-domain { margin-bottom: 0.15rem; }
+.mentorship__pair-people {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+.mentorship__person {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  flex: 1;
+}
+.mentorship__arrow {
+  font-size: 1.2rem;
+  color: var(--ink-faint);
+  flex-shrink: 0;
+}
+
+/* ── Dev Path Stepper ───────────────────────────────────────────────────── */
+.devpath {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  margin-top: 0.6rem;
+  padding-top: 0.6rem;
+  border-top: 1px solid var(--line-soft);
+}
+.devpath__step {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.3rem 0.65rem;
+  border-radius: var(--radius-sm);
+  font-size: 0.8rem;
+  border: 1px solid var(--line);
+}
+.devpath__step--done {
+  background: color-mix(in srgb, var(--level-canteach) 8%, var(--surface));
+  border-color: color-mix(in srgb, var(--level-canteach) 30%, transparent);
+  color: var(--ink-soft);
+}
+.devpath__step--next {
+  background: color-mix(in srgb, var(--accent) 8%, var(--surface));
+  border-color: var(--accent-soft);
+  color: var(--ink);
+  font-weight: 600;
+}
+.devpath__step--todo {
+  background: transparent;
+  color: var(--ink-faint);
+}
+.devpath__step-icon { font-size: 0.9rem; }
+.devpath__step-label { flex: 1; }
+.devpath__step-btn { margin-left: 0.25rem; }
+.devpath__step-done { color: var(--level-canteach); font-weight: 700; }
+.devpath__progress {
+  font-size: 0.75rem;
+  color: var(--ink-faint);
+  font-weight: 500;
+}
+.devpath__rationale {
+  font-size: 0.78rem;
+  color: var(--ink-soft);
+  font-style: italic;
+  display: block;
+  margin-top: 0.2rem;
+}
