@@ -10,7 +10,7 @@
 > [§8 Current System State](#8-current-system-state) and [§15 Current Priorities](#15-current-priorities)
 > accurate at all times.
 >
-> **Last updated:** 2026-06-30 (F22: real-time voice practice call — Gemini Live API) ·
+> **Last updated:** 2026-06-30 (bugfix pass: dev paths/action center/sequence auth/docs) ·
 > **Doc maintainer:** Claude (AI agent) + repo owner. Assumptions are explicitly marked **[ASSUMPTION]**.
 
 ---
@@ -372,7 +372,7 @@ training assignments.
   `src/components/{SupervisorApp,Nav}.jsx`, `src/styles.css`.
 
 ### F20 — Adaptive, AI-Personalized Development Paths
-- **Purpose:** Per-domain 5-step development sequences (coaching → practice → module → mini-check)
+- **Purpose:** Per-domain 5-step development sequences (coaching → practice → interview → module → mini-check)
   with AI reordering via Gemini.
 - **User benefit:** Navigator follows a clear step-by-step path per weak domain. A "Personalize my
   path" button calls Gemini to reorder + annotate the steps based on their actual score profile.
@@ -383,7 +383,8 @@ training assignments.
     [{kind, status}], percentComplete }`. Status derived from completions (by kind) + interview grades.
   - New `api/sequence-path.js` — Gemini proxy (temp 0.3, structured JSON, `validateSequenceResponse`
     exported helper). Mounted in `server.js` as `POST /api/sequence-path`. Advisory: falls back to
-    rule-based order on failure.
+    rule-based order on failure. Supports `coaching`, `practice`, `interview`, `module`, and
+    `minicheck` step kinds.
   - `src/components/MyTraining.jsx` rewritten: flat list → path stepper per domain; "Personalize my
     path" button calls `/api/sequence-path` and merges AI step order with computed status.
   - Mini-check mode in `src/components/Check.jsx`: `miniDomain` + `limit` props filter questions to
@@ -462,10 +463,11 @@ training assignments.
   `db.js` CRUD (`subscribeQuestions`, `getActiveQuestions`, `saveDraftQuestions`, `activate/archive/
   delete/updateQuestion`, `seedQuestionsIfEmpty`); supervisor UI
   [QuestionBank.jsx](src/components/QuestionBank.jsx) + [QuestionEditor.jsx](src/components/QuestionEditor.jsx);
-  serverless [api/generate-scenarios.js](api/generate-scenarios.js) (Gemini `gemini-2.5-flash`,
+  server [api/generate-scenarios.js](api/generate-scenarios.js) (Gemini `gemini-2.5-flash`,
   structured JSON output, validated/repaired; rotates across multiple keys on rate-limit). Only
   **active** questions appear in the check; AI drafts require human activation.
-- **Status:** Complete (code). **[ASSUMPTION]** Owner sets `GEMINI_API_KEY` + `GENERATION_SECRET` on Vercel.
+- **Status:** Complete. Owner sets `GEMINI_API_KEYS`/`GEMINI_API_KEY` + `GENERATION_SECRET` in
+  Railway for deployed AI features.
 
 ---
 
@@ -545,18 +547,18 @@ QuarterKnolwdge/
   init in [src/lib/firebase.js](src/lib/firebase.js) (reads `VITE_FIREBASE_*` from `.env.local`).
 - **Express server + `/api` handlers.** [server.js](server.js) is the Railway entry point: an
   Express 5 app that serves `dist/` as static files (SPA catch-all via `/*splat`) and mounts
-  [api/generate-scenarios.js](api/generate-scenarios.js) and [api/health.js](api/health.js) as
-  Express routes. The handlers use the same `(req, res)` Node.js signature they had as Vercel
-  functions — no changes needed. `generate-scenarios.js` holds the `GEMINI_API_KEYS`
-  **server-side only** (never bundled), calls `gemini-2.5-flash` with structured-JSON output,
-  validates/repairs each scenario, and rotates keys on 429/503. Helper modules are `_`-prefixed
-  (`api/_sop-context.js`). The endpoint is gated by `GENERATION_SECRET` — pilot-grade.
+  the REST Gemini handlers plus [api/health.js](api/health.js) as Express routes. The handlers use
+  the same `(req, res)` Node.js signature they had as Vercel functions — no changes needed.
+  `api/_gemini-client.js` keeps `GEMINI_API_KEYS` **server-side only** (never bundled), calls
+  Gemini with structured-JSON/text outputs, and rotates keys on 429/403/503/500. Helper modules are
+  `_`-prefixed (`api/_sop-context.js`, `api/_auth.js`). REST endpoints are gated by
+  `GENERATION_SECRET` — pilot-grade.
 - **No auth system** (by design for the pilot): navigators pick their name from the roster + a
   4-digit PIN; supervisors enter `SUPERVISOR_PASSCODE`. Session persistence is localStorage only,
   isolated in [src/lib/session.js](src/lib/session.js). Security rules in `firestore.rules` are
   pilot-grade (open per-collection) — replace with real auth before production.
 - **Pre-pilot state (historical):** the original prototype was fully in-memory; then a static
-  GitHub-Pages + Firestore pilot with no server; now Vercel + serverless for the Gemini proxy.
+  GitHub-Pages + Firestore pilot with no server; then Vercel serverless; now Railway + Express.
 
 ### Infrastructure
 - **Hosting:** **Railway** — runs the Express server (`server.js`) which serves the Vite build
@@ -668,9 +670,10 @@ stateDiagram-v2
   scale (they signal priority, not capability level).
 
 ### 2026-06-23 — Department dimension; Pediatrics live, others mockup
-- **Decision:** Add 4 departments sharing the same 6 domains; only Pediatrics is assessed by the
-  live check.
-- **Reasoning:** The SOP covers Pediatrics; other departments need their own question sets later.
+- **Decision:** Add 4 departments sharing the same 6 domains; Pediatrics and OB/GYN are assessed by
+  the live check.
+- **Reasoning:** The Pediatrics SOP covers Pediatrics; OB/GYN later received a sanitized question
+  set. Adult Medicine and Behavioural Health still need their own question sets later.
 - **Alternatives considered:** Fabricate checks for all departments.
 - **Impact:** Cross-department views work now; mockup departments are clearly labelled.
 
@@ -775,6 +778,29 @@ stateDiagram-v2
 ---
 
 ## 7. Development History
+
+### 2026-06-30 — Fix: dev-path/action-center contract bugs + stale README claims
+- **What changed:** Fixed several follow-on issues discovered during a full repo orientation pass:
+  - `api/sequence-path.js` had its `validateSecret` guard inverted, so valid "Personalize my path"
+    calls returned before responding. The handler now matches the other Gemini endpoints.
+  - Adaptive paths now treat `interview` as a supported AI-sequenced step kind end to end:
+    `validateSequenceResponse`, the Gemini prompt, `MyTraining.jsx` labels/actions, and navigator
+    evidence loading all know about practice-call steps.
+  - Mini-check completions no longer count as Spot-the-Error practice completions. Passed
+    mini-check result saves preserve/merge existing answer and competency context instead of
+    replacing competency scores with a 4-question subset.
+  - `buildActionCenter` now returns the fields its UI renders (`score`, `interviewId`,
+    `canTeachCount`) and only treats practice completions as clearing required practice training.
+  - `NavigatorDetail` now passes real completion records into `trainingImpact` and `buildDossier`.
+  - Replaced undefined `var(--border)` CSS references with the existing `--line` token.
+  - Updated `README.md` to reflect Railway + Express API, current AI endpoints, and Pediatrics +
+    OB/GYN live-check scope instead of the older Vercel/Pediatrics-only description.
+- **Files affected:** `api/sequence-path.js`, `api/sequence-path.test.js`, `api/_auth.js`,
+  `src/lib/{scoring,scoring.test}.js`, `src/components/{ActionCenter,MyTraining,NavigatorApp,NavigatorDetail,SupervisorApp}.jsx`,
+  `src/styles.css`, `README.md`, `CLAUDE.md`.
+- **Verification:** `npm test` → **208 passing** (8 test files); `npm run build` → clean with the
+  known large main-bundle warning (~891 kB minified JS).
+- **Status:** Complete.
 
 ### 2026-06-30 — Fix: voice call dropped on first mic frame (deprecated `mediaChunks` format)
 - **What changed:** With audio finally flowing (after the suspended-AudioContext fix), the Gemini
@@ -1757,7 +1783,7 @@ stateDiagram-v2
   → navigator/training dashboards → **switch departments** → practice interview → "Spot the Error"
   QA audit → path stepper + mini re-check per weak domain → supervisor Action Center + Mentorship
   tabs → practice call offered as **voice (real-time) or text chat**. Build clean, tests green
-  (`npm test` → **206 passing**, 8 test files).
+  (`npm test` → **208 passing**, 8 test files).
 - **Existing functionality:** features F1–F22 (see [§4](#4-feature-inventory)) are **Complete** in
   code. F17 adds longitudinal trends + Sparkline. F18 adds dossier evidence per competency. F19
   adds the supervisor Action Center. F20 adds AI-sequenced dev paths + mini re-check. F21 adds
@@ -1777,7 +1803,7 @@ stateDiagram-v2
 - **Experimental / mockup:**
   - Training **content** is mockup (flagged in UI). Logic is real.
   - **Adult Medicine and Behavioural Health** are not assessed; **Pediatrics and OB/GYN** are live.
-- **Test coverage:** **206 tests** across **8 test files**: `scoring.test.js` (all 22 exports
+- **Test coverage:** **208 tests** across **8 test files**: `scoring.test.js` (all 22 exports
   including F17–F21 functions: buildTrend, trainingImpact, teamTrend, buildDossier, buildActionCenter,
   buildDevPath, buildMentorMatches, pairingOutcomes + malformed-input edge cases), `session.test.js`,
   `db.test.js`, `api/api-handlers.test.js`, `api/generate-audit.test.js`,
@@ -1789,7 +1815,7 @@ stateDiagram-v2
   timeout, SUPERVISOR_PASSCODE injection, Content-Type, error-body parsing). Used by Interview.jsx,
   SpotTheError.jsx, Coaching.jsx, and SupervisorApp.jsx.
 - **Server secret validation:** `api/_auth.js` — shared `validateSecret(req, res)` helper used by
-  all 6 Gemini handlers; centralises the `GENERATION_SECRET || SUPERVISOR_PASSCODE` fallback logic.
+  the REST Gemini handlers; centralises the `GENERATION_SECRET || SUPERVISOR_PASSCODE` fallback logic.
 - **Branding:** product name is **Knowledge Check** everywhere in the UI. `public/favicon.png`
   is active (linked in `index.html`). `public/logo.png` exists in the repo but is no longer
   referenced. `styles.css` has orphaned `.start__logo`/`.nav__logo`/`logo-float` rules from
@@ -1797,7 +1823,7 @@ stateDiagram-v2
 - **Known code quality items (non-blocking, from code review 2026-06-25):**
   - ~~Dead import `createRequire` in `server.js:6`~~ — **removed 2026-06-25**.
   - ~~`getApiKeys`/`callGemini`/`geminiWithRotation` duplicated across all `api/` handlers~~ —
-    **extracted to `api/_gemini-client.js` 2026-06-26** (all 6 Gemini handlers now import it).
+    **extracted to `api/_gemini-client.js` 2026-06-26** (REST Gemini handlers now import it).
   - ~~Redundant condition in `SpotTheError.jsx:157`~~ — **simplified 2026-06-26**.
   - ~~Interview score colours referenced undefined CSS vars (`--can-teach`/`--solid`/`--learning`)~~
     — **fixed 2026-06-26**: `--level-*` vars now defined in `:root`; colours come from
@@ -1986,12 +2012,12 @@ npm run test:watch   # run Vitest in watch mode
 - Heatmap intensity toggle (show % inside matrix cells).
 
 ### Technical Debt
-- **130 tests** across 5 test files as of 2026-06-26. **Role-app integration tests** (`SupervisorApp`,
+- **206+ tests** across 8 test files as of 2026-06-30. **Role-app integration tests** (`SupervisorApp`,
   `NavigatorApp`, `App`) remain the only untested area — adding those is the next coverage priority.
 - ~~Components, role apps, and API handlers untested~~ — **resolved 2026-06-26**: component tests
   (jsdom + Testing Library), API handler pure-function tests, and db.js mocked tests all added.
 - ~~`getApiKeys`/`callGemini`/`geminiWithRotation` duplicated 6×~~ — **extracted to
-  `api/_gemini-client.js` 2026-06-26**; all 6 Gemini handlers import it.
+  `api/_gemini-client.js` 2026-06-26**; REST Gemini handlers import it.
 - ~~**Dead import:** `createRequire` imported in `server.js:6`~~ — removed 2026-06-25.
 - ~~**Redundant condition** in `SpotTheError.jsx:157`~~ — simplified 2026-06-26.
 - ~~`SUPERVISOR_PASSCODE` secret validation duplicated 6×~~ — **extracted to `api/_auth.js` 2026-06-26**.
@@ -2022,8 +2048,8 @@ npm run test:watch   # run Vitest in watch mode
 - **Silent save failure for navigator:** if `saveResult` fails after submission, the navigator sees
   their results from local state but the supervisor's matrix doesn't update. *Severity: low for
   pilot.* A future toast notification would improve this.
-- **Non-assessed departments are empty:** only Pediatrics has live data; other departments show an
-  empty state. *Severity: low (intended for pilot).*
+- **Non-assessed departments are empty:** Adult Medicine and Behavioural Health are not assessed yet;
+  they show an empty state until SOP-backed question sets exist. *Severity: low (intended for pilot).*
 - **~~Pages deploy is manual~~ (resolved):** Railway auto-deploys on push to `main`; no manual
   gh-pages step needed.
 - **Mockup departments can be mistaken for real data** if the "illustrative mockup data" note is
@@ -2031,7 +2057,7 @@ npm run test:watch   # run Vitest in watch mode
 - **~~Interview caller hallucinating facts~~ (resolved 2026-06-25):** Gemini was generating
   caller facts (age, birthday) fresh each turn at temperature 0.8 instead of recalling what it had
   already stated. Fixed: consistency rule added to `buildSystemInstruction`; temperature lowered to 0.5.
-- **No known functional bugs** in scoring/read-offs (46 unit tests green).
+- **No known functional bugs** in scoring/read-offs after the 2026-06-30 contract-fix pass.
 
 ---
 
@@ -2160,6 +2186,8 @@ npm run test:watch   # run Vitest in watch mode
   default-args defensive fix).
 - ✅ F17–F21: longitudinal trends, dossier, action center, adaptive dev paths, mentor matching — done
   2026-06-29 (206 tests, 8 test files, new `sequence-path` endpoint, `resultHistory` + `pairings` collections).
+- ✅ Contract-fix pass: sequence auth, dev-path interview wiring, action-center fields, mini-check
+  evidence preservation, README/current-doc cleanup — done 2026-06-30 (208 tests, 8 test files).
 - Role-app integration tests (`SupervisorApp`, `NavigatorApp`, `App`) — next coverage priority.
 - Supervisor grade override for practice sessions — next interview feature.
 

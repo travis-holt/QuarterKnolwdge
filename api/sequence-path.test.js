@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { validateSequenceResponse } from './sequence-path.js';
 
-const VALID_KINDS = ['coaching', 'practice', 'module', 'minicheck'];
+const VALID_KINDS = ['coaching', 'practice', 'interview', 'module', 'minicheck'];
 
 const makeValidPath = (domainId = 'domain-1', kinds = VALID_KINDS) => ({
   domainId,

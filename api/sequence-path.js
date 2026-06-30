@@ -8,7 +8,7 @@ import { geminiWithRotation, getApiKeys } from './_gemini-client.js';
 import { sopContextFor } from './_sop-context.js';
 
 const MODEL = 'gemini-2.5-flash';
-const VALID_KINDS = ['coaching', 'practice', 'module', 'minicheck'];
+const VALID_KINDS = ['coaching', 'practice', 'interview', 'module', 'minicheck'];
 
 export function validateSequenceResponse(parsed) {
   if (!Array.isArray(parsed?.paths)) return { error: 'missing paths array' };
@@ -27,7 +27,7 @@ export function validateSequenceResponse(parsed) {
 
 export default async function handler(req, res) {
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
-  if (!validateSecret(req, res)) return;
+  if (validateSecret(req, res)) return;
 
   const { weakDomains = [], department = 'pediatrics', name = 'the navigator' } = req.body ?? {};
   if (!weakDomains.length) return res.status(400).json({ error: 'weakDomains required' });
@@ -48,16 +48,17 @@ ${domainList}
 SOP reference (for grounding):
 ${sopContext.slice(0, 3000)}
 
-Your task: for each domain, sequence the four development steps in the most effective order:
+Your task: for each domain, sequence the five development steps in the most effective order:
 - coaching: reflect on the scoring feedback (always beneficial, often first)
 - practice: "Spot the Error" QA audit (active learning, reinforces rules)
+- interview: practice handling a patient call in text or voice
 - module: read the training module content (knowledge building)
 - minicheck: a 4-question re-validation quiz (confirm mastery before advancing)
 
 Adapt the order based on the navigator's current score and level. For example:
-- Very low score (Learning, < 50%): coaching → practice → module → minicheck
-- Mid Learning (50–59%): practice → module → coaching → minicheck (active first)
-- Solid: module → minicheck → coaching → practice (stretch approach)
+- Very low score (Learning, < 50%): coaching → practice → module → interview → minicheck
+- Mid Learning (50–59%): practice → module → interview → coaching → minicheck (active first)
+- Solid: module → interview → minicheck → coaching → practice (stretch approach)
 
 Respond ONLY with valid JSON matching this schema exactly:
 {
@@ -65,7 +66,7 @@ Respond ONLY with valid JSON matching this schema exactly:
     {
       "domainId": "<same string as input>",
       "steps": [
-        { "kind": "coaching|practice|module|minicheck", "rationale": "<one sentence why this step is best here>" },
+        { "kind": "coaching|practice|interview|module|minicheck", "rationale": "<one sentence why this step is best here>" },
         ...
       ]
     }

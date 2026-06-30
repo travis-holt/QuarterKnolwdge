@@ -17,7 +17,7 @@ import {
   departmentMatrix,
   findRow,
 } from '../lib/scoring.js';
-import { getResult, saveResult, subscribeResults, getActiveQuestions, getCompletions, saveCompletion } from '../lib/db.js';
+import { getResult, saveResult, subscribeResults, getActiveQuestions, getCompletions, getInterviews, saveCompletion } from '../lib/db.js';
 import { MINICHECK_SIZE, MINICHECK_PASS } from '../data/config.js';
 import { isFirebaseConfigured } from '../lib/firebase.js';
 import { SEED_QUESTIONS, SEED_QUESTIONS_OBGYN } from '../data/questions.js';
@@ -46,6 +46,8 @@ export default function NavigatorApp({ navigatorId, name, onSignOut }) {
   const [miniCheckDomain, setMiniCheckDomain] = useState(null);
   const [practiceMode, setPracticeMode] = useState(null); // null (chooser) · 'voice' · 'chat'
   const [completedDomains, setCompletedDomains] = useState(new Set());
+  const [completions, setCompletions] = useState([]);
+  const [interviews, setInterviews] = useState([]);
   const [loadError, setLoadError] = useState(false);
   // Cross-dept scores keyed by deptId — populated on mount + updated after each check.
   // Feeds deptMatrix so the "Strength across departments" strip shows real data for
@@ -111,18 +113,35 @@ export default function NavigatorApp({ navigatorId, name, onSignOut }) {
     return () => unsub();
   }, []);
 
-  // Load the navigator's "Spot the Error" completions so MyTraining can show badges.
+  // Load exercise/interview evidence when views need progress indicators.
   useEffect(() => {
     if (!isFirebaseConfigured) return undefined;
+    if (view !== 'dashboard' && view !== 'training') return undefined;
     let active = true;
     getCompletions(navigatorId)
       .then((list) => {
         if (!active) return;
-        setCompletedDomains(new Set(list.map((c) => c.domainId)));
+        setCompletions(list);
+        setCompletedDomains(new Set(
+          list.filter((c) => !c.kind || c.kind === 'practice').map((c) => c.domainId)
+        ));
       })
       .catch(() => { /* completions are non-critical */ });
     return () => { active = false; };
-  }, [navigatorId]);
+  }, [navigatorId, view]);
+
+  useEffect(() => {
+    if (!isFirebaseConfigured) return undefined;
+    if (view !== 'dashboard' && view !== 'training') return undefined;
+    let active = true;
+    getInterviews(navigatorId)
+      .then((list) => {
+        if (!active) return;
+        setInterviews(list);
+      })
+      .catch(() => { /* interviews are non-critical */ });
+    return () => { active = false; };
+  }, [navigatorId, view]);
 
   // Reset the practice-type chooser whenever the navigator leaves the Practice tab.
   // (Must live with the other hooks, above the early returns — never after them.)
@@ -160,6 +179,11 @@ export default function NavigatorApp({ navigatorId, name, onSignOut }) {
     setView('audit');
   };
 
+  const startInterview = () => {
+    setPracticeMode(null);
+    setView('interview');
+  };
+
   const startMiniCheck = (domainId) => {
     setMiniCheckDomain(domainId);
     setView('minicheck');
@@ -169,6 +193,10 @@ export default function NavigatorApp({ navigatorId, name, onSignOut }) {
   // so the badge appears immediately without waiting for a Firestore round-trip.
   const handleAuditComplete = (domainId) => {
     setCompletedDomains((prev) => new Set([...prev, domainId]));
+    setCompletions((prev) => [
+      ...prev,
+      { navigatorId, name, domainId, kind: 'practice', completedAt: { seconds: Math.floor(Date.now() / 1000) } },
+    ]);
   };
 
   // Merge own result into the floor results for mentor suggestions.
@@ -283,6 +311,7 @@ export default function NavigatorApp({ navigatorId, name, onSignOut }) {
             onPreviewModule={openModule}
             onChangeDept={handleDeptSelect}
             navigatorId={navigatorId}
+            completions={completions}
             answers={ownResult?.answers ?? lastAnswers}
             questions={questions}
           />
@@ -299,8 +328,11 @@ export default function NavigatorApp({ navigatorId, name, onSignOut }) {
             row={myRow}
             onPreviewModule={openModule}
             onStartAudit={startAudit}
+            onStartInterview={startInterview}
             onStartMiniCheck={startMiniCheck}
             completedDomains={completedDomains}
+            completions={completions}
+            interviews={interviews}
             department={activeDept ?? 'pediatrics'}
           />
         ) : (
@@ -353,16 +385,41 @@ export default function NavigatorApp({ navigatorId, name, onSignOut }) {
             // Always record the minicheck completion regardless of pass/fail
             try {
               await saveCompletion(navigatorId, name, miniCheckDomain, 'minicheck');
-              setCompletedDomains((prev) => new Set([...prev, miniCheckDomain]));
             } catch {/* non-critical */}
             if (passed) {
               // Re-save result with updated scores so the trend chart gains a new point
               const allScores = { ...(ownResult?.scores ?? {}), [miniCheckDomain]: domainScore };
-              const competencyScores = scorePerCompetency(answers, questions);
+              const baseAnswers = ownResult?.answers ?? lastAnswers ?? {};
+              const mergedAnswers = { ...baseAnswers, ...answers };
+              const hasFullAnswerContext = Object.keys(baseAnswers).length > 0;
+              const competencyScores = hasFullAnswerContext
+                ? scorePerCompetency(mergedAnswers, questions)
+                : (ownResult?.competencyScores ?? {});
               try {
-                await saveResult(navigatorId, name, allScores, competencyScores, dept, answers);
+                await saveResult(
+                  navigatorId,
+                  name,
+                  allScores,
+                  competencyScores,
+                  dept,
+                  hasFullAnswerContext ? mergedAnswers : answers
+                );
+                setOwnResult((prev) => ({
+                  ...(prev ?? {}),
+                  name,
+                  navigatorId,
+                  department: dept,
+                  scores: allScores,
+                  competencyScores,
+                  answers: hasFullAnswerContext ? mergedAnswers : answers,
+                }));
+                setAllDeptResults((prev) => ({ ...prev, [dept]: allScores }));
               } catch {/* non-critical */}
             }
+            setCompletions((prev) => [
+              ...prev,
+              { navigatorId, name, domainId: miniCheckDomain, kind: 'minicheck', completedAt: { seconds: Math.floor(Date.now() / 1000) } },
+            ]);
             setView('training');
           }}
           onCancel={() => setView('training')}

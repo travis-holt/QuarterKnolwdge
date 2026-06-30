@@ -8,8 +8,8 @@ throughout: *development and fit, not pass/fail.*
 
 It's a real multi-user app: navigators sign in, take the check, and get **rule-based coaching**;
 supervisors watch the capability map fill in live, and can **generate new scenarios from the SOP
-with Gemini**, review them, and activate them. Data persists in Cloud Firestore; the Gemini call
-runs in a Vercel serverless function (the API key never reaches the browser).
+with Gemini**, review them, and activate them. Data persists in Cloud Firestore; Gemini calls run
+through the Express API server in this repo, so the API key never reaches the browser.
 
 ## Run it locally
 
@@ -20,7 +20,13 @@ npm run dev
 
 Then open the printed local URL (default http://localhost:5173).
 
-Without Firebase config the app boots to a friendly "not connected" state — see setup below.
+Without Firebase config the app boots to a friendly "not connected" state — see setup below. For
+AI/API features locally, run a production build and start the Express server:
+
+```bash
+npm run build
+npm start
+```
 
 ## Firebase setup (required to take it live)
 
@@ -39,15 +45,16 @@ Without Firebase config the app boots to a friendly "not connected" state — se
 
 ## Gemini scenario generation (optional — for the Question Bank)
 
-The supervisor **Questions** tab can generate scenario drafts from the SOP. This calls Gemini
-through a serverless function so the API key stays server-side.
+The supervisor **Questions** tab can generate scenario drafts from the SOP. Coaching, practice
+calls, audits, voice relay, and path personalization also call Gemini through the Express API so
+the API key stays server-side.
 
 1. Get a free key at [aistudio.google.com/apikey](https://aistudio.google.com/apikey).
 2. Set two **server-only** env vars (NOT `VITE_`-prefixed): `GEMINI_API_KEYS` (one or more keys,
    comma-separated — the function rotates to the next on rate-limit) and `GENERATION_SECRET`
    (set the secret equal to your `SUPERVISOR_PASSCODE`). See [`.env.local.example`](.env.local.example).
-3. The `/api` functions only run on Vercel or under `vercel dev` — plain `npm run dev` serves the
-   app but not `/api`, so the Generate button needs `vercel dev` locally (or a deploy).
+3. `npm run dev` serves the Vite frontend only. Run `npm run build && npm start` when you need the
+   local Express `/api` routes, or use the Railway deployment.
 
 Generated scenarios always land as **drafts**; nothing goes live until a supervisor activates it.
 
@@ -56,14 +63,14 @@ Generated scenarios always land as **drafts**; nothing goes live until a supervi
 The Start screen asks **"I'm a navigator"** or **"I'm a supervisor."**
 
 - **Supervisor** (passcode) lands on the team **Overview** and has the full management app:
-  Overview · Matrix · **Navigators** (add people to the roster, each with a 4-digit PIN) · Training.
-  Everything updates live as navigators submit.
+  Overview · Matrix · **Navigators** (add people to the roster, each with a 4-digit PIN) · Training ·
+  Questions · Action center · Mentorship. Everything updates live as navigators submit.
 - **Navigator** picks their name from the roster and enters their PIN. First time → they take the
   check, then get a **coaching review** (answer-by-answer, with the best answer and why, plus
   competency strengths/gaps), then land on their personal dashboard (per-domain **and**
   per-competency breakdown, strengths, growth areas, suggested mentors, assigned training).
-  Returning → straight to the dashboard. They see **only their own data** — **My results** and
-  **My training**.
+  Returning → straight to the dashboard. They see **only their own data** — **My results**,
+  **My training**, and their own practice exercises.
 
 A supervisor must **add a navigator to the roster first** (Navigators tab) before that person can
 sign in.
@@ -95,7 +102,7 @@ site, or prior-quarter data are invented.
 | Training auto-assign rules (which levels get Required/Stretch) | [src/data/config.js](src/data/config.js) |
 | Scoring (both axes), read-offs, analytics + training logic | [src/lib/scoring.js](src/lib/scoring.js) |
 | Firestore reads/writes (roster · results · questions) | [src/lib/db.js](src/lib/db.js) |
-| Gemini generation prompt + SOP grounding | [api/generate-scenarios.js](api/generate-scenarios.js), [api/_sop-context.js](api/_sop-context.js) |
+| Gemini API handlers + SOP grounding | [api](api), [api/_sop-context.js](api/_sop-context.js) |
 | Session (localStorage) | [src/lib/session.js](src/lib/session.js) |
 
 The domains and seed questions are derived from the team SOP (`SOP Guide.pdf`, Aizer Health
@@ -108,11 +115,11 @@ refresh `api/_sop-context.js`, and either edit `SEED_QUESTIONS` or generate a fr
 ```bash
 npm test            # Vitest unit tests for the scoring logic (both axes)
 npm run build       # production build to dist/
-# deploy: Vercel (Git-connected push, or `vercel --prod`).
-# Set env vars in the Vercel project: VITE_FIREBASE_* (client) and
-# GEMINI_API_KEY + GENERATION_SECRET (server-only).
+# deploy: Railway uses railway.toml/nixpacks.toml.
+# Set env vars in Railway: VITE_FIREBASE_* (client build) and
+# GEMINI_API_KEYS/GEMINI_API_KEY + GENERATION_SECRET (server-only).
 ```
 
-The live check currently assesses **Pediatrics** only; the other departments show empty states
-until they get their own question sets. All navigator data is real (from Firestore) — there are no
-sample navigators.
+The live check currently assesses **Pediatrics** and **OB/GYN**; Adult Medicine and Behavioral
+Health remain placeholders until they get their own SOP-backed question sets. All navigator data is
+real (from Firestore) — there are no sample navigators.

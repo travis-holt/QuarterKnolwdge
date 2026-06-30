@@ -7,16 +7,17 @@ import { apiFetch } from '../lib/apiFetch.js';
 const STEP_LABELS = {
   coaching: 'Review coaching',
   practice: 'Spot the Error',
+  interview: 'Practice call',
   module: 'Read module',
   minicheck: `Mini re-check (${MINICHECK_SIZE}Q)`,
 };
-const STEP_ICONS = { coaching: '💬', practice: '🔍', module: '📖', minicheck: '✏️' };
+const STEP_ICONS = { coaching: '💬', practice: '🔍', interview: '☎️', module: '📖', minicheck: '✏️' };
 
 function PathStep({ step, onAction }) {
   return (
     <div className={`devpath__step devpath__step--${step.status}`}>
-      <span className="devpath__step-icon" aria-hidden="true">{STEP_ICONS[step.kind]}</span>
-      <span className="devpath__step-label">{STEP_LABELS[step.kind]}</span>
+      <span className="devpath__step-icon" aria-hidden="true">{STEP_ICONS[step.kind] ?? '•'}</span>
+      <span className="devpath__step-label">{STEP_LABELS[step.kind] ?? step.label ?? step.kind}</span>
       {step.status === 'next' && (
         <button className="btn btn--ghost btn--sm devpath__step-btn" onClick={() => onAction(step.kind)}>
           Start
@@ -28,12 +29,24 @@ function PathStep({ step, onAction }) {
 }
 
 // completedDomains is a Set<domainId> of domains the navigator has practiced.
+// completions carries all exercise completions so mini-check progress can be tracked too.
 // interviews is an array of graded interview sessions (for dev path progress).
-export default function MyTraining({ row, onPreviewModule, onStartAudit, onStartMiniCheck, completedDomains = new Set(), interviews = [], department = 'pediatrics' }) {
+export default function MyTraining({
+  row,
+  onPreviewModule,
+  onStartAudit,
+  onStartInterview,
+  onStartMiniCheck,
+  completedDomains = new Set(),
+  completions = [],
+  interviews = [],
+  department = 'pediatrics',
+}) {
   const training = trainingForRow(row);
-  // Reconstruct minimal completion list with kind so buildDevPath can track steps
+  // Preserve compatibility with older callers that only pass completedDomains.
   const practiceCompletions = [...completedDomains].map((d) => ({ domainId: d, kind: 'practice' }));
-  const paths = buildDevPath(row, practiceCompletions, interviews);
+  const completionEvidence = completions.length > 0 ? completions : practiceCompletions;
+  const paths = buildDevPath(row, completionEvidence, interviews);
 
   const [aiPaths, setAiPaths] = useState(null);
   const [personalizing, setPersonalizing] = useState(false);
@@ -72,6 +85,7 @@ export default function MyTraining({ row, onPreviewModule, onStartAudit, onStart
 
   const handleStepAction = (path, kind) => {
     if (kind === 'practice') onStartAudit(path.domainId);
+    else if (kind === 'interview') onStartInterview?.(path.domainId);
     else if (kind === 'minicheck') onStartMiniCheck?.(path.domainId);
     else onPreviewModule(path.domainId); // coaching + module both open the module
   };

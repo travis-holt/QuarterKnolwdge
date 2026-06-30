@@ -15,12 +15,13 @@ function formatDate(ts) {
 
 // completedDomains: Set<domainId> — domains where the navigator has practiced a
 // "Spot the Error" scenario (supervisor view passes this from completionMap).
+// completions: full completion records for training impact and evidence dossier.
 // onChangeDept(deptId): optional — when provided (navigator context only), assessed dept cards
 // become clickable buttons that jump straight to that dept's dashboard or check.
 // dept: the active department string (needed for getResultHistory).
 // answers: the navigator's raw answers map {questionId: optionId} (for dossier).
 // questions: the active question bank (for dossier).
-export default function NavigatorDetail({ rows, name, deptName, dept, deptMatrix, onBack, onOpenNavigator, onPreviewModule, navigatorId, completedDomains = new Set(), onChangeDept, answers, questions }) {
+export default function NavigatorDetail({ rows, name, deptName, dept, deptMatrix, onBack, onOpenNavigator, onPreviewModule, navigatorId, completedDomains = new Set(), completions = [], onChangeDept, answers, questions }) {
   const row = findRow(rows, name);
   const deptRow = deptMatrix?.find((r) => r.name === name);
 
@@ -93,7 +94,7 @@ export default function NavigatorDetail({ rows, name, deptName, dept, deptMatrix
   const trend = history?.length ? buildTrend(history) : null;
 
   // Dossier (computed when answers + questions are provided)
-  const dossier = answers && questions?.length ? buildDossier(row, answers, questions, interviews ?? []) : null;
+  const dossier = answers && questions?.length ? buildDossier(row, answers, questions, interviews ?? [], completions) : null;
 
   return (
     <section className="navdetail stagger">
@@ -226,7 +227,7 @@ export default function NavigatorDetail({ rows, name, deptName, dept, deptMatrix
               const series = trend.domainSeries[d.id];
               if (!series) return null;
               const impact = training.find((t) => t.domainId === d.id)
-                ? trainingImpact(history, [], d.id) // completions not wired here — placeholder
+                ? trainingImpact(history, completions, d.id)
                 : null;
               return (
                 <div key={d.id} className="trend__domain-row">

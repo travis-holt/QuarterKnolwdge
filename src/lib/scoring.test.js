@@ -913,6 +913,13 @@ describe('buildActionCenter', () => {
     expect(ac.trainingOverdue.some((t) => t.name === 'Ada' && t.domainId === D0)).toBe(false);
   });
 
+  it('keeps training overdue when only a mini-check completion exists', () => {
+    const rows = buildMatrixRows([{ name: 'Ada', scores: makeScores({ [D0]: LEARN }, TEACH) }], null);
+    const completions = [{ name: 'Ada', domainId: D0, kind: 'minicheck' }];
+    const ac = buildActionCenter(rows, { completions });
+    expect(ac.trainingOverdue.some((t) => t.name === 'Ada' && t.domainId === D0)).toBe(true);
+  });
+
   it('flags declining trend when overall drops >5 points between last two snapshots', () => {
     const rows = buildMatrixRows([{ name: 'Ada', scores: makeScores({}, SOLID) }], null);
     const now = Math.floor(Date.now() / 1000);
@@ -926,9 +933,14 @@ describe('buildActionCenter', () => {
 
   it('flags failed practice for interview scores below the fair threshold', () => {
     const rows = buildMatrixRows([{ name: 'Ada', scores: makeScores({}, SOLID) }], null);
-    const interviews = [{ name: 'Ada', domainId: D0, grade: { score: 40 } }];
+    const interviews = [{ id: 'iv1', name: 'Ada', domainId: D0, grade: { score: 40 } }];
     const ac = buildActionCenter(rows, { interviews });
-    expect(ac.failedPractice.some((f) => f.name === 'Ada')).toBe(true);
+    expect(ac.failedPractice).toContainEqual(expect.objectContaining({
+      name: 'Ada',
+      domainId: D0,
+      score: 40,
+      interviewId: 'iv1',
+    }));
   });
 
   it('does NOT flag failed practice for scores at/above the fair threshold', () => {
@@ -936,6 +948,18 @@ describe('buildActionCenter', () => {
     const interviews = [{ name: 'Ada', domainId: D0, grade: { score: 70 } }];
     const ac = buildActionCenter(rows, { interviews });
     expect(ac.failedPractice.some((f) => f.name === 'Ada')).toBe(false);
+  });
+
+  it('includes canTeachCount for ready-for-more items', () => {
+    const rows = buildMatrixRows([
+      { name: 'Ada', scores: makeScores({}, TEACH) },
+      { name: 'Bea', scores: makeScores({}, SOLID) },
+    ], null);
+    const ac = buildActionCenter(rows);
+    expect(ac.readyForMore).toContainEqual(expect.objectContaining({
+      name: 'Ada',
+      canTeachCount: DOMAINS.length,
+    }));
   });
 });
 

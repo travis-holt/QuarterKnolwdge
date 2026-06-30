@@ -110,6 +110,7 @@ export default function SupervisorApp({ onSignOut }) {
   // Build a lookup: navigatorId → Set<domainId> for "Spot the Error" completions.
   const completionMap = {};
   for (const c of completions) {
+    if (c.kind && c.kind !== 'practice') continue;
     if (!completionMap[c.navigatorId]) completionMap[c.navigatorId] = new Set();
     completionMap[c.navigatorId].add(c.domainId);
   }
@@ -287,6 +288,9 @@ export default function SupervisorApp({ onSignOut }) {
                 onPreviewModule={(d) => openModule(d, 'navigator')}
                 navigatorId={selectedNavigatorId}
                 completedDomains={selectedNavigatorId ? (completionMap[selectedNavigatorId] ?? new Set()) : new Set()}
+                completions={completions.filter((c) => (
+                  selectedNavigatorId ? c.navigatorId === selectedNavigatorId : c.name === selected
+                ))}
                 answers={selectedResult?.answers}
                 questions={questions.filter((q) => q.status === 'active')}
               />

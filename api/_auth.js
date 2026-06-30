@@ -3,7 +3,7 @@
 //
 // Every handler calls validateSecret(req, res) at the top of its handler body
 // and returns early if it responds with 401. This replaces the identical
-// three-line block that was copy-pasted across all 5 handlers.
+// three-line block that was copy-pasted across the REST handlers.
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { SUPERVISOR_PASSCODE } from '../src/data/config.js';

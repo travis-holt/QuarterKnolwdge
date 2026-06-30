@@ -691,8 +691,8 @@ export function buildDossier(row, answers, questions, interviews = [], completio
  *   criticalGaps:   {name,reason,domainId,severity}[],
  *   trainingOverdue:{name,reason,domainId,severity}[],
  *   decliningTrends:{name,reason,delta,severity}[],
- *   failedPractice: {name,reason,domainId,severity}[],
- *   readyForMore:   {name,reason,severity}[],
+ *   failedPractice: {name,reason,domainId,score,interviewId,severity}[],
+ *   readyForMore:   {name,reason,canTeachCount,severity}[],
  * }}
  */
 export function buildActionCenter(rows, { history = [], interviews = [], completions = [] } = {}) {
@@ -713,7 +713,9 @@ export function buildActionCenter(rows, { history = [], interviews = [], complet
 
     const training = trainingForRow(row);
     const navCompleted = new Set(
-      completions.filter((c) => c.name === row.name).map((c) => c.domainId)
+      completions
+        .filter((c) => c.name === row.name && (!c.kind || c.kind === 'practice'))
+        .map((c) => c.domainId)
     );
     for (const a of training) {
       if (a.priority === 'Required' && !navCompleted.has(a.domainId)) {
@@ -737,7 +739,14 @@ export function buildActionCenter(rows, { history = [], interviews = [], complet
     if (iv.grade?.score != null && iv.grade.score < INTERVIEW_SCORE_BANDS.fair) {
       const row = rows.find((r) => r.name === iv.name);
       if (row) {
-        failedPractice.push({ name: iv.name, reason: `Practice score ${iv.grade.score}/100`, domainId: iv.domainId, severity: 'medium' });
+        failedPractice.push({
+          name: iv.name,
+          reason: `Practice score ${iv.grade.score}/100`,
+          domainId: iv.domainId,
+          score: iv.grade.score,
+          interviewId: iv.id ?? `${iv.name}-${iv.domainId}-${iv.endedAt?.seconds ?? 'practice'}`,
+          severity: 'medium',
+        });
       }
     }
   }
@@ -745,7 +754,12 @@ export function buildActionCenter(rows, { history = [], interviews = [], complet
   const avgCanTeach = tally.length > 0 ? tally.reduce((s, t) => s + t.canTeachCount, 0) / tally.length : 0;
   for (const t of tally) {
     if (t.canTeachCount >= Math.ceil(avgCanTeach) + 1 && t.canTeachCount >= 3) {
-      readyForMore.push({ name: t.name, reason: `Can-Teach in ${t.canTeachCount} of ${DOMAINS.length} domains`, severity: 'info' });
+      readyForMore.push({
+        name: t.name,
+        reason: `Can-Teach in ${t.canTeachCount} of ${DOMAINS.length} domains`,
+        canTeachCount: t.canTeachCount,
+        severity: 'info',
+      });
     }
   }
 
