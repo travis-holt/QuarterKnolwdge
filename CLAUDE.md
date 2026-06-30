@@ -706,6 +706,25 @@ stateDiagram-v2
 
 ## 7. Development History
 
+### 2026-06-30 — Drop the branch/PR ceremony (main-first workflow)
+- **What changed:** Removed the feature-branch enforcement from the in-repo SAW harness. This is a
+  solo project with no CI and Railway auto-deploy on push to `main`, so the branch → PR → self-merge
+  loop was pure ceremony — every PR was reviewed by no one and merged seconds later. Work now commits
+  straight to `main`.
+  - `.claude/settings.json` — removed three hooks: the "you're on main" UserPromptSubmit warning, the
+    "block push to main" PreToolUse blocker, and the "/pre-pr before gh pr create" reminder. **Kept**
+    the commit-format reminder and the block-push-with-uncommitted-changes guard (cheap insurance,
+    not branch ceremony).
+  - `CLAUDE.md` §14 — harness bullet rewritten to describe the main-first flow; the `/start-work`,
+    `/pre-pr`, `/end-work` slash commands still exist but are optional (they don't fire on their own).
+    §14 "Required workflows" already described committing + pushing to `main` directly, so it's now
+    consistent rather than contradicted by the hooks.
+- **Rationale:** A branch only earns its keep when something gates the merge (a reviewer or CI). With
+  neither, branches added 4 steps around a 1-step push. If `npm test` ever runs as a GitHub Actions
+  check on PRs, revisit — at that point the PR gate becomes worth the ceremony.
+- **Files affected:** `.claude/settings.json`, `CLAUDE.md`.
+- **Status:** Complete.
+
 ### 2026-06-29 — F17–F21: Longitudinal trends, dossier, action center, adaptive dev paths, mentor matching
 - **What changed:** Five new capability-platform features turning Knowledge Check into the standing
   quarterly instrument described in the vision. All builds are complete; no mockup stubs.
@@ -1847,12 +1866,15 @@ npm run test:watch   # run Vitest in watch mode
   with `stop ponytail`. It shapes *how* code is written here; it changes nothing about the app.
 
 - **In-repo harness (`.claude/`):** this repo carries a tailored **SAFe Agentic Workflow** harness
-  (commands, agents, skills, guardrail hooks) — see the 2026-06-29 §7 entry and
+  (commands, agents, skills) — see the 2026-06-29 §7 entry and
   [.claude/README.md](.claude/README.md). It's workflow scaffolding for AI sessions, not app code.
-  Key touch-points: `/start-work`, `/pre-pr`, `/end-work` commands; `fe-developer`/`qas`/
-  `tech-writer`/`system-architect`/`rte` agents; auto-loaded `safe-workflow`/`pattern-discovery`/
-  `testing-patterns`/`git-advanced` skills; and hooks in `.claude/settings.json` that block
-  push-to-`main` and push-with-uncommitted-changes. All gates are `npm test` + `npm run build`.
+  Key touch-points: the `fe-developer`/`qas`/`tech-writer`/`system-architect`/`rte` agents and the
+  auto-loaded `safe-workflow`/`pattern-discovery`/`testing-patterns`/`git-advanced` skills.
+  **Branch ceremony removed 2026-06-30** — this is a solo, auto-deploy, no-CI project, so work is
+  committed straight to `main` (Railway deploys on push). The branch/PR slash commands
+  (`/start-work`, `/pre-pr`, `/end-work`) still exist but are optional; the only remaining
+  `.claude/settings.json` hooks are a commit-format reminder and a block on pushing with
+  uncommitted changes. All gates are `npm test` + `npm run build`.
 
 - **Project conventions:**
   - All tunable values live in [src/data/config.js](src/data/config.js). Prefer editing data files
