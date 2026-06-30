@@ -706,6 +706,37 @@ stateDiagram-v2
 
 ## 7. Development History
 
+### 2026-06-30 — Fix: "Personalize my path" button did nothing (instant-abort bug)
+- **What changed:** `MyTraining.jsx` called `apiFetch('/api/sequence-path', {...})` with no
+  `timeoutMs` argument. `apiFetch` did `setTimeout(() => controller.abort(), undefined)`, and a
+  `setTimeout` with an `undefined` delay fires on the next tick (treated as 0 ms) — so the
+  `AbortController` aborted the fetch before it could complete. The `AbortError` was swallowed by
+  the silent `catch` in `handlePersonalize`, so the button just reset and nothing visible happened.
+  Two fixes: (1) pass a 25 s timeout at the call site (matches the other Gemini-backed callers);
+  (2) root-cause guard — `apiFetch`'s `timeoutMs` now defaults to `30_000`, so any future caller
+  that omits it gets a sane timeout instead of an instant abort.
+- **Files affected:** `src/components/MyTraining.jsx`, `src/lib/apiFetch.js`, `CLAUDE.md`.
+- **Verification:** `npm run build` → clean.
+- **Status:** Complete.
+
+### 2026-06-30 — Added ARCHITECTURE.md (maintenance/panic guide — docs only)
+- **What changed:** New top-level `ARCHITECTURE.md` written for the "something is down in 6 months
+  and I need to know where to look" moment. Plain-language, non-exhaustive, aimed at a non-expert
+  maintainer. Sections: (1) what the app does, (2) the stack, (3) 3 end-to-end data flows
+  (take-the-check, supervisor dashboard, AI feature), (4) **the seams** — the 5 connection points
+  that actually break (browser→Firestore, browser→Railway `/api`, server→Gemini, Railway hosting,
+  the fake PIN/passcode auth boundary), each with "what failure looks like" + "what to check first",
+  (5) a load-bearing-vs-peripheral file map, (6) a literal down-the-checklist debug + rollback guide,
+  (7) an honest "risky smells" list (fake auth + open Firestore rules, browser-talks-to-DB-directly,
+  SOP PDFs, 21-feature scope creep, no CI). Read-only documentation pass — **no `src/`, `api/`,
+  config, or build file was touched.**
+- **Files affected:** new `ARCHITECTURE.md`; `CLAUDE.md` (this entry).
+- **Verification:** N/A (docs only; grounded in a direct read of `server.js`, `src/lib/{db,firebase,
+  apiFetch,session}.js`, `src/data/config.js`, `api/_gemini-client.js`, `api/_auth.js`,
+  `api/generate-coaching.js`, `src/components/{Start,App}.jsx`, `firestore.rules`, and the role-app
+  subscription wiring — not assumptions).
+- **Status:** Complete.
+
 ### 2026-06-30 — Drop the branch/PR ceremony (main-first workflow)
 - **What changed:** Removed the feature-branch enforcement from the in-repo SAW harness. This is a
   solo project with no CI and Railway auto-deploy on push to `main`, so the branch → PR → self-merge

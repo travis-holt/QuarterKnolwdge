@@ -22,7 +22,7 @@ import { SUPERVISOR_PASSCODE } from '../data/config.js';
  * @throws {Error} on non-2xx, timeout, or network failure; AbortError name is
  *                 preserved so callers can detect timeouts via err.name === 'AbortError'
  */
-export async function apiFetch(endpoint, body, timeoutMs) {
+export async function apiFetch(endpoint, body, timeoutMs = 30_000) {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), timeoutMs);
   try {
