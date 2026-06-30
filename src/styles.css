@@ -2609,6 +2609,70 @@ textarea:focus-visible {
   align-items: stretch;
 }
 
+/* ── Practice-type chooser (voice vs chat) ─────────────────────────────────── */
+.practice-choice {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 16px;
+}
+.practice-choice__card {
+  text-align: left;
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  transition: transform var(--dur-1) var(--ease-out), box-shadow var(--dur-1) var(--ease-out);
+}
+.practice-choice__card:hover {
+  transform: translateY(-3px);
+  box-shadow: var(--shadow-md);
+}
+.practice-choice__glyph { font-size: 2rem; }
+.practice-choice__title { font-size: 1.15rem; margin: 0; }
+.practice-choice__desc { color: var(--ink-soft); font-size: 0.92rem; margin: 0; }
+
+/* ── Voice call: animated "listening / speaking" orb ───────────────────────── */
+.voicecall {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 14px;
+  text-align: center;
+}
+.voicecall__orb {
+  width: 96px;
+  height: 96px;
+  border-radius: 50%;
+  background: var(--grad-accent, var(--accent));
+  box-shadow: 0 0 0 0 rgba(196, 116, 79, 0.45);
+  margin: 8px 0;
+}
+.voicecall__orb.is-speaking {
+  animation: voice-pulse 1.1s var(--ease-out) infinite;
+}
+@keyframes voice-pulse {
+  0%   { box-shadow: 0 0 0 0 rgba(196, 116, 79, 0.45); transform: scale(1); }
+  70%  { box-shadow: 0 0 0 22px rgba(196, 116, 79, 0); transform: scale(1.06); }
+  100% { box-shadow: 0 0 0 0 rgba(196, 116, 79, 0); transform: scale(1); }
+}
+.voicecall__status { color: var(--ink-soft); font-weight: 500; }
+.voicecall__captions {
+  width: 100%;
+  max-width: 640px;
+  max-height: 240px;
+  overflow-y: auto;
+  text-align: left;
+  margin-top: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.voicecall__caption { margin: 0; font-size: 0.95rem; line-height: 1.45; }
+.voicecall__caption--navigator { color: var(--accent-deep, var(--accent)); }
+@media (prefers-reduced-motion: reduce) {
+  .voicecall__orb.is-speaking { animation: none; }
+}
+
 /* spinner shown during saving/grading phases */
 .interview__grading-spinner {
   width: 36px;

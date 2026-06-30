@@ -10,8 +10,7 @@
 > [§8 Current System State](#8-current-system-state) and [§15 Current Priorities](#15-current-priorities)
 > accurate at all times.
 >
-> **Last updated:** 2026-06-29 (F17–F21: longitudinal trends, dossier, action center, adaptive
-> dev paths, mentor matching engine — full builds) ·
+> **Last updated:** 2026-06-30 (F22: real-time voice practice call — Gemini Live API) ·
 > **Doc maintainer:** Claude (AI agent) + repo owner. Assumptions are explicitly marked **[ASSUMPTION]**.
 
 ---
@@ -414,6 +413,48 @@ training assignments.
 - **Files:** new `src/components/Mentorship.jsx`; edited `src/lib/{scoring,scoring.test,db}.js`,
   `src/components/{SupervisorApp,Nav}.jsx`, `firestore.rules`, `src/styles.css`.
 
+### F22 — Real-Time Voice Practice Call (Gemini Live API)
+- **Purpose:** A genuine voice phone call with the AI patient — the caller speaks, the navigator
+  speaks back, both in real time, no typing. Separate from the F15 text chat (the navigator picks
+  voice **or** chat at the Practice entry — they're never mixed in one UI).
+- **User benefit:** The closest thing to a real call. Bidirectional streaming audio, interruptible
+  (barge-in), grounded in the same persona/scenario as the chat practice. The transcript is still
+  captured under the hood and graded by the existing `/api/grade-interview`, so a voice call
+  produces the same score + strengths/improvements review as a chat call.
+- **Why this design (vs the first attempt):** v1 bolted browser TTS + Web-Speech STT onto the chat
+  UI. It felt glitchy — STT auto-sent on every pause (cutting the navigator off), the caller's text
+  bubble appeared *before* its audio (spoiling the line), and chat's turn-based model had no place
+  for a real call's rhythm. The owner correctly called out that chat and voice shouldn't share a
+  UI. Rebuilt on the **Gemini Live API** (real-time, streaming, interruptible) as its own screen.
+- **Technical implementation:**
+  - **Server relay — `api/live-relay.js`** (`attachLiveRelay(server)` in `server.js`): a `ws`
+    `WebSocketServer` at **`/api/live`**. Browser ⇄ relay ⇄ Gemini Live
+    (`BidiGenerateContent` over WSS). The relay holds the key (never exposed to the browser),
+    validates the secret via `isValidSecret()` (new non-Express helper in `_auth.js`), and builds
+    the patient persona server-side with `buildSystemInstruction()` (reused from `interview-turn.js`).
+    Model: **`gemini-3.1-flash-live-preview`** — the gemini-3 Live model, verified to open a session
+    on the project keys (a `bidiGenerateContent` model; text flash models like `gemini-3.5-flash`
+    can't do the real-time call). Enables `inputAudioTranscription` + `outputAudioTranscription`
+    so the relay can forward a text transcript for grading. Protocol is small JSON both ways
+    (`start` / `audio` / `ready` / `transcript` / `interrupted` / `turnComplete` / `error`).
+  - **Client — `src/components/VoiceCall.jsx`:** gets the scenario+callerName from the existing
+    `/api/interview-turn` init, opens the relay socket, captures mic via
+    `getUserMedia({echoCancellation,noiseSuppression,autoGainControl})` → `ScriptProcessorNode`
+    → downsample to 16kHz PCM16 → base64 → relay. Caller audio (24kHz PCM16) is decoded into
+    scheduled `AudioBufferSource`s on a 24kHz `AudioContext` for gapless playback; an `interrupted`
+    message flushes the queue (barge-in). An animated orb shows speaking/listening state. End call →
+    coalesced transcript → `saveInterview` → `/api/grade-interview` → same reviewed screen as chat.
+  - **Entry chooser:** `PracticeChooser` in `NavigatorApp.jsx` — the Practice tab shows two cards
+    (Voice call / Text chat); `practiceMode` state routes to `<VoiceCall>` or `<Interview>` and
+    resets when the navigator leaves the tab.
+- **Status:** Complete. Server relay verified headlessly end-to-end (node client → relay → Gemini →
+  caller audio + transcript). **In-browser mic capture/playback must be tested in Chrome/Edge** —
+  not verifiable in the headless codespace; Web Audio mic capture is also Chromium-reliable, so the
+  text-chat option remains the cross-browser fallback.
+- **Files affected:** new `api/live-relay.js`, `src/components/VoiceCall.jsx`; edited `server.js`,
+  `api/_auth.js` (added `isValidSecret`), `src/components/NavigatorApp.jsx`, `src/styles.css`,
+  `package.json` (`ws` dependency).
+
 ### F14 — Question Bank + Gemini Scenario Generation (review gate)
 - **Purpose:** Grow the check from the SOP; questions are live Firestore data, not a static file.
 - **User benefit:** Supervisors generate, review, and curate the assessment without a code change.
@@ -470,6 +511,8 @@ QuarterKnolwdge/
 │   ├── grade-interview.js   #   Gemini practice-call grading
 │   ├── generate-audit.js    #   Gemini "Spot the Error" transcript
 │   ├── coach-audit.js       #   Gemini audit-reflection coaching
+│   ├── sequence-path.js     #   Gemini dev-path step reordering
+│   ├── live-relay.js        #   WebSocket relay → Gemini Live API (real-time voice call)
 │   ├── health.js            #   deploy/health check
 │   ├── _gemini-client.js    #   shared getApiKeys/callGemini/geminiWithRotation (helper, not a route)
 │   └── _sop-context.js      #   SOP grounding text (helper, not a route)
@@ -491,7 +534,7 @@ QuarterKnolwdge/
         ├── useInView.js     # IntersectionObserver hook (scroll-reveal trigger)
         ├── useCountUp.js    # rAF count-up hook (reduced-motion aware)
         ├── scoring.js       # all scoring (2 axes), read-offs, analytics, training logic
-        └── scoring.test.js  # Vitest unit tests for scoring.js (46 tests)
+        └── scoring.test.js  # Vitest unit tests for scoring.js
 ```
 
 ### Backend Architecture
@@ -704,7 +747,131 @@ stateDiagram-v2
 
 ---
 
+### 2026-06-30 — Voice practice call: Gemini Live API + WS relay, separate from chat
+- **Decision:** Build the voice practice call on the **Gemini Live API** (real-time bidirectional
+  streaming audio) via a server-side **WebSocket relay** at `/api/live`, as its own screen
+  (`VoiceCall.jsx`) — separate from the F15 text chat, chosen by the navigator at a Practice entry
+  chooser.
+- **Reasoning:** A first attempt bolted one-shot Gemini TTS + browser Web-Speech STT onto the chat
+  UI. It was glitchy by construction: STT auto-sent on pauses, the caller's text appeared before
+  its audio, and chat's turn-based model has no rhythm for a live call. Owner correctly identified
+  that chat and voice shouldn't share a UI. The Live API is purpose-built for fluid, interruptible
+  voice. A relay is mandatory because the browser can't hold the Gemini key — the browser talks
+  only to our server, which opens the upstream Live socket. Verified before building: the key opens
+  a Live session and completes a full audio round-trip. **Model = `gemini-3.1-flash-live-preview`**
+  (the gemini-3 Live model) — picked via `listModels` over the `bidiGenerateContent` set after
+  confirming it opens a session; `gemini-2.5-flash-native-audio-*` are stable fallbacks. Note
+  `gemini-3.5-flash` exists but is text-only (no bidi), so it can't power the voice call.
+- **Alternatives considered:** one-shot TTS + browser STT bolted onto chat (built first, rejected —
+  glitchy, wrong paradigm); browser `speechSynthesis` for caller voice (robotic, and still leaves
+  the turn-taking problem); third-party realtime voice (ElevenLabs/Deepgram — new account, new
+  billing, no benefit over Live on the existing keys).
+- **Impact:** New `api/live-relay.js` (`ws` WebSocketServer attached to the Express http server) +
+  `src/components/VoiceCall.jsx` (mic capture, downsample to 16kHz, 24kHz scheduled playback,
+  barge-in). `ws` added as a dependency. The chat `Interview.jsx` is untouched and remains the
+  reliable, cross-browser, gradeable path. **Live API has its own preview quota** — fine for a
+  demo, but a heavier-traffic production rollout would need to confirm Live tier limits/billing.
+
+---
+
 ## 7. Development History
+
+### 2026-06-30 — Fix: voice call dropped on first mic frame (deprecated `mediaChunks` format)
+- **What changed:** With audio finally flowing (after the suspended-AudioContext fix), the Gemini
+  Live session closed the instant the first mic frame arrived: `code 1007 — realtime_input.
+  media_chunks is deprecated. Use audio, video, or text instead.` The relay was forwarding mic
+  audio as `realtimeInput: { mediaChunks: [{mimeType, data}] }`, which newer Live models
+  (`gemini-3.1-flash-live-preview`) reject. Changed to the current single-Blob form
+  `realtimeInput: { audio: { mimeType: 'audio/pcm;rate=16000', data } }` in `api/live-relay.js`.
+  This also explains the earlier "no caller audio": the session died right after `ready`, before
+  the opening line could stream back.
+- **How it was found:** added server-side `[live-relay]` logs + an on-screen "caller audio chunks"
+  counter and live captions in `VoiceCall.jsx`; the relay log showed the exact 1007 close reason.
+  (Also surfaced an operational gotcha: a stale `npm start` left port 3000 bound, so later
+  `npm start`s hit `EADDRINUSE` and the browser kept hitting old code — kill with `pkill -f server.js`.)
+- **Verification:** new headless test (`relay-audio-test.mjs`, PORT 3100) sends mic frames through
+  the relay after `ready` — session now **survives** and streams **182KB** of caller audio +
+  transcript back (previously closed 1007 with 0 audio). `npm test` → 206; `node --check` OK.
+- **Files affected:** `api/live-relay.js` (format fix), `src/components/VoiceCall.jsx` (live
+  captions), `src/styles.css`. **Owner confirmed working in Chrome** (full call: heard the caller,
+  spoke back, saw captions). The temporary diagnostics (on-screen chunk counter, per-frame
+  console logs) were removed in the same pass — kept the lifecycle/error logs in `live-relay.js`
+  (connect/disconnect/upstream-closed) since those are useful ops signal in Railway logs, and kept
+  live captions in `VoiceCall.jsx` as real UX, not just a diagnostic.
+- **Status:** Complete. Real-time voice practice call works end to end.
+
+### 2026-06-30 — Fix: voice call connected but mic/audio were silent (suspended AudioContext)
+- **What changed:** After the previous env-loading fix, the voice call reached the active screen
+  but produced no audio either direction — mic didn't engage, no caller audio played. Root cause:
+  `VoiceCall.jsx` created both `AudioContext`s (`inCtx`/`outCtx`) **after** awaiting a network
+  round-trip (scenario generation) and the mic permission prompt. By that point Chrome's autoplay
+  policy had very likely started both contexts in `'suspended'` state — and a suspended context
+  renders **no** audio at all: `ScriptProcessorNode.onaudioprocess` never fires (mic never sends),
+  and scheduled `AudioBufferSource`s for caller playback just sit queued (silence). Neither
+  direction logs an error; it just does nothing, which matches exactly what was reported.
+- **Fix:** explicit `await Promise.all([inCtx.resume(), outCtx.resume()])` immediately after
+  creating the contexts in `startCall()`. `resume()` still succeeds here because it's running
+  inside the same gesture chain as the "Start voice call" click (promise/async chains without a
+  `setTimeout` don't break Chrome's transient-activation window for `resume()`, even though the
+  *initial* suspended-or-not state was already decided unfavorably). Added a guard: if either
+  context still isn't `'running'` after resume, show "Audio is blocked by the browser — click
+  again" and return to setup, rather than silently failing a second time.
+- **Files affected:** `src/components/VoiceCall.jsx`.
+- **Verification:** `npm test` → 206 passing; `npm run build` → clean. **Not browser-verified** —
+  audio-context suspend/resume behavior can't be exercised in the headless codespace; needs an
+  owner test in Chrome/Edge to confirm mic + playback now work.
+- **Status:** Complete (code); awaiting browser confirmation.
+
+### 2026-06-30 — F22: Real-time voice practice call (Gemini Live API) — replaced the TTS first attempt
+- **Context:** An earlier attempt this session bolted one-shot Gemini TTS (`/api/speak`) + browser
+  Web-Speech STT onto the chat `Interview.jsx`. It felt glitchy (auto-send on pauses, caller text
+  appearing before its audio, no call rhythm). Owner flagged that chat + voice in one UI was the
+  wrong call. That attempt was **fully reverted** (`git checkout` of `Interview.jsx`/`server.js`;
+  `api/speak.js` + `src/lib/pcmAudio.js` + its test deleted) and rebuilt on the Live API.
+- **What changed:** New real-time voice call as its own screen, with a chooser separating it from
+  the text chat.
+  - **`api/live-relay.js` (new):** `ws` `WebSocketServer` at `/api/live`, attached to the Express
+    http server via `attachLiveRelay(server)` in `server.js`. Relays browser ⇄ Gemini Live
+    (`BidiGenerateContent` WSS) so the key stays server-side. Builds the patient persona with
+    `buildSystemInstruction()` (reused from `interview-turn.js`), validates the secret with the new
+    `isValidSecret()` helper in `_auth.js`, model
+    `gemini-3.1-flash-live-preview`, with input+output transcription enabled.
+    Small JSON protocol (`start`/`audio`/`ready`/`transcript`/`interrupted`/`turnComplete`/`error`).
+  - **`src/components/VoiceCall.jsx` (new):** mic capture (`getUserMedia` → `ScriptProcessorNode`
+    → downsample 16kHz PCM16 → relay), gapless 24kHz playback via scheduled `AudioBufferSource`s,
+    barge-in flush on `interrupted`, speaking/listening orb, end → `saveInterview` →
+    `/api/grade-interview` → same reviewed screen as the chat call.
+  - **`src/components/NavigatorApp.jsx`:** `PracticeChooser` (voice vs chat) + `practiceMode` state
+    routing the Practice tab to `<VoiceCall>` or `<Interview>`; resets on leaving the tab via a
+    `useEffect` placed **with the other hooks above the early returns** (a first cut put it after
+    the `deptselect`/`loading` early returns, which violated the Rules of Hooks — clicking a
+    department changed the hook count between renders and blanked the page; fixed by hoisting it).
+  - **`src/styles.css`:** `.practice-choice*` cards + `.voicecall*` orb/pulse (reduced-motion safe).
+  - **`package.json`:** `ws` added.
+  - **Local-dev env fix (`load-env.js`):** `node server.js` never loaded `.env.local` (only Vite
+    did, for build-time `VITE_*`), so a plain local `npm start` ran with **no `GEMINI_API_KEYS`** →
+    every `/api/*` AI call 500'd "not configured" → the voice/chat call showed "Could not set up
+    the call scenario." New `load-env.js` (imported first by `server.js`) calls native
+    `process.loadEnvFile('.env.local')` when present — no-op on Railway (vars injected, file
+    absent) and on Node < 20.12 (guarded). Reminder: `/api` (incl. the `/api/live` WS) only runs
+    under `npm start`/Railway — **not** `npm run dev` (Vite, no proxy configured).
+- **Model note:** initially built on `gemini-2.5-flash-native-audio-preview-09-2025`, then
+  switched to **`gemini-3.1-flash-live-preview`** (gemini-3 Live) after a `listModels` check showed
+  it available + a setup handshake confirmed it. `gemini-3.5-flash` was raised as a candidate but
+  it's text-only (no `bidiGenerateContent`) so it can't drive the voice call; it was also 503-ing
+  ("high demand") on the free tier at the time, a reason the REST `MODEL` stayed on `gemini-2.5-flash`.
+- **Verification:** `npm test` → **206 passing** (8 test files — back to pre-attempt count after
+  removing `pcmAudio.test.js`); `npm run build` → clean; `node --check api/live-relay.js`,
+  `server.js` → OK. **Live API verified before and after building:** (1) `listModels` — enumerated
+  the `bidiGenerateContent` models on the key; (2) full-turn probe — setup → text prompt → 163KB
+  audio + output transcript; (3) **relay round-trip** on the final gemini-3 Live model — node
+  client → our `/api/live` relay → Gemini → `ready` + 250KB caller audio + transcript, key never
+  leaving the server. In-browser mic capture/playback is **not** verifiable in the headless
+  codespace and must be tested in Chrome/Edge.
+- **Status:** Complete. Server relay live-verified; **owner confirmed working end-to-end in
+  Chrome** (mic, caller voice, captions) after two follow-on fixes — see the two 2026-06-30
+  history entries above this one (suspended `AudioContext` + deprecated `realtimeInput.mediaChunks`
+  format).
 
 ### 2026-06-30 — Fix: "Personalize my path" button did nothing (instant-abort bug)
 - **What changed:** `MyTraining.jsx` called `apiFetch('/api/sequence-path', {...})` with no
@@ -1589,11 +1756,13 @@ stateDiagram-v2
   `resultHistory` collection (powers trend views) → supervisor matrix/overview update live per dept
   → navigator/training dashboards → **switch departments** → practice interview → "Spot the Error"
   QA audit → path stepper + mini re-check per weak domain → supervisor Action Center + Mentorship
-  tabs. Build clean, tests green (`npm test` → **206 passing**, 8 test files).
-- **Existing functionality:** features F1–F21 (see [§4](#4-feature-inventory)) are **Complete** in
+  tabs → practice call offered as **voice (real-time) or text chat**. Build clean, tests green
+  (`npm test` → **206 passing**, 8 test files).
+- **Existing functionality:** features F1–F22 (see [§4](#4-feature-inventory)) are **Complete** in
   code. F17 adds longitudinal trends + Sparkline. F18 adds dossier evidence per competency. F19
   adds the supervisor Action Center. F20 adds AI-sequenced dev paths + mini re-check. F21 adds
-  the mentor matching engine with persisted pairings + outcome tracking.
+  the mentor matching engine with persisted pairings + outcome tracking. F22 adds a real-time
+  voice practice call (Gemini Live API via a WebSocket relay), alongside the existing text chat.
 - **SOP grounding:** Pediatrics AI features ground against `Pediatrics_SOP_Updated.pdf`; OB/GYN AI
   features ground against the sanitized `SOP_CONTEXT_OBGYN` in `api/_sop-context.js` (faithful to
   OB/GYN workflow but with generic role labels — no PII; repo is public). `SOP Guide.pdf` superseded.
@@ -1613,7 +1782,9 @@ stateDiagram-v2
   buildDevPath, buildMentorMatches, pairingOutcomes + malformed-input edge cases), `session.test.js`,
   `db.test.js`, `api/api-handlers.test.js`, `api/generate-audit.test.js`,
   `api/_gemini-client.test.js`, `api/sequence-path.test.js` (9 tests for `validateSequenceResponse`),
-  `src/components/components.test.jsx`. Role-app integration tests remain the only untested area.
+  `src/components/components.test.jsx`. The F22 voice call (relay + Web Audio) is verified by live
+  end-to-end probe rather than unit tests — audio I/O isn't unit-testable headlessly. Role-app
+  integration tests remain the only other untested area.
 - **Client fetch layer:** `src/lib/apiFetch.js` — shared helper for all `/api` calls (AbortController
   timeout, SUPERVISOR_PASSCODE injection, Content-Type, error-body parsing). Used by Interview.jsx,
   SpotTheError.jsx, Coaching.jsx, and SupervisorApp.jsx.
@@ -1636,7 +1807,8 @@ stateDiagram-v2
     `src/lib/apiFetch.js` 2026-06-26**.
   - ~~Mixed `.then()` vs `async/await` in Coaching.jsx~~ — **standardised to `async/await` 2026-06-26**.
 - **Active integrations:** **Firebase / Firestore** (live) + **Gemini via Railway Express server**
-  (`GEMINI_API_KEYS` set in Railway Variables; all 6 AI endpoints live).
+  (`GEMINI_API_KEYS` set in Railway Variables; all 7 REST AI endpoints live + the `/api/live`
+  WebSocket relay for the real-time voice call).
 - **Deployment status:** **Railway** (Git-connected to `main`). Railway auto-deploys on push.
   `VITE_FIREBASE_*` and `GEMINI_API_KEYS` confirmed set in Railway Variables. No `GENERATION_SECRET`
   needed — server falls back to `SUPERVISOR_PASSCODE`.
@@ -1648,10 +1820,10 @@ stateDiagram-v2
   OB/GYN = **32** seed questions (bank grows in Firestore per dept) · 4 departments (**Pediatrics
   + OB/GYN live**, 2 mockup) · **206** unit tests (8 test files) · **7** Firestore collections
   (`roster`, `results`, `resultHistory`, `questions`, `interviews`, `completions`, `pairings`) ·
-  **8** serverless functions (`generate-scenarios`, `generate-coaching`, `interview-turn`,
-  `grade-interview`, `generate-audit`, `coach-audit`, `sequence-path`, `health`) · **2** shared API
-  helpers (`api/_gemini-client.js`, `api/_auth.js`) · **1** shared client fetch helper
-  (`src/lib/apiFetch.js`).
+  **8** REST serverless functions (`generate-scenarios`, `generate-coaching`, `interview-turn`,
+  `grade-interview`, `generate-audit`, `coach-audit`, `sequence-path`, `health`) + **1** WebSocket
+  relay (`live-relay.js` → `/api/live`) · **2** shared API helpers (`api/_gemini-client.js`,
+  `api/_auth.js`) · **1** shared client fetch helper (`src/lib/apiFetch.js`).
 
 ---
 
@@ -1722,6 +1894,12 @@ stateDiagram-v2
   - `POST /api/generate-audit` `{ domain, secret }` → `{ transcript, errorIndex, hint, modelExplanation }` (~10-turn flawed transcript for the "Spot the Error" exercise).
   - `POST /api/coach-audit` `{ domain, modelExplanation, navigatorAnswer, name, secret }` → `{ reply }` (warm 2–3 sentence mentor coaching note; advisory only).
   - `GET /api/health` → `{ ok }`.
+- **WebSocket endpoint:**
+  - `WS /api/live` — real-time voice practice call relay (F22). Client sends `{type:'start',
+    secret, callerName, scenario}` then streams `{type:'audio', data}` (base64 PCM16 @16kHz mic
+    frames); relay forwards to Gemini Live and streams back `{type:'ready'|'audio'|'transcript'|
+    'interrupted'|'turnComplete'|'error'}`. Key held server-side; persona built via
+    `buildSystemInstruction()`. Model `gemini-3.1-flash-live-preview`.
 - **Env vars:** client (gitignored `.env.local`, build-time) `VITE_FIREBASE_*`; **server-only**
   (Railway service Variables — never `VITE_`-prefixed) `GEMINI_API_KEYS` (comma-separated; rotated on
   rate-limit) or single `GEMINI_API_KEY`. `GENERATION_SECRET` is optional — server falls back to

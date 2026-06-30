@@ -2,6 +2,7 @@
 // Serves the Vite-built SPA from dist/ and mounts the /api handlers that were
 // originally written as Vercel serverless functions (same req/res signature).
 
+import './load-env.js'; // must be first — populates process.env from .env.local in local dev
 import express from 'express';
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
@@ -20,6 +21,7 @@ import generateAudit from './api/generate-audit.js';
 import coachAudit from './api/coach-audit.js';
 import sequencePath from './api/sequence-path.js';
 import health from './api/health.js';
+import { attachLiveRelay } from './api/live-relay.js';
 
 app.post('/api/generate-scenarios', generateScenarios);
 app.post('/api/generate-coaching', generateCoaching);
@@ -43,6 +45,9 @@ app.get('/*splat', (_req, res) => {
 
 // Railway injects PORT automatically; fall back to 3000 for local testing.
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => {
+const server = app.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
 });
+
+// Real-time voice practice call (Gemini Live API) — WebSocket relay at /api/live.
+attachLiveRelay(server);

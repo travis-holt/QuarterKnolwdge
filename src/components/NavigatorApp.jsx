@@ -6,6 +6,7 @@ import NavigatorDetail from './NavigatorDetail.jsx';
 import MyTraining from './MyTraining.jsx';
 import TrainingModule from './TrainingModule.jsx';
 import Interview from './Interview.jsx';
+import VoiceCall from './VoiceCall.jsx';
 import SpotTheError from './SpotTheError.jsx';
 import EmptyState from './EmptyState.jsx';
 import Footer from './Footer.jsx';
@@ -43,6 +44,7 @@ export default function NavigatorApp({ navigatorId, name, onSignOut }) {
   const [moduleDomain, setModuleDomain] = useState(null);
   const [auditDomain, setAuditDomain] = useState(null);
   const [miniCheckDomain, setMiniCheckDomain] = useState(null);
+  const [practiceMode, setPracticeMode] = useState(null); // null (chooser) · 'voice' · 'chat'
   const [completedDomains, setCompletedDomains] = useState(new Set());
   const [loadError, setLoadError] = useState(false);
   // Cross-dept scores keyed by deptId — populated on mount + updated after each check.
@@ -121,6 +123,10 @@ export default function NavigatorApp({ navigatorId, name, onSignOut }) {
       .catch(() => { /* completions are non-critical */ });
     return () => { active = false; };
   }, [navigatorId]);
+
+  // Reset the practice-type chooser whenever the navigator leaves the Practice tab.
+  // (Must live with the other hooks, above the early returns — never after them.)
+  useEffect(() => { if (view !== 'interview') setPracticeMode(null); }, [view]);
 
   const handleSubmit = async (_ignoredName, answers) => {
     const dept = activeDept ?? 'pediatrics';
@@ -314,8 +320,17 @@ export default function NavigatorApp({ navigatorId, name, onSignOut }) {
         />
       )}
 
-      {view === 'interview' && (
-        <Interview navigatorId={navigatorId} name={name} department={dept} />
+      {view === 'interview' && practiceMode === null && (
+        <PracticeChooser onPick={setPracticeMode} />
+      )}
+      {view === 'interview' && practiceMode === 'voice' && (
+        <VoiceCall navigatorId={navigatorId} name={name} department={dept} onExit={() => setPracticeMode(null)} />
+      )}
+      {view === 'interview' && practiceMode === 'chat' && (
+        <>
+          <button className="linkbtn" onClick={() => setPracticeMode(null)} style={{ marginBottom: '1rem' }}>← Call type</button>
+          <Interview navigatorId={navigatorId} name={name} department={dept} />
+        </>
       )}
 
       {view === 'audit' && auditDomain && (
@@ -363,6 +378,33 @@ export default function NavigatorApp({ navigatorId, name, onSignOut }) {
 }
 
 // Shared shell for the navigator: nav + main + footer.
+// Practice-type chooser — keeps the real-time voice call and the text chat as
+// two separate experiences rather than mixing voice into the chat UI.
+function PracticeChooser({ onPick }) {
+  return (
+    <section className="interview view-enter">
+      <header className="overview__head">
+        <div>
+          <h1 className="overview__title">Practice Call</h1>
+          <p className="overview__lede">Practice handling a patient call. Pick how you want to do it.</p>
+        </div>
+      </header>
+      <div className="practice-choice">
+        <button className="card practice-choice__card" onClick={() => onPick('voice')} type="button">
+          <span className="practice-choice__glyph" aria-hidden="true">🎙️</span>
+          <h2 className="practice-choice__title">Voice call</h2>
+          <p className="practice-choice__desc">Talk out loud with a simulated patient in real time, like a real phone call. Needs a mic (works best in Chrome/Edge, with headphones).</p>
+        </button>
+        <button className="card practice-choice__card" onClick={() => onPick('chat')} type="button">
+          <span className="practice-choice__glyph" aria-hidden="true">💬</span>
+          <h2 className="practice-choice__title">Text chat</h2>
+          <p className="practice-choice__desc">Type your responses turn by turn. Works on any browser, no mic needed.</p>
+        </button>
+      </div>
+    </section>
+  );
+}
+
 function Shell({ role, view, setView, onSignOut, activeDeptName, onChangeDept, children }) {
   return (
     <div className="app">

@@ -25,3 +25,8 @@ export function validateSecret(req, res) {
   }
   return false;
 }
+
+/** Plain secret check for non-Express callers (e.g. the WebSocket live relay). */
+export function isValidSecret(secret) {
+  return secret === SECRET;
+}
