@@ -11,5 +11,9 @@ export default defineConfig({
   test: {
     // jest-dom matchers for component tests (used by files with @vitest-environment jsdom)
     setupFiles: ['./src/test-setup.js'],
+    // Vitest runs the unit/component tests under src/ + api/ only. The Playwright
+    // end-to-end specs live in e2e/ and are run separately via `npm run test:e2e`
+    // (they use @playwright/test, not vitest).
+    include: ['src/**/*.{test,spec}.{js,jsx}', 'api/**/*.{test,spec}.js'],
   },
 });

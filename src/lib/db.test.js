@@ -155,22 +155,25 @@ describe('saveResult', () => {
 // ── clearResult ───────────────────────────────────────────────────────────────
 
 describe('clearResult', () => {
-  it('deletes the composite-key doc when it exists', async () => {
+  it('deletes both the MCQ and Spot docs for the department when they exist', async () => {
     mocks.getDoc.mockResolvedValue({ exists: () => true });
     mocks.deleteDoc.mockResolvedValue();
     await clearResult('nav-id', 'obgyn');
-    expect(mocks.doc).toHaveBeenCalledWith(mocks.db, 'results', 'nav-id__obgyn');
-    expect(mocks.deleteDoc).toHaveBeenCalledOnce();
+    const ids = mocks.doc.mock.calls.map(([, , id]) => id);
+    expect(ids).toContain('nav-id__obgyn');        // MCQ (composite)
+    expect(ids).toContain('nav-id__obgyn__spot');  // Spot the Error
+    expect(mocks.deleteDoc).toHaveBeenCalledTimes(2);
   });
 
-  it('falls back to the legacy plain-id doc when composite does not exist', async () => {
+  it('also targets the legacy plain-id doc for pediatrics and skips non-existent docs', async () => {
     mocks.getDoc.mockResolvedValue({ exists: () => false });
     mocks.deleteDoc.mockResolvedValue();
     await clearResult('nav-id', 'pediatrics');
     const ids = mocks.doc.mock.calls.map(([, , id]) => id);
-    expect(ids).toContain('nav-id__pediatrics'); // composite tried first
-    expect(ids).toContain('nav-id');             // then legacy
-    expect(mocks.deleteDoc).toHaveBeenCalledOnce();
+    expect(ids).toContain('nav-id__pediatrics');       // MCQ composite
+    expect(ids).toContain('nav-id__pediatrics__spot'); // Spot the Error
+    expect(ids).toContain('nav-id');                   // legacy plain-id
+    expect(mocks.deleteDoc).not.toHaveBeenCalled();    // none existed → nothing deleted
   });
 });
 

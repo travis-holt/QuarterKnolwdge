@@ -17,6 +17,8 @@ import {
   scorePerCompetency,
   scoreToLevel,
   levelFor,
+  scoreSpotTheError,
+  scoreSpotTheErrorByDomain,
   buildMatrixRows,
   deptSamples,
   departmentOverall,
@@ -192,6 +194,44 @@ describe('levelFor', () => {
     expect(levelFor(SOLID)).toBe(LEVELS.solid);
     expect(levelFor(LEARN)).toBe(LEVELS.learning);
     expect(levelFor(TEACH).label).toBe('Can-Teach');
+  });
+});
+
+// ── scoreSpotTheError ────────────────────────────────────────────────────────
+
+describe('scoreSpotTheError', () => {
+  it('returns the share of items found correctly, rounded 0–100', () => {
+    expect(scoreSpotTheError([true, true, true, true])).toBe(100);
+    expect(scoreSpotTheError([true, false, false, false])).toBe(25);
+    expect(scoreSpotTheError([false, false])).toBe(0);
+  });
+
+  it('accepts object entries with a `correct` flag', () => {
+    expect(scoreSpotTheError([{ correct: true }, { correct: false }])).toBe(50);
+    expect(scoreSpotTheError([{ correct: true }, { correct: true }, { correct: false }])).toBe(67);
+  });
+
+  it('is defensive against empty or malformed input', () => {
+    expect(scoreSpotTheError([])).toBe(0);
+    expect(scoreSpotTheError(undefined)).toBe(0);
+    expect(scoreSpotTheError(null)).toBe(0);
+  });
+});
+
+describe('scoreSpotTheErrorByDomain', () => {
+  it('scores each domain by its share of correct items', () => {
+    const graded = [
+      { domainId: 'a', correct: true },
+      { domainId: 'a', correct: false },
+      { domainId: 'b', correct: true },
+    ];
+    expect(scoreSpotTheErrorByDomain(graded)).toEqual({ a: 50, b: 100 });
+  });
+
+  it('omits domains with no items and is defensive against junk', () => {
+    expect(scoreSpotTheErrorByDomain([])).toEqual({});
+    expect(scoreSpotTheErrorByDomain(undefined)).toEqual({});
+    expect(scoreSpotTheErrorByDomain([null, { correct: true }])).toEqual({});
   });
 });
 

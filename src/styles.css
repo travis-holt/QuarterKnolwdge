@@ -3224,6 +3224,232 @@ textarea:focus-visible {
   color: var(--ink);
 }
 
+/* ── Assessment: progress, wrong-pick reveal, per-item feedback ───────────── */
+
+.spot-error__progress {
+  flex-shrink: 0;
+  align-self: flex-start;
+  font-size: 0.78rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--ink-soft);
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 5px 12px;
+  white-space: nowrap;
+}
+
+/* Wrong pick — red highlight (assessment reveal after the single attempt) */
+.spot-error__bubble--wrong .spot-error__message {
+  background: #fbe9e7;
+  border-color: #c0392b;
+  border-width: 2px;
+  color: var(--ink);
+}
+
+.spot-error__feedback {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  animation: fadeIn var(--dur-2) var(--ease-out);
+}
+
+.spot-error__feedback-verdict {
+  margin: 0;
+  font-size: 0.95rem;
+  font-weight: 600;
+}
+
+.spot-error__feedback-verdict--ok { color: #3e8e5a; }
+.spot-error__feedback-verdict--miss { color: #c0392b; }
+
+/* ── Dashboard assessment bar (MCQ / Spot toggle + take another) ──────────── */
+
+.assess-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-bottom: 16px;
+  padding: 10px 14px;
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+}
+
+.assess-bar__toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.assess-bar__label {
+  font-size: 0.85rem;
+  color: var(--ink-soft);
+}
+
+.assess-bar__pill {
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: var(--ink-soft);
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 5px 12px;
+  cursor: pointer;
+  transition: background var(--dur-1) var(--ease-out),
+              border-color var(--dur-1) var(--ease-out),
+              color var(--dur-1) var(--ease-out);
+}
+
+.assess-bar__pill:hover { border-color: var(--accent); }
+
+.assess-bar__pill.is-active {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+
+.practice-choice__taken {
+  display: inline-block;
+  align-self: flex-start;
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  color: #3e8e5a;
+  background: #eaf6ee;
+  border: 1px solid #c3e0cb;
+  border-radius: 999px;
+  padding: 3px 9px;
+  margin-bottom: 8px;
+}
+
+/* ── Assessment: results scorecard + per-item review ──────────────────────── */
+
+.spot-error__scorecard {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  align-items: flex-start;
+}
+
+.spot-error__score {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  margin: 4px 0;
+}
+
+.spot-error__score-value {
+  font-size: 2.6rem;
+  font-weight: 800;
+  line-height: 1;
+}
+
+.spot-error__score-level {
+  font-size: 0.78rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  border-radius: 999px;
+  padding: 5px 12px;
+}
+
+.spot-error__domain-breakdown {
+  margin-top: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.spot-error__domain-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.spot-error__domain-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--line);
+}
+
+.spot-error__domain-row:last-child { border-bottom: none; }
+
+.spot-error__domain-name {
+  font-size: 0.92rem;
+  color: var(--ink);
+}
+
+.spot-error__domain-level {
+  flex-shrink: 0;
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  border-radius: 999px;
+  padding: 4px 10px;
+}
+
+.spot-error__review-list {
+  list-style: none;
+  margin: 16px 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.spot-error__review-item {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  border-left: 3px solid var(--line);
+}
+
+.spot-error__review-item--ok { border-left-color: #3e8e5a; }
+.spot-error__review-item--miss { border-left-color: #c0392b; }
+
+.spot-error__review-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.spot-error__review-num {
+  font-size: 0.8rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--ink-soft);
+}
+
+.spot-error__review-badge {
+  font-size: 0.78rem;
+  font-weight: 700;
+}
+
+.spot-error__review-badge--ok { color: #3e8e5a; }
+.spot-error__review-badge--miss { color: #c0392b; }
+
+.spot-error__review-error {
+  margin: 0;
+  font-size: 0.9rem;
+  line-height: 1.55;
+  color: var(--ink);
+}
+
 /* Done screen */
 .spot-error__done {
   text-align: center;

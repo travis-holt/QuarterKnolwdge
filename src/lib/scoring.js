@@ -109,6 +109,45 @@ export function levelFor(pct) {
 }
 
 /**
+ * Score a "Spot the Error" assessment run into a per-domain percentage (0–100).
+ * Each item is graded purely on click accuracy: the navigator either identified
+ * the flawed agent message on their one attempt (correct) or did not. The score
+ * is the share of items found correctly, so it lands on the same 0–100 scale as
+ * the main check and can feed the capability matrix domain score directly.
+ * @param {(boolean | {correct:boolean})[]} picks - one entry per presented item
+ * @returns {number} 0–100, rounded
+ */
+export function scoreSpotTheError(picks) {
+  if (!Array.isArray(picks) || picks.length === 0) return 0;
+  const correct = picks.filter((p) => (typeof p === 'boolean' ? p : p?.correct)).length;
+  return Math.round((correct / picks.length) * 100);
+}
+
+/**
+ * Score a multi-domain "Spot the Error" run into a per-domain percentage map.
+ * Each graded item is `{ domainId, correct }`; a domain's score is the share of
+ * its items found correctly (0–100). Domains with no items are omitted (callers
+ * that need a complete profile fill the gaps themselves).
+ * @param {{domainId:string, correct:boolean}[]} graded
+ * @returns {Record<string, number>} domainId -> score (0–100, rounded)
+ */
+export function scoreSpotTheErrorByDomain(graded) {
+  if (!Array.isArray(graded)) return {};
+  const tally = {}; // domainId -> { correct, total }
+  for (const g of graded) {
+    if (!g || !g.domainId) continue;
+    const bucket = tally[g.domainId] ?? (tally[g.domainId] = { correct: 0, total: 0 });
+    bucket.total += 1;
+    if (g.correct) bucket.correct += 1;
+  }
+  const scores = {};
+  for (const [domainId, { correct, total }] of Object.entries(tally)) {
+    scores[domainId] = total === 0 ? 0 : Math.round((correct / total) * 100);
+  }
+  return scores;
+}
+
+/**
  * Build the matrix rows from sample navigators + the optional live taker.
  * Each row carries both scoring axes:
  *   { name, isLive, scores, levels,                 // per-domain

@@ -71,6 +71,11 @@ export const MENTOR_MAX_LOAD = 3;
 export const MINICHECK_SIZE = 4;
 export const MINICHECK_PASS = 60; // same as THRESHOLDS.learning — passing means escaping Learning
 
+// "Spot the Error" assessment: how many flawed transcripts make up one scored
+// run. Each item is a single click-to-identify-the-error question; the domain
+// score is the share found correctly (0–100), fed back into the capability matrix.
+export const SPOT_ASSESSMENT_SIZE = 5;
+
 // Longitudinal trends: how many synthetic illustrative leading points to prepend
 // when a navigator has fewer than 2 real history snapshots (for demo purposes).
 export const TREND_SYNTH_POINTS = 2;

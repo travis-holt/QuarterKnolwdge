@@ -136,7 +136,19 @@ export default function SupervisorApp({ onSignOut }) {
   const activeRosterIds = new Set(
     roster.filter((m) => m.status !== 'inactive').map((m) => m.id)
   );
-  const activeResults = results.filter((r) => activeRosterIds.has(r.navigatorId));
+  const rawActiveResults = results.filter((r) => activeRosterIds.has(r.navigatorId));
+
+  // A navigator can now hold BOTH an MCQ and a Spot the Error result per
+  // department. Collapse to one canonical result per navigator+department —
+  // their most recent submission — so the matrix shows a single current row.
+  const activeResults = Object.values(
+    rawActiveResults.reduce((acc, r) => {
+      const key = `${r.navigatorId}__${r.department ?? 'pediatrics'}`;
+      const prev = acc[key];
+      if (!prev || (r.submittedAt?.seconds ?? 0) >= (prev.submittedAt?.seconds ?? 0)) acc[key] = r;
+      return acc;
+    }, {})
+  );
 
   // Filter results by the currently selected department. Legacy docs without a
   // `department` field are treated as 'pediatrics'.

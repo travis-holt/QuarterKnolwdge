@@ -4,6 +4,12 @@ dist
 *.local
 migration-bundles/
 
+# Playwright e2e artifacts (browsers install to a user-level cache, not here)
+test-results/
+playwright-report/
+blob-report/
+.playwright/
+
 # Agent tooling (ponytail plugin) — not part of the app
 .agents/
 .claude-plugin/

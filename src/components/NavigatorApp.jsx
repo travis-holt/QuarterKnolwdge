@@ -20,7 +20,7 @@ import {
 import { getResult, saveResult, subscribeResults, getActiveQuestions, getCompletions, getInterviews, saveCompletion } from '../lib/db.js';
 import { MINICHECK_SIZE, MINICHECK_PASS } from '../data/config.js';
 import { isFirebaseConfigured } from '../lib/firebase.js';
-import { SEED_QUESTIONS, SEED_QUESTIONS_OBGYN } from '../data/questions.js';
+import { SEED_QUESTIONS, SEED_QUESTIONS_OBGYN, DOMAINS } from '../data/questions.js';
 import { ASSESSED_DEPTS, departmentName } from '../data/departments.js';
 
 // Seed fallbacks keyed by department so offline mode works for both.
@@ -29,15 +29,22 @@ const SEED_BY_DEPT = {
   obgyn: SEED_QUESTIONS_OBGYN,
 };
 
+// Every domain id — the full-profile "Spot the Error" assessment covers them all.
+const ALL_DOMAIN_IDS = DOMAINS.map((d) => d.id);
+
 // The navigator's self-contained app. They can ONLY ever see their own data:
 // there is no route to the matrix, overview, or other navigators' dashboards.
 // (They do receive the floor's results — read-only — so mentor suggestions can
 // name colleagues who can teach their growth domains, but those names are not
 // clickable and open nothing.)
 export default function NavigatorApp({ navigatorId, name, onSignOut }) {
-  const [view, setView] = useState('loading'); // loading · deptselect · check · coaching · dashboard · training · module · interview · audit · minicheck
+  const [view, setView] = useState('loading'); // loading · deptselect · typeselect · check · spotfull · coaching · dashboard · training · module · interview · audit · minicheck
   const [activeDept, setActiveDept] = useState(null); // chosen by navigator at deptselect
-  const [ownResult, setOwnResult] = useState(null); // { name, navigatorId, scores, competencyScores, department }
+  // A navigator can hold BOTH an MCQ and a Spot the Error result per department;
+  // both are kept so they can take (and view) either. `activeType` is the one
+  // currently being viewed/updated; `ownResult` is derived from it.
+  const [resultsByType, setResultsByType] = useState({ mcq: null, spot: null });
+  const [activeType, setActiveType] = useState(null); // 'mcq' | 'spot' | null
   const [lastAnswers, setLastAnswers] = useState(null); // answers from the just-taken check (for coaching)
   const [questions, setQuestions] = useState(SEED_QUESTIONS); // active bank (seed fallback)
   const [results, setResults] = useState([]); // whole floor (for mentor data)
@@ -54,6 +61,19 @@ export default function NavigatorApp({ navigatorId, name, onSignOut }) {
   // every dept the navigator has taken, not just the currently active one.
   const [allDeptResults, setAllDeptResults] = useState({});
 
+  // Derived: the result currently in view, and which types exist.
+  const ownResult = activeType ? resultsByType[activeType] : null;
+  const hasMcq = Boolean(resultsByType.mcq);
+  const hasSpot = Boolean(resultsByType.spot);
+
+  // Given both loaded results, which one to show by default (the most recent).
+  const pickActiveType = (byType) => {
+    const mcqAt = byType.mcq?.submittedAt?.seconds ?? -1;
+    const spotAt = byType.spot?.submittedAt?.seconds ?? -1;
+    if (byType.mcq && byType.spot) return spotAt >= mcqAt ? 'spot' : 'mcq';
+    return byType.mcq ? 'mcq' : byType.spot ? 'spot' : null;
+  };
+
   // On mount: skip straight to deptselect so the navigator picks their department.
   // Also pre-fetch results for all assessed depts to power the cross-dept matrix.
   useEffect(() => {
@@ -65,8 +85,13 @@ export default function NavigatorApp({ navigatorId, name, onSignOut }) {
     setView('deptselect');
     Promise.all(
       ASSESSED_DEPTS.map(async (deptId) => {
-        const res = await getResult(navigatorId, deptId).catch(() => null);
-        return { deptId, scores: res?.scores ?? null };
+        const [mcq, spot] = await Promise.all([
+          getResult(navigatorId, deptId, 'mcq').catch(() => null),
+          getResult(navigatorId, deptId, 'spot').catch(() => null),
+        ]);
+        // Most recent result's scores drive the cross-dept strip for this dept.
+        const type = pickActiveType({ mcq, spot });
+        return { deptId, scores: type ? { mcq, spot }[type].scores : null };
       })
     ).then((entries) => {
       const map = {};
@@ -75,27 +100,28 @@ export default function NavigatorApp({ navigatorId, name, onSignOut }) {
       }
       setAllDeptResults(map);
     });
-  }, [navigatorId]);
+  }, [navigatorId]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // When a department is selected, check if this navigator already has a result there.
+  // When a department is selected, load BOTH result types for it.
   const handleDeptSelect = async (dept) => {
     setActiveDept(dept);
     setView('loading');
     try {
-      const res = await getResult(navigatorId, dept);
-      if (res) {
-        setOwnResult(res);
-        setAllDeptResults((prev) => ({ ...prev, [dept]: res.scores }));
-        // Fetch the active question bank for this department.
-        const qs = await getActiveQuestions(dept).catch(() => []);
-        if (qs.length > 0) setQuestions(qs);
-        else setQuestions(SEED_BY_DEPT[dept] ?? SEED_QUESTIONS);
+      const [mcq, spot] = await Promise.all([
+        getResult(navigatorId, dept, 'mcq'),
+        getResult(navigatorId, dept, 'spot'),
+      ]);
+      setResultsByType({ mcq, spot });
+      const type = pickActiveType({ mcq, spot });
+      setActiveType(type);
+      // Fetch the active question bank for this department (needed by MCQ + coaching).
+      const qs = await getActiveQuestions(dept).catch(() => []);
+      setQuestions(qs.length > 0 ? qs : (SEED_BY_DEPT[dept] ?? SEED_QUESTIONS));
+      if (type) {
+        setAllDeptResults((prev) => ({ ...prev, [dept]: { mcq, spot }[type].scores }));
         setView('dashboard');
       } else {
-        const qs = await getActiveQuestions(dept).catch(() => []);
-        if (qs.length > 0) setQuestions(qs);
-        else setQuestions(SEED_BY_DEPT[dept] ?? SEED_QUESTIONS);
-        setView('check');
+        setView('typeselect'); // no results yet → pick an assessment
       }
     } catch {
       setLoadError(true);
@@ -151,12 +177,15 @@ export default function NavigatorApp({ navigatorId, name, onSignOut }) {
     const dept = activeDept ?? 'pediatrics';
     const scores = scorePerDomain(answers, questions);
     const competencyScores = scorePerCompetency(answers, questions);
-    setOwnResult({ name, navigatorId, scores, competencyScores, department: dept });
+    const now = { seconds: Math.floor(Date.now() / 1000) };
+    const result = { name, navigatorId, scores, competencyScores, answers, department: dept, assessmentType: 'mcq', submittedAt: now };
+    setResultsByType((prev) => ({ ...prev, mcq: result }));
+    setActiveType('mcq');
     setAllDeptResults((prev) => ({ ...prev, [dept]: scores }));
     setLastAnswers(answers);
     setView('coaching');
     try {
-      await saveResult(navigatorId, name, scores, competencyScores, dept, answers);
+      await saveResult(navigatorId, name, scores, competencyScores, dept, answers, 'mcq');
     } catch {
       // Dashboard shows from local state; a failed write means supervisor won't see it.
     }
@@ -164,9 +193,18 @@ export default function NavigatorApp({ navigatorId, name, onSignOut }) {
 
   const handleChangeDept = () => {
     setActiveDept(null);
-    setOwnResult(null);
+    setResultsByType({ mcq: null, spot: null });
+    setActiveType(null);
     setLastAnswers(null);
     setView('deptselect');
+  };
+
+  // From the dashboard: go take another assessment (MCQ or Spot) for this dept.
+  const handleTakeAnother = () => setView('typeselect');
+
+  // Switch which stored result the dashboard/training views reflect.
+  const handleSwitchType = (type) => {
+    if (resultsByType[type]) setActiveType(type);
   };
 
   const openModule = (domainId) => {
@@ -189,14 +227,38 @@ export default function NavigatorApp({ navigatorId, name, onSignOut }) {
     setView('minicheck');
   };
 
-  // When a "Spot the Error" scenario completes, add the domain to the local Set
-  // so the badge appears immediately without waiting for a Firestore round-trip.
-  const handleAuditComplete = (domainId) => {
-    setCompletedDomains((prev) => new Set([...prev, domainId]));
+  // When a "Spot the Error" assessment completes, feed its click-accuracy scores
+  // back into the navigator's capability ratings and record a practice completion
+  // for each assessed domain. `domainScores` is a { domainId: percent } map (one
+  // entry in training mode, all domains in full-profile mode).
+  //   mode 'full'   → this IS the Spot result: replace the whole Spot profile.
+  //   mode 'domain' → merge the assessed domain into whichever profile is active
+  //                   (the training plan is derived from the active result).
+  const handleSpotComplete = async (domainScores, mode) => {
+    const domainIds = Object.keys(domainScores);
+    const now = { seconds: Math.floor(Date.now() / 1000) };
+    setCompletedDomains((prev) => new Set([...prev, ...domainIds]));
     setCompletions((prev) => [
       ...prev,
-      { navigatorId, name, domainId, kind: 'practice', completedAt: { seconds: Math.floor(Date.now() / 1000) } },
+      ...domainIds.map((domainId) => ({ navigatorId, name, domainId, kind: 'practice', completedAt: now })),
     ]);
+    for (const domainId of domainIds) {
+      try { await saveCompletion(navigatorId, name, domainId, 'practice'); } catch {/* non-critical */}
+    }
+
+    const targetType = mode === 'full' ? 'spot' : (activeType ?? 'spot');
+    const target = resultsByType[targetType];
+    const baseScores = mode === 'full' ? {} : (target?.scores ?? {});
+    const allScores = { ...baseScores, ...domainScores };
+    const competencyScores = mode === 'full' ? {} : (target?.competencyScores ?? {});
+    const answers = mode === 'full' ? {} : (target?.answers ?? {});
+    const result = { name, navigatorId, department: dept, assessmentType: targetType, scores: allScores, competencyScores, answers, submittedAt: now };
+    setResultsByType((prev) => ({ ...prev, [targetType]: result }));
+    setActiveType(targetType);
+    setAllDeptResults((prev) => ({ ...prev, [dept]: allScores }));
+    try {
+      await saveResult(navigatorId, name, allScores, competencyScores, dept, answers, targetType);
+    } catch {/* non-critical — dashboard reflects local state */}
   };
 
   // Merge own result into the floor results for mentor suggestions.
@@ -265,8 +327,8 @@ export default function NavigatorApp({ navigatorId, name, onSignOut }) {
     );
   }
 
-  // Only show dept switcher outside the check itself — switching mid-quiz would lose progress.
-  const showDeptSwitcher = activeDept && view !== 'check' && view !== 'coaching';
+  // Only show dept switcher outside an in-progress assessment — switching mid-quiz would lose progress.
+  const showDeptSwitcher = activeDept && view !== 'check' && view !== 'spotfull' && view !== 'coaching';
 
   return (
     <Shell
@@ -277,14 +339,35 @@ export default function NavigatorApp({ navigatorId, name, onSignOut }) {
       activeDeptName={showDeptSwitcher ? deptName : null}
       onChangeDept={handleChangeDept}
     >
+      {view === 'typeselect' && (
+        <AssessmentTypeChooser
+          deptName={deptName}
+          taken={{ mcq: hasMcq, spot: hasSpot }}
+          onPick={(type) => setView(type === 'spot' ? 'spotfull' : 'check')}
+        />
+      )}
+
       {view === 'check' && (
         <Check
           onSubmit={handleSubmit}
-          onCancel={() => setView('deptselect')}
+          onCancel={() => setView('typeselect')}
           questions={questions}
           hideName
           greetingName={name}
           deptName={deptName}
+        />
+      )}
+
+      {view === 'spotfull' && (
+        <SpotTheError
+          navigatorId={navigatorId}
+          name={name}
+          domains={ALL_DOMAIN_IDS}
+          mode="full"
+          department={dept}
+          onBack={() => setView('typeselect')}
+          onFinish={() => setView('dashboard')}
+          onComplete={handleSpotComplete}
         />
       )}
 
@@ -303,25 +386,34 @@ export default function NavigatorApp({ navigatorId, name, onSignOut }) {
 
       {view === 'dashboard' &&
         (myRow ? (
-          <NavigatorDetail
-            rows={rows}
-            name={name}
-            deptName={deptName}
-            dept={activeDept ?? 'pediatrics'}
-            deptMatrix={deptMatrix}
-            onBack={null}
-            onOpenNavigator={null}
-            onPreviewModule={openModule}
-            onChangeDept={handleDeptSelect}
-            navigatorId={navigatorId}
-            completions={completions}
-            answers={ownResult?.answers ?? lastAnswers}
-            questions={questions}
-          />
+          <>
+            <AssessmentBar
+              activeType={activeType}
+              hasMcq={hasMcq}
+              hasSpot={hasSpot}
+              onSwitch={handleSwitchType}
+              onTakeAnother={handleTakeAnother}
+            />
+            <NavigatorDetail
+              rows={rows}
+              name={name}
+              deptName={deptName}
+              dept={activeDept ?? 'pediatrics'}
+              deptMatrix={deptMatrix}
+              onBack={null}
+              onOpenNavigator={null}
+              onPreviewModule={openModule}
+              onChangeDept={handleDeptSelect}
+              navigatorId={navigatorId}
+              completions={completions}
+              answers={ownResult?.answers ?? lastAnswers}
+              questions={questions}
+            />
+          </>
         ) : (
           <EmptyState title="No results yet">
             It looks like your check hasn't been recorded.{' '}
-            <button className="linkbtn" onClick={() => setView('check')}>Take the check</button>.
+            <button className="linkbtn" onClick={() => setView('typeselect')}>Take an assessment</button>.
           </EmptyState>
         ))}
 
@@ -372,10 +464,12 @@ export default function NavigatorApp({ navigatorId, name, onSignOut }) {
         <SpotTheError
           navigatorId={navigatorId}
           name={name}
-          domainId={auditDomain}
+          domains={[auditDomain]}
+          mode="domain"
           department={dept}
           onBack={() => setView('training')}
-          onComplete={handleAuditComplete}
+          onFinish={() => setView('training')}
+          onComplete={handleSpotComplete}
         />
       )}
 
@@ -390,31 +484,31 @@ export default function NavigatorApp({ navigatorId, name, onSignOut }) {
               await saveCompletion(navigatorId, name, miniCheckDomain, 'minicheck');
             } catch {/* non-critical */}
             if (passed) {
-              // Re-save result with updated scores so the trend chart gains a new point
-              const allScores = { ...(ownResult?.scores ?? {}), [miniCheckDomain]: domainScore };
-              const baseAnswers = ownResult?.answers ?? lastAnswers ?? {};
+              // Re-save the active profile with the updated domain so the trend chart gains a point.
+              const targetType = activeType ?? 'mcq';
+              const target = resultsByType[targetType];
+              const allScores = { ...(target?.scores ?? {}), [miniCheckDomain]: domainScore };
+              const baseAnswers = target?.answers ?? lastAnswers ?? {};
               const mergedAnswers = { ...baseAnswers, ...answers };
               const hasFullAnswerContext = Object.keys(baseAnswers).length > 0;
               const competencyScores = hasFullAnswerContext
                 ? scorePerCompetency(mergedAnswers, questions)
-                : (ownResult?.competencyScores ?? {});
+                : (target?.competencyScores ?? {});
+              const savedAnswers = hasFullAnswerContext ? mergedAnswers : answers;
               try {
-                await saveResult(
-                  navigatorId,
-                  name,
-                  allScores,
-                  competencyScores,
-                  dept,
-                  hasFullAnswerContext ? mergedAnswers : answers
-                );
-                setOwnResult((prev) => ({
-                  ...(prev ?? {}),
-                  name,
-                  navigatorId,
-                  department: dept,
-                  scores: allScores,
-                  competencyScores,
-                  answers: hasFullAnswerContext ? mergedAnswers : answers,
+                await saveResult(navigatorId, name, allScores, competencyScores, dept, savedAnswers, targetType);
+                setResultsByType((prev) => ({
+                  ...prev,
+                  [targetType]: {
+                    ...(prev[targetType] ?? {}),
+                    name,
+                    navigatorId,
+                    department: dept,
+                    assessmentType: targetType,
+                    scores: allScores,
+                    competencyScores,
+                    answers: savedAnswers,
+                  },
                 }));
                 setAllDeptResults((prev) => ({ ...prev, [dept]: allScores }));
               } catch {/* non-critical */}
@@ -434,6 +528,78 @@ export default function NavigatorApp({ navigatorId, name, onSignOut }) {
         />
       )}
     </Shell>
+  );
+}
+
+// Dashboard control bar — shows which assessment the profile is from, lets the
+// navigator switch between their MCQ and Spot the Error results (when both exist),
+// and launches another assessment.
+const TYPE_LABEL = { mcq: 'Multiple choice', spot: 'Spot the Error' };
+function AssessmentBar({ activeType, hasMcq, hasSpot, onSwitch, onTakeAnother }) {
+  const bothTaken = hasMcq && hasSpot;
+  return (
+    <div className="assess-bar">
+      {bothTaken ? (
+        <div className="assess-bar__toggle" role="group" aria-label="Which assessment to view">
+          <span className="assess-bar__label">Showing:</span>
+          {['mcq', 'spot'].map((t) => (
+            <button
+              key={t}
+              type="button"
+              className={`assess-bar__pill ${activeType === t ? 'is-active' : ''}`}
+              onClick={() => onSwitch(t)}
+              aria-pressed={activeType === t}
+            >
+              {TYPE_LABEL[t]}
+            </button>
+          ))}
+        </div>
+      ) : (
+        <span className="assess-bar__label">
+          From your <strong>{TYPE_LABEL[activeType] ?? 'assessment'}</strong> result
+        </span>
+      )}
+      <button type="button" className="btn btn--ghost btn--sm" onClick={onTakeAnother}>
+        {bothTaken ? 'Retake an assessment' : 'Take the other assessment'}
+      </button>
+    </div>
+  );
+}
+
+// Assessment-type chooser — MCQ scenario check vs. the "Spot the Error" QA audit.
+// Both feed the capability matrix; the navigator picks how they want to be assessed.
+function AssessmentTypeChooser({ deptName, taken = {}, onPick }) {
+  return (
+    <section className="interview view-enter">
+      <header className="overview__head">
+        <div>
+          <h1 className="overview__title">Choose your assessment</h1>
+          <p className="overview__lede">
+            Two ways to be assessed for {deptName}. Both score every domain — take either or both.
+          </p>
+        </div>
+      </header>
+      <div className="practice-choice">
+        <button className="card practice-choice__card" onClick={() => onPick('mcq')} type="button">
+          {taken.mcq && <span className="practice-choice__taken">✓ Completed — retake</span>}
+          <span className="practice-choice__glyph" aria-hidden="true">📝</span>
+          <h2 className="practice-choice__title">Multiple choice</h2>
+          <p className="practice-choice__desc">
+            Work through scenario questions and choose the best action. Measures every domain and
+            competency.
+          </p>
+        </button>
+        <button className="card practice-choice__card" onClick={() => onPick('spot')} type="button">
+          {taken.spot && <span className="practice-choice__taken">✓ Completed — retake</span>}
+          <span className="practice-choice__glyph" aria-hidden="true">🔍</span>
+          <h2 className="practice-choice__title">Spot the Error</h2>
+          <p className="practice-choice__desc">
+            Read real call transcripts and find where the agent broke policy — one per domain. Scores
+            your whole capability profile on click accuracy.
+          </p>
+        </button>
+      </div>
+    </section>
   );
 }
 

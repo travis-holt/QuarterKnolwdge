@@ -10,7 +10,7 @@
 > [§8 Current System State](#8-current-system-state) and [§15 Current Priorities](#15-current-priorities)
 > accurate at all times.
 >
-> **Last updated:** 2026-07-01 (Adaptive learning feedback loop) ·
+> **Last updated:** 2026-07-01 (Playwright e2e harness added) ·
 > **Doc maintainer:** Claude (AI agent) + repo owner. Assumptions are explicitly marked **[ASSUMPTION]**.
 
 ---
@@ -301,33 +301,52 @@ training assignments.
   Expanding a session shows the grade breakdown (summary, what went well, areas to develop) above the
   full transcript. The panel is hidden in the navigator's own dashboard.
 
-### F16 — "Spot the Error" QA Audit Training
-- **Purpose:** Let navigators practice domain knowledge by acting as a QA auditor — reading a
-  realistic (AI-generated) flawed agent transcript and finding the SOP violation.
-- **User benefit:** Consequence-free active learning. Finding others' mistakes internalises the
-  right behaviour faster than passive reading. An AI coach gives personalised, non-blocking feedback.
+### F16 — "Spot the Error" QA Audit Assessment
+- **Purpose:** A **scored** QA-audit assessment — navigators act as a QA auditor over AI-generated
+  flawed agent transcripts, identifying each SOP violation. **Feeds the capability matrix** (changed
+  2026-07-01 from advisory-only training). Offered as a top-level **alternative to the MCQ check** at
+  a post-department assessment-type chooser, and also per-domain from the training plan.
+- **User benefit:** A real, low-friction assessment of applied domain knowledge that moves the
+  navigator's rating — finding others' mistakes tests SOP mastery more sharply than recall.
+- **Two modes (both in `SpotTheError.jsx`, driven by `mode` + `domains` props):**
+  - **`full`** — the Start-level alternative to MCQ: **one item per domain** across all 6 domains,
+    producing a complete per-domain profile. Saved as the primary result (full replacement).
+  - **`domain`** — the training-plan launch: `SPOT_ASSESSMENT_SIZE` (=5) items for **one** domain;
+    merges just that domain score into the existing result.
 - **Technical implementation:**
   - `api/generate-audit.js` — Gemini generates a ~10-turn Patient/Agent transcript with exactly
     one planted SOP violation, plus `errorIndex`, `hint`, and `modelExplanation` (structured JSON
     schema output, temp 0.8). Validation ensures `errorIndex` always lands on an Agent turn.
-  - `api/coach-audit.js` — second Gemini call (temp 0.4) reads the navigator's written reflection
-    and returns a 2–3 sentence warm mentor reply. Advisory only; never gates completion.
-  - `src/components/SpotTheError.jsx` — phases: `loading → active (clickable transcript, wrong
-    click = shake + hint) → reflect (textarea) → coaching (skeleton) → coached (AI reply + model
-    answer) → saving → done`. 25 s / 15 s AbortController timeouts per call.
-  - **Trigger:** "Practice Scenario" button on each assigned training domain in `MyTraining.jsx`.
-  - **Completion gate:** clicking the correct bubble + submitting any reflection = done. AI coaching
-    never blocks. Completion saved to Firestore `completions` collection.
+    (`hint` is now unused by the assessment UI but still returned.)
+  - Pure scoring in `scoring.js`: `scoreSpotTheError(picks)` → overall share correct (0–100);
+    `scoreSpotTheErrorByDomain(graded)` → `{ domainId: percent }` from `[{domainId, correct}]`.
+    Click-accuracy only. Same 0–100 scale as the main check, so results feed domain scores directly.
+  - `src/components/SpotTheError.jsx` — phases: `loading` (fires one `/api/generate-audit` call per
+    planned item in parallel via `Promise.allSettled`, keeps whatever succeeds; full-mode domains
+    that fail to generate backfill to 0) → `active` (one item at a time; **one click per item**,
+    then a correct/wrong reveal + Next; each item shows its domain tag) → `review` (overall score +
+    level badge, a per-domain breakdown in full mode, and a per-item list of the actual error + what
+    the SOP says) → `saving` → `done`. No hints, no reflection, no AI coaching.
+  - **Score feed:** `SpotTheError` calls `onComplete(domainScores, mode)`;
+    `NavigatorApp.handleSpotComplete` saves the scores (full → replace whole profile; domain →
+    merge just that domain), appends a `resultHistory` trend point, and records a `kind:'practice'`
+    completion per assessed domain. Local state updates immediately so the dashboard/matrix reflect
+    the new ratings without a round-trip.
+  - **Entry:** `AssessmentTypeChooser` in `NavigatorApp` (view `typeselect`, shown after
+    `deptselect`) → MCQ (`check`) or Spot the Error (`spotfull`). Per-domain launch is still the
+    "Spot the Error" step on each assigned training domain in `MyTraining.jsx` (view `audit`).
+  - **Coexistence:** MCQ and Spot results are stored in separate docs and both kept — a navigator
+    takes either or both, and switches which one the dashboard reflects via `AssessmentBar` (see the
+    2026-07-01 "MCQ + Spot the Error results coexist" history entry).
   - **Completion tracking (supervisor):** `subscribeCompletions` in `SupervisorApp` builds
     `completionMap: { [navigatorId]: Set<domainId> }`. "✓ Practiced" badges appear in
     `Training.jsx` (by-navigator section) and `NavigatorDetail.jsx` (assigned training panel).
-    Navigator sees badges in `MyTraining.jsx` from their own `getCompletions` fetch.
-- **Status:** Complete.
-- **Files:** new `api/generate-audit.js`, `api/coach-audit.js`, `src/components/SpotTheError.jsx`;
-  edited `server.js`, `src/lib/db.js`, `firestore.rules`, `src/components/{MyTraining,NavigatorApp,
-  SupervisorApp,Training,NavigatorDetail}.jsx`, `src/styles.css`.
-- **Notes:** Closes the roadmapped "Training completion tracking" item. Scores never touched;
-  completion is advisory progress evidence only. One error per transcript (multi-error = v2).
+- **Status:** Complete (scored assessment; MCQ-or-Spot chooser + full-profile mode).
+- **Files:** `api/generate-audit.js`, `src/components/SpotTheError.jsx`; edited `src/lib/{scoring,
+  scoring.test}.js`, `src/data/config.js`, `src/components/NavigatorApp.jsx`, `src/styles.css`.
+- **Notes:** Full mode scores each domain from a single item (0 or 100), so the profile is coarse by
+  design (owner's choice: 1 item/domain for speed). `api/coach-audit.js` + `POST /api/coach-audit`
+  remain in the repo but are **no longer wired**. One error per transcript (multi-error = v2).
 
 ### F17 — Longitudinal Capability Trends & Training Impact
 - **Purpose:** Quarter-over-quarter trend views for domain/competency scores and training impact.
@@ -811,6 +830,132 @@ stateDiagram-v2
 ---
 
 ## 7. Development History
+
+### 2026-07-01 — Playwright end-to-end test harness added
+- **What changed:** Added Playwright so browser flows can actually be verified locally (the app's
+  Firebase/Gemini/Web-Audio paths were previously "not verifiable headlessly").
+  - `@playwright/test` dev dependency + Chromium browser installed (browsers live in the user-level
+    `ms-playwright` cache, not the repo).
+  - `playwright.config.js` — `testDir: './e2e'`, headless Chromium, and a `webServer` that runs
+    `npm run build && npm start` and waits on `/api/health` (so tests hit the real Express server +
+    `/api` routes + `.env.local`, exactly like Railway). `reuseExistingServer: true`.
+  - `e2e/smoke.spec.js` — Start gate renders + wrong supervisor passcode is rejected.
+  - `e2e/supervisor.spec.js` — signs in with the public pilot passcode (`0200`) and confirms the
+    management shell loads, exercising the **live Firebase subscriptions** end to end.
+  - `e2e/navigator.spec.js` — signs in as a real test navigator (roster name + PIN), reaches the
+    MCQ/Spot chooser, completes an MCQ end to end (→ coaching → dashboard), and — the headline
+    coverage — **takes a full live-Gemini Spot the Error assessment, then an MCQ, and asserts both
+    results coexist and the dashboard toggle switches between them**. This is the browser proof of the
+    "MCQ + Spot coexist" feature.
+  - `vite.config.js` — Vitest `include` pinned to `src/**` + `api/**` so it ignores `e2e/` (which
+    uses `@playwright/test`, not Vitest). `npm run test:e2e` runs the Playwright suite.
+  - `.gitignore` — Playwright artifacts (`test-results/`, `playwright-report/`, …).
+- **Gates now:** `npm test` (228 Vitest unit) · `npm run test:e2e` (6 Playwright e2e) · `npm run build`.
+- **Note:** the navigator specs write to live Firestore and the Spot journey calls live Gemini, so
+  they need `.env.local` (Firebase + `GEMINI_API_KEYS`). The navigator credential is a pre-deploy
+  test account; the supervisor passcode is the public pilot one. Swap both before any real rollout.
+- **Files affected:** new `playwright.config.js`, `e2e/{smoke,supervisor,navigator}.spec.js`; edited
+  `package.json`, `vite.config.js`, `.gitignore`, `CLAUDE.md`.
+- **Verification:** `npm run test:e2e` → **6 passed** (incl. the live take-both-and-switch journey);
+  `npm test` → **228 passed** (unchanged).
+- **Status:** Complete.
+
+### 2026-07-01 — MCQ + Spot the Error results coexist (take/switch either)
+- **What changed:** A navigator can now hold **both** an MCQ result and a Spot the Error result per
+  department, take the other type after finishing one, and switch which one their dashboard reflects
+  — instead of the second overwriting the first (owner request: "keep both separately", entry point
+  on the dashboard).
+  - **Storage (`db.js`):** result docs are now keyed by assessment type — MCQ keeps the legacy
+    `${navigatorId}__${department}` key (full back-compat); Spot the Error uses
+    `${navigatorId}__${department}__spot`. New `resultDocId()` helper; `getResult` and `saveResult`
+    take an `assessmentType` param (`'mcq'` default) and stamp `assessmentType` on the doc + history
+    snapshot; `clearResult` now deletes both docs (+ the legacy plain-id doc for pediatrics).
+  - **Navigator (`NavigatorApp.jsx`):** single `ownResult` state replaced by `resultsByType`
+    `{ mcq, spot }` + `activeType`; `ownResult` is derived. `handleDeptSelect` loads both types and
+    defaults the view to the most recent. New `AssessmentBar` on the dashboard: a **MCQ ⇄ Spot
+    toggle** (when both exist) + a **"Take the other / Retake"** button → the chooser. `handleSubmit`
+    writes `mcq`; `handleSpotComplete` writes `spot` in full mode and merges into the **active** type
+    in training mode; the mini-check likewise re-saves the active type. The chooser badges which types
+    are already completed.
+  - **Supervisor (`SupervisorApp.jsx`):** `subscribeResults` now returns up to two docs per
+    navigator+department, so results are **deduped to the most recent** per navigator+department
+    before building the matrix / cross-dept strip — the matrix still shows one current row per person.
+  - **Tests:** `db.test.js` `clearResult` cases updated for dual-doc deletion (228 passing).
+- **Known limitation:** `resultHistory` now interleaves MCQ and Spot snapshots, so trend lines mix
+  both assessment types (not filtered by type yet). Acceptable for the pilot.
+- **Files affected:** `src/lib/{db,db.test}.js`, `src/components/{NavigatorApp,SupervisorApp}.jsx`,
+  `src/styles.css`, `CLAUDE.md`.
+- **Verification:** `npm test` → **228 passing** (8 files); `npm run build` → clean. Browser
+  click-through (take both, toggle, supervisor dedup) not run headlessly.
+- **Status:** Complete.
+
+### 2026-07-01 — Ponytail installed for Codex usage reduction (local only — NOT an app change)
+- **What changed:** Installed `DietrichGebert/ponytail` for the repo owner's Codex environment to
+  bias future agent work toward smaller, reused, stdlib/native-first changes. Because `git` is not
+  available on this Windows PATH, the repo was downloaded as a GitHub zip to
+  `~/.codex/marketplaces/ponytail-main`, registered as a local Codex marketplace, and installed as
+  `ponytail@ponytail` version `4.8.4`.
+  - **Mode:** `full` was initialized via Ponytail's activation hook, which emitted `PONYTAIL:FULL`
+    and wrote the plugin data mode flag.
+  - **Important:** This is user-level Codex tooling only. It changes how future agents choose
+    implementations; it does not change the app, its runtime, or deploy output.
+- **Files affected:** `CLAUDE.md` only.
+- **Status:** Complete.
+
+### 2026-07-01 — Assessment-type chooser: MCQ vs. full-profile Spot the Error
+- **What changed:** Added a top-level choice of assessment. After a navigator picks a department,
+  a new `typeselect` view (`AssessmentTypeChooser` in `NavigatorApp.jsx`) offers **Multiple choice**
+  (the existing MCQ `check`) or **Spot the Error** (a new full-profile assessment, view `spotfull`).
+  Both feed the capability matrix.
+  - `SpotTheError.jsx` generalised to two modes via `domains` (array) + `mode` props:
+    **`full`** = one item per domain across all 6 (backfills a failed-gen domain to 0 for a complete
+    profile); **`domain`** = the existing `SPOT_ASSESSMENT_SIZE`-item single-domain training launch.
+    Each item now carries its own `domainId` (shown as a tag); the review adds a per-domain breakdown
+    in full mode. `onComplete` now hands back a `{ domainId: percent }` map + the mode.
+  - `scoring.js` — new pure `scoreSpotTheErrorByDomain(graded)` (`[{domainId,correct}]` →
+    `{domainId: percent}`); 2 tests added (`scoring.test.js`, 226 → 228).
+  - `NavigatorApp.jsx` — `handleAuditComplete(domainId, score)` replaced by
+    `handleSpotComplete(domainScores, mode)`: full → replace the whole profile and land on the
+    dashboard; domain → merge just that domain and return to training. `handleDeptSelect`'s no-result
+    branch now routes to `typeselect` (was `check`); the MCQ `check` cancel returns to `typeselect`;
+    the dept switcher is hidden during `spotfull` (as it already was during `check`).
+  - `styles.css` — per-domain breakdown rows on the results screen.
+- **Design choices (with owner):** full-profile covers **all domains, 1 item each** (fast, coarse
+  0/100 per domain); chooser sits **after** department selection.
+- **Files affected:** `src/lib/{scoring,scoring.test}.js`, `src/components/{SpotTheError,NavigatorApp}.jsx`,
+  `src/styles.css`, `CLAUDE.md`.
+- **Verification:** `npm test` → **228 passing** (8 files); `npm run build` → clean (known large
+  main-bundle warning only). Browser click-through against live Gemini keys not run headlessly.
+- **Status:** Complete.
+
+### 2026-07-01 — F16 "Spot the Error" → scored, matrix-feeding assessment
+- **What changed:** Converted "Spot the Error" from advisory-only training into a real, scored
+  assessment whose result feeds the per-domain capability rating (owner request). Design decisions
+  taken with the owner: **feed the domain score**, **multiple items** (`SPOT_ASSESSMENT_SIZE = 5`),
+  **click-accuracy scoring only** (no AI grading).
+  - `src/lib/scoring.js` — new pure `scoreSpotTheError(picks)` → share of items found correctly
+    (0–100), on the same scale as the main check. 3 tests added (`scoring.test.js`, 223 → 226).
+  - `src/data/config.js` — `SPOT_ASSESSMENT_SIZE = 5`.
+  - `src/components/SpotTheError.jsx` — rewritten as an item-by-item assessment: `loading` (fires
+    N `/api/generate-audit` calls in parallel via `Promise.allSettled`, keeps what succeeds) →
+    `active` (one click per item, correct/wrong reveal + Next) → `review` (score + level badge +
+    per-item breakdown) → `saving` → `done`. Removed the hint/shake, the reflection textarea, and
+    the AI-coaching step (those were training affordances). No longer calls `saveCompletion`
+    itself — the parent orchestrates the save.
+  - `src/components/NavigatorApp.jsx` — `handleAuditComplete(domainId, score)` is now async and
+    merge-saves the domain score into the result doc (overwrites only that domain, preserves
+    competency scores + answers, appends a `resultHistory` trend point) and records a
+    `kind:'practice'` completion — mirroring the mini-check merge pattern. Updates local `ownResult`/
+    `allDeptResults` immediately so the dashboard/matrix reflect the new rating without a round-trip.
+  - `src/styles.css` — assessment styles (progress pill, wrong-pick red reveal, per-item feedback,
+    results scorecard with level-coloured score, per-item review list).
+- **Not touched but now dead:** `api/coach-audit.js` + the `POST /api/coach-audit` route are no
+  longer wired (reflection step removed). Left in place; flagged in F16 notes.
+- **Files affected:** `src/lib/{scoring,scoring.test}.js`, `src/data/config.js`,
+  `src/components/{SpotTheError,NavigatorApp}.jsx`, `src/styles.css`, `CLAUDE.md`.
+- **Verification:** `npm test` → **226 passing** (8 test files); `npm run build` → clean (known
+  large main-bundle warning only). Browser click-through of the assessment flow not run headlessly.
+- **Status:** Complete.
 
 ### 2026-07-01 — Learning Loop: trim inline feedback chips to signal-only
 - **What changed:** `FeedbackControls` (the inline chips on adaptive next steps, question
@@ -1932,14 +2077,15 @@ stateDiagram-v2
 ## 8. Current System State
 
 - **Working end to end (logic + UI):** supervisor adds navigators / generates+curates questions
-  (per department) → navigators sign in → **pick department** (Pediatrics or OB/GYN) → take that
-  department's active check → land on **coaching** → per-domain **and** per-competency results
+  (per department) → navigators sign in → **pick department** (Pediatrics or OB/GYN) → **choose an
+  assessment type** (MCQ scenario check **or** full-profile Spot the Error) → take it → MCQ lands on
+  **coaching**, Spot lands on its results/dashboard → per-domain (+ per-competency for MCQ) results
   persist to Firestore (composite key `${navigatorId}__${department}`) **and** to the append-only
   `resultHistory` collection (powers trend views) → supervisor matrix/overview update live per dept
-  → navigator/training dashboards → **switch departments** → practice interview → "Spot the Error"
-  QA audit → path stepper + mini re-check per weak domain → supervisor Action Center + Mentorship
-  tabs → practice call offered as **voice (real-time) or text chat**. Build clean, tests green
-  (`npm test` → **223 passing**, 8 test files).
+  → navigator/training dashboards → **switch departments** → practice interview → per-domain "Spot
+  the Error" assessment → path stepper + mini re-check per weak domain → supervisor Action Center +
+  Mentorship tabs → practice call offered as **voice (real-time) or text chat**. Build clean, tests
+  green (`npm test` → **228 passing**, 8 test files).
 - **Existing functionality:** features F1–F23 (see [§4](#4-feature-inventory)) are **Complete** in
   code. F17 adds longitudinal trends + Sparkline. F18 adds dossier evidence per competency. F19
   adds the supervisor Action Center. F20 adds AI-sequenced dev paths + mini re-check. F21 adds
@@ -2072,9 +2218,12 @@ stateDiagram-v2
 ### Database schemas / API endpoints / env vars
 - **Firestore collections** (UUID-keyed; levels never stored — always derived client-side):
   - `roster/{uuid}` → `{ name, pin, createdAt }` — supervisor-managed navigator list.
-  - `results/{uuid}` → `{ name, navigatorId, scores:{domainId:pct}, competencyScores:{compId:pct},
-    submittedAt }`. Shares the navigator's roster UUID (a retake overwrites cleanly). Older docs may
-    lack `competencyScores` (tolerated).
+  - `results/{key}` → `{ name, navigatorId, department, assessmentType, scores:{domainId:pct},
+    competencyScores:{compId:pct}, answers, submittedAt }`. Key is `${navigatorId}__${department}`
+    for MCQ (legacy back-compat) and `${navigatorId}__${department}__spot` for Spot the Error, so a
+    navigator can hold **both** an MCQ and a Spot result per department. Supervisor views dedupe to
+    the most-recent per navigator+department. Older docs may lack `competencyScores`/`assessmentType`
+    (tolerated; treated as MCQ).
   - `questions/{uuid}` → the question shape above. Only `status:'active'` appears in the check.
   - `supervisorFeedback/{uuid}` → `{ targetType, targetId, status, note, context, createdAt }`.
     Status is one of `helpful`, `inaccurate`, `needsAdjustment`, `approved`, `rejected`.
@@ -2106,8 +2255,10 @@ stateDiagram-v2
   first build** — they're baked into the JS bundle at build time.
 - **db.js API** (the only Firestore surface): roster — `addToRoster`, `getRoster`,
   `subscribeRoster(cb,onError?)`, `updateRosterEntry(id,patch)`, `setRosterStatus(id,status)`;
-  results — `getResult`, `saveResult(navigatorId, name, scores, competencyScores?)`,
-  `clearResult(navigatorId)`, `subscribeResults(cb,onError?)`; questions — `subscribeQuestions(cb,onError?)`,
+  results — `getResult(navigatorId, department?, assessmentType?)`,
+  `saveResult(navigatorId, name, scores, competencyScores?, department?, answers?, assessmentType?)`,
+  `clearResult(navigatorId, department?)` (deletes both MCQ + Spot docs),
+  `subscribeResults(cb,onError?)`; questions — `subscribeQuestions(cb,onError?)`,
   `getActiveQuestions()`, `seedQuestionsIfEmpty(seed)`, `saveDraftQuestions(drafts, source?)`,
   `updateQuestion(id,patch)`, `activateQuestion(id)`, `archiveQuestion(id)`, `deleteQuestion(id)`;
   interviews — `saveInterview(navigatorId, name, domainId, scenario, callerName, transcript)`,
@@ -2126,8 +2277,10 @@ npm run dev          # local dev (http://localhost:5173, base '/'); /api NOT ava
 npm run build        # production build to dist/ (base '/')
 npm start            # run the Express server locally (serves dist/ + /api); needs .env.local
 npm run preview      # preview the production build (Vite only, no /api)
-npm test             # run the Vitest suite once (CI-style)
+npm test             # run the Vitest unit suite once (CI-style)
 npm run test:watch   # run Vitest in watch mode
+npm run test:e2e     # run the Playwright browser tests (auto-builds + starts the server; needs .env.local)
+# first-time e2e setup: npm i (installs @playwright/test) && npx playwright install chromium
 # deploy: push to main → Railway auto-deploys. Set env vars in Railway service Variables.
 # To test /api locally: npm run build && npm start (uses server.js + .env.local for secrets)
 ```
@@ -2270,10 +2423,11 @@ npm run test:watch   # run Vitest in watch mode
 **Read this before changing anything.**
 
 - **Active tooling (not part of the app):** the repo owner runs **ponytail** (token-reduction
-  "lazy senior dev" plugin) in their Claude Code environment — installed user-level in `~/.claude/`,
-  not in this repo. It auto-injects a "favour reuse / stdlib / one-liners over new abstractions"
-  ruleset every session (default mode `full`). Adjust via `/ponytail lite|full|ultra|off` or disable
-  with `stop ponytail`. It shapes *how* code is written here; it changes nothing about the app.
+  "lazy senior dev" plugin) in Claude Code (`~/.claude/`) and Codex (`~/.codex/`) user-level
+  environments, not in this repo. It auto-injects a "favour reuse / stdlib / one-liners over new
+  abstractions" ruleset every session (default mode `full`). Adjust via `/ponytail
+  lite|full|ultra|off` or disable with `stop ponytail`. It shapes *how* code is written here; it
+  changes nothing about the app.
 
 - **In-repo harness (`.claude/`):** this repo carries a tailored **SAFe Agentic Workflow** harness
   (commands, agents, skills) — see the 2026-06-29 §7 entry and
