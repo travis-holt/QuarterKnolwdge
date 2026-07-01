@@ -2,6 +2,7 @@ node_modules
 dist
 .vite
 *.local
+migration-bundles/
 
 # Agent tooling (ponytail plugin) — not part of the app
 .agents/
