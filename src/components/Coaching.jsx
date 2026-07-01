@@ -22,7 +22,7 @@ function toneFor(points) {
   return 'is-poor';
 }
 
-export default function Coaching({ questions, answers, competencyScores, name, onContinue }) {
+export default function Coaching({ questions, answers, competencyScores, name, completions = [], interviews = [], priorResults = [], feedbackSummary = null, onContinue }) {
   // null = still loading, false = failed/skip, object = { [compId]: string }
   const [aiCoaching, setAiCoaching] = useState(null);
 
@@ -30,7 +30,16 @@ export default function Coaching({ questions, answers, competencyScores, name, o
   // fallback to rule-based coaching so the navigator is never stuck waiting.
   useEffect(() => {
     let cancelled = false;
-    apiFetch('/api/generate-coaching', { answers, questions, competencyScores, name }, 10_000)
+    apiFetch('/api/generate-coaching', {
+      answers,
+      questions,
+      competencyScores,
+      name,
+      completions,
+      interviews,
+      priorResults,
+      feedbackSummary,
+    }, 10_000)
       .then((data) => { if (!cancelled) setAiCoaching(data?.coaching ?? {}); })
       .catch(() => { if (!cancelled) setAiCoaching(false); });
     return () => { cancelled = true; };

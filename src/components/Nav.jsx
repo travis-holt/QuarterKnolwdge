@@ -23,6 +23,7 @@ export default function Nav({ role, view, setView, onSignOut, activeDeptName, on
           { id: 'training', label: 'Training' },
           { id: 'action', label: 'Action Center' },
           { id: 'mentorship', label: 'Mentorship' },
+          { id: 'learning', label: 'Learning Loop' },
           { id: 'questions', label: 'Questions' },
         ];
 

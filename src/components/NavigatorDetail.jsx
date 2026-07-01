@@ -6,6 +6,7 @@ import { LEVELS, interviewScoreColor } from '../data/config.js';
 import { findRow, mentorSuggestions, trainingForRow, buildTrend, trainingImpact, buildDossier } from '../lib/scoring.js';
 import { getInterviews, getResultHistory } from '../lib/db.js';
 import Sparkline from './Sparkline.jsx';
+import FeedbackControls from './FeedbackControls.jsx';
 
 function formatDate(ts) {
   if (!ts) return '—';
@@ -21,7 +22,7 @@ function formatDate(ts) {
 // dept: the active department string (needed for getResultHistory).
 // answers: the navigator's raw answers map {questionId: optionId} (for dossier).
 // questions: the active question bank (for dossier).
-export default function NavigatorDetail({ rows, name, deptName, dept, deptMatrix, onBack, onOpenNavigator, onPreviewModule, navigatorId, completedDomains = new Set(), completions = [], onChangeDept, answers, questions }) {
+export default function NavigatorDetail({ rows, name, deptName, dept, deptMatrix, onBack, onOpenNavigator, onPreviewModule, navigatorId, completedDomains = new Set(), completions = [], onChangeDept, answers, questions, onSaveFeedback }) {
   const row = findRow(rows, name);
   const deptRow = deptMatrix?.find((r) => r.name === name);
 
@@ -486,6 +487,13 @@ export default function NavigatorDetail({ rows, name, deptName, dept, deptMatrix
                                 </ul>
                               </div>
                             )}
+                            <FeedbackControls
+                              compact
+                              targetType="interviewGrade"
+                              targetId={session.id}
+                              context={{ navigator: row.name, domainId: session.domainId, score: g.score }}
+                              onSaveFeedback={onSaveFeedback}
+                            />
                           </div>
                         )}
 

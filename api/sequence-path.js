@@ -29,7 +29,7 @@ export default async function handler(req, res) {
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
   if (validateSecret(req, res)) return;
 
-  const { weakDomains = [], department = 'pediatrics', name = 'the navigator' } = req.body ?? {};
+  const { weakDomains = [], department = 'pediatrics', name = 'the navigator', completions = [], interviews = [] } = req.body ?? {};
   if (!weakDomains.length) return res.status(400).json({ error: 'weakDomains required' });
 
   const keys = getApiKeys();
@@ -38,12 +38,19 @@ export default async function handler(req, res) {
   const domainList = weakDomains
     .map((d) => `• domainId="${d.domainId}", level=${d.level}, score=${d.currentScore}%`)
     .join('\n');
+  const learningEvidence = [
+    completions.length > 0 ? `Completed steps: ${completions.slice(0, 10).map((c) => `${c.domainId}:${c.kind ?? 'practice'}`).join(', ')}` : '',
+    interviews.length > 0 ? `Practice calls: ${interviews.slice(0, 8).map((iv) => `${iv.domainId}:${iv.grade?.score ?? 'ungraded'}/100`).join(', ')}` : '',
+  ].filter(Boolean).join('\n') || 'No completion or practice-call evidence provided.';
 
   const prompt = `You are a clinical learning advisor for a contact-centre patient navigator team.
 
 Navigator: ${name}
 Domains needing development:
 ${domainList}
+
+Stored learning evidence:
+${learningEvidence}
 
 SOP reference (for grounding):
 ${sopContext.slice(0, 3000)}
@@ -59,6 +66,8 @@ Adapt the order based on the navigator's current score and level. For example:
 - Very low score (Learning, < 50%): coaching → practice → module → interview → minicheck
 - Mid Learning (50–59%): practice → module → interview → coaching → minicheck (active first)
 - Solid: module → interview → minicheck → coaching → practice (stretch approach)
+
+Also adapt based on stored learning evidence: do not put an already completed step first unless repetition is clearly useful, and explain when a weak interview score should move call practice earlier.
 
 Respond ONLY with valid JSON matching this schema exactly:
 {

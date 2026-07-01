@@ -10,7 +10,7 @@
 > [§8 Current System State](#8-current-system-state) and [§15 Current Priorities](#15-current-priorities)
 > accurate at all times.
 >
-> **Last updated:** 2026-06-30 (Live voice call freshness: opener + dept-aware prompt) ·
+> **Last updated:** 2026-07-01 (Adaptive learning feedback loop) ·
 > **Doc maintainer:** Claude (AI agent) + repo owner. Assumptions are explicitly marked **[ASSUMPTION]**.
 
 ---
@@ -459,6 +459,36 @@ training assignments.
   `api/_auth.js` (added `isValidSecret`), `src/components/NavigatorApp.jsx`, `src/styles.css`,
   `package.json` (`ws` dependency).
 
+### F23 — Adaptive Learning Feedback Loop
+- **Purpose:** Make the platform progressively smarter from stored evidence without uncontrolled
+  self-learning. The system analyzes historical results, question health, completions, interviews,
+  and supervisor feedback, then proposes review-safe improvements.
+- **User benefit:** Supervisors get explainable next-best training recommendations, question review
+  signals, recurring AI-quality risks, and a proposal queue. Navigators receive coaching/path prompts
+  that can use their prior practice evidence when available.
+- **Technical implementation:**
+  - Pure functions in [src/lib/scoring.js](src/lib/scoring.js): `buildLearningSignals`,
+    `buildQuestionImprovementSuggestions`, `adaptiveTrainingRecommendations`, and `feedbackInsights`.
+    These return evidence and reasons only; they never mutate scores, active questions, or training.
+  - New Firestore collections via [src/lib/db.js](src/lib/db.js): `supervisorFeedback` and
+    `learningProposals`, with save/subscribe/status helpers. `firestore.rules` explicitly permits
+    both pilot-grade collections.
+  - New supervisor UI [src/components/LearningLoop.jsx](src/components/LearningLoop.jsx), reached from
+    the "Learning Loop" nav tab. It shows adaptive next steps, question improvement signals,
+    supervisor feedback risks, and pending human-review proposals.
+  - New [src/components/FeedbackControls.jsx](src/components/FeedbackControls.jsx) lets supervisors
+    mark generated or advisory items as `helpful`, `inaccurate`, `needsAdjustment`, `approved`, or
+    `rejected`. Added to Learning Loop, flagged question cards, and supervisor-visible interview
+    grades.
+  - Question revision suggestions create proposal records first. Approval creates a **draft** question
+    (`source: 'learning-loop'`) that still must pass the existing Question Bank activation gate.
+  - `api/generate-coaching.js` and `api/sequence-path.js` accept optional stored learning evidence
+    (prior results, completions, interviews, feedback summaries) so advisory prose/path rationales can
+    become more specific over time.
+- **Status:** Complete.
+- **Safety:** AI and learning-loop output is advisory. No raw check score can be edited, no generated
+  question becomes active without supervisor review, and no training-plan change is silently applied.
+
 ### F14 — Question Bank + Gemini Scenario Generation (review gate)
 - **Purpose:** Grow the check from the SOP; questions are live Firestore data, not a static file.
 - **User benefit:** Supervisors generate, review, and curate the assessment without a code change.
@@ -781,6 +811,98 @@ stateDiagram-v2
 ---
 
 ## 7. Development History
+
+### 2026-07-01 — Learning Loop: trim inline feedback chips to signal-only
+- **What changed:** `FeedbackControls` (the inline chips on adaptive next steps, question
+  improvement signals, flagged questions, and supervisor-visible interview grades) no longer renders
+  **Approve** / **Reject**. It now shows only **Helpful / Inaccurate / Adjust**. Approve/Reject were
+  ambiguous inline — they only logged a `supervisorFeedback` status string and did nothing
+  actionable, yet visually implied they approved the recommendation. Those two actions belong solely
+  to proposals in the Learning Loop **Human review queue**, where Approve actually creates a draft
+  question and advances the proposal. `feedbackInsights` still treats `approved` as a positive status
+  (tolerates any legacy docs); no scoring/feedback-math change.
+- **Files affected:** `src/components/FeedbackControls.jsx`, `CLAUDE.md`.
+- **Verification:** `npm test` → **223 passing** (8 test files); `npm run build` → clean.
+- **Status:** Complete.
+
+### 2026-07-01 — Learning Loop click feedback UX fix
+- **What changed:** Feedback and proposal buttons in the Learning Loop now show visible state instead
+  of failing silently. `FeedbackControls` displays `Saving...`, then `Saved`, or `Could not save`.
+  `LearningLoop` and `QuestionBank` show queued/approved/rejected status messages and surface Firestore
+  save errors so local misconfiguration or network issues are obvious.
+- **Why:** In localhost testing, clicking Helpful/Inaccurate/Queue Proposal appeared to do nothing
+  because the original implementation wrote to Firestore without any success or error affordance.
+- **Files affected:** `src/components/{FeedbackControls,LearningLoop,QuestionBank}.jsx`,
+  `src/styles.css`, `CLAUDE.md`.
+- **Verification:** `npm test` → **223 passing** (8 test files); `npm run build` → clean with the
+  known large main-bundle warning.
+- **Status:** Complete.
+
+### 2026-07-01 — Learning Loop dead recomputation cleanup
+- **What changed:** Removed an unused `computeQuestionHealth(questions, results)` call inside
+  `buildLearningSignals()`. Question health is still computed by `buildQuestionImprovementSuggestions()`;
+  this only removes redundant work from the Learning Loop render path.
+- **Files affected:** `src/lib/scoring.js`, `CLAUDE.md`.
+- **Verification:** `npm test` → **223 passing** (8 test files).
+- **Status:** Complete.
+
+### 2026-07-01 — Adaptive learning feedback loop (controlled intelligence layer)
+- **What changed:** Added a controlled, human-reviewed learning loop that uses stored data to produce
+  explainable recommendations and improvement proposals without silently changing production logic.
+  - `src/lib/scoring.js`: new pure helpers `buildLearningSignals`, `buildQuestionImprovementSuggestions`,
+    `adaptiveTrainingRecommendations`, and `feedbackInsights`. They analyze result history, current
+    answers, question health, completions, interviews, and supervisor feedback, returning ranked
+    evidence and reasons only.
+  - `src/lib/db.js` + `firestore.rules`: added `supervisorFeedback` and `learningProposals`
+    collections. Feedback records store target type/id, status, note/context, and timestamp.
+    Proposals store type/title/target/payload/reasons/status and require supervisor review.
+  - New UI: `LearningLoop.jsx` supervisor tab plus `FeedbackControls.jsx`. Supervisors can review
+    adaptive next steps, queue training/question proposals, mark advisory output helpful/inaccurate/
+    needs-adjustment/approved/rejected, and approve or reject pending proposals.
+  - Question improvement loop: flagged question-health signals can be queued as revision proposals;
+    approving a question proposal creates a draft question only (`source: 'learning-loop'`), preserving
+    the existing activation gate.
+  - AI prompt improvement: `generate-coaching` and `sequence-path` accept optional learning evidence
+    (prior results, completions, interviews, feedback summaries) so advisory coaching/path rationales
+    can become more specific over time.
+- **Files affected:** `src/lib/{scoring,scoring.test,db,db.test}.js`, `firestore.rules`,
+  `api/{generate-coaching,sequence-path}.js`, `src/components/{LearningLoop,FeedbackControls,
+  SupervisorApp,Nav,QuestionBank,NavigatorDetail,Coaching,MyTraining}.jsx`, `src/styles.css`,
+  `CLAUDE.md`.
+- **Verification:** `npm test` → **223 passing** (8 test files); `node --check` on
+  `api/generate-coaching.js` and `api/sequence-path.js`; `npm run build` → clean with the known
+  large main-bundle warning.
+- **Status:** Complete.
+
+### 2026-07-01 — Doc consistency fix (stale department references)
+- **What changed:** Corrected two stale lines in this CLAUDE.md and de-duplicated the global file.
+  - §14 "Common pitfalls" said *"the live check only assesses Pediatrics (`ASSESSED_DEPT`)"* — now
+    correctly states **Pediatrics and OB/GYN** are assessed (`ASSESSED_DEPTS` / `isAssessed(id)`),
+    consistent with F10 and §8.
+  - §9 data-modules list undersold `src/data/departments.js` (`DEPARTMENTS`, `ASSESSED_DEPT`) — now
+    lists the real exports (`ASSESSED_DEPTS`, `DEFAULT_DEPT`, `isAssessed`, `departmentName`, with
+    `ASSESSED_DEPT` as a back-compat alias), verified against the source.
+  - The user-global `C:\Users\t.1223\CLAUDE.md` held a full stale copy of this project's knowledge
+    base (2026-06-24: "Quarterly Knowledge Check", GitHub Pages, Pediatrics-only, 38 tests, Firebase
+    "in design"), which injected contradictory context every session. Replaced with a short pointer
+    to this authoritative file.
+- **Files affected:** `CLAUDE.md` (§9, §14, this entry); `C:\Users\t.1223\CLAUDE.md` (global — now a pointer).
+- **Verification:** exports confirmed via grep of `src/data/departments.js`; docs-only change (no code touched).
+- **Status:** Complete.
+
+### 2026-06-30 — Local Codespace migration bundle guide
+- **What changed:** Added a local migration guide and bundle script for moving the full Codespace
+  state to a local machine before Codespace quota expires. The guide explicitly calls out the
+  important ignored/local files that are not recoverable from GitHub alone: `.env.local`,
+  `roo-code-settings.json`, `OB GYN SOP.pdf`, `Pediatrics_SOP_Updated.pdf`, in-repo `.claude/`, and
+  user-level `/home/codespace/.claude` + `/home/codespace/.codex` state. The script writes private
+  timestamped tarballs under `migration-bundles/`, includes `.git` and ignored local files, excludes
+  regenerable `node_modules`, emits a manifest plus SHA-256 checksums, and ignores bundle output in
+  `.gitignore` so private archives are not committed by accident.
+- **Files affected:** new `LOCAL_MIGRATION.md`, new `scripts/create-migration-bundles.sh`,
+  `.gitignore`, `CLAUDE.md`.
+- **Verification:** `bash -n scripts/create-migration-bundles.sh`.
+- **Status:** Complete.
 
 ### 2026-06-30 — Live voice call freshness pass: opener, department, transcript quality
 - **What changed:** The real-time voice call now carries the generated `openingLine` from
@@ -1817,12 +1939,14 @@ stateDiagram-v2
   → navigator/training dashboards → **switch departments** → practice interview → "Spot the Error"
   QA audit → path stepper + mini re-check per weak domain → supervisor Action Center + Mentorship
   tabs → practice call offered as **voice (real-time) or text chat**. Build clean, tests green
-  (`npm test` → **208 passing**, 8 test files).
-- **Existing functionality:** features F1–F22 (see [§4](#4-feature-inventory)) are **Complete** in
+  (`npm test` → **223 passing**, 8 test files).
+- **Existing functionality:** features F1–F23 (see [§4](#4-feature-inventory)) are **Complete** in
   code. F17 adds longitudinal trends + Sparkline. F18 adds dossier evidence per competency. F19
   adds the supervisor Action Center. F20 adds AI-sequenced dev paths + mini re-check. F21 adds
   the mentor matching engine with persisted pairings + outcome tracking. F22 adds a real-time
   voice practice call (Gemini Live API via a WebSocket relay), alongside the existing text chat.
+  F23 adds the controlled adaptive learning loop: supervisor feedback, learning proposals,
+  question-improvement signals, and explainable next-best training recommendations.
 - **SOP grounding:** Pediatrics AI features ground against `Pediatrics_SOP_Updated.pdf`; OB/GYN AI
   features ground against the sanitized `SOP_CONTEXT_OBGYN` in `api/_sop-context.js` (faithful to
   OB/GYN workflow but with generic role labels — no PII; repo is public). `SOP Guide.pdf` superseded.
@@ -1839,9 +1963,11 @@ stateDiagram-v2
 - **Experimental / mockup:**
   - Training **content** is mockup (flagged in UI). Logic is real.
   - **Adult Medicine and Behavioural Health** are not assessed; **Pediatrics and OB/GYN** are live.
-- **Test coverage:** **210 tests** across **8 test files**: `scoring.test.js` (all 22 exports
+- **Test coverage:** **223 tests** across **8 test files**: `scoring.test.js` (all 26 exports
   including F17–F21 functions: buildTrend, trainingImpact, teamTrend, buildDossier, buildActionCenter,
-  buildDevPath, buildMentorMatches, pairingOutcomes + malformed-input edge cases), `session.test.js`,
+  buildDevPath, buildMentorMatches, pairingOutcomes, buildLearningSignals,
+  buildQuestionImprovementSuggestions, adaptiveTrainingRecommendations, feedbackInsights +
+  malformed-input edge cases), `session.test.js`,
   `db.test.js`, `api/api-handlers.test.js`, `api/generate-audit.test.js`,
   `api/_gemini-client.test.js`, `api/sequence-path.test.js` (9 tests for `validateSequenceResponse`),
   `src/components/components.test.jsx`. The F22 voice call (relay + Web Audio) is verified by live
@@ -1880,8 +2006,9 @@ stateDiagram-v2
   now stored on every new result doc; legacy docs (pre-this-change) are skipped silently.
 - **Counts (today):** 6 domains (shared, dept-neutral) · 9 competencies · 18 Pediatrics + 14
   OB/GYN = **32** seed questions (bank grows in Firestore per dept) · 4 departments (**Pediatrics
-  + OB/GYN live**, 2 mockup) · **210** unit tests (8 test files) · **7** Firestore collections
-  (`roster`, `results`, `resultHistory`, `questions`, `interviews`, `completions`, `pairings`) ·
+  + OB/GYN live**, 2 mockup) · **223** unit tests (8 test files) · **9** Firestore collections
+  (`roster`, `results`, `resultHistory`, `questions`, `interviews`, `completions`, `pairings`,
+  `supervisorFeedback`, `learningProposals`) ·
   **8** REST serverless functions (`generate-scenarios`, `generate-coaching`, `interview-turn`,
   `grade-interview`, `generate-audit`, `coach-audit`, `sequence-path`, `health`) + **1** WebSocket
   relay (`live-relay.js` → `/api/live`) · **2** shared API helpers (`api/_gemini-client.js`,
@@ -1923,8 +2050,9 @@ stateDiagram-v2
 - **[src/data/training.js](src/data/training.js):** `TRAINING_MODULES`
   (`{domainId, title, blurb, estMinutes, lessons:[{title,points[]}], keyTakeaways[]}`);
   `moduleForDomain(id)`.
-- **[src/data/departments.js](src/data/departments.js):** `DEPARTMENTS`, `ASSESSED_DEPT`,
-  `departmentName(id)`.
+- **[src/data/departments.js](src/data/departments.js):** `DEPARTMENTS`, `ASSESSED_DEPTS`
+  (`['pediatrics','obgyn']`), `DEFAULT_DEPT`, `isAssessed(id)`, `departmentName(id)`; `ASSESSED_DEPT`
+  kept as a back-compat alias.
 
 ### Key shapes
 ```js
@@ -1948,9 +2076,17 @@ stateDiagram-v2
     submittedAt }`. Shares the navigator's roster UUID (a retake overwrites cleanly). Older docs may
     lack `competencyScores` (tolerated).
   - `questions/{uuid}` → the question shape above. Only `status:'active'` appears in the check.
+  - `supervisorFeedback/{uuid}` → `{ targetType, targetId, status, note, context, createdAt }`.
+    Status is one of `helpful`, `inaccurate`, `needsAdjustment`, `approved`, `rejected`.
+  - `learningProposals/{uuid}` → `{ type, title, target, payload, reasons, status, createdAt,
+    reviewedAt }`. Proposals are review-only; approving a question proposal creates a draft, not an
+    active question.
 - **Serverless endpoints:**
   - `POST /api/generate-scenarios` `{ domainId, count, secret }` → `{ questions }` (validated drafts).
-  - `POST /api/generate-coaching` `{ answers, questions, competencyScores, name, secret }` → `{ coaching: { [compId]: string } }` (personalised AI notes per weak competency; empty object if all at canTeach or all correct).
+  - `POST /api/generate-coaching` `{ answers, questions, competencyScores, name, completions?,
+    interviews?, priorResults?, feedbackSummary?, secret }` → `{ coaching: { [compId]: string } }`
+    (personalised AI notes per weak competency; optional stored learning evidence makes notes more
+    specific over time; advisory only).
   - `POST /api/interview-turn` `{ domain, secret }` (init, no scenario) → `{ scenario, callerName, reply }`. `{ domain, scenario, callerName, history, navigatorMessage, secret }` (turn) → `{ reply }`.
   - `POST /api/grade-interview` `{ domain, scenario, transcript, name, secret }` → `{ grade: { score:number(0–100), summary:string, strengths:string[], improvements:string[] } }`. Gemini reviews the full transcript against the SOP; temp 0.3 for consistency. Advisory only.
   - `POST /api/generate-audit` `{ domain, secret }` → `{ transcript, errorIndex, hint, modelExplanation }` (~10-turn flawed transcript for the "Spot the Error" exercise).
@@ -1977,7 +2113,9 @@ stateDiagram-v2
   interviews — `saveInterview(navigatorId, name, domainId, scenario, callerName, transcript)`,
   `getInterviews(navigatorId)`, `updateInterviewGrade(id, grade)`;
   completions — `saveCompletion(navigatorId, name, domainId)`, `getCompletions(navigatorId)`,
-  `subscribeCompletions(cb, onError?)`.
+  `subscribeCompletions(cb, onError?)`; learning loop — `saveSupervisorFeedback`,
+  `subscribeSupervisorFeedback`, `saveLearningProposal`, `updateLearningProposalStatus`,
+  `subscribeLearningProposals`.
 - **Secrets:** `SUPERVISOR_PASSCODE` is in the repo (pilot-acceptable); `GEMINI_API_KEYS` is a
   server-only Railway Variable, never committed or bundled.
 
@@ -2049,7 +2187,7 @@ npm run test:watch   # run Vitest in watch mode
 - Heatmap intensity toggle (show % inside matrix cells).
 
 ### Technical Debt
-- **206+ tests** across 8 test files as of 2026-06-30. **Role-app integration tests** (`SupervisorApp`,
+- **223 tests** across 8 test files as of 2026-07-01. **Role-app integration tests** (`SupervisorApp`,
   `NavigatorApp`, `App`) remain the only untested area — adding those is the next coverage priority.
 - ~~Components, role apps, and API handlers untested~~ — **resolved 2026-06-26**: component tests
   (jsdom + Testing Library), API handler pure-function tests, and db.js mocked tests all added.
@@ -2171,7 +2309,8 @@ npm run test:watch   # run Vitest in watch mode
     scoring path; pass the bank through (seed fallback is fine).
   - Keep the two axes distinct: domains = topic, competencies = capability. Both reuse `scoreToLevel`.
   - Don't invent operational KPIs — the product is **knowledge-only** by decision.
-  - The live check only assesses **Pediatrics** (`ASSESSED_DEPT`); other departments are mockups.
+  - The live check assesses **Pediatrics and OB/GYN** (`ASSESSED_DEPTS`; use `isAssessed(id)`);
+    Adult Medicine and Behavioural Health are mockups.
 - **Required workflows:**
   1. Make the change. 2. `npm test` (green) **and** `npm run build` (clean); `node --check` any
      edited `api/*`. 3. Update **this CLAUDE.md** (relevant section + a §7 history entry). 4. Commit
@@ -2195,7 +2334,7 @@ npm run test:watch   # run Vitest in watch mode
 3. **Supervisor grade override** — allow supervisors to adjust the AI-given score on a saved practice session.
 
 **Active work items:**
-- None outstanding (F17–F21 complete as of 2026-06-29).
+- None outstanding (F17–F23 complete as of 2026-07-01).
 
 **Blockers:**
 - Adult Medicine and Behavioural Health remain mockup — each needs an owner-provided SOP before

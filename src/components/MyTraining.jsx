@@ -60,7 +60,13 @@ export default function MyTraining({
         level: a.level,
         currentScore: row.scores[a.domainId] ?? 0,
       }));
-      const data = await apiFetch('/api/sequence-path', { weakDomains, department, name: row.name }, 25_000);
+      const data = await apiFetch('/api/sequence-path', {
+        weakDomains,
+        department,
+        name: row.name,
+        completions,
+        interviews,
+      }, 25_000);
       if (data?.paths?.length) {
         setAiPaths(Object.fromEntries(data.paths.map((p) => [p.domainId, p.steps])));
         setPersonalized(true);

@@ -34,6 +34,10 @@ import {
   trainingStats,
   mentorSuggestions,
   computeQuestionHealth,
+  buildLearningSignals,
+  buildQuestionImprovementSuggestions,
+  adaptiveTrainingRecommendations,
+  feedbackInsights,
   buildTrend,
   trainingImpact,
   teamTrend,
@@ -631,6 +635,110 @@ describe('computeQuestionHealth', () => {
     const h = computeQuestionHealth([Q, Q2], results);
     expect(h.q1.correctCount).toBe(1);
     expect(h.q2.correctCount).toBe(0);
+  });
+});
+
+describe('buildQuestionImprovementSuggestions', () => {
+  const Q = { id: 'q-review', correctOptionId: 'a', domainId: FAKE_D0, scenario: 'Scenario', options: [{ id: 'a', text: 'Best' }, { id: 'b', text: 'Wrong' }] };
+
+  it('suggests review drafts for repeatedly missed questions', () => {
+    const results = [
+      { answers: { [Q.id]: 'a' }, scores: { [FAKE_D0]: SOLID } },
+      ...Array.from({ length: 11 }, () => ({ answers: { [Q.id]: 'b' }, scores: { [FAKE_D0]: SOLID } })),
+    ];
+    const suggestions = buildQuestionImprovementSuggestions([Q], results);
+    expect(suggestions).toHaveLength(1);
+    expect(suggestions[0]).toMatchObject({ questionId: Q.id, severity: 'high' });
+    expect(suggestions[0].labels).toContain('needsReview');
+    expect(suggestions[0].suggestedDraft.status).toBe('draft');
+    expect(suggestions[0].suggestedDraft.source).toBe('learning-loop');
+  });
+
+  it('flags can-teach misses even when the overall correct rate is not review-level', () => {
+    const results = [
+      ...Array.from({ length: 6 }, () => ({ answers: { [Q.id]: 'a' }, scores: { [FAKE_D0]: SOLID } })),
+      { answers: { [Q.id]: 'b' }, scores: { [FAKE_D0]: TEACH } },
+      ...Array.from({ length: 4 }, () => ({ answers: { [Q.id]: 'b' }, scores: { [FAKE_D0]: SOLID } })),
+    ];
+    const suggestions = buildQuestionImprovementSuggestions([Q], results);
+    expect(suggestions[0].labels).toContain('canTeachMisses');
+  });
+
+  it('uses supervisor feedback concerns as a review signal', () => {
+    const feedback = [{ targetType: 'question', targetId: Q.id, status: 'needsAdjustment' }];
+    const suggestions = buildQuestionImprovementSuggestions([Q], [], feedback);
+    expect(suggestions[0].labels).toContain('supervisorConcern');
+  });
+});
+
+describe('feedbackInsights', () => {
+  it('aggregates feedback by target and surfaces recurring negative signals', () => {
+    const result = feedbackInsights([
+      { targetType: 'interviewGrade', targetId: 'iv1', status: 'inaccurate', note: 'Too generous' },
+      { targetType: 'interviewGrade', targetId: 'iv1', status: 'needsAdjustment', note: 'Missed escalation issue' },
+      { targetType: 'question', targetId: 'q1', status: 'helpful' },
+    ]);
+    expect(result.byTarget['interviewGrade:iv1'].negative).toBe(2);
+    expect(result.risks).toContainEqual(expect.objectContaining({
+      targetType: 'interviewGrade',
+      targetId: 'iv1',
+    }));
+  });
+});
+
+describe('adaptiveTrainingRecommendations', () => {
+  const row = buildMatrixRows([{ name: 'Ada', scores: makeScores({ [D0]: LEARN }, TEACH), competencyScores: { [C0]: LEARN } }], null)[0];
+  const q = { id: 'fq1', domainId: D0, competencies: [C0], correctOptionId: 'a',
+    options: [{ id: 'a', text: 'best', points: 100 }, { id: 'b', text: 'miss', points: 20 }] };
+
+  it('recommends practice first when required training has no practice completion', () => {
+    const recs = adaptiveTrainingRecommendations(row, {
+      questions: [q],
+      result: { answers: { fq1: 'b' } },
+      completions: [],
+      interviews: [],
+    });
+    const d0 = recs.find((r) => r.domainId === D0);
+    expect(d0.kind).toBe('practice');
+    expect(d0.reasons.join(' ')).toMatch(/No completed practice/);
+    expect(d0.evidence.missedQuestions).toHaveLength(1);
+  });
+
+  it('moves to interview after practice completion', () => {
+    const recs = adaptiveTrainingRecommendations(row, {
+      completions: [{ domainId: D0, kind: 'practice', completedAt: { seconds: 10 } }],
+      interviews: [],
+    });
+    expect(recs.find((r) => r.domainId === D0).kind).toBe('interview');
+  });
+
+  it('recommends mini-check after a strong graded interview', () => {
+    const recs = adaptiveTrainingRecommendations(row, {
+      completions: [{ domainId: D0, kind: 'practice', completedAt: { seconds: 10 } }],
+      interviews: [{ domainId: D0, grade: { score: 90 }, endedAt: { seconds: 20 } }],
+    });
+    expect(recs.find((r) => r.domainId === D0).kind).toBe('minicheck');
+  });
+});
+
+describe('buildLearningSignals', () => {
+  it('combines weak domains, missed questions, training gaps, and interview risks', () => {
+    const rows = buildMatrixRows([{ name: 'Ada', scores: makeScores({ [D0]: LEARN }, TEACH), competencyScores: { [C0]: LEARN } }], null);
+    const questions = [{ id: 'q1', domainId: D0, competencies: [C0], correctOptionId: 'a',
+      options: [{ id: 'a', text: 'best', points: 100 }, { id: 'b', text: 'miss', points: 0 }] }];
+    const results = [{ name: 'Ada', answers: { q1: 'b' }, scores: { [D0]: LEARN } }];
+    const signals = buildLearningSignals({
+      rows,
+      results,
+      questions,
+      completions: [],
+      interviews: [{ id: 'iv1', name: 'Ada', domainId: D0, grade: { score: 40 } }],
+    });
+    expect(signals.weakDomains.some((s) => s.name === 'Ada' && s.domainId === D0)).toBe(true);
+    expect(signals.weakCompetencies.some((s) => s.competencyId === C0)).toBe(true);
+    expect(signals.repeatedMisses).toContainEqual(expect.objectContaining({ questionId: 'q1' }));
+    expect(signals.trainingGaps).toContainEqual(expect.objectContaining({ name: 'Ada', domainId: D0 }));
+    expect(signals.interviewRisks).toContainEqual(expect.objectContaining({ interviewId: 'iv1' }));
   });
 });
 

@@ -10,6 +10,7 @@ import TrainingModule from './TrainingModule.jsx';
 import QuestionBank from './QuestionBank.jsx';
 import ActionCenter from './ActionCenter.jsx';
 import Mentorship from './Mentorship.jsx';
+import LearningLoop from './LearningLoop.jsx';
 import EmptyState from './EmptyState.jsx';
 import Footer from './Footer.jsx';
 import { buildMatrixRows, departmentMatrix } from '../lib/scoring.js';
@@ -33,6 +34,11 @@ import {
   subscribePairings,
   savePairing,
   updatePairingStatus,
+  saveSupervisorFeedback,
+  subscribeSupervisorFeedback,
+  saveLearningProposal,
+  subscribeLearningProposals,
+  updateLearningProposalStatus,
 } from '../lib/db.js';
 import { isFirebaseConfigured } from '../lib/firebase.js';
 import { ALL_SEED_QUESTIONS } from '../data/questions.js';
@@ -42,7 +48,7 @@ import { apiFetch } from '../lib/apiFetch.js';
 // Views where the DeptBar appears. The Navigators tab is intentionally NOT here:
 // roster management is global (not department-scoped), so it always shows the
 // live Pediatrics check plus the full roster regardless of department.
-const DEPT_SCOPED_VIEWS = ['overview', 'matrix', 'training', 'navigator'];
+const DEPT_SCOPED_VIEWS = ['overview', 'matrix', 'training', 'navigator', 'learning'];
 // Analytics views that should show an empty state when there's no live data.
 const DATA_VIEWS = ['overview', 'matrix', 'training', 'navigator'];
 
@@ -56,6 +62,8 @@ export default function SupervisorApp({ onSignOut }) {
   const [resultHistory, setResultHistory] = useState([]); // append-only history for trends
   const [allInterviews, setAllInterviews] = useState([]); // all interview sessions for action center
   const [pairings, setPairings] = useState([]); // active/completed mentor pairings
+  const [feedback, setFeedback] = useState([]); // supervisor judgments for the learning loop
+  const [learningProposals, setLearningProposals] = useState([]); // human-review improvement queue
   const [selected, setSelected] = useState(null);
   const [moduleDomain, setModuleDomain] = useState(null);
   const [moduleReturn, setModuleReturn] = useState('training');
@@ -83,6 +91,12 @@ export default function SupervisorApp({ onSignOut }) {
     const unsubPairings = subscribePairings(setPairings, (err) => {
       console.error('subscribePairings:', err);
     });
+    const unsubFeedback = subscribeSupervisorFeedback(setFeedback, (err) => {
+      console.error('subscribeSupervisorFeedback:', err);
+    });
+    const unsubProposals = subscribeLearningProposals(setLearningProposals, (err) => {
+      console.error('subscribeLearningProposals:', err);
+    });
     return () => {
       unsubResults();
       unsubRoster();
@@ -90,6 +104,8 @@ export default function SupervisorApp({ onSignOut }) {
       unsubHistory();
       unsubInterviews();
       unsubPairings();
+      unsubFeedback();
+      unsubProposals();
     };
   }, []);
 
@@ -166,6 +182,10 @@ export default function SupervisorApp({ onSignOut }) {
   const handleResetResult = (id) => clearResult(id, selectedDept);
   const handleSavePairing = (pairing) => savePairing(pairing);
   const handleUpdatePairing = (id, status) => updatePairingStatus(id, status);
+  const handleSaveFeedback = (item) => saveSupervisorFeedback(item);
+  const handleSaveLearningProposal = (proposal) => saveLearningProposal(proposal);
+  const handleUpdateLearningProposal = (id, status, review) => updateLearningProposalStatus(id, status, review);
+  const handleCreateQuestionDraft = (draft) => saveDraftQuestions([draft], 'learning-loop', selectedDept);
 
   // Generate scenarios via the serverless Gemini proxy. The function returns
   // validated draft questions; we persist them as `draft` for review (they never
@@ -293,6 +313,7 @@ export default function SupervisorApp({ onSignOut }) {
                 ))}
                 answers={selectedResult?.answers}
                 questions={questions.filter((q) => q.status === 'active')}
+                onSaveFeedback={handleSaveFeedback}
               />
             )}
 
@@ -325,6 +346,24 @@ export default function SupervisorApp({ onSignOut }) {
               />
             )}
 
+            {view === 'learning' && (
+              <LearningLoop
+                rows={rows}
+                results={deptResults}
+                questions={questions.filter((q) => (q.department ?? 'pediatrics') === selectedDept)}
+                completions={completions}
+                interviews={allInterviews.filter((iv) => (iv.department ?? 'pediatrics') === selectedDept)}
+                history={deptHistory}
+                feedback={feedback}
+                proposals={learningProposals.filter((p) => !p.target?.department || p.target.department === selectedDept)}
+                deptName={deptName}
+                onSaveFeedback={handleSaveFeedback}
+                onSaveProposal={handleSaveLearningProposal}
+                onUpdateProposal={handleUpdateLearningProposal}
+                onCreateQuestionDraft={handleCreateQuestionDraft}
+              />
+            )}
+
             {view === 'questions' && (
               <QuestionBank
                 questions={questions}
@@ -335,6 +374,8 @@ export default function SupervisorApp({ onSignOut }) {
                 onDelete={deleteQuestion}
                 onSaveEdit={updateQuestion}
                 onGenerate={handleGenerate}
+                onSaveFeedback={handleSaveFeedback}
+                onSaveProposal={handleSaveLearningProposal}
               />
             )}
           </>

@@ -63,6 +63,11 @@ import {
   clearResult,
   getRoster,
   subscribeRoster,
+  saveSupervisorFeedback,
+  subscribeSupervisorFeedback,
+  saveLearningProposal,
+  updateLearningProposalStatus,
+  subscribeLearningProposals,
 } from './db.js';
 
 beforeEach(() => vi.clearAllMocks());
@@ -217,5 +222,74 @@ describe('subscribeRoster', () => {
     mocks.onSnapshot.mockReturnValue(unsub);
     const result = subscribeRoster(() => {});
     expect(result).toBe(unsub);
+  });
+});
+
+describe('learning loop db helpers', () => {
+  it('saveSupervisorFeedback stores the target, status, context, and timestamp', async () => {
+    mocks.setDoc.mockResolvedValue();
+    await saveSupervisorFeedback({
+      targetType: 'interviewGrade',
+      targetId: 'iv1',
+      status: 'needsAdjustment',
+      note: 'Too generous',
+      context: { score: 88 },
+    });
+    expect(mocks.collection).toHaveBeenCalledWith(mocks.db, 'supervisorFeedback');
+    const [, data] = mocks.setDoc.mock.calls[0];
+    expect(data).toMatchObject({
+      targetType: 'interviewGrade',
+      targetId: 'iv1',
+      status: 'needsAdjustment',
+      note: 'Too generous',
+      context: { score: 88 },
+    });
+    expect(data.createdAt).toBe('__ts__');
+  });
+
+  it('saveLearningProposal writes a pending proposal with reasons', async () => {
+    mocks.setDoc.mockResolvedValue();
+    await saveLearningProposal({
+      type: 'questionRevision',
+      title: 'Review q1',
+      target: { questionId: 'q1' },
+      payload: { draft: true },
+      reasons: ['Low correct rate'],
+    });
+    const [, data] = mocks.setDoc.mock.calls[0];
+    expect(data.status).toBe('pending');
+    expect(data.reasons).toEqual(['Low correct rate']);
+    expect(data.createdAt).toBe('__ts__');
+  });
+
+  it('updateLearningProposalStatus stores review metadata and reviewedAt', async () => {
+    mocks.updateDoc.mockResolvedValue();
+    await updateLearningProposalStatus('proposal-1', 'approved', { note: 'Create draft' });
+    expect(mocks.doc).toHaveBeenCalledWith(mocks.db, 'learningProposals', 'proposal-1');
+    const [, data] = mocks.updateDoc.mock.calls[0];
+    expect(data).toMatchObject({ status: 'approved', review: { note: 'Create draft' } });
+    expect(data.reviewedAt).toBe('__ts__');
+  });
+
+  it('subscribeSupervisorFeedback maps snapshot docs', () => {
+    const fakeDocs = [{ id: 'fb1', data: () => ({ status: 'helpful' }) }];
+    mocks.onSnapshot.mockImplementation((ref, cb) => {
+      cb({ docs: fakeDocs });
+      return () => {};
+    });
+    const cb = vi.fn();
+    subscribeSupervisorFeedback(cb);
+    expect(cb).toHaveBeenCalledWith([{ id: 'fb1', status: 'helpful' }]);
+  });
+
+  it('subscribeLearningProposals maps snapshot docs', () => {
+    const fakeDocs = [{ id: 'lp1', data: () => ({ status: 'pending' }) }];
+    mocks.onSnapshot.mockImplementation((ref, cb) => {
+      cb({ docs: fakeDocs });
+      return () => {};
+    });
+    const cb = vi.fn();
+    subscribeLearningProposals(cb);
+    expect(cb).toHaveBeenCalledWith([{ id: 'lp1', status: 'pending' }]);
   });
 });

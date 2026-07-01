@@ -3,6 +3,7 @@ import { DOMAINS, domainName } from '../data/questions.js';
 import { COMPETENCIES, competencyName } from '../data/competencies.js';
 import { computeQuestionHealth } from '../lib/scoring.js';
 import QuestionEditor from './QuestionEditor.jsx';
+import FeedbackControls from './FeedbackControls.jsx';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Question Bank — the supervisor's review gate. Generated scenarios land as
@@ -11,11 +12,12 @@ import QuestionEditor from './QuestionEditor.jsx';
 // live assessment.
 // ─────────────────────────────────────────────────────────────────────────────
 
-export default function QuestionBank({ questions, results = [], selectedDept = 'pediatrics', onActivate, onArchive, onDelete, onSaveEdit, onGenerate }) {
+export default function QuestionBank({ questions, results = [], selectedDept = 'pediatrics', onActivate, onArchive, onDelete, onSaveEdit, onGenerate, onSaveFeedback, onSaveProposal }) {
   const [editingId, setEditingId] = useState(null);
   const [genDomain, setGenDomain] = useState(DOMAINS[0].id);
   const [genCount, setGenCount] = useState(3);
   const [generating, setGenerating] = useState(false);
+  const [queueingId, setQueueingId] = useState(null);
   const [message, setMessage] = useState(null); // { kind: 'ok'|'err', text }
 
   // Filter the bank to the supervisor's selected department.
@@ -51,6 +53,36 @@ export default function QuestionBank({ questions, results = [], selectedDept = '
       correctOptionId: edited.correctOptionId,
     });
     setEditingId(null);
+  };
+
+  const queueRevision = async (q, h) => {
+    if (!onSaveProposal) return;
+    setQueueingId(q.id);
+    setMessage(null);
+    try {
+      await onSaveProposal({
+        type: 'questionRevision',
+        title: `Review question ${q.id}`,
+        target: { questionId: q.id, domainId: q.domainId, department: selectedDept },
+        payload: {
+          suggestedDraft: {
+            ...q,
+            status: 'draft',
+            source: 'learning-loop',
+            reviewNotes: `Question health flagged this item at ${Math.round((h?.correctRate ?? 0) * 100)}% correct across ${h?.responseCount ?? 0} responses. Review wording, options, rationales, and SOP alignment before activation.`,
+          },
+        },
+        reasons: [
+          `${Math.round((h?.correctRate ?? 0) * 100)}% correct across ${h?.responseCount ?? 0} responses`,
+          h?.canTeachFailCount > 0 ? `${h.canTeachFailCount} Can-Teach misses` : 'No Can-Teach miss signal',
+        ],
+      });
+      setMessage({ kind: 'ok', text: 'Question revision queued in Learning Loop.' });
+    } catch (err) {
+      setMessage({ kind: 'err', text: err?.message || 'Could not queue revision. Check Firebase config/network.' });
+    } finally {
+      setQueueingId(null);
+    }
   };
 
   const renderQuestion = (q, actions, showHealth = false) => {
@@ -93,6 +125,21 @@ export default function QuestionBank({ questions, results = [], selectedDept = '
             {h.canTeachFailCount > 0 && (
               <> {h.canTeachFailCount} of {h.canTeachCount} Can-Teach navigator{h.canTeachCount !== 1 ? 's' : ''} also missed this — the SOP may not match floor practice.</>
             )}
+          </div>
+        )}
+
+        {h?.status === 'review' && (
+          <div className="qhealth__actions">
+              <button className="btn btn--ghost btn--sm" type="button" disabled={queueingId !== null} onClick={() => queueRevision(q, h)}>
+                {queueingId === q.id ? 'Queuing...' : 'Queue revision'}
+              </button>
+            <FeedbackControls
+              compact
+              targetType="question"
+              targetId={q.id}
+              context={{ correctRate: h.correctRate, responseCount: h.responseCount, canTeachFailCount: h.canTeachFailCount }}
+              onSaveFeedback={onSaveFeedback}
+            />
           </div>
         )}
 

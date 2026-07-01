@@ -56,6 +56,26 @@ export function buildDigest(questions, answers) {
 
 // Builds the two separate parts of the Gemini request: system instruction
 // (static persona/rules) and user message (dynamic navigator data).
+function buildEvidenceContext({ completions = [], interviews = [], priorResults = [], feedbackSummary = null } = {}) {
+  const parts = [];
+  if (priorResults.length > 0) {
+    parts.push(`Prior attempts/departments: ${priorResults.slice(0, 5).map((r) => {
+      const scores = Object.entries(r.scores ?? {}).map(([k, v]) => `${k} ${v}%`).join(', ');
+      return `${r.department ?? 'unknown'} (${scores})`;
+    }).join(' | ')}`);
+  }
+  if (completions.length > 0) {
+    parts.push(`Training/practice completed: ${completions.slice(0, 8).map((c) => `${c.domainId}:${c.kind ?? 'practice'}`).join(', ')}`);
+  }
+  if (interviews.length > 0) {
+    parts.push(`Practice call scores: ${interviews.slice(0, 5).map((iv) => `${iv.domainId}:${iv.grade?.score ?? 'ungraded'}/100`).join(', ')}`);
+  }
+  if (feedbackSummary) {
+    parts.push(`Supervisor feedback summary: ${JSON.stringify(feedbackSummary).slice(0, 1200)}`);
+  }
+  return parts.join('\n');
+}
+
 function buildMessages(name, weakComps, competencyScores, digest) {
   const compList = weakComps
     .map((c) => `  ${c.id} (${competencyName(c.id)}): ${Math.round(competencyScores[c.id])}%`)
@@ -102,7 +122,7 @@ export default async function handler(req, res) {
   if (keys.length === 0) return res.status(500).json({ error: 'Coaching is not configured on the server.' });
 
   if (validateSecret(req, res)) return;
-  const { answers, questions, competencyScores, name } = req.body ?? {};
+  const { answers, questions, competencyScores, name, completions, interviews, priorResults, feedbackSummary } = req.body ?? {};
 
   if (!answers || !questions || !competencyScores || !name) {
     return res.status(400).json({ error: 'Missing required fields.' });
@@ -114,6 +134,10 @@ export default async function handler(req, res) {
   });
 
   const digest = buildDigest(questions, answers);
+  const evidenceContext = buildEvidenceContext({ completions, interviews, priorResults, feedbackSummary });
+  const digestForPrompt = evidenceContext
+    ? [...digest, `Stored learning evidence:\n${evidenceContext}\nUse this to make the coaching more specific over time, but do not change scores or invent facts.`]
+    : digest;
 
   if (weakComps.length === 0 || digest.length === 0) {
     // Nothing to coach — all competencies at canTeach, or no missed questions.
@@ -121,7 +145,7 @@ export default async function handler(req, res) {
   }
 
   const responseSchema = buildResponseSchema(weakComps);
-  const { systemInstruction, userMessage } = buildMessages(name, weakComps, competencyScores, digest);
+  const { systemInstruction, userMessage } = buildMessages(name, weakComps, competencyScores, digestForPrompt);
   const body = buildBody(systemInstruction, userMessage, responseSchema);
 
   const result = await geminiWithRotation(keys, body, { label: 'generate-coaching' });

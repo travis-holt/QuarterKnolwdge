@@ -448,6 +448,359 @@ export function computeQuestionHealth(questions, results) {
   return health;
 }
 
+function tsSeconds(value) {
+  if (!value) return 0;
+  if (typeof value === 'number') return value;
+  if (typeof value.toDate === 'function') return Math.floor(value.toDate().getTime() / 1000);
+  return value.seconds ?? 0;
+}
+
+function latestBy(items, getTs) {
+  return [...items].sort((a, b) => getTs(b) - getTs(a))[0] ?? null;
+}
+
+function optionPoints(question, optionId) {
+  const opt = question.options?.find((o) => o.id === optionId);
+  if (!opt) return 0;
+  if (typeof opt.points === 'number') return opt.points;
+  return optionId === question.correctOptionId ? 100 : 0;
+}
+
+/**
+ * Build database-driven learning signals from stored attempts and review data.
+ * This is intentionally deterministic: it explains patterns and produces
+ * evidence for review, but never changes scores, active questions, or training.
+ *
+ * @param {{
+ *   rows?: object[],
+ *   results?: object[],
+ *   history?: object[],
+ *   questions?: object[],
+ *   completions?: object[],
+ *   interviews?: object[],
+ *   feedback?: object[],
+ * }} input
+ * @returns {{
+ *   weakDomains: object[],
+ *   weakCompetencies: object[],
+ *   repeatedMisses: object[],
+ *   questionRisks: object[],
+ *   trainingGaps: object[],
+ *   interviewRisks: object[],
+ *   feedbackRisks: object[],
+ * }}
+ */
+export function buildLearningSignals({
+  rows = [],
+  results = [],
+  history = [],
+  questions = [],
+  completions = [],
+  interviews = [],
+  feedback = [],
+} = {}) {
+  const questionById = Object.fromEntries(questions.map((q) => [q.id, q]));
+  const resultByName = Object.fromEntries(results.map((r) => [r.name, r]));
+
+  const weakDomains = [];
+  const weakCompetencies = [];
+  const repeatedMisses = [];
+  const trainingGaps = [];
+  const interviewRisks = [];
+
+  for (const row of rows) {
+    const result = resultByName[row.name];
+    for (const d of DOMAINS) {
+      const level = row.levels?.[d.id] ?? scoreToLevel(row.scores?.[d.id] ?? 0);
+      if (level !== 'canTeach') {
+        const navCompletions = completions.filter((c) => c.name === row.name && c.domainId === d.id);
+        const navInterviews = interviews.filter((iv) => iv.name === row.name && iv.domainId === d.id);
+        weakDomains.push({
+          name: row.name,
+          domainId: d.id,
+          score: row.scores?.[d.id] ?? 0,
+          level,
+          practiceCount: navCompletions.filter((c) => !c.kind || c.kind === 'practice').length,
+          miniCheckCount: navCompletions.filter((c) => c.kind === 'minicheck').length,
+          interviewCount: navInterviews.filter((iv) => iv.grade?.score != null).length,
+          evidence: [
+            `${level} in ${d.id}`,
+            `${navCompletions.length} completed exercise${navCompletions.length === 1 ? '' : 's'}`,
+          ],
+        });
+      }
+    }
+
+    for (const c of COMPETENCIES) {
+      const score = row.competencyScores?.[c.id];
+      if (typeof score === 'number' && score < THRESHOLDS.canTeach) {
+        weakCompetencies.push({
+          name: row.name,
+          competencyId: c.id,
+          score,
+          level: scoreToLevel(score),
+          evidence: [`${Math.round(score)}% in ${c.id}`],
+        });
+      }
+    }
+
+    const answers = result?.answers ?? {};
+    for (const [questionId, chosen] of Object.entries(answers)) {
+      const question = questionById[questionId];
+      if (!question) continue;
+      const points = optionPoints(question, chosen);
+      if (points >= 100) continue;
+      repeatedMisses.push({
+        name: row.name,
+        questionId,
+        domainId: question.domainId,
+        competencies: question.competencies ?? [],
+        points,
+        chosenOptionId: chosen,
+        correctOptionId: question.correctOptionId,
+        evidence: [`Earned ${points}/100 on ${questionId}`],
+      });
+    }
+
+    const rowTraining = trainingForRow(row);
+    for (const assignment of rowTraining) {
+      const practiced = completions.some((c) => c.name === row.name && c.domainId === assignment.domainId && (!c.kind || c.kind === 'practice'));
+      if (assignment.priority === 'Required' && !practiced) {
+        trainingGaps.push({
+          name: row.name,
+          domainId: assignment.domainId,
+          priority: assignment.priority,
+          reason: 'Required practice has not been completed yet.',
+          evidence: [`${assignment.domainId} is ${assignment.level}`],
+        });
+      }
+    }
+  }
+
+  for (const iv of interviews) {
+    if (iv.grade?.score != null && iv.grade.score < INTERVIEW_SCORE_BANDS.fair) {
+      interviewRisks.push({
+        name: iv.name,
+        domainId: iv.domainId,
+        interviewId: iv.id,
+        score: iv.grade.score,
+        reason: `Practice call scored ${iv.grade.score}/100`,
+      });
+    }
+  }
+
+  const questionRisks = buildQuestionImprovementSuggestions(questions, results, feedback);
+  const feedbackRisks = feedbackInsights(feedback).risks;
+
+  return {
+    weakDomains: weakDomains.sort((a, b) => a.score - b.score),
+    weakCompetencies: weakCompetencies.sort((a, b) => a.score - b.score),
+    repeatedMisses: repeatedMisses.sort((a, b) => a.points - b.points),
+    questionRisks,
+    trainingGaps,
+    interviewRisks,
+    feedbackRisks,
+    historyCount: history.length,
+  };
+}
+
+/**
+ * Suggest review-safe question improvements from performance history. Returned
+ * suggestions are draft/proposal data only; callers must route them through the
+ * supervisor review gate before a live question changes.
+ */
+export function buildQuestionImprovementSuggestions(questions, results, feedback = []) {
+  const health = computeQuestionHealth(questions, results);
+  const byTarget = feedbackInsights(feedback).byTarget;
+
+  return questions
+    .map((q) => {
+      const h = health[q.id];
+      if (!h) return null;
+      const feedbackSummary = byTarget[`question:${q.id}`];
+      const correctRate = h.correctRate;
+      const reasons = [];
+      const labels = [];
+
+      if (h.status === 'review') {
+        labels.push('needsReview');
+        reasons.push(`Only ${Math.round(correctRate * 100)}% correct after ${h.responseCount} responses.`);
+      }
+      if (h.responseCount >= HEALTH_MIN_RESPONSES && correctRate >= 0.9) {
+        labels.push('tooEasy');
+        reasons.push('High correct rate may mean the scenario is no longer discriminating skill.');
+      }
+      if (h.responseCount >= HEALTH_MIN_RESPONSES && correctRate < 0.5) {
+        labels.push('tooHard');
+        reasons.push('Low correct rate suggests the wording or SOP alignment needs review.');
+      }
+      if (h.canTeachFailCount > 0) {
+        labels.push('canTeachMisses');
+        reasons.push(`${h.canTeachFailCount} Can-Teach navigator${h.canTeachFailCount === 1 ? '' : 's'} missed it.`);
+      }
+      if (feedbackSummary?.negative > 0) {
+        labels.push('supervisorConcern');
+        reasons.push(`${feedbackSummary.negative} supervisor feedback item${feedbackSummary.negative === 1 ? '' : 's'} flagged concern.`);
+      }
+
+      if (labels.length === 0) return null;
+      const severity = labels.includes('needsReview') || labels.includes('canTeachMisses') ? 'high' : 'medium';
+      return {
+        questionId: q.id,
+        domainId: q.domainId,
+        severity,
+        labels,
+        reasons,
+        responseCount: h.responseCount,
+        correctRate,
+        canTeachFailCount: h.canTeachFailCount,
+        suggestedDraft: {
+          ...q,
+          status: 'draft',
+          source: 'learning-loop',
+          reviewNotes: [
+            'Review wording, answer-option clarity, rationale language, and SOP alignment before activating.',
+            ...reasons,
+          ].join(' '),
+        },
+      };
+    })
+    .filter(Boolean)
+    .sort((a, b) => (a.severity === 'high' ? -1 : 1) - (b.severity === 'high' ? -1 : 1));
+}
+
+/**
+ * Build the next best review-safe training recommendation for each weak domain.
+ */
+export function adaptiveTrainingRecommendations(row, {
+  questions = [],
+  result = null,
+  history = [],
+  completions = [],
+  interviews = [],
+  feedback = [],
+} = {}) {
+  if (!row) return [];
+  const answers = result?.answers ?? {};
+  const missedByDomain = {};
+  for (const q of questions) {
+    const chosen = answers[q.id];
+    if (chosen === undefined) continue;
+    const points = optionPoints(q, chosen);
+    if (points < 100) {
+      (missedByDomain[q.domainId] ??= []).push({ questionId: q.id, points, competencies: q.competencies ?? [] });
+    }
+  }
+
+  const feedbackSummary = feedbackInsights(feedback).byTarget;
+
+  return trainingForRow(row).map((assignment) => {
+    const domainId = assignment.domainId;
+    const domainCompletions = completions.filter((c) => c.domainId === domainId);
+    const hasPractice = domainCompletions.some((c) => !c.kind || c.kind === 'practice');
+    const hasMiniCheck = domainCompletions.some((c) => c.kind === 'minicheck');
+    const latestInterview = latestBy(
+      interviews.filter((iv) => iv.domainId === domainId && iv.grade?.score != null),
+      (iv) => tsSeconds(iv.endedAt)
+    );
+    const impact = trainingImpact(history, domainCompletions, domainId);
+    const misses = missedByDomain[domainId] ?? [];
+
+    let kind = 'module';
+    let label = 'Review the training module';
+    const reasons = [`${domainId} is ${assignment.level} (${row.scores?.[domainId] ?? 0}%).`];
+
+    if (!hasPractice) {
+      kind = 'practice';
+      label = 'Complete a Spot the Error practice scenario';
+      reasons.push('No completed practice scenario is recorded for this domain.');
+    } else if (!latestInterview || latestInterview.grade.score < INTERVIEW_SCORE_BANDS.good) {
+      kind = 'interview';
+      label = 'Complete a practice call';
+      reasons.push(latestInterview ? `Latest practice call was ${latestInterview.grade.score}/100.` : 'No graded practice call is recorded.');
+    } else if (!hasMiniCheck) {
+      kind = 'minicheck';
+      label = 'Take the mini re-check';
+      reasons.push('Practice exists; mini-check evidence is still missing.');
+    } else if (impact.delta != null && impact.delta < 5) {
+      kind = 'coaching';
+      label = 'Review coaching notes with a supervisor';
+      reasons.push(`Training impact is only ${impact.delta >= 0 ? '+' : ''}${impact.delta} points so far.`);
+    }
+
+    if (misses.length > 0) reasons.push(`${misses.length} missed or partial question${misses.length === 1 ? '' : 's'} in this domain.`);
+    const fb = feedbackSummary[`training:${row.name}:${domainId}`];
+    if (fb?.negative > 0) reasons.push('Supervisor feedback previously marked this recommendation as needing adjustment.');
+
+    return {
+      name: row.name,
+      domainId,
+      kind,
+      label,
+      priority: assignment.priority,
+      module: assignment.module,
+      reasons,
+      evidence: {
+        score: row.scores?.[domainId] ?? 0,
+        level: assignment.level,
+        missedQuestions: misses,
+        completionCount: domainCompletions.length,
+        latestInterviewScore: latestInterview?.grade?.score ?? null,
+        trainingImpact: impact,
+      },
+    };
+  });
+}
+
+/**
+ * Summarise supervisor feedback so future recommendations can surface recurring
+ * weak spots. This does not mutate prompts or behavior; callers decide how to
+ * display or include the summary in advisory AI context.
+ */
+export function feedbackInsights(feedback = []) {
+  const byTarget = {};
+  const risks = [];
+  const negativeStatuses = new Set(['inaccurate', 'needsAdjustment', 'rejected']);
+  const positiveStatuses = new Set(['helpful', 'approved']);
+
+  for (const item of feedback) {
+    const targetType = item.targetType ?? 'unknown';
+    const targetId = item.targetId ?? 'unknown';
+    const key = `${targetType}:${targetId}`;
+    const bucket = (byTarget[key] ??= {
+      targetType,
+      targetId,
+      helpful: 0,
+      approved: 0,
+      inaccurate: 0,
+      needsAdjustment: 0,
+      rejected: 0,
+      positive: 0,
+      negative: 0,
+      notes: [],
+    });
+    if (bucket[item.status] !== undefined) bucket[item.status] += 1;
+    if (positiveStatuses.has(item.status)) bucket.positive += 1;
+    if (negativeStatuses.has(item.status)) bucket.negative += 1;
+    if (item.note) bucket.notes.push(item.note);
+  }
+
+  for (const bucket of Object.values(byTarget)) {
+    if (bucket.negative >= 2 || bucket.negative > bucket.positive) {
+      risks.push({
+        targetType: bucket.targetType,
+        targetId: bucket.targetId,
+        negative: bucket.negative,
+        positive: bucket.positive,
+        reason: 'Supervisor feedback shows recurring concern.',
+        notes: bucket.notes.slice(-3),
+      });
+    }
+  }
+
+  return { byTarget, risks };
+}
+
 /**
  * Suggested mentors for one navigator: for each domain where they are not yet
  * Can-Teach, list colleagues who can teach it (excluding themselves).

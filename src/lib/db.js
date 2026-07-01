@@ -57,6 +57,8 @@ const QUESTIONS_COL = 'questions';
 const INTERVIEWS = 'interviews';
 const COMPLETIONS = 'completions';
 const PAIRINGS = 'pairings';
+const SUPERVISOR_FEEDBACK = 'supervisorFeedback';
+const LEARNING_PROPOSALS = 'learningProposals';
 
 // ── Roster ───────────────────────────────────────────────────────────────────
 
@@ -516,5 +518,88 @@ export function subscribePairings(cb, onError) {
     collection(db, PAIRINGS),
     (snap) => cb(snap.docs.map((d) => ({ id: d.id, ...d.data() }))),
     onError ?? ((err) => console.error('subscribePairings:', err))
+  );
+}
+
+// ── Learning Loop (feedback + review-safe proposals) ─────────────────────────
+
+/**
+ * Supervisor: record a judgment on an AI-generated or system-generated item.
+ * Status values: helpful | inaccurate | needsAdjustment | approved | rejected.
+ * @param {{ targetType:string, targetId:string, status:string, note?:string, context?:object }} feedback
+ * @returns {Promise<string>} the new feedback doc id
+ */
+export async function saveSupervisorFeedback(feedback) {
+  const ref = doc(collection(db, SUPERVISOR_FEEDBACK));
+  await setDoc(ref, {
+    targetType: feedback.targetType,
+    targetId: feedback.targetId,
+    status: feedback.status,
+    note: feedback.note ?? '',
+    context: feedback.context ?? {},
+    createdAt: serverTimestamp(),
+  });
+  return ref.id;
+}
+
+/**
+ * Supervisor: live subscription to all feedback records.
+ * @param {(feedback:object[]) => void} cb
+ * @param {(err:Error) => void} [onError]
+ * @returns {() => void} unsubscribe
+ */
+export function subscribeSupervisorFeedback(cb, onError) {
+  return onSnapshot(
+    collection(db, SUPERVISOR_FEEDBACK),
+    (snap) => cb(snap.docs.map((d) => ({ id: d.id, ...d.data() }))),
+    onError ?? ((err) => console.error('subscribeSupervisorFeedback:', err))
+  );
+}
+
+/**
+ * Supervisor/system: save a proposed improvement for human review. Proposals do
+ * not affect active checks, scores, or training until a supervisor acts.
+ * @param {{ type:string, title:string, target?:object, payload?:object, reasons?:string[] }} proposal
+ * @returns {Promise<string>} the new proposal doc id
+ */
+export async function saveLearningProposal(proposal) {
+  const ref = doc(collection(db, LEARNING_PROPOSALS));
+  await setDoc(ref, {
+    type: proposal.type,
+    title: proposal.title,
+    target: proposal.target ?? {},
+    payload: proposal.payload ?? {},
+    reasons: proposal.reasons ?? [],
+    status: 'pending',
+    createdAt: serverTimestamp(),
+  });
+  return ref.id;
+}
+
+/**
+ * Supervisor: update a proposal status after review.
+ * @param {string} id
+ * @param {'pending'|'approved'|'rejected'} status
+ * @param {{ reviewedBy?:string, note?:string }} [review]
+ */
+export async function updateLearningProposalStatus(id, status, review = {}) {
+  await updateDoc(doc(db, LEARNING_PROPOSALS, id), {
+    status,
+    review,
+    reviewedAt: serverTimestamp(),
+  });
+}
+
+/**
+ * Supervisor: live subscription to learning proposals.
+ * @param {(proposals:object[]) => void} cb
+ * @param {(err:Error) => void} [onError]
+ * @returns {() => void} unsubscribe
+ */
+export function subscribeLearningProposals(cb, onError) {
+  return onSnapshot(
+    collection(db, LEARNING_PROPOSALS),
+    (snap) => cb(snap.docs.map((d) => ({ id: d.id, ...d.data() }))),
+    onError ?? ((err) => console.error('subscribeLearningProposals:', err))
   );
 }

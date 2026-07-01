@@ -3627,6 +3627,105 @@ textarea:focus-visible {
 }
 
 /* ── Question editor form ────────────────────────────────────────────────── */
+.qhealth__actions,
+.feedbackctl {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  align-items: center;
+}
+
+.qhealth__actions {
+  margin: 0.5rem 0 0.65rem;
+}
+
+.feedbackctl--compact .feedbackctl__btn {
+  padding-inline: 0.55rem;
+}
+
+.feedbackctl__btn.is-saved {
+  border-color: color-mix(in srgb, var(--level-canteach) 35%, transparent);
+  color: var(--level-canteach);
+  background: color-mix(in srgb, var(--level-canteach) 8%, var(--surface));
+}
+
+.feedbackctl__msg,
+.learning__msg {
+  font-size: 0.82rem;
+  font-weight: 700;
+}
+
+.feedbackctl__msg.is-error,
+.learning__msg.is-error {
+  color: var(--level-learning);
+}
+
+.learning__msg.is-ok {
+  color: var(--level-canteach);
+}
+
+.learning__summary {
+  margin-bottom: 1rem;
+}
+
+.learning__list {
+  display: grid;
+  gap: 0.75rem;
+  padding: 0;
+  margin: 1rem 0 0;
+  list-style: none;
+}
+
+.learning__item {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 1rem;
+  align-items: start;
+  padding: 0.9rem;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface-2);
+}
+
+.learning__title,
+.learning__body,
+.learning__note {
+  margin: 0;
+}
+
+.learning__title {
+  font-weight: 800;
+  color: var(--ink);
+}
+
+.learning__body,
+.learning__note,
+.learning__reasons {
+  color: var(--ink-soft);
+  font-size: 0.92rem;
+}
+
+.learning__reasons {
+  margin: 0.45rem 0 0;
+  padding-left: 1.1rem;
+}
+
+.learning__actions {
+  display: grid;
+  justify-items: end;
+  gap: 0.45rem;
+}
+
+@media (max-width: 760px) {
+  .learning__item {
+    grid-template-columns: 1fr;
+  }
+
+  .learning__actions {
+    justify-items: start;
+  }
+}
+
 .qedit {
   border: 1px solid var(--accent);
   border-radius: 8px;

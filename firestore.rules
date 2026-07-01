@@ -47,6 +47,14 @@ service cloud.firestore {
     match /pairings/{docId} {
       allow read, write: if true;
     }
+    // Supervisor feedback on AI/generated recommendations.
+    match /supervisorFeedback/{docId} {
+      allow read, write: if true;
+    }
+    // Human-review queue for adaptive learning proposals.
+    match /learningProposals/{docId} {
+      allow read, write: if true;
+    }
 
     // Everything else is denied.
     match /{document=**} {

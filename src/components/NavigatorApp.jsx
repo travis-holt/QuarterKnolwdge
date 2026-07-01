@@ -294,6 +294,9 @@ export default function NavigatorApp({ navigatorId, name, onSignOut }) {
           answers={lastAnswers}
           competencyScores={ownResult.competencyScores}
           name={name}
+          completions={completions}
+          interviews={interviews}
+          priorResults={Object.entries(allDeptResults).map(([department, scores]) => ({ department, scores }))}
           onContinue={() => setView('dashboard')}
         />
       )}
