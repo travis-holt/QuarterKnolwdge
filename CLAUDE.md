@@ -10,7 +10,7 @@
 > [§8 Current System State](#8-current-system-state) and [§15 Current Priorities](#15-current-priorities)
 > accurate at all times.
 >
-> **Last updated:** 2026-07-03 (F24 upgrade: PDF upload + fidelity audit + SOP tab redesign) ·
+> **Last updated:** 2026-07-03 (pilot-feedback fixes: audit bank, grading retry, history view, code-splitting) ·
 > **Doc maintainer:** Claude (AI agent) + repo owner. Assumptions are explicitly marked **[ASSUMPTION]**.
 
 ---
@@ -351,6 +351,14 @@ training assignments.
 - **Notes:** Full mode scores each domain from a single item (0 or 100), so the profile is coarse by
   design (owner's choice: 1 item/domain for speed). `api/coach-audit.js` + `POST /api/coach-audit`
   remain in the repo but are **no longer wired**. One error per transcript (multi-error = v2).
+- **Audit bank (2026-07-03, pilot-feedback fix):** transcripts are now pre-generated into a
+  Firestore `audits` collection with the question-bank review-gate model (draft → active →
+  archived). Supervisor UI `AuditBank.jsx` (Questions tab, below the Question Bank): per-domain
+  coverage read-off, pooled generation, transcript review with the planted error highlighted.
+  `SpotTheError.jsx` draws shuffled `active` bank items first (instant start, no repeats within
+  one assessment) and only live-generates domains the bank can't cover. Fixes the 40-70 s
+  loading wait and lets unrealistic transcripts be curated out. db helpers: `subscribeAudits`,
+  `getActiveAudits`, `saveDraftAudits`, `activateAudit`, `archiveAudit`, `deleteAudit`.
 
 ### F17 — Longitudinal Capability Trends & Training Impact
 - **Purpose:** Quarter-over-quarter trend views for domain/competency scores and training impact.
@@ -895,6 +903,59 @@ stateDiagram-v2
 ---
 
 ## 7. Development History
+
+### 2026-07-03 — Pilot-feedback pass (6-7 navigator soft launch)
+- **Context:** The owner launched the webapp to 6-7 navigators and collected feedback
+  ("Knowledge Check Webapp Bugs And Feature Tweaks.docx", untracked). This pass addressed 6 of
+  the 9 items; the remaining 3 are: add more keys to `GEMINI_API_KEYS` in Railway (owner action,
+  no code), colour-scheme feedback (content unknown — needs specifics), and Railway cold-start
+  (infra-side; the in-repo part was fixed here via code-splitting).
+- **1 · Practice caller switched language mid-call** (one navigator's chat "turned into indian"):
+  `buildSystemInstruction()` in `api/interview-turn.js` had NO language rule, so nothing stopped
+  Gemini drifting into Hindi at roleplay temperatures. Added a CRITICAL English-only rule (covers
+  BOTH the text chat and the voice call — the live relay reuses the same persona builder) and an
+  "everything in English" line in the init prompt.
+- **2 · Voice/chat practice review never appeared:** grading failures in `VoiceCall.jsx` and
+  `Interview.jsx` were swallowed (console.error → reviewed screen with a bare "—"), and the
+  transcript/docId were discarded so nothing could be retried. Both components now keep the saved
+  transcript + doc id, explain the failure ("the reviewer may be busy"), and offer a **"Try the
+  review again"** button that re-calls `/api/grade-interview` and writes the grade back to the
+  interview doc. `VoiceCall` also resets stale grade state when starting a new call.
+- **3 · "Spot the Error" was slow (40–70 s) with unrealistic scenarios → pre-generated audit
+  bank:** new Firestore `audits` collection (same draft→active review-gate model as the question
+  bank). `db.js`: `subscribeAudits`, `getActiveAudits(dept)`, `saveDraftAudits`, `activateAudit`,
+  `archiveAudit`, `deleteAudit` (+3 db tests). New supervisor UI `AuditBank.jsx` (rendered under
+  the Question Bank in the Questions tab): per-domain active-coverage read-off, pooled generation
+  (2 concurrent via `runPooled`, now exported from `apiFetch.js`), full-transcript review with the
+  planted error highlighted, activate/archive/delete. `SpotTheError.jsx` now draws items from the
+  bank first (instant, shuffled, no repeat within an assessment) and only live-generates domains
+  the bank can't cover. `generate-audit.js` prompt gained REALISM RULES (specific ordinary
+  requests grounded in SOP visit types/queues, natural phone speech, plausible rushed-agent
+  mistakes — not cartoonish ones, near-miss distractor turns, English only). Rule added to
+  `firestore.rules` — **owner must `firebase deploy --only firestore:rules` to activate**.
+- **4 · MCQ best answer too obvious:** `generate-scenarios.js` prompt gained a DISTRACTOR QUALITY
+  block — every wrong option must be a plausible near-miss failing on a specific SOP detail, all
+  options the same length/tone (no longest-answer tell), at least one distractor more
+  cautious-sounding than the best answer, two-plus options tempting without SOP knowledge.
+  Existing weak questions still need regeneration + curation through the Question Bank.
+- **5 · Navigators couldn't review answers / see history:** new `MyHistory.jsx` + "My history"
+  navigator tab. Panel 1: attempt history from `resultHistory` (first navigator-facing read of
+  it) — every snapshot for the active dept, newest first, per-domain level chips. Panel 2:
+  answer-by-answer review of the latest MCQ from the stored `answers` on the result doc (same
+  rendering as post-check Coaching; answers to since-retired questions are skipped with a note).
+- **6 · Welcome page slow to appear:** code-split at both seams. `App.jsx` lazy-loads
+  `SupervisorApp`/`NavigatorApp` via `React.lazy` + `Suspense`; `Start.jsx` imports
+  `firebase.js`/`db.js` **dynamically** (roster fetch + PIN save) so the Firebase SDK leaves the
+  entry chunk. Entry JS: **889 kB → 197 kB** (62 kB gzip); Firebase (684 kB) + each role app now
+  load as separate lazy chunks. Railway cold-start remains a possible second cause (infra).
+- **Verification:** `npm test` → **253 passing** (9 files; +3 audit-bank db tests);
+  `npm run build` → clean, chunks split as above; `node --check` on the 3 edited api handlers.
+- **Files:** new `src/components/{AuditBank,MyHistory}.jsx`; edited `api/{interview-turn,
+  generate-audit,generate-scenarios}.js`, `src/components/{VoiceCall,Interview,SpotTheError,
+  SupervisorApp,NavigatorApp,Nav,Start,App}.jsx`, `src/lib/{db,db.test,apiFetch}.js`,
+  `firestore.rules`, `src/styles.css`, `CLAUDE.md`.
+- **Status:** Complete (code). Owner actions: deploy rules; generate + activate audit transcripts
+  per domain in the new bank; add more Gemini keys; report what the colour-scheme feedback was.
 
 ### 2026-07-03 — F24 upgrade: PDF upload, fidelity audit, SOP tab redesign
 - **Context:** Owner review of the first SOP manager: "bland and generic", questioned whether
@@ -2350,8 +2411,9 @@ stateDiagram-v2
   `resultHistory` collection (powers trend views) → supervisor matrix/overview update live per dept
   → navigator/training dashboards → **switch departments** → practice interview → per-domain "Spot
   the Error" assessment → path stepper + mini re-check per weak domain → supervisor Action Center +
-  Mentorship tabs → practice call offered as **voice (real-time) or text chat**. Build clean, tests
-  green (`npm test` → **228 passing**, 8 test files).
+  Mentorship tabs → practice call offered as **voice (real-time) or text chat** → navigator "My
+  history" tab (attempt history + answer review). Build clean, tests green (`npm test` →
+  **253 passing**, 9 test files).
 - **Existing functionality:** features F1–F23 (see [§4](#4-feature-inventory)) are **Complete** in
   code. F17 adds longitudinal trends + Sparkline. F18 adds dossier evidence per competency. F19
   adds the supervisor Action Center. F20 adds AI-sequenced dev paths + mini re-check. F21 adds
@@ -2375,13 +2437,14 @@ stateDiagram-v2
 - **Experimental / mockup:**
   - Training **content** is mockup (flagged in UI). Logic is real.
   - **Adult Medicine and Behavioural Health** are not assessed; **Pediatrics and OB/GYN** are live.
-- **Test coverage:** **223 tests** across **8 test files**: `scoring.test.js` (all 26 exports
+- **Test coverage:** **253 tests** across **9 test files**: `scoring.test.js` (all 26 exports
   including F17–F21 functions: buildTrend, trainingImpact, teamTrend, buildDossier, buildActionCenter,
   buildDevPath, buildMentorMatches, pairingOutcomes, buildLearningSignals,
   buildQuestionImprovementSuggestions, adaptiveTrainingRecommendations, feedbackInsights +
   malformed-input edge cases), `session.test.js`,
-  `db.test.js`, `api/api-handlers.test.js`, `api/generate-audit.test.js`,
+  `db.test.js` (incl. audit-bank helpers), `api/api-handlers.test.js`, `api/generate-audit.test.js`,
   `api/_gemini-client.test.js`, `api/sequence-path.test.js` (9 tests for `validateSequenceResponse`),
+  `api/refine-sop.test.js`,
   `src/components/components.test.jsx`. The F22 voice call (relay + Web Audio) is verified by live
   end-to-end probe rather than unit tests — audio I/O isn't unit-testable headlessly. Role-app
   integration tests remain the only other untested area.
@@ -2419,9 +2482,9 @@ stateDiagram-v2
 - **Counts (today):** 6 domains (job-aligned 2026-07-02: intake · classification · routing ·
   scheduling · boundaries · documentation) · 9 competencies · 21 Pediatrics + 16
   OB/GYN = **37** seed questions (bank grows in Firestore per dept) · 4 departments (**Pediatrics
-  + OB/GYN live**, 2 mockup) · **250** unit tests (9 test files) · **10** Firestore collections
-  (`roster`, `results`, `resultHistory`, `questions`, `interviews`, `completions`, `pairings`,
-  `supervisorFeedback`, `learningProposals`, `sops`) ·
+  + OB/GYN live**, 2 mockup) · **253** unit tests (9 test files) · **11** Firestore collections
+  (`roster`, `results`, `resultHistory`, `questions`, `audits`, `interviews`, `completions`,
+  `pairings`, `supervisorFeedback`, `learningProposals`, `sops`) ·
   **9** REST serverless functions (`generate-scenarios`, `generate-coaching`, `interview-turn`,
   `grade-interview`, `generate-audit`, `coach-audit`, `sequence-path`, `refine-sop`, `health`) +
   **1** WebSocket relay (`live-relay.js` → `/api/live`) · **3** shared API helpers
@@ -2620,7 +2683,7 @@ npm run test:e2e     # run the Playwright browser tests (auto-builds + starts th
 - Heatmap intensity toggle (show % inside matrix cells).
 
 ### Technical Debt
-- **223 tests** across 8 test files as of 2026-07-01. **Role-app integration tests** (`SupervisorApp`,
+- **253 tests** across 9 test files as of 2026-07-03. **Role-app integration tests** (`SupervisorApp`,
   `NavigatorApp`, `App`) remain the only untested area — adding those is the next coverage priority.
 - ~~Components, role apps, and API handlers untested~~ — **resolved 2026-06-26**: component tests
   (jsdom + Testing Library), API handler pure-function tests, and db.js mocked tests all added.
@@ -2768,8 +2831,16 @@ npm run test:e2e     # run the Playwright browser tests (auto-builds + starts th
 3. **Supervisor grade override** — allow supervisors to adjust the AI-given score on a saved practice session.
 
 **Active work items:**
+- **Pilot-feedback follow-ups (2026-07-03):** deploy the updated Firestore rules
+  (`firebase deploy --only firestore:rules` — required for the new `audits` collection);
+  generate + activate audit transcripts per domain in the new Audit Bank (Questions tab) so
+  Spot the Error starts instantly; add more keys to `GEMINI_API_KEYS` in Railway (pilot
+  exhausted rotation quickly); get the specifics of the colour-scheme feedback (item was
+  recorded without detail).
 - **Question bank regeneration** — the reset bank holds only the 37 seeds; supervisors should
-  generate + activate additional scenarios per new domain via the Question Bank UI.
+  generate + activate additional scenarios per new domain via the Question Bank UI (the
+  generation prompt now enforces distractor quality — regenerating also addresses the
+  "too obvious" pilot feedback).
 - **SOP content** — paste the real Pediatrics / OB/GYN SOPs (and later Behavioral Health /
   Internal Medicine) into the new SOPs tab and activate, taking grounding control away from the
   hardcoded `_sop-context.js` fallbacks. Note: live SOPs in Firestore may hold real provider

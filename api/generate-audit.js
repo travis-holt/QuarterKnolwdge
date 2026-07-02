@@ -49,9 +49,23 @@ TRANSCRIPT RULES:
 - Alternate naturally: Agent, Patient, Agent, Patient… for 10 turns total
 - Plant exactly ONE clear SOP violation in ONE Agent message (must be an Agent turn, not Patient)
 - All other Agent messages must be correct per SOP
-- The Patient's messages should be realistic — a concerned parent calling about their child, not a test dummy
-- The error should require careful reading to spot; it should not be the only remotely wrong thing in the transcript
-- Make the call feel like a real call: natural conversational flow, realistic detail
+- Everything in English only
+
+REALISM RULES (the transcript must read like a real recorded call, not a training script):
+- The call must be a SPECIFIC, ORDINARY request a real caller would have (an appointment for a
+  named reason, a refill, a lab result, a referral question) — grounded in the SOP's actual visit
+  types, queues, timing rules, and routing rules. Never a generic "I have a question" call.
+- The caller talks like a real person on the phone: short sentences, occasional imprecision
+  ("sometime this week?", "I think it was last month"), answers only what was asked.
+- The Agent follows the real call shape from the SOP: identify the patient (correct lookup order
+  for the department), classify the request, then act — with realistic small confirmations
+  ("one moment while I pull that up").
+- The planted error must be PLAUSIBLE — the kind of mistake a rushed but competent agent actually
+  makes (wrong queue, skipped verification step, promising something the SOP forbids, wrong
+  timing rule), NOT cartoonish rudeness or an obviously absurd statement.
+- The error should require careful reading to spot; correct Agent turns should include near-miss
+  moments that a careless reader might wrongly suspect.
+- Never include markdown, stage directions, or bracketed narration — spoken words only.
 
 FOR errorIndex: return the 0-based index of the message array where the Agent's error appears (always an even-indexed turn: 0, 2, 4, 6, or 8).
 

@@ -9,6 +9,7 @@ export default function Nav({ role, view, setView, onSignOut, activeDeptName, on
     role === 'navigator'
       ? [
           { id: 'dashboard', label: 'My results' },
+          { id: 'history', label: 'My history' },
           { id: 'training', label: 'My training' },
           { id: 'interview', label: 'Practice' },
         ]

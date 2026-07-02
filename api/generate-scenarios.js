@@ -68,6 +68,20 @@ TASK: Write ${count} scenario-based multiple-choice question(s) for the domain "
   in the SOP.
 - Set "correctOptionId" to the id of the 100-point option.
 - Tag 1–3 "competencies" from EXACTLY this allowed list (use the id, not the name): ${compList}.
+
+DISTRACTOR QUALITY — this is the most important requirement. The question is worthless if the
+best answer is guessable without knowing the SOP:
+- Every wrong option must be something a real, well-meaning navigator might actually do — a
+  near-miss that only fails on a specific SOP detail (wrong queue, wrong order of steps, right
+  action for a DIFFERENT caller type, outdated rule, plausible overreach). Never a strawman,
+  never obviously rude, lazy, or absurd.
+- All 4 options must be roughly the SAME LENGTH and the same tone. Do not make the best answer
+  the longest, most detailed, or most hedged option — that pattern gives it away.
+- Do not reuse giveaway wording from the scenario in only the correct option.
+- At least one distractor should be MORE cautious/thorough-sounding than the best answer but
+  wrong per the SOP (e.g. escalating something the SOP says to handle directly).
+- A navigator who has NOT read the SOP should find at least two options equally tempting.
+
 Option ids must be "a","b","c","d". Do not include a domain field. Return ONLY the JSON array.`;
 }
 

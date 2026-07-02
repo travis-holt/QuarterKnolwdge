@@ -1,8 +1,11 @@
 import { useState, useEffect } from 'react';
 import { DOMAINS } from '../data/questions.js';
 import { SUPERVISOR_PASSCODE } from '../data/config.js';
-import { isFirebaseConfigured } from '../lib/firebase.js';
-import { getRoster, updateRosterEntry } from '../lib/db.js';
+
+// Firebase is imported DYNAMICALLY (inside NavigatorGate) so the whole SDK —
+// by far the heaviest dependency — stays out of the welcome page's chunk.
+// The welcome page paints from a small entry bundle; Firebase downloads only
+// when the visitor picks the navigator role (pilot feedback: slow first load).
 
 // The Start gate. Three sub-screens controlled by `mode`:
 //   'role'       — pick navigator vs supervisor
@@ -125,13 +128,18 @@ function NavigatorGate({ onBack, onEnter }) {
 
   useEffect(() => {
     let active = true;
-    if (!isFirebaseConfigured) {
-      setLoadError(true);
-      setRoster([]);
-      return;
-    }
-    getRoster()
-      .then((list) => {
+    (async () => {
+      try {
+        const { isFirebaseConfigured } = await import('../lib/firebase.js');
+        if (!isFirebaseConfigured) {
+          if (active) {
+            setLoadError(true);
+            setRoster([]);
+          }
+          return;
+        }
+        const { getRoster } = await import('../lib/db.js');
+        const list = await getRoster();
         if (!active) return;
         // Only active navigators can sign in; sort alphabetically.
         setRoster(
@@ -139,8 +147,10 @@ function NavigatorGate({ onBack, onEnter }) {
             .filter((r) => r.status !== 'inactive')
             .sort((a, b) => a.name.localeCompare(b.name))
         );
-      })
-      .catch(() => active && setLoadError(true));
+      } catch {
+        if (active) setLoadError(true);
+      }
+    })();
     return () => {
       active = false;
     };
@@ -167,6 +177,7 @@ function NavigatorGate({ onBack, onEnter }) {
     if (!hasPin) {
       setBusy(true);
       try {
+        const { updateRosterEntry } = await import('../lib/db.js');
         await updateRosterEntry(entry.id, { pin: trimmedPin });
       } catch {
         setError("Couldn't save your PIN. Check the connection and try again.");

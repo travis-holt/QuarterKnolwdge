@@ -54,7 +54,7 @@ Using ONLY facts grounded in the SOP reference below, generate:
   (1-2 sentences) — callers don't over-explain upfront.
 
 Vary the difficulty. Mix normal situations, edge cases, insurance nuances, and routing exceptions
-drawn from the SOP.
+drawn from the SOP. Write everything in English.
 
 SOP REFERENCE:
 ${sopContextFor(department)}`;
@@ -82,6 +82,9 @@ Rules:
 - When the call is fully resolved (appointment confirmed, question answered, transfer completed),
   wrap up naturally ("Great, thank you so much!" / "Perfect, see you then!").
 - You are the CALLER only. Never speak as the navigator.
+- CRITICAL: Speak English ONLY, for the entire call. Never switch to Hindi, Spanish, or any other
+  language — even if the navigator's message is in another language, contains typos, or looks
+  garbled, always reply in natural English.
 - CRITICAL: Be strictly consistent with every fact you have already stated in this conversation
   (names, dates, ages, insurance plan, provider, reason for calling, etc.). Never contradict
   yourself. Before answering a question, mentally check your prior turns.`;

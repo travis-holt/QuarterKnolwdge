@@ -77,6 +77,7 @@ export default function VoiceCall({ navigatorId, name, department = 'pediatrics'
   const [speaking, setSpeaking]   = useState(false); // caller currently talking
   const [error, setError]         = useState('');
   const [grade, setGrade]         = useState(null);
+  const [gradeBusy, setGradeBusy] = useState(false);  // retrying a failed grade from the reviewed screen
   const [captions, setCaptions]   = useState([]);     // [{role, text}] shown live during the call
 
   const wsRef        = useRef(null);
@@ -87,6 +88,7 @@ export default function VoiceCall({ navigatorId, name, department = 'pediatrics'
   const playheadRef  = useRef(0);
   const sourcesRef   = useRef([]);          // scheduled playback sources (for barge-in flush)
   const segmentsRef  = useRef([]);          // [{role, text}] transcript, coalesced by role
+  const finalRef     = useRef(null);        // { transcript, docId } kept after teardown for grade retries
   const domain = DOMAINS.find((d) => d.id === domainId);
 
   useEffect(() => () => teardown(), []);    // stop everything on unmount
@@ -145,6 +147,9 @@ export default function VoiceCall({ navigatorId, name, department = 'pediatrics'
     setPhase('connecting');
     setError('');
     segmentsRef.current = [];
+    finalRef.current = null;
+    setGrade(null);
+    setGradeBusy(false);
     setCaptions([]);
 
     // 1) Generate the scenario + caller name (reuses the existing chat init path).
@@ -263,6 +268,16 @@ export default function VoiceCall({ navigatorId, name, department = 'pediatrics'
     } catch (err) {
       console.error('Failed to save voice call:', err);
     }
+    finalRef.current = { transcript, docId };
+    await runGrading();
+    setPhase('reviewed');
+  };
+
+  // Grades the saved transcript; also used to retry from the reviewed screen when
+  // the first attempt failed (e.g. the Gemini keys were rate-limited).
+  const runGrading = async () => {
+    const { transcript, docId } = finalRef.current ?? {};
+    if (!transcript) return;
     try {
       const data = await apiFetch(
         '/api/grade-interview',
@@ -276,7 +291,12 @@ export default function VoiceCall({ navigatorId, name, department = 'pediatrics'
     } catch (err) {
       console.error('Failed to grade voice call:', err);
     }
-    setPhase('reviewed');
+  };
+
+  const retryGrading = async () => {
+    setGradeBusy(true);
+    await runGrading();
+    setGradeBusy(false);
   };
 
   const discard = () => { teardown(); setPhase('discarded'); };
@@ -327,7 +347,23 @@ export default function VoiceCall({ navigatorId, name, department = 'pediatrics'
             )}
             <p className="interview__score-domain tag">{domain?.name}</p>
             {grade?.summary && <p className="interview__score-summary">{grade.summary}</p>}
-            {!grade && <p className="readoff__sub" style={{ marginTop: '0.75rem' }}>Grading unavailable — the call was saved but couldn&rsquo;t be reviewed right now.</p>}
+            {!grade && (
+              <>
+                <p className="readoff__sub" style={{ marginTop: '0.75rem' }}>
+                  Your call was saved, but the review couldn&rsquo;t be generated — the reviewer
+                  may be busy right now.
+                </p>
+                <button
+                  className="btn btn--ghost btn--sm"
+                  style={{ marginTop: '0.75rem' }}
+                  disabled={gradeBusy}
+                  onClick={retryGrading}
+                  type="button"
+                >
+                  {gradeBusy ? 'Reviewing…' : 'Try the review again'}
+                </button>
+              </>
+            )}
           </div>
           {grade?.strengths?.length > 0 && (
             <div className="card interview__feedback-card interview__feedback-card--strengths">

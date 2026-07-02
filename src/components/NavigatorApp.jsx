@@ -6,6 +6,7 @@ import NavigatorDetail from './NavigatorDetail.jsx';
 import MyTraining from './MyTraining.jsx';
 import TrainingModule from './TrainingModule.jsx';
 import Interview from './Interview.jsx';
+import MyHistory from './MyHistory.jsx';
 import VoiceCall from './VoiceCall.jsx';
 import SpotTheError from './SpotTheError.jsx';
 import EmptyState from './EmptyState.jsx';
@@ -38,7 +39,7 @@ const ALL_DOMAIN_IDS = DOMAINS.map((d) => d.id);
 // name colleagues who can teach their growth domains, but those names are not
 // clickable and open nothing.)
 export default function NavigatorApp({ navigatorId, name, onSignOut }) {
-  const [view, setView] = useState('loading'); // loading · deptselect · typeselect · check · spotfull · coaching · dashboard · training · module · interview · audit · minicheck
+  const [view, setView] = useState('loading'); // loading · deptselect · typeselect · check · spotfull · coaching · dashboard · history · training · module · interview · audit · minicheck
   const [activeDept, setActiveDept] = useState(null); // chosen by navigator at deptselect
   // A navigator can hold BOTH an MCQ and a Spot the Error result per department;
   // both are kept so they can take (and view) either. `activeType` is the one
@@ -469,6 +470,16 @@ export default function NavigatorApp({ navigatorId, name, onSignOut }) {
             <button className="linkbtn" onClick={() => setView('typeselect')}>Take an assessment</button>.
           </EmptyState>
         ))}
+
+      {view === 'history' && (
+        <MyHistory
+          navigatorId={navigatorId}
+          department={dept}
+          deptName={deptName}
+          resultsByType={resultsByType}
+          questions={questions}
+        />
+      )}
 
       {view === 'training' &&
         (myRow ? (

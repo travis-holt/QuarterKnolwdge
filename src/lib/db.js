@@ -21,6 +21,10 @@
 //   questions     — supervisor-managed scenario bank { scenario, options, status,
 //                   department, … }. `department` field added to support per-dept
 //                   banks. Legacy docs without `department` are treated as 'pediatrics'.
+//   audits        — pre-generated "Spot the Error" transcripts { department,
+//                   domainId, transcript, errorIndex, hint, modelExplanation,
+//                   status: draft|active|archived, source, createdAt }. Same
+//                   review-gate model as questions; only `active` items are served.
 //   interviews    — practice roleplay transcripts { navigatorId, name, domainId,
 //                   scenario, callerName, transcript, endedAt }
 //   completions   — exercise completions { navigatorId, name, domainId, kind,
@@ -104,6 +108,7 @@ const ROSTER = 'roster';
 const RESULTS = 'results';
 const RESULT_HISTORY = 'resultHistory';
 const QUESTIONS_COL = 'questions';
+const AUDITS_COL = 'audits';
 const INTERVIEWS = 'interviews';
 const COMPLETIONS = 'completions';
 const PAIRINGS = 'pairings';
@@ -547,6 +552,87 @@ export async function archiveQuestion(id) {
 /** Supervisor: permanently delete a question. */
 export async function deleteQuestion(id) {
   await deleteDoc(doc(db, QUESTIONS_COL, id));
+}
+
+// ── Audits (pre-generated "Spot the Error" transcript bank) ───────────────────
+//
+// Same review-gate model as the question bank: Gemini output lands as `draft`,
+// the supervisor reads the transcript + planted error, and only `active` items
+// are served to navigators. Pre-generating kills the 40–70s live-generation
+// wait in the Spot the Error assessment AND lets unrealistic transcripts be
+// curated out before a navigator ever sees them.
+//
+// Doc shape: { department, domainId, transcript:[{speaker,message}], errorIndex,
+//              hint, modelExplanation, status: draft|active|archived, source,
+//              createdAt }
+
+/**
+ * Supervisor: live subscription to the whole audit bank (all statuses).
+ * @param {(audits:object[]) => void} cb
+ * @param {(err:Error) => void} [onError]
+ * @returns {() => void} unsubscribe
+ */
+export function subscribeAudits(cb, onError) {
+  return liveQuery(collection(db, AUDITS_COL), cb, onError ?? ((err) => console.error('subscribeAudits:', err)));
+}
+
+/**
+ * One-time fetch of active audit items for a department (used by the Spot the
+ * Error assessment). Filters client-side so no composite index is required.
+ * @param {string} [department='pediatrics']
+ * @returns {Promise<object[]>}
+ */
+export async function getActiveAudits(department = 'pediatrics') {
+  const snap = await getDocs(query(collection(db, AUDITS_COL), where('status', '==', 'active')));
+  return snap.docs
+    .map((d) => ({ id: d.id, ...d.data() }))
+    .filter((a) => (a.department ?? 'pediatrics') === department);
+}
+
+/**
+ * Save a batch of generated audit items as drafts — never served until the
+ * supervisor activates them.
+ * @param {object[]} drafts  [{ domainId, transcript, errorIndex, hint, modelExplanation }]
+ * @param {string} [source='gemini']
+ * @param {string} [department='pediatrics']
+ * @returns {Promise<string[]>} the new draft ids
+ */
+export async function saveDraftAudits(drafts, source = 'gemini', department = 'pediatrics') {
+  const batch = writeBatch(db);
+  const ids = [];
+  for (const a of drafts) {
+    const ref = doc(collection(db, AUDITS_COL));
+    ids.push(ref.id);
+    batch.set(ref, {
+      domainId: a.domainId,
+      transcript: a.transcript,
+      errorIndex: a.errorIndex,
+      hint: a.hint ?? '',
+      modelExplanation: a.modelExplanation,
+      department: a.department ?? department,
+      status: 'draft',
+      source,
+      createdAt: serverTimestamp(),
+    });
+  }
+  await authReady;
+  await batch.commit();
+  return ids;
+}
+
+/** Supervisor: make an audit item live in the Spot the Error assessment. */
+export async function activateAudit(id) {
+  await updateDoc(doc(db, AUDITS_COL, id), { status: 'active' });
+}
+
+/** Supervisor: retire an audit item (kept for history, no longer served). */
+export async function archiveAudit(id) {
+  await updateDoc(doc(db, AUDITS_COL, id), { status: 'archived' });
+}
+
+/** Supervisor: permanently delete an audit item. */
+export async function deleteAudit(id) {
+  await deleteDoc(doc(db, AUDITS_COL, id));
 }
 
 // ── Pairings (mentor-mentee assignments) ──────────────────────────────────────

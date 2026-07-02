@@ -75,6 +75,9 @@ import {
   saveLearningProposal,
   updateLearningProposalStatus,
   subscribeLearningProposals,
+  saveDraftAudits,
+  getActiveAudits,
+  activateAudit,
 } from './db.js';
 
 beforeEach(() => vi.clearAllMocks());
@@ -244,6 +247,59 @@ describe('subscribeRoster', () => {
     await flush(); // let the deferred onSnapshot attach
     result();
     expect(unsub).toHaveBeenCalledOnce();
+  });
+});
+
+// ── Audit bank (pre-generated Spot the Error transcripts) ─────────────────────
+
+describe('audit bank db helpers', () => {
+  it('saveDraftAudits batches drafts with status draft, source, and department', async () => {
+    const batchSet = vi.fn();
+    const batchCommit = vi.fn().mockResolvedValue();
+    mocks.writeBatch.mockReturnValue({ set: batchSet, commit: batchCommit });
+
+    const drafts = [{
+      domainId: 'routing',
+      transcript: [{ speaker: 'Agent', message: 'Hello' }],
+      errorIndex: 0,
+      hint: 'Look closely',
+      modelExplanation: 'Wrong queue.',
+    }];
+    const ids = await saveDraftAudits(drafts, 'gemini', 'obgyn');
+
+    expect(mocks.collection).toHaveBeenCalledWith(mocks.db, 'audits');
+    expect(batchSet).toHaveBeenCalledOnce();
+    const [, data] = batchSet.mock.calls[0];
+    expect(data).toMatchObject({
+      domainId: 'routing',
+      errorIndex: 0,
+      status: 'draft',
+      source: 'gemini',
+      department: 'obgyn',
+    });
+    expect(data.createdAt).toBe('__ts__');
+    expect(batchCommit).toHaveBeenCalledOnce();
+    expect(ids).toHaveLength(1);
+  });
+
+  it('getActiveAudits filters to the requested department (legacy docs = pediatrics)', async () => {
+    mocks.getDocs.mockResolvedValue({
+      docs: [
+        { id: 'a1', data: () => ({ domainId: 'intake', department: 'obgyn' }) },
+        { id: 'a2', data: () => ({ domainId: 'routing', department: 'pediatrics' }) },
+        { id: 'a3', data: () => ({ domainId: 'boundaries' }) }, // legacy, no department
+      ],
+    });
+    const audits = await getActiveAudits('pediatrics');
+    expect(audits.map((a) => a.id)).toEqual(['a2', 'a3']);
+  });
+
+  it('activateAudit sets status active on the audits doc', async () => {
+    mocks.updateDoc.mockResolvedValue();
+    await activateAudit('audit-1');
+    expect(mocks.doc).toHaveBeenCalledWith(mocks.db, 'audits', 'audit-1');
+    const [, data] = mocks.updateDoc.mock.calls[0];
+    expect(data).toEqual({ status: 'active' });
   });
 });
 

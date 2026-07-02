@@ -4935,3 +4935,100 @@ textarea:focus-visible {
   .sops__spinner, .sop-hero__pulse { animation: none; }
   .sops__dropzone.is-dragging { transform: none; }
 }
+
+/* ── Audit bank (pre-generated Spot the Error transcripts) ─────────────────── */
+
+.auditbank__coverage {
+  list-style: none;
+  margin: 0.9rem 0 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  gap: 0.6rem;
+}
+.auditbank__coverage-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.6rem;
+  padding: 0.55rem 0.8rem;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+  font-size: 0.86rem;
+}
+.auditbank__coverage-item.is-empty {
+  border-style: dashed;
+  color: var(--ink-faint);
+}
+.auditbank__coverage-count {
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+.auditbank__coverage-item.is-empty .auditbank__coverage-count {
+  color: var(--level-learning);
+}
+
+.auditbank__transcript {
+  margin: 0.8rem 0;
+  padding: 0.9rem 1rem;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+  display: flex;
+  flex-direction: column;
+  gap: 0.55rem;
+}
+.auditbank__turn {
+  margin: 0;
+  font-size: 0.88rem;
+  line-height: 1.55;
+}
+.auditbank__turn--patient { color: var(--ink-soft); }
+.auditbank__turn.is-error {
+  background: color-mix(in srgb, var(--level-learning) 9%, transparent);
+  border-left: 3px solid var(--level-learning);
+  padding: 0.4rem 0.6rem;
+  border-radius: var(--radius-sm);
+}
+.auditbank__error-flag {
+  display: inline-block;
+  margin-left: 0.5rem;
+  padding: 0.1rem 0.5rem;
+  border-radius: 999px;
+  background: var(--level-learning);
+  color: #fff;
+  font-size: 0.68rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  vertical-align: middle;
+}
+
+/* ── My history (navigator attempt history) ────────────────────────────────── */
+
+.history__list {
+  list-style: none;
+  margin: 0.9rem 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.8rem;
+}
+.history__item {
+  padding: 0.85rem 1rem;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+}
+.history__item-head {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+}
+.history__date {
+  font-weight: 600;
+  font-size: 0.9rem;
+}
+.history__chips { margin-top: 0.6rem; }

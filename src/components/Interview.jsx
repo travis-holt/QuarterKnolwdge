@@ -33,9 +33,11 @@ export default function Interview({ navigatorId, name, department = 'pediatrics'
   const [busy, setBusy]             = useState(false);
   const [error, setError]           = useState('');
   const [grade, setGrade]           = useState(null); // { score, summary, strengths[], improvements[] }
+  const [gradeBusy, setGradeBusy]   = useState(false); // retrying a failed grade from the reviewed screen
 
   const bottomRef = useRef(null);
   const inputRef  = useRef(null);
+  const docIdRef  = useRef(null);   // saved interview doc, kept so a grade retry can write back
   const domain    = DOMAINS.find((d) => d.id === domainId);
 
   useEffect(() => {
@@ -103,17 +105,9 @@ export default function Interview({ navigatorId, name, department = 'pediatrics'
 
   // ── Save + grade ─────────────────────────────────────────────────────────────
 
-  const saveAndGrade = async () => {
-    setPhase('saving');
-    let docId = null;
-    try {
-      docId = await saveInterview(navigatorId, name, domainId, scenario, callerName, transcript);
-    } catch (err) {
-      console.error('Failed to save interview:', err);
-      // Continue to grading even if save failed — navigator still sees feedback.
-    }
-
-    setPhase('grading');
+  // Grades the transcript; used both on save and when retrying from the reviewed
+  // screen (grading can fail transiently when the Gemini keys are rate-limited).
+  const runGrading = async () => {
     try {
       const data = await apiFetch(
         '/api/grade-interview',
@@ -123,18 +117,36 @@ export default function Interview({ navigatorId, name, department = 'pediatrics'
       if (data.grade) {
         setGrade(data.grade);
         // Write grade back to the Firestore doc so supervisors can see it too.
-        if (docId) {
-          updateInterviewGrade(docId, data.grade).catch((err) =>
+        if (docIdRef.current) {
+          updateInterviewGrade(docIdRef.current, data.grade).catch((err) =>
             console.error('Failed to save grade to Firestore:', err)
           );
         }
       }
     } catch (err) {
-      // Silent — show the reviewed screen with whatever grade we have (null = failed).
       console.error('Failed to grade interview:', err);
     }
+  };
 
+  const saveAndGrade = async () => {
+    setPhase('saving');
+    docIdRef.current = null;
+    try {
+      docIdRef.current = await saveInterview(navigatorId, name, domainId, scenario, callerName, transcript);
+    } catch (err) {
+      console.error('Failed to save interview:', err);
+      // Continue to grading even if save failed — navigator still sees feedback.
+    }
+
+    setPhase('grading');
+    await runGrading();
     setPhase('reviewed');
+  };
+
+  const retryGrading = async () => {
+    setGradeBusy(true);
+    await runGrading();
+    setGradeBusy(false);
   };
 
   // ── Discard ──────────────────────────────────────────────────────────────────
@@ -154,6 +166,8 @@ export default function Interview({ navigatorId, name, department = 'pediatrics'
     setInput('');
     setError('');
     setGrade(null);
+    setGradeBusy(false);
+    docIdRef.current = null;
   };
 
   // ─────────────────────────────────────────────────────────────────────────────
@@ -199,9 +213,21 @@ export default function Interview({ navigatorId, name, department = 'pediatrics'
               <p className="interview__score-summary">{grade.summary}</p>
             )}
             {!grade && (
-              <p className="readoff__sub" style={{ marginTop: '0.75rem' }}>
-                Grading unavailable — the session was saved but couldn&rsquo;t be reviewed right now.
-              </p>
+              <>
+                <p className="readoff__sub" style={{ marginTop: '0.75rem' }}>
+                  Your session was saved, but the review couldn&rsquo;t be generated — the reviewer
+                  may be busy right now.
+                </p>
+                <button
+                  className="btn btn--ghost btn--sm"
+                  style={{ marginTop: '0.75rem' }}
+                  disabled={gradeBusy}
+                  onClick={retryGrading}
+                  type="button"
+                >
+                  {gradeBusy ? 'Reviewing…' : 'Try the review again'}
+                </button>
+              </>
             )}
           </div>
 

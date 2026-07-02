@@ -50,6 +50,10 @@ service cloud.firestore {
     match /questions/{docId} {
       allow read, write: if signedIn();
     }
+    // Supervisor-managed "Spot the Error" audit transcript bank.
+    match /audits/{docId} {
+      allow read, write: if signedIn();
+    }
     // "Spot the Error" exercise completions.
     match /completions/{docId} {
       allow read, write: if signedIn();

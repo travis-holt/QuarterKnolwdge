@@ -47,3 +47,31 @@ export function fetchErrorMessage(err, timeoutMessage, fallbackMessage) {
   if (err.name === 'AbortError') return timeoutMessage;
   return err.message || fallbackMessage;
 }
+
+/**
+ * Run an async worker over a list with BOUNDED concurrency (rate-limit friendly
+ * fan-out for the Gemini endpoints). Returns Promise.allSettled-shaped results,
+ * in input order. Used by SpotTheError (H3) and the supervisor audit-bank
+ * generation.
+ * @param {any[]} items
+ * @param {number} limit    max workers in flight
+ * @param {(item:any, i:number) => Promise<any>} worker
+ * @returns {Promise<{status:'fulfilled',value:any}|{status:'rejected',reason:any}[]>}
+ */
+export async function runPooled(items, limit, worker) {
+  const results = new Array(items.length);
+  let next = 0;
+  const runner = async () => {
+    while (true) {
+      const i = next++;
+      if (i >= items.length) return;
+      try {
+        results[i] = { status: 'fulfilled', value: await worker(items[i], i) };
+      } catch (reason) {
+        results[i] = { status: 'rejected', reason };
+      }
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, runner));
+  return results;
+}

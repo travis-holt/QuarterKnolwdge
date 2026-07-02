@@ -2,7 +2,9 @@ import { useState, useEffect } from 'react';
 import { DOMAINS, domainName } from '../data/questions.js';
 import { LEVELS, SPOT_ASSESSMENT_SIZE } from '../data/config.js';
 import { scoreSpotTheError, scoreSpotTheErrorByDomain, scoreToLevel } from '../lib/scoring.js';
-import { apiFetch } from '../lib/apiFetch.js';
+import { apiFetch, runPooled } from '../lib/apiFetch.js';
+import { getActiveAudits } from '../lib/db.js';
+import { isFirebaseConfigured } from '../lib/firebase.js';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // SpotTheError — a scored QA-audit ASSESSMENT.
@@ -27,28 +29,20 @@ import { apiFetch } from '../lib/apiFetch.js';
 
 const GENERATE_TIMEOUT_MS = 25_000;
 
-// H3: full-profile mode generates one item PER DOMAIN. Firing all 6 Gemini calls
-// at once spikes the rate limit — and with many navigators doing this together it
-// exhausts the shared key rotation fast. Cap how many generate-audit calls are
-// in flight per assessment. Returns Promise.allSettled-shaped results, in order.
+// H3: live generation runs with BOUNDED concurrency (runPooled from apiFetch) —
+// firing 5-6 Gemini calls at once spikes the rate limit, and with many
+// navigators assessing together it exhausts the shared key rotation fast.
 const SPOT_GEN_CONCURRENCY = 2;
 
-async function runPooled(items, limit, worker) {
-  const results = new Array(items.length);
-  let next = 0;
-  const runner = async () => {
-    while (true) {
-      const i = next++;
-      if (i >= items.length) return;
-      try {
-        results[i] = { status: 'fulfilled', value: await worker(items[i], i) };
-      } catch (reason) {
-        results[i] = { status: 'rejected', reason };
-      }
-    }
-  };
-  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, runner));
-  return results;
+// Shuffle (Fisher-Yates, copy) — used to draw random bank items per assessment
+// so retakes don't replay the same transcripts in the same order.
+function shuffled(arr) {
+  const a = [...arr];
+  for (let i = a.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [a[i], a[j]] = [a[j], a[i]];
+  }
+  return a;
 }
 
 export default function SpotTheError({
@@ -90,20 +84,56 @@ export default function SpotTheError({
     setPicks([]);
     setCurrent(0);
     try {
-      // Fire the item generations with BOUNDED concurrency (H3); keep whatever
-      // succeeds so a single rate-limited call doesn't sink the whole assessment.
-      const results = await runPooled(plan, SPOT_GEN_CONCURRENCY, (domainId) =>
-        apiFetch('/api/generate-audit', { domain: domainId, department }, GENERATE_TIMEOUT_MS)
-          .then((data) => ({ domainId, data }))
-      );
-      const got = results
-        .filter((r) => r.status === 'fulfilled' && Array.isArray(r.value?.data?.transcript))
-        .map((r) => ({
-          domainId: r.value.domainId,
-          transcript: r.value.data.transcript,
-          errorIndex: r.value.data.errorIndex,
-          modelExplanation: r.value.data.modelExplanation,
-        }));
+      // 1) Draw from the pre-generated, supervisor-curated audit bank first —
+      //    instant, no Gemini call, and only reviewed transcripts are served.
+      //    Random order per assessment so retakes see different items.
+      const byDomain = {};
+      if (isFirebaseConfigured) {
+        try {
+          const bank = await getActiveAudits(department);
+          for (const a of shuffled(bank)) (byDomain[a.domainId] ??= []).push(a);
+        } catch (err) {
+          console.error('Audit bank read failed — falling back to live generation:', err);
+        }
+      }
+
+      const fromBank = [];
+      const toGenerate = [];
+      for (const domainId of plan) {
+        const pool = byDomain[domainId];
+        if (pool?.length) {
+          const a = pool.shift(); // each bank item used at most once per assessment
+          fromBank.push({
+            domainId,
+            transcript: a.transcript,
+            errorIndex: a.errorIndex,
+            modelExplanation: a.modelExplanation,
+          });
+        } else {
+          toGenerate.push(domainId);
+        }
+      }
+
+      // 2) Live-generate only the slots the bank couldn't fill, with BOUNDED
+      //    concurrency (H3); keep whatever succeeds so a single rate-limited
+      //    call doesn't sink the whole assessment.
+      let generated = [];
+      if (toGenerate.length > 0) {
+        const results = await runPooled(toGenerate, SPOT_GEN_CONCURRENCY, (domainId) =>
+          apiFetch('/api/generate-audit', { domain: domainId, department }, GENERATE_TIMEOUT_MS)
+            .then((data) => ({ domainId, data }))
+        );
+        generated = results
+          .filter((r) => r.status === 'fulfilled' && Array.isArray(r.value?.data?.transcript))
+          .map((r) => ({
+            domainId: r.value.domainId,
+            transcript: r.value.data.transcript,
+            errorIndex: r.value.data.errorIndex,
+            modelExplanation: r.value.data.modelExplanation,
+          }));
+      }
+
+      const got = [...fromBank, ...generated];
       if (got.length === 0) {
         setGenError('Could not generate the assessment — check your connection and try again.');
         return;

@@ -8,6 +8,7 @@ import NavigatorDetail from './NavigatorDetail.jsx';
 import Training from './Training.jsx';
 import TrainingModule from './TrainingModule.jsx';
 import QuestionBank from './QuestionBank.jsx';
+import AuditBank from './AuditBank.jsx';
 import SopManager from './SopManager.jsx';
 import ActionCenter from './ActionCenter.jsx';
 import Mentorship from './Mentorship.jsx';
@@ -29,6 +30,11 @@ import {
   archiveQuestion,
   deleteQuestion,
   updateQuestion,
+  subscribeAudits,
+  saveDraftAudits,
+  activateAudit,
+  archiveAudit,
+  deleteAudit,
   subscribeCompletions,
   subscribeResultHistory,
   subscribeInterviews,
@@ -50,7 +56,7 @@ import {
 import { isFirebaseConfigured } from '../lib/firebase.js';
 import { ALL_SEED_QUESTIONS } from '../data/questions.js';
 import { DEFAULT_DEPT, isAssessed as deptIsAssessed, departmentName } from '../data/departments.js';
-import { apiFetch } from '../lib/apiFetch.js';
+import { apiFetch, runPooled } from '../lib/apiFetch.js';
 
 // Views where the DeptBar appears. The Navigators tab is intentionally NOT here:
 // roster management is global (not department-scoped), so it always shows the
@@ -65,6 +71,7 @@ export default function SupervisorApp({ onSignOut }) {
   const [results, setResults] = useState([]);
   const [roster, setRoster] = useState([]);
   const [questions, setQuestions] = useState([]);
+  const [audits, setAudits] = useState([]); // pre-generated Spot the Error transcript bank
   const [completions, setCompletions] = useState([]);
   const [resultHistory, setResultHistory] = useState([]); // append-only history for trends
   const [allInterviews, setAllInterviews] = useState([]); // all interview sessions for action center
@@ -129,7 +136,13 @@ export default function SupervisorApp({ onSignOut }) {
       console.error('subscribeQuestions:', err);
       setSubscribeError(true);
     });
-    return () => unsub();
+    const unsubAudits = subscribeAudits(setAudits, (err) => {
+      console.error('subscribeAudits:', err);
+    });
+    return () => {
+      unsub();
+      unsubAudits();
+    };
   }, []);
 
   const isAssessedDept = deptIsAssessed(selectedDept);
@@ -220,6 +233,26 @@ export default function SupervisorApp({ onSignOut }) {
     if (!data.questions?.length) throw new Error('No scenarios returned.');
     await saveDraftQuestions(data.questions, 'gemini', selectedDept);
     return data.questions.length;
+  };
+
+  // Generate "Spot the Error" audit transcripts into the bank (F16 speed fix).
+  // /api/generate-audit produces one transcript per call, so fan out with
+  // bounded concurrency and keep whatever succeeds. Drafts only — the
+  // supervisor reviews and activates before anything is served.
+  const handleGenerateAudits = async ({ domainId, count }) => {
+    const plan = Array.from({ length: count }, () => domainId);
+    const results = await runPooled(plan, 2, (d) =>
+      apiFetch('/api/generate-audit', { domain: d, department: selectedDept }, 30_000)
+    );
+    const drafts = results
+      .filter((r) => r.status === 'fulfilled' && Array.isArray(r.value?.transcript))
+      .map((r) => ({ domainId, ...r.value }));
+    if (!drafts.length) {
+      const firstErr = results.find((r) => r.status === 'rejected')?.reason;
+      throw new Error(firstErr?.message || 'No transcripts returned.');
+    }
+    await saveDraftAudits(drafts, 'gemini', selectedDept);
+    return drafts.length;
   };
 
   // Decide whether a data view should be replaced by an empty state.
@@ -402,18 +435,28 @@ export default function SupervisorApp({ onSignOut }) {
             )}
 
             {view === 'questions' && (
-              <QuestionBank
-                questions={questions}
-                results={deptResults}
-                selectedDept={selectedDept}
-                onActivate={activateQuestion}
-                onArchive={archiveQuestion}
-                onDelete={deleteQuestion}
-                onSaveEdit={updateQuestion}
-                onGenerate={handleGenerate}
-                onSaveFeedback={handleSaveFeedback}
-                onSaveProposal={handleSaveLearningProposal}
-              />
+              <>
+                <QuestionBank
+                  questions={questions}
+                  results={deptResults}
+                  selectedDept={selectedDept}
+                  onActivate={activateQuestion}
+                  onArchive={archiveQuestion}
+                  onDelete={deleteQuestion}
+                  onSaveEdit={updateQuestion}
+                  onGenerate={handleGenerate}
+                  onSaveFeedback={handleSaveFeedback}
+                  onSaveProposal={handleSaveLearningProposal}
+                />
+                <AuditBank
+                  audits={audits}
+                  selectedDept={selectedDept}
+                  onGenerate={handleGenerateAudits}
+                  onActivate={activateAudit}
+                  onArchive={archiveAudit}
+                  onDelete={deleteAudit}
+                />
+              </>
             )}
           </>
         )}
