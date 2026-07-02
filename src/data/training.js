@@ -3,8 +3,9 @@
 // lesson content.
 //
 // MOCKUP CONTENT: lessons/takeaways below are stand-in material drawn from the
-// SOP so the preview feels real for the demo. Swap for the finished training
-// materials later — the `domainId` is the only field the assignment logic needs.
+// SOPs and the Patient Navigator role description so the preview feels real for
+// the demo. Swap for the finished training materials later — the `domainId` is
+// the only field the assignment logic needs.
 //
 // Shape:
 //   { domainId, title, blurb, estMinutes,
@@ -14,188 +15,180 @@
 
 export const TRAINING_MODULES = [
   {
-    domainId: 'sites',
-    title: 'Sites & Routing Essentials',
-    blurb: 'Hub vs. satellite logic, the BK prefix, and where labs can actually be drawn.',
-    estMinutes: 30,
+    domainId: 'intake',
+    title: 'Call Opening & Identification',
+    blurb: 'Department-adaptive lookup, family accounts, and confirming you have the right chart.',
+    estMinutes: 25,
     lessons: [
       {
-        title: 'The three sites at a glance',
+        title: 'Lookup depends on the department',
         points: [
-          'Forest Road (49 Forest Rd) is the strategic hub — complex and multidisciplinary cases concentrate here. Uses standard "Peds Lab" / "Ped Nurse" routing.',
-          'Baker Town (48 Baker Town Rd) — ALL nursing and lab services use the "BK" prefix (e.g. "BK Peds Lab").',
-          'Blooming Grove (1200 Route 208) — Monday–Thursday only, staffed exclusively by Dr. Dina Faiden.',
+          'Pediatrics: ask for the PARENT\'S phone number first — it pulls up the whole family, and parents often call for two or three children.',
+          'Adult departments (OB/GYN, Behavioral Health, Internal Medicine): the patient usually calls for themselves — ask date of birth first, then confirm first and last name.',
+          'Start of shift: check the department Teams group chats for workflow changes, approvals, provider updates, and schedule updates before going available on Intermedia.',
         ],
       },
       {
-        title: 'Routing without cross-site errors',
+        title: 'Right chart, every time',
         points: [
-          'The BK prefix at Baker Town is a deliberate safeguard — it keeps routing distinct and prevents cross-site diagnostic errors. Always apply it.',
-          'Blooming Grove has NO on-site lab. The "208-Lab" code is administrative only — specimens must be routed externally.',
-          'Send complex / multidisciplinary requests to Forest Road; keep routine satellite visits local.',
+          'Two patients with the same name? Verify DOB (and address/phone if needed) BEFORE opening or discussing either chart.',
+          'Multi-child calls: work each child\'s request in that child\'s own chart — never batch under one sibling.',
+          'Read the eligibility indicator on pull-up: Yellow "Y" means active coverage but Aizer is NOT the PCP.',
         ],
       },
     ],
     keyTakeaways: [
-      'Baker Town = BK prefix, every time.',
-      'Never book an on-site lab draw at Blooming Grove.',
-      'Forest Road is for complex care; satellites are for routine visits.',
+      'Peds = parent phone first; adult departments = DOB first, then name.',
+      'Never open or discuss a chart until identity is confirmed.',
+      'Each child\'s request lives in that child\'s chart.',
     ],
   },
   {
-    domainId: 'scheduling',
-    title: 'Scheduling & Visit Rules',
-    blurb: 'Well-visit timing, managed-care exceptions, newborn and tetanus protocols.',
-    estMinutes: 45,
+    domainId: 'classification',
+    title: 'Classifying the Call',
+    blurb: 'The core thinking skill — deciding which workflow a request actually belongs to.',
+    estMinutes: 35,
     lessons: [
       {
-        title: 'Well-visit timing',
+        title: 'The first question: what IS this call?',
         points: [
-          'Commercial / private insurance: follow the "one calendar year plus one day" rule to prevent claim denials.',
-          'Managed care (Fidelis) early physicals are permitted ONLY if it has been at least six months since the last PE AND the child has reached the next age milestone (e.g. turned 6).',
+          'Every request maps to a workflow: scheduling, clinical question, refill, lab result, form/record request, referral, complaint, urgent symptom, wrong department, or needs-approval.',
+          'One call can contain multiple requests — a refill AND a clinical question are two workflows, each handled on its own path.',
+          'Clinical questions are classified and ROUTED, never answered — even "is this normal?" is a clinical question.',
         ],
       },
       {
-        title: 'Newborn (6 weeks or less) protocols',
+        title: 'Urgent vs. routine vs. wrong department',
         points: [
-          'Book at the START of the provider\'s shift to minimise exposure to sick-visit traffic.',
-          'Request hospital discharge papers. For Good Samaritan (GS) births, record the hearing-screening lab ID in the reason for visit.',
-          'Every newborn visit must carry an "NPP" (New Patient Paperwork) or "MRC" alert.',
-        ],
-      },
-      {
-        title: 'Tetanus',
-        points: [
-          'Regardless of physical-exam status, every tetanus administration requires a provider check-up immediately prior to assess acute injury risk.',
-          'Never book a tetanus shot as a standalone administrative task.',
+          'Symptom red flags (e.g., decreased fetal movement, preterm contractions, third-trimester swelling) take priority over whatever else the caller wants — classify urgent first, handle the routine part after.',
+          'A positive home pregnancy test is a SCHEDULING call (confirmation-of-pregnancy visit), not a clinical question.',
+          'Wrong-department requests get routed to the owning department — never booked in your department\'s templates, never simply dropped.',
         ],
       },
     ],
     keyTakeaways: [
-      'Commercial physicals: one calendar year + one day.',
-      'Fidelis early PE needs BOTH 6 months AND next age milestone.',
-      'Newborns book at shift start with NPP/MRC alert; tetanus always needs a prior check-up.',
-    ],
-  },
-  {
-    domainId: 'providers',
-    title: 'Provider Matching & Booking Nuances',
-    blurb: 'Demographic comfort, booking rules, and specialist insurance constraints.',
-    estMinutes: 40,
-    lessons: [
-      {
-        title: 'Match the provider to the patient',
-        points: [
-          'Several providers have demographic comfort restrictions (teenage males / teenage females). Check before booking an adolescent.',
-          'Dr. Adam Polinger is comfortable with teenage females; several others are not.',
-          'Stitches are handled by Dr. Chana Heintz only.',
-          'Language proficiencies (Spanish / Yiddish / Hebrew) are matched to the community — use them to place the patient well.',
-        ],
-      },
-      {
-        title: 'Booking nuances & specialists',
-        points: [
-          'Booking rules differ by provider (double/triple booking, sibling double-booking, block lengths) — follow each provider\'s template.',
-          'Dr. Cooper (Cardiology) and Dr. Gottlieb (Rheumatology) do NOT accept United Healthcare.',
-          'Dr. Welter (Pulmonology) rotates the 2nd-last Tuesday of each month.',
-          'Food challenges (Dr. Hochfelder / Siegel) take the first slot of the shift or post-lunch.',
-        ],
-      },
-    ],
-    keyTakeaways: [
-      'Always check teen-male / teen-female comfort before booking adolescents.',
-      'Stitches → Dr. Heintz only.',
-      'Cooper & Gottlieb take no UHC; Welter is 2nd-last Tuesday.',
+      'Classify before you act — the workflow decides everything downstream.',
+      'Multiple requests = multiple workflows in the same call.',
+      'Urgent symptoms outrank routine requests, every time.',
     ],
   },
   {
     domainId: 'routing',
-    title: 'Call Routing & Referral Pathways',
-    blurb: 'Who handles what — and what must never be answered on the phone.',
-    estMinutes: 35,
+    title: 'Routing & Escalation Pathways',
+    blurb: 'TE destinations, department sub-routing, soft transfers, and urgent escalation.',
+    estMinutes: 40,
     lessons: [
       {
-        title: 'What you must never do on the phone',
+        title: 'The TE routing table',
         points: [
-          'Administrative staff must NEVER give medical advice or test results by phone.',
-          'Route any clinical inquiry to the "Q-Pediatrics Nursing Inquiries" queue.',
-          'Labs / imaging follow an "Order First" policy — verify orders in the Patient Hub before directing the call.',
+          'Pediatrics: medical questions, lab results, and refills → PEDS Encounters queue. Referrals → Anisa Azeez.',
+          'OB/GYN: pregnant patient / pregnancy-related issue → OB Portal. Non-pregnant GYN visit issue → PSS OB. Established MFM patient → the MFM coordinator.',
+          'Behavioral Health: questions, refills, medication issues, and clinical concerns → assign the TE directly to the provider.',
+          'Controlled-substance refills (Peds) → Sally Carilli (Ext. 1934).',
         ],
       },
       {
-        title: 'Who handles what',
+        title: 'Live transfers and urgent paths',
         points: [
-          'Immunization & lab requests → Marisa Kraft or Jeanette Alcantara. Soft-transfer if they\'re available; otherwise send a Telephone Encounter (TE).',
-          'Controlled-substance refills & mental-health follow-ups → Sally Carilli (Ext. 1934).',
-          'Referrals & 2020 Transportation forms → Anisa Azeez (Ext. 1911).',
-          'Pediatric specialty scheduling → Haley Newton (Ext. 1909).',
+          'When the owner is available, soft-transfer the live call instead of sending a TE (e.g., immunizations → Marisa Kraft or Jeanette Alcantara).',
+          'Refills where the patient is completely out are marked HIGH PRIORITY.',
+          'Obstetric red flags (decreased fetal movement at/after viability, regular contractions before 37 weeks) → Labor & Delivery immediately — never a routine appointment or a wait-and-see TE.',
         ],
       },
     ],
     keyTakeaways: [
-      'No medical advice or results by phone — route to the nursing queue.',
-      'Immunization/lab → Marisa or Jeanette (soft transfer, else TE).',
-      'Controlled substances → Sally; referrals → Anisa; specialty → Haley.',
+      'Pregnant → OB Portal; non-pregnant GYN issue → PSS OB; MFM → the MFM coordinator.',
+      'Owner available? Soft-transfer. Otherwise the TE goes to the owning queue or person.',
+      'Completely out of medication = high-priority flag.',
     ],
   },
   {
-    domainId: 'insurance',
-    title: 'Insurance & Eligibility Basics',
-    blurb: 'Eligibility indicators, plan-specific rules, and self-pay handling.',
+    domainId: 'scheduling',
+    title: 'Scheduling & Appointment Rules',
+    blurb: 'Appointment types, timing rules, provider templates, and approval requirements.',
     estMinutes: 45,
     lessons: [
       {
-        title: 'Reading the eligibility indicator',
+        title: 'Timing rules that protect the claim',
         points: [
-          'Green (Y): eligible.',
-          'Yellow (Y): active, but Aizer is NOT the primary care provider (PCP).',
-          'Black (?): pending verification.',
-          'Red (X/!): inactive or a data error.',
+          'Commercial/private physicals: "one calendar year plus one day" — never earlier.',
+          'Managed care (Fidelis) early physicals need BOTH: at least six months since the last PE AND a new age milestone.',
+          'OB windows: first prenatal at 8–12 weeks, GCT at 24–29 weeks, GBS at 36–37 weeks.',
         ],
       },
       {
-        title: 'Plan-specific rules',
+        title: 'Types, templates, and approvals',
         points: [
-          'United Healthcare commercial plans require online prior authorization for specialists.',
-          'Healthfirst is accepted ONLY if the patient has active Medicaid as a secondary payer.',
-          'For all Medicaid / Managed Care, set "Relationship to Insured" to Self (1).',
-          'Self-pay: sliding fee scale from $25 (income-based, 1-year validity) or a flat $100.',
+          'Same-day sick visits book ONLY on the day itself. Office visits can be pre-booked — but only with a documented provider follow-up.',
+          'Newborns: start-of-shift slot, hospital discharge papers, and the NPP/MRC alert. Tetanus always needs a provider check-up immediately prior.',
+          'Credentialed procedures (IUD insertion, anatomy scans) book only with authorized providers — verify before offering a slot.',
+          'Many OB/GYN and Behavioral Health visit types are "only if approved" — check the approval requirement before booking, and never book what you can\'t approve.',
         ],
       },
     ],
     keyTakeaways: [
-      'Yellow Y = active but not our PCP.',
-      'Healthfirst needs secondary Medicaid; Medicaid relationship = Self (1).',
-      'Self-pay is $25 sliding or $100 flat.',
+      'Know the timing window before offering a date.',
+      'Same-day sick = same day only; office visits need a documented follow-up.',
+      'Credentialed or approval-gated visit types are never booked on availability alone.',
     ],
   },
   {
-    domainId: 'registration',
-    title: 'Registration & Confirmation Workflow',
-    blurb: 'Account search, arrival guidance, confirmation status, forms and OTC rules.',
+    domainId: 'boundaries',
+    title: 'Scope & Privacy Discipline',
+    blurb: 'What navigators never do — clinical advice, results, promises, and unauthorized disclosure.',
     estMinutes: 30,
     lessons: [
       {
-        title: 'Register cleanly',
+        title: 'The scope line',
         points: [
-          'Always search by phone number first to surface linked family accounts.',
-          'Advise every patient to arrive BEFORE their appointment time, and document it in "General Notes".',
+          'Never interpret lab results, give medical advice, judge clinical urgency beyond the routing rules, or decide a symptom is "normal."',
+          'Never approve exceptions or promise a provider will approve something — offer the legitimate path instead (provider review, earliest compliant date).',
+          'Results requests become TEs to the clinical queue; the answer always comes from clinical staff.',
         ],
       },
       {
-        title: 'Confirmation colours & forms',
+        title: 'Privacy under pressure',
         points: [
-          'White: no confirmation. Blue/Green: automated or manual message left. Purple with a "V": staff-confirmed.',
-          'The shift from automated attempts to a manual "V" confirmation is the key lever for reducing no-shows.',
-          'OTC meds (Tylenol / Motrin) are insurance-covered only if dispensed before checkout; post-checkout, the patient must purchase them.',
-          'School forms are faxed only if the PE is up to date (UTD), and external school inquiries require the institution on the patient\'s HIPAA authorization.',
+          'Information goes only to callers AUTHORIZED on the account — family relationship alone (spouse, grandparent) authorizes nothing.',
+          'Behavioral Health is strictest: you may take information from many callers, but never confirm someone is a BH patient or share care details with an unauthorized caller.',
+          'Never give a provider\'s cell number to patients or family — take the message and contact the provider internally.',
+          'Decline courteously and leave a path forward: take a message, or have the authorized contact call.',
         ],
       },
     ],
     keyTakeaways: [
-      'Search by phone number first.',
-      'Purple "V" = staff-confirmed (the no-show lever).',
-      'OTC only before checkout; school forms only if PE is UTD.',
+      'No advice, no results, no promises — route instead.',
+      'Authorization on the account, not family relationship, decides disclosure.',
+      'Protect privacy with courtesy: always offer a legitimate next step.',
+    ],
+  },
+  {
+    domainId: 'documentation',
+    title: 'Documentation & Follow-through',
+    blurb: 'TEs that clinicians can act on, clean reason fields, and correct system entry.',
+    estMinutes: 30,
+    lessons: [
+      {
+        title: 'A TE someone can act on',
+        points: [
+          'Refill TE: medication name + dosage, prescribing provider (from the e-prescription log), preferred pharmacy, callback number — and the high-priority flag if the patient is out.',
+          'OB clinical-question TE: gestational age or due date, the question/symptoms with onset, callback number, correct queue.',
+          'The correct DESTINATION is part of the documentation — a perfect TE in the wrong queue helps no one.',
+        ],
+      },
+      {
+        title: 'Reason fields and entry conventions',
+        points: [
+          'Same-day sick visits: write ALL reported symptoms in the reason section (e.g., "FEVER + COUGH since last night").',
+          'Site conventions matter: Baker Town services use the "BK" prefix so routing stays distinct.',
+          'General Notes is not a work queue — anything needing clinical follow-up goes in a TE, not a note.',
+        ],
+      },
+    ],
+    keyTakeaways: [
+      'Complete TE = no second round-trip: what, who, where, callback, priority.',
+      'All symptoms in the reason field, not in notes.',
+      'The right queue is part of good documentation.',
     ],
   },
 ];

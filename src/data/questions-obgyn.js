@@ -1,11 +1,15 @@
 // ─────────────────────────────────────────────────────────────────────────────
 // OB/GYN SEED QUESTIONS
 //
-// Derived from the Aizer Health OB/GYN Department SOP. All scenarios are
-// SANITIZED: faithful to the workflow but using generic role labels only
-// ("the MFM nurse", "the sonography/MFM director", "the scheduling lead").
-// NO real provider names, phone numbers, or external portal credentials appear
-// anywhere in this file.
+// Derived from the Aizer Health OB/GYN Department SOP plus the current Patient
+// Navigator role description (2026-07 floor rules: DOB-first lookup for adult
+// departments; TE routing — pregnant/pregnancy-related → OB Portal, non-pregnant
+// GYN visit issue → PSS OB, established MFM patient → the MFM coordinator).
+//
+// All scenarios are SANITIZED: faithful to the workflow but using generic role
+// labels only ("the MFM nurse", "the MFM coordinator", "the sonography/MFM
+// director"). NO real provider names, phone numbers, or external portal
+// credentials appear anywhere in this file.
 //
 // These seed the Firestore `questions` collection on first run (alongside the
 // Pediatrics seed) and serve as the offline fallback for the OB/GYN check.
@@ -15,12 +19,96 @@
 
 export const SEED_QUESTIONS_OBGYN = [
 
-  // ── Sites & Routing ────────────────────────────────────────────────────────
+  // ── Call Opening & Identification ──────────────────────────────────────────
 
   {
-    id: 'q-obgyn-sites-1',
+    id: 'q-obgyn-int-1',
     department: 'obgyn',
-    domainId: 'sites',
+    domainId: 'intake',
+    competencies: ['sopApplication', 'sopKnowledge'],
+    scenario:
+      'A woman calls the OB/GYN line about her own care. What do you ask for first to pull up her chart?',
+    options: [
+      { id: 'a', text: 'Her phone number first, to pull up linked family accounts.', points: 30,
+        rationale: 'Phone-first is the Pediatrics flow (parents calling for children). Adult patients call for themselves — DOB-first is the standard.' },
+      { id: 'b', text: 'Her date of birth first, then confirm her first and last name.', points: 100,
+        rationale: 'Correct: in adult departments the patient is usually the caller, so DOB-first plus name confirmation is the standard verification flow.' },
+      { id: 'c', text: 'Her last name only.', points: 15,
+        rationale: 'Name-only search risks pulling the wrong patient — common and changed names collide.' },
+      { id: 'd', text: 'Her insurance member ID.', points: 10,
+        rationale: 'Insurance ID is not the chart lookup key and delays identification.' },
+    ],
+    correctOptionId: 'b',
+  },
+
+  {
+    id: 'q-obgyn-int-2',
+    department: 'obgyn',
+    domainId: 'intake',
+    competencies: ['riskManagement', 'compliance', 'criticalThinking'],
+    scenario:
+      'Your search returns two patients with the same first and last name. What do you do before discussing anything about the account?',
+    options: [
+      { id: 'a', text: 'Open the chart with the most recent activity — that is almost always the caller.', points: 5,
+        rationale: '"Almost always" is how wrong-chart errors happen; recency proves nothing about identity.' },
+      { id: 'b', text: 'Verify date of birth (and address or phone if still ambiguous) to confirm the exact patient before opening or discussing either chart.', points: 100,
+        rationale: 'Correct: identity must be confirmed with a second identifier before any chart is opened or any detail discussed — a wrong-chart disclosure is a privacy breach.' },
+      { id: 'c', text: 'Read both records\' details to the caller and ask which one is hers.', points: 0,
+        rationale: 'Reading another patient\'s details to the caller IS the privacy breach you are trying to avoid.' },
+      { id: 'd', text: 'Proceed with the first result and correct the record later if it turns out wrong.', points: 0,
+        rationale: 'Working in the wrong chart contaminates two patients\' records and may disclose protected information.' },
+    ],
+    correctOptionId: 'b',
+  },
+
+  // ── Call Classification ────────────────────────────────────────────────────
+
+  {
+    id: 'q-obgyn-cls-1',
+    department: 'obgyn',
+    domainId: 'classification',
+    competencies: ['criticalThinking', 'riskManagement', 'escalation'],
+    scenario:
+      'A patient at 28 weeks calls about new swelling in her hands and face since yesterday — and also mentions wanting to move next week\'s appointment. How do you classify and sequence this call?',
+    options: [
+      { id: 'a', text: 'A scheduling call — move the appointment, and suggest she mention the swelling at the visit.', points: 0,
+        rationale: 'New facial swelling in the third trimester is a clinical red flag; treating it as a footnote to a reschedule delays evaluation.' },
+      { id: 'b', text: 'The symptom takes priority: route it for immediate clinical assessment per the pregnancy-symptom protocol, then handle the reschedule.', points: 100,
+        rationale: 'Correct: classify the clinical symptom first and route it urgently — the navigator never judges it, and never lets the routine request bury it. The scheduling piece is handled after.' },
+      { id: 'c', text: 'Reassure her that swelling is normal in pregnancy and process the reschedule.', points: 0,
+        rationale: 'Deciding a symptom is "normal" is clinical judgement — outside navigator scope regardless of how common the symptom is.' },
+      { id: 'd', text: 'Tell her to go straight to Labor and Delivery and end the call.', points: 40,
+        rationale: 'Erring urgent is safer than dismissing, but the SOP path is to route for clinical assessment — the clinical team, not the navigator, directs her to L&D if warranted. The reschedule is also dropped.' },
+    ],
+    correctOptionId: 'b',
+  },
+
+  {
+    id: 'q-obgyn-cls-2',
+    department: 'obgyn',
+    domainId: 'classification',
+    competencies: ['criticalThinking', 'sopApplication', 'customerHandling'],
+    scenario:
+      'A patient calls saying she just got a positive home pregnancy test and asks what she should do next. How do you classify this call?',
+    options: [
+      { id: 'a', text: 'A scheduling request — book a confirmation-of-pregnancy visit per the scheduling protocol.', points: 100,
+        rationale: 'Correct: a positive home test maps to the confirmation-of-pregnancy appointment type — a standard scheduling workflow, not a clinical question or an emergency.' },
+      { id: 'b', text: 'A clinical question — send a TE asking the clinical team what she should do.', points: 20,
+        rationale: 'No clinical input is needed to know the next step; the SOP defines it as a bookable visit type.' },
+      { id: 'c', text: 'Urgent — direct her to Labor and Delivery.', points: 5,
+        rationale: 'A positive test with no symptoms is routine, not an emergency.' },
+      { id: 'd', text: 'Advise her to retest in two weeks before booking anything.', points: 0,
+        rationale: 'Testing advice is clinical guidance — outside navigator scope.' },
+    ],
+    correctOptionId: 'a',
+  },
+
+  // ── Routing & Escalation ───────────────────────────────────────────────────
+
+  {
+    id: 'q-obgyn-rt-1',
+    department: 'obgyn',
+    domainId: 'routing',
     competencies: ['sopKnowledge', 'sopApplication'],
     scenario:
       'A new OB patient calls to schedule her first prenatal appointment. Which internal queue or system should you use to enter her booking request?',
@@ -38,9 +126,49 @@ export const SEED_QUESTIONS_OBGYN = [
   },
 
   {
-    id: 'q-obgyn-sites-2',
+    id: 'q-obgyn-rt-2',
     department: 'obgyn',
-    domainId: 'sites',
+    domainId: 'routing',
+    competencies: ['sopKnowledge', 'sopApplication', 'escalation'],
+    scenario:
+      'A pregnant patient has a pregnancy-related question that needs clinical follow-up. Where does the Telephone Encounter go?',
+    options: [
+      { id: 'a', text: 'To PSS OB.', points: 25,
+        rationale: 'PSS OB is the destination for NON-pregnant GYN visit-related issues — not pregnancy questions.' },
+      { id: 'b', text: 'Assign it to the OB Portal — the queue for pregnant patients and pregnancy-related issues.', points: 100,
+        rationale: 'Correct per current floor routing: pregnant patient / pregnancy-related issue → OB Portal; non-pregnant GYN visit issue → PSS OB; established MFM patient → the MFM coordinator.' },
+      { id: 'c', text: 'To the MFM coordinator.', points: 15,
+        rationale: 'The MFM coordinator handles established MFM (high-risk) patients only.' },
+      { id: 'd', text: 'Directly to the patient\'s OB provider.', points: 20,
+        rationale: 'Provider-direct TE assignment is the Behavioral Health model, not the OB/GYN one — OB pregnancy questions go to the OB Portal queue.' },
+    ],
+    correctOptionId: 'b',
+  },
+
+  {
+    id: 'q-obgyn-rt-3',
+    department: 'obgyn',
+    domainId: 'routing',
+    competencies: ['sopKnowledge', 'escalation'],
+    scenario:
+      'An established MFM (high-risk) patient calls with a question about her MFM care plan. Who gets the TE?',
+    options: [
+      { id: 'a', text: 'The OB Portal, like any pregnancy-related question.', points: 30,
+        rationale: 'Close — but established MFM patients have a dedicated owner; the general pregnancy queue adds a hop.' },
+      { id: 'b', text: 'The MFM coordinator only — established MFM patients route to their dedicated owner.', points: 100,
+        rationale: 'Correct per current floor routing: established MFM patient questions are assigned to the MFM coordinator, not the general queues.' },
+      { id: 'c', text: 'PSS OB.', points: 10,
+        rationale: 'PSS OB handles non-pregnant GYN visit issues — the wrong lane entirely for MFM care.' },
+      { id: 'd', text: 'Whichever nurse answers first.', points: 15,
+        rationale: 'MFM routing is owner-specific by design; ad-hoc assignment loses high-risk continuity.' },
+    ],
+    correctOptionId: 'b',
+  },
+
+  {
+    id: 'q-obgyn-rt-4',
+    department: 'obgyn',
+    domainId: 'routing',
     competencies: ['sopKnowledge', 'escalation', 'riskManagement'],
     scenario:
       'A patient at 24 weeks is calling because her OB wants her to see a maternal-fetal medicine (MFM) specialist due to a high-risk complication. How do you handle the handoff?',
@@ -57,10 +185,30 @@ export const SEED_QUESTIONS_OBGYN = [
     correctOptionId: 'b',
   },
 
-  // ── Scheduling & Visit Rules ────────────────────────────────────────────────
+  {
+    id: 'q-obgyn-rt-5',
+    department: 'obgyn',
+    domainId: 'routing',
+    competencies: ['escalation', 'riskManagement', 'sopApplication'],
+    scenario:
+      'A patient at 34 weeks calls saying she hasn\'t felt the baby move since last night — roughly 18 hours ago. She says she hasn\'t had any bleeding. What do you do?',
+    options: [
+      { id: 'a', text: 'Schedule her for a routine visit later this week so the provider can check.', points: 0,
+        rationale: 'Decreased fetal movement is a potential emergency — scheduling a routine visit delays critical monitoring.' },
+      { id: 'b', text: 'Direct her to go to Labor and Delivery immediately for monitoring; decreased fetal movement requires urgent evaluation.', points: 100,
+        rationale: 'Correct per SOP: decreased fetal movement at or after viability always requires immediate L&D triage — never schedule a routine appointment.' },
+      { id: 'c', text: 'Send a Telephone Encounter to the nursing team and tell her to call back if it doesn\'t improve.', points: 5,
+        rationale: 'A TE for decreased fetal movement is insufficient — this symptom requires immediate, not deferred, evaluation.' },
+      { id: 'd', text: 'Tell her to drink cold water or juice and do a kick count; call back if she counts fewer than 10 movements in an hour.', points: 10,
+        rationale: 'Giving clinical advice on the phone about kick counts is outside navigator scope, and the symptom\'s duration warrants immediate evaluation.' },
+    ],
+    correctOptionId: 'b',
+  },
+
+  // ── Scheduling & Appointment Rules ─────────────────────────────────────────
 
   {
-    id: 'q-obgyn-sched-1',
+    id: 'q-obgyn-sc-1',
     department: 'obgyn',
     domainId: 'scheduling',
     competencies: ['sopKnowledge', 'sopApplication', 'customerHandling'],
@@ -80,7 +228,7 @@ export const SEED_QUESTIONS_OBGYN = [
   },
 
   {
-    id: 'q-obgyn-sched-2',
+    id: 'q-obgyn-sc-2',
     department: 'obgyn',
     domainId: 'scheduling',
     competencies: ['sopKnowledge', 'compliance', 'sopApplication'],
@@ -100,7 +248,7 @@ export const SEED_QUESTIONS_OBGYN = [
   },
 
   {
-    id: 'q-obgyn-sched-3',
+    id: 'q-obgyn-sc-3',
     department: 'obgyn',
     domainId: 'scheduling',
     competencies: ['sopKnowledge', 'sopApplication', 'riskManagement'],
@@ -120,51 +268,9 @@ export const SEED_QUESTIONS_OBGYN = [
   },
 
   {
-    id: 'q-obgyn-sched-4',
+    id: 'q-obgyn-sc-4',
     department: 'obgyn',
     domainId: 'scheduling',
-    competencies: ['sopKnowledge', 'sopApplication'],
-    scenario:
-      'A patient calls at exactly 40 weeks saying her provider told her she needs a non-stress test (NST). When should this be scheduled and how frequently?',
-    options: [
-      { id: 'a', text: 'Once at 40 weeks, then only if the provider orders more.', points: 20,
-        rationale: 'Post-dates NST is typically twice weekly; a single test and waiting for orders underserves the patient.' },
-      { id: 'b', text: 'Starting at 40 weeks and repeated twice weekly (approximately every 3–4 days) until delivery.', points: 100,
-        rationale: 'Correct per SOP: NSTs begin at or after 40 weeks and are performed twice weekly to monitor fetal well-being in post-dates pregnancies.' },
-      { id: 'c', text: 'Weekly from 40 weeks until the patient delivers.', points: 40,
-        rationale: 'Weekly monitoring is less frequent than the SOP standard of twice weekly for post-dates NST.' },
-      { id: 'd', text: 'NSTs are only done when a patient reports decreased fetal movement, not routinely at 40 weeks.', points: 10,
-        rationale: 'Routine NST at 40 weeks is a standard prenatal protocol, not reserved only for decreased fetal movement.' },
-    ],
-    correctOptionId: 'b',
-  },
-
-  // ── Provider Matching ───────────────────────────────────────────────────────
-
-  {
-    id: 'q-obgyn-prov-1',
-    department: 'obgyn',
-    domainId: 'providers',
-    competencies: ['sopKnowledge', 'sopApplication', 'riskManagement'],
-    scenario:
-      'A patient at 19 weeks calls to schedule her anatomy scan (Level II ultrasound). Any OB provider has openings this week. Who can you book the anatomy scan with?',
-    options: [
-      { id: 'a', text: 'Any available OB provider, since all are trained in ultrasound.', points: 5,
-        rationale: 'The anatomy scan requires specialist credentials; it cannot be performed by all OB providers.' },
-      { id: 'b', text: 'Only the sonography/MFM director — they are the sole credentialed provider for anatomy scans.', points: 100,
-        rationale: 'Correct per SOP: the anatomy/Level II scan must be booked with the sonography/MFM director, who holds the required credentials for this procedure.' },
-      { id: 'c', text: 'The MFM nurse, who can perform the scan and add the clinical review.', points: 10,
-        rationale: 'The MFM nurse coordinates high-risk care but does not perform anatomy scans.' },
-      { id: 'd', text: 'The first available provider to avoid a long wait.', points: 5,
-        rationale: 'Booking an uncredentialed provider for a specialist scan creates a quality and liability issue.' },
-    ],
-    correctOptionId: 'b',
-  },
-
-  {
-    id: 'q-obgyn-prov-2',
-    department: 'obgyn',
-    domainId: 'providers',
     competencies: ['sopKnowledge', 'compliance', 'customerHandling'],
     scenario:
       'A patient calls requesting an IUD insertion. She asks if she can see any provider for this procedure. What do you tell her?',
@@ -181,32 +287,12 @@ export const SEED_QUESTIONS_OBGYN = [
     correctOptionId: 'b',
   },
 
-  // ── Call Routing & Triage ───────────────────────────────────────────────────
+  // ── Scope & Privacy ────────────────────────────────────────────────────────
 
   {
-    id: 'q-obgyn-route-1',
+    id: 'q-obgyn-bd-1',
     department: 'obgyn',
-    domainId: 'routing',
-    competencies: ['escalation', 'riskManagement', 'sopApplication'],
-    scenario:
-      'A patient at 34 weeks calls saying she hasn\'t felt the baby move since last night — roughly 18 hours ago. She says she hasn\'t had any bleeding. What do you do?',
-    options: [
-      { id: 'a', text: 'Schedule her for a routine visit later this week so the provider can check.', points: 0,
-        rationale: 'Decreased fetal movement is a potential emergency — scheduling a routine visit delays critical monitoring.' },
-      { id: 'b', text: 'Direct her to go to Labor and Delivery immediately for monitoring; decreased fetal movement requires urgent evaluation.', points: 100,
-        rationale: 'Correct per SOP: decreased fetal movement at or after viability always requires immediate L&D triage — never schedule a routine appointment.' },
-      { id: 'c', text: 'Send a Telephone Encounter to the nursing team and tell her to call back if it doesn\'t improve.', points: 5,
-        rationale: 'A TE for decreased fetal movement is insufficient — this symptom requires immediate, not deferred, evaluation.' },
-      { id: 'd', text: 'Tell her to drink cold water or juice and do a kick count; call back if she counts fewer than 10 movements in an hour.', points: 10,
-        rationale: 'Giving clinical advice on the phone about kick counts is outside navigator scope, and the symptom\'s duration warrants immediate evaluation.' },
-    ],
-    correctOptionId: 'b',
-  },
-
-  {
-    id: 'q-obgyn-route-2',
-    department: 'obgyn',
-    domainId: 'routing',
+    domainId: 'boundaries',
     competencies: ['compliance', 'escalation', 'sopKnowledge'],
     scenario:
       'A patient calls asking what her recent prenatal lab results mean. She says her provider hasn\'t called her yet and she is worried. What do you do?',
@@ -214,7 +300,7 @@ export const SEED_QUESTIONS_OBGYN = [
       { id: 'a', text: 'Read her the results and briefly explain what the values mean to ease her worry.', points: 0,
         rationale: 'Conveying or interpreting lab results is a clinical act — a strict SOP violation regardless of intent.' },
       { id: 'b', text: 'Let her know you cannot share results by phone; send a Telephone Encounter to the clinical team so a nurse or provider can call her back with the results.', points: 100,
-        rationale: 'Correct per SOP: lab results and clinical information are never communicated by the front line; the correct action is to create a TE for the nursing/clinical team to follow up.' },
+        rationale: 'Correct per SOP: lab results and clinical information are never communicated by the front line; the correct action is to create a TE for the clinical team to follow up.' },
       { id: 'c', text: 'Transfer her to the nursing lead and have the nurse read her the values.', points: 40,
         rationale: 'Better than reading the results yourself, but a TE is the correct pathway so the right clinical owner follows up with context.' },
       { id: 'd', text: 'Tell her the results are normal if they look normal in the system, otherwise say you are not sure.', points: 0,
@@ -224,106 +310,44 @@ export const SEED_QUESTIONS_OBGYN = [
   },
 
   {
-    id: 'q-obgyn-route-3',
+    id: 'q-obgyn-bd-2',
     department: 'obgyn',
-    domainId: 'routing',
-    competencies: ['escalation', 'riskManagement', 'sopApplication', 'criticalThinking'],
+    domainId: 'boundaries',
+    competencies: ['compliance', 'riskManagement', 'communication'],
     scenario:
-      'A patient at 32 weeks calls saying she is having regular contractions every 8–10 minutes. She says they have been going on for about an hour. What do you do?',
+      'A man calls saying he is a patient\'s husband and asks whether her pregnancy test came back positive. What do you do?',
     options: [
-      { id: 'a', text: 'Schedule her for a same-day provider visit to be evaluated in the office.', points: 10,
-        rationale: 'Regular contractions at 32 weeks (preterm) require hospital monitoring, not an office visit.' },
-      { id: 'b', text: 'Direct her to go to Labor and Delivery immediately — regular contractions before 37 weeks may indicate preterm labour and require hospital triage.', points: 100,
-        rationale: 'Correct per SOP: regular uterine contractions at less than 37 weeks are a preterm labour alert; L&D triage is the only appropriate pathway.' },
-      { id: 'c', text: 'Send a TE to the nursing team and advise her to rest and drink water; call back if they get stronger.', points: 10,
-        rationale: 'A TE and wait-and-see approach is not appropriate for potential preterm labour — immediate L&D evaluation is required.' },
-      { id: 'd', text: 'Ask her to time the contractions for another hour and call back if they continue.', points: 5,
-        rationale: 'Advising a patient in possible preterm labour to wait an additional hour risks a serious outcome.' },
+      { id: 'a', text: 'Confirm the result — he\'s her husband and it\'s good news.', points: 0,
+        rationale: 'Marital status does not authorize disclosure. Test results go to the patient, through the clinical pathway.' },
+      { id: 'b', text: 'Explain you cannot share any patient information with a third party without documented authorization, and offer to take a message for the patient.', points: 100,
+        rationale: 'Correct: no confirmation of results — or even of the patient relationship details — to an unauthorized caller. Taking a message keeps the interaction courteous without disclosing anything.' },
+      { id: 'c', text: 'Check whether he is listed as her spouse in the chart, and share the result if he is.', points: 15,
+        rationale: 'Being listed as a spouse is demographic data, not disclosure authorization — and results are not shared by phone by the front line regardless.' },
+      { id: 'd', text: 'Say "you didn\'t hear it from me, but congratulations."', points: 0,
+        rationale: 'A disclosure with a wink is still a disclosure — and this one is also a results communication.' },
     ],
     correctOptionId: 'b',
   },
 
-  // ── Insurance & Eligibility ─────────────────────────────────────────────────
+  // ── Documentation & Follow-through ─────────────────────────────────────────
 
   {
-    id: 'q-obgyn-ins-1',
+    id: 'q-obgyn-doc-1',
     department: 'obgyn',
-    domainId: 'insurance',
-    competencies: ['sopKnowledge', 'compliance', 'customerHandling'],
+    domainId: 'documentation',
+    competencies: ['communication', 'sopApplication', 'problemResolution'],
     scenario:
-      'A pregnant patient with Medicaid coverage asks how much her copay will be for today\'s prenatal visit. What do you tell her?',
+      'You are writing the TE for a pregnant patient\'s clinical question. Which documentation is complete?',
     options: [
-      { id: 'a', text: 'The standard copay — Medicaid copays apply to all visit types.', points: 15,
-        rationale: 'Medicaid copays for maternity/prenatal care are subject to exemptions; assuming a standard copay may overcharge the patient.' },
-      { id: 'b', text: 'Prenatal visits are typically covered without a copay under Medicaid maternity benefits; verify her specific plan, but she likely owes nothing today.', points: 100,
-        rationale: 'Correct per SOP: Medicaid maternity coverage generally waives copays for prenatal visits; always verify, but the patient should be informed of the likely exemption.' },
-      { id: 'c', text: 'She will need to pay the copay upfront; a Medicaid reimbursement can be requested later.', points: 5,
-        rationale: 'Collecting a copay that is waived under maternity Medicaid benefits creates a billing error and harms the patient.' },
-      { id: 'd', text: 'Medicaid does not cover OB visits — refer her to a Medicaid-contracted OB clinic.', points: 0,
-        rationale: 'Medicaid covers prenatal care; denying coverage and turning away a pregnant patient is both incorrect and harmful.' },
+      { id: 'a', text: 'Gestational age (or due date), the specific question or symptoms with onset, a callback number, assigned to the OB Portal.', points: 100,
+        rationale: 'Correct: gestational age changes what almost every OB question means clinically; symptoms with onset, callback details, and the correct queue let the nurse act on the first read.' },
+      { id: 'b', text: '"Patient has a question, please call back," assigned to the OB Portal.', points: 5,
+        rationale: 'Right queue, but no gestational age, no question, no callback details — the nurse must re-do the whole intake.' },
+      { id: 'c', text: 'The symptoms, assigned to the OB Portal — her chart has the rest.', points: 30,
+        rationale: 'Better, but omitting gestational age and callback details forces chart-digging and delays the response; symptom onset also matters.' },
+      { id: 'd', text: 'Write the details in General Notes on her chart instead of a TE.', points: 10,
+        rationale: 'General Notes is not a work queue — nothing routes to a clinician, so no one will follow up.' },
     ],
-    correctOptionId: 'b',
-  },
-
-  {
-    id: 'q-obgyn-ins-2',
-    department: 'obgyn',
-    domainId: 'insurance',
-    competencies: ['sopKnowledge', 'compliance', 'customerHandling', 'problemResolution'],
-    scenario:
-      'An uninsured patient calls asking about costs for a routine GYN visit. What self-pay options should you explain?',
-    options: [
-      { id: 'a', text: 'A flat $100 fee for all self-pay GYN visits, no exceptions.', points: 20,
-        rationale: 'A flat fee is one option but omits the income-based sliding scale available to lower-income patients.' },
-      { id: 'b', text: 'A sliding fee scale (income-based, starting at $25, valid for one year) or a flat self-pay rate; she can apply for the sliding scale if her income qualifies.', points: 100,
-        rationale: 'Correct per SOP: self-pay options include an income-verified sliding scale starting at $25 (1-year validity) and a flat self-pay rate for those who do not qualify or prefer not to apply.' },
-      { id: 'c', text: 'Full charge applies; self-pay patients should apply for insurance before booking.', points: 5,
-        rationale: 'Refusing to book until the patient has insurance and not mentioning self-pay options is against department policy.' },
-      { id: 'd', text: 'Refer her to the billing department and take no further action until they reply.', points: 15,
-        rationale: 'The navigator should be able to explain the self-pay options at a high level; deferring entirely to billing without answering leaves the patient without guidance.' },
-    ],
-    correctOptionId: 'b',
-  },
-
-  // ── Registration & Records ──────────────────────────────────────────────────
-
-  {
-    id: 'q-obgyn-reg-1',
-    department: 'obgyn',
-    domainId: 'registration',
-    competencies: ['sopApplication', 'compliance', 'customerHandling'],
-    scenario:
-      'A new OB patient who was previously seen at another practice calls to transfer her care at 16 weeks. What must you collect before scheduling her first appointment?',
-    options: [
-      { id: 'a', text: 'Just her insurance information and preferred appointment time.', points: 15,
-        rationale: 'Booking without prenatal records means the OB provider will have no baseline data for the visit.' },
-      { id: 'b', text: 'Her prior prenatal records (including dating ultrasound, lab results, and the prenatal flow sheet) must be received before or at the first appointment.', points: 100,
-        rationale: 'Correct per SOP: transfer patients must bring or send their prenatal records so the receiving provider has the full clinical history from the start of the pregnancy.' },
-      { id: 'c', text: 'A referral from the prior practice before she can be seen.', points: 20,
-        rationale: 'A referral is not a standard requirement for OB transfer patients; what is needed is the clinical records.' },
-      { id: 'd', text: 'Nothing extra — start from scratch; the provider will order new labs and an ultrasound at the visit.', points: 10,
-        rationale: 'Ordering a full repeat work-up when prior records exist is wasteful and potentially distressing for the patient; records should be obtained.' },
-    ],
-    correctOptionId: 'b',
-  },
-
-  {
-    id: 'q-obgyn-reg-2',
-    department: 'obgyn',
-    domainId: 'registration',
-    competencies: ['sopApplication', 'customerHandling', 'problemResolution', 'communication'],
-    scenario:
-      'A patient arrives 18 minutes late for her 30-minute prenatal appointment. The provider\'s next patient is already waiting. What is the standard approach?',
-    options: [
-      { id: 'a', text: 'Always see the patient regardless of how late she is — missing a prenatal visit is too risky.', points: 20,
-        rationale: 'While continuity of care matters, seeing an 18-minute late patient when the slot cannot accommodate it disrupts the provider\'s schedule and affects other patients.' },
-      { id: 'b', text: 'Apply the late arrival policy: if it is beyond the grace period (typically 15 minutes for a 30-minute slot), offer to reschedule; explain the policy courteously and offer the next available appointment.', points: 100,
-        rationale: 'Correct per SOP: beyond the grace period for the visit length, the standard is to reschedule, explain the policy kindly, and offer prompt rescheduling.' },
-      { id: 'c', text: 'Seat her immediately without telling the provider; let the provider decide.', points: 15,
-        rationale: 'Routing a significantly late patient into a full room without informing the provider creates a scheduling conflict and a poor patient experience.' },
-      { id: 'd', text: 'Charge a no-show fee and tell her she must call before next time.', points: 10,
-        rationale: 'An 18-minute late arrival is not a no-show; the fee and wording are incorrect.' },
-    ],
-    correctOptionId: 'b',
+    correctOptionId: 'a',
   },
 ];

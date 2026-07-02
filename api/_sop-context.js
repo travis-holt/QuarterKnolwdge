@@ -495,6 +495,62 @@ HOSPITAL SCHEDULE LIFECYCLE:
 `.trim();
 
 // ─────────────────────────────────────────────────────────────────────────────
+// PATIENT NAVIGATOR ROLE CONTEXT — shared across departments.
+//
+// Distilled from the current Patient Navigator role description (2026-07).
+// Prepended to every department SOP so AI-generated scenarios, coaching, and
+// roleplay reflect how the job actually works: cross-department call handlers
+// who classify, route, schedule, protect scope/privacy, and document — never
+// giving clinical advice. Names outside Pediatrics are role labels only
+// (sanitization: the repo is public).
+// ─────────────────────────────────────────────────────────────────────────────
+export const NAVIGATOR_ROLE_CONTEXT = `
+THE PATIENT NAVIGATOR ROLE (applies across departments)
+
+Patient Navigators are cross-department inbound call handlers (Pediatrics, OB/GYN,
+Behavioral Health, and later Internal Medicine). Their job is to guide each patient to the
+correct next step WITHOUT giving clinical advice. Main systems: Intermedia (inbound calls),
+eCW/ECW (charts, scheduling, e-prescription logs, Telephone Encounters), Microsoft Teams
+(department group chats — checked at shift start for workflow changes, approvals, provider
+and schedule updates).
+
+CALL OPENING — lookup adapts to the department:
+- Pediatrics: ask for the PARENT'S phone number first (pulls up the family; parents often
+  call for two or three children).
+- Adult departments (OB/GYN, Behavioral Health, Internal Medicine): the patient usually
+  calls for themselves — ask date of birth first, then confirm first and last name.
+
+CLASSIFICATION — the navigator's first decision on every call: is this scheduling, a
+clinical question, a refill, a lab result, a form/record request, a referral, a complaint,
+an urgent symptom, a wrong-department call, or something that needs approval? One call can
+contain several requests; each gets its own workflow.
+
+TELEPHONE ENCOUNTER ROUTING (current floor rules):
+- Pediatrics: medical questions / lab results / refills → PEDS Encounters queue;
+  referrals → Anisa Azeez.
+- OB/GYN: pregnant patient or pregnancy-related issue → OB Portal; non-pregnant GYN
+  visit-related issue → PSS OB; established MFM patient → the MFM coordinator only.
+- Behavioral Health: questions, refills, medication issues, clinical concerns → assign the
+  TE directly to the provider.
+
+REFILLS: ask for the prescription name and preferred pharmacy. Pediatrics: check the
+e-prescription log, copy the medication and prescribing provider, TE to the PEDS Encounters
+queue — HIGH PRIORITY if the patient is completely out. Behavioral Health additionally
+checks appointment continuity (last appointment, follow-up status) before processing.
+
+HARD BOUNDARIES — navigators never: interpret lab results, give medical advice, approve
+exceptions, independently judge clinical urgency beyond the routing rules, or promise that
+a provider will approve something. Privacy: information goes only to callers authorized on
+the account — family relationship alone authorizes nothing. Behavioral Health is strictest:
+never confirm that someone is a BH patient to an unauthorized caller, and never give a
+provider's cell number to patients or family (take the message; contact the provider
+internally).
+
+DOCUMENTATION: every TE needs the correct destination, a clear reason, the relevant clinical
+context (e.g., symptoms with onset; gestational age for OB), and callback details.
+`.trim();
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Map + accessor — used by all SOP-grounded API handlers
 // ─────────────────────────────────────────────────────────────────────────────
 export const SOP_CONTEXTS = {
@@ -502,7 +558,9 @@ export const SOP_CONTEXTS = {
   obgyn: SOP_CONTEXT_OBGYN,
 };
 
-/** Return the SOP grounding text for a department. Falls back to Pediatrics. */
+/** Return the SOP grounding text for a department (role context + department SOP).
+ *  Falls back to Pediatrics. */
 export function sopContextFor(deptId) {
-  return SOP_CONTEXTS[deptId] ?? SOP_CONTEXTS.pediatrics;
+  const dept = SOP_CONTEXTS[deptId] ?? SOP_CONTEXTS.pediatrics;
+  return `${NAVIGATOR_ROLE_CONTEXT}\n\n${dept}`;
 }

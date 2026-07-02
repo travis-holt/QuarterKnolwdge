@@ -10,7 +10,7 @@
 > [§8 Current System State](#8-current-system-state) and [§15 Current Priorities](#15-current-priorities)
 > accurate at all times.
 >
-> **Last updated:** 2026-07-01 (Playwright e2e harness added) ·
+> **Last updated:** 2026-07-02 (domain redesign: 6 job-aligned Patient Navigator domains) ·
 > **Doc maintainer:** Claude (AI agent) + repo owner. Assumptions are explicitly marked **[ASSUMPTION]**.
 
 ---
@@ -63,9 +63,11 @@
 
 > **Context / origin.** Built from a build brief (`ClaudeCode_Build_Brief.md`) plus a team SOP
 > (`Pediatrics_SOP_Updated.pdf` — the *Aizer Health Pediatric Department* operational report; the
-> original `SOP Guide.pdf` is superseded by this updated version). The SOP is the **source of
-> truth** for the knowledge domains and scenario questions. It is a pediatric contact-centre
-> operations document; the prototype derives 6 domains and 20 questions from it.
+> original `SOP Guide.pdf` is superseded by this updated version). The department SOPs are the
+> **source of truth for scenario questions**; since 2026-07-02 the **6 knowledge domains** come
+> from the Patient Navigator **role description** (`Patient-Navigators-Job.txt`, owner-provided):
+> cross-department call handlers who classify requests, route them, schedule accurately, hold
+> scope/privacy boundaries, and document cleanly.
 
 ---
 
@@ -223,9 +225,11 @@ training assignments.
   names, phone numbers, or credentials (repo is public).
 - **Status:** Complete (**Pediatrics** and **OB/GYN** live; Adult Medicine and Behavioural Health
   = mockup data).
-- **Notes:** The 6 domain IDs are shared across all departments; names/blurbs are now
-  department-neutral (e.g. "Scheduling & Visit Rules" covers both pediatric visit cadence and
-  OB gestational-age timing rules).
+- **Notes:** The 6 domain IDs are shared across all departments and are department-neutral.
+  Since the 2026-07-02 redesign they mirror the Patient Navigator job itself: `intake` (Call
+  Opening & Identification), `classification` (Call Classification), `routing` (Routing &
+  Escalation), `scheduling` (Scheduling & Appointment Rules), `boundaries` (Scope & Privacy),
+  `documentation` (Documentation & Follow-through).
 
 ### F11 — Deployment (Railway)
 - **Purpose:** Persistent public URL + a place to run the Gemini proxy (which GitHub Pages can't).
@@ -830,6 +834,107 @@ stateDiagram-v2
 ---
 
 ## 7. Development History
+
+### 2026-07-02 — Domain redesign: 6 job-aligned Patient Navigator domains (+ pilot data reset)
+- **Context:** The owner provided a comprehensive Patient Navigator role description (cross-
+  department inbound call handlers: classify → route → schedule → protect scope/privacy →
+  document; Peds/OB-GYN/BH/IM; Intermedia + eCW + Teams). The old 6 domains were pediatric-SOP-
+  shaped ("Sites & Routing", "Provider Matching", "Insurance & Eligibility") and didn't match the
+  job. Decisions taken with the owner: use 6 new domains (not the 7 capability areas verbatim —
+  "adaptability under complexity" belongs to the competency axis), reset pilot data, domains
+  before the SOP-manager feature.
+- **New DOMAINS** (`src/data/questions.js`): `intake` — Call Opening & Identification (dept-
+  adaptive lookup: parent-phone-first for Peds, DOB-first for adult depts, family accounts);
+  `classification` — Call Classification (scheduling vs clinical question vs refill vs lab vs
+  urgent vs wrong-department vs needs-approval); `routing` — Routing & Escalation (TE queues,
+  dept sub-routing, soft transfers, urgent paths); `scheduling` — Scheduling & Appointment Rules;
+  `boundaries` — Scope & Privacy (no advice/results/promises, caller authorization);
+  `documentation` — Documentation & Follow-through (TE destination + fields, reason fields,
+  entry conventions). Refills are deliberately NOT a domain — a refill call exercises
+  classification + routing + documentation, so it appears as scenario content across domains.
+- **Seed banks rewritten:** Pediatrics **21** questions (best old questions re-tagged/re-IDed,
+  new ones authored for intake/classification/boundaries/documentation from the role doc — e.g.
+  multi-child family calls, refill→PEDS Encounters queue with HIGH PRIORITY when out, no promised
+  approvals, complete refill-TE fields). OB/GYN **16** questions (sanitized as before — role
+  labels only) encoding the current floor routing table: pregnant/pregnancy-related → **OB
+  Portal**, non-pregnant GYN visit issue → **PSS OB**, established MFM patient → **the MFM
+  coordinator**; plus DOB-first lookup and third-party privacy scenarios. Total seed 32 → **37**.
+- **`src/data/training.js`:** all 6 modules rewritten for the new domains (still flagged mockup).
+- **`api/_sop-context.js`:** new exported `NAVIGATOR_ROLE_CONTEXT` (distilled from the role
+  description, sanitized: OB names → role labels; BH psych-nurse routing treated as outdated per
+  the doc — questions/refills go provider-direct). `sopContextFor(deptId)` now prepends it to the
+  department SOP, so all 7 AI features ground in the real role model + current routing rules.
+- **Pilot data reset** (owner-approved): new `scripts/reset-pilot-data.mjs` (web SDK +
+  `.env.local`, dry-run by default, `--delete` to execute, per-collection permission tolerance).
+  Deleted live `results` (5) and the old `questions` bank (23). `resultHistory`/`completions`/
+  `pairings` are **blocked by the old deployed rules** (unauthenticated access denied; anonymous
+  auth not yet enabled — the pending C1 owner action) — re-run the script after enabling
+  Anonymous auth + deploying rules to clear any stragglers. New bank auto-seeds from
+  `ALL_SEED_QUESTIONS` on next app load. Old `interviews` docs keep old domain tags (render as
+  raw ids — cosmetic; clear manually if desired).
+- **Also:** `stress/quota-probe.mjs` domain list updated. Tests derive from `DOMAINS`
+  dynamically, so no test-file changes were needed.
+- **Files affected:** `src/data/{questions,questions-obgyn,training}.js`, `api/_sop-context.js`,
+  `stress/quota-probe.mjs`, new `scripts/reset-pilot-data.mjs`, `CLAUDE.md`.
+- **Verification:** `npm test` → **228 passing** (8 files); `npm run build` → clean (known
+  large-bundle warning); `node --check api/_sop-context.js` → OK; reset script dry-run + delete
+  executed against the live project.
+- **Next (agreed with owner):** SOP manager (adder/builder/refiner) — Firestore `sops`
+  collection + supervisor editor UI + AI refine endpoint + DB-backed `sopContextFor`.
+- **Status:** Complete.
+
+### 2026-07-01 — Pre-rollout hardening (C1/C4/H1/H2/M1/H3) + stress harness + load results
+- **Context:** Readiness audit ahead of a ~20-navigator rollout flagged the privacy/role model as
+  UI-only. This pass closes the top items and adds a repeatable stress harness that measures real
+  Gemini-quota and concurrency ceilings.
+- **C1 — Firebase Anonymous Auth + hardened rules:** `src/lib/firebase.js` now signs every visitor
+  in with `signInAnonymously` and exports an `authReady` promise that **never rejects** (a failed
+  sign-in logs and resolves `false` so the app keeps working under the current open rules).
+  `src/lib/db.js` gates every read/write behind `authReady` (via aliased `fb*` primitives wrapped in
+  auth-gated versions — zero call-site churn) and defers every `onSnapshot` behind `authReady` via a
+  new `liveQuery()` helper. `firestore.rules` rewritten to require `request.auth != null` on all 9
+  collections, with a documented SAFE DEPLOY ORDER (enable Anonymous auth → ship app code → THEN
+  deploy rules). **Honest limit:** anonymous auth has no per-user identity, so this stops anonymous
+  internet scraping but not a determined signed-in navigator — real Auth + role claims is still the
+  next step. `db.test.js` updated (mock `authReady`; 5 subscription tests made async).
+- **C4 — stop broadcasting all results to navigators:** new `getFloorScores()` returns a one-time,
+  minimized `{ name, scores }` projection (drops peers' raw `answers`, competency detail,
+  navigatorId). `NavigatorApp` uses it instead of the full-collection `subscribeResults` live stream.
+  Residual (peers' scores still reach the client for mentor matching) noted for future server-side
+  computation.
+- **H1 — `firestore.indexes.json`** declaring the `resultHistory (navigatorId, department)`
+  composite index `getResultHistory` requires (`firebase deploy --only firestore:indexes`).
+- **H2 — visible save-failure + retry:** `NavigatorApp` surfaces a banner instead of swallowing
+  `saveResult` failures; `persistResult`/`retrySave` wrap all three save sites (MCQ, Spot, mini-check).
+- **M1 — in-progress check persistence:** `Check.jsx` takes a `persistKey`, restoring/saving answers
+  + step to `sessionStorage` (survives refresh); cleared on submit/cancel; step clamped to the live
+  bank. Wired for the main MCQ check only.
+- **H3 — bounded Spot fan-out:** `SpotTheError` full-profile generation runs through a `runPooled`
+  limiter (max 2 concurrent `/api/generate-audit`) instead of firing all 6 at once.
+- **Stress harness (new `stress/` + `playwright.stress.config.js`):** `stress/quota-probe.mjs`,
+  `stress/voice-ws-probe.mjs`, `stress/load.spec.js`. Scripts: `test:stress`, `stress:quota`,
+  `stress:voice`. NOTE: Node `fetch`/`ws` must target `127.0.0.1` not `localhost` (undici picks IPv6
+  `::1`; the server listens IPv4).
+- **Measured ceilings (live keys, 2026-07-01):**
+  - **Gemini generateContent rotation:** clean 100% up to **8 concurrent** heavy calls; first
+    `429 "All Gemini keys are rate-limited"` at **12 concurrent**; majority-fail by 16–20 (each heavy
+    call ~11–23s). ⇒ with H3 (~2 calls/navigator) ~**4 navigators** can start a full Spot at once;
+    coaching (1/navigator) tolerates ~**8 simultaneous** MCQ finishes before falling back to
+    rule-based. The MCQ check uses NO AI in its critical path, so it never breaks.
+  - **Voice relay (`/api/live`):** 5/5 concurrent sessions reached `ready` with no server errors, but
+    only 1/5 delivered caller audio in-window — the Gemini **Live preview** tier is the bottleneck,
+    not the relay. ⇒ cap concurrent voice calls to a few, or leave off preview.
+  - **20 concurrent navigators, full MCQ+coaching:** **20/20 completed end-to-end**, ~126s wall, no
+    crashes; AI endpoints degraded gracefully (429/400 → fallback). Observed non-blocking console
+    signal: `getInterviews: Missing or insufficient permissions` in the LIVE project — reinforces that
+    Anonymous auth must be enabled and the new rules deployed together.
+- **Gates:** `npm test` → **228 passing** (8 files); `npm run build` → clean.
+- **Files:** `src/lib/{firebase,db,db.test}.js`, `firestore.rules`, new `firestore.indexes.json`,
+  `src/components/{NavigatorApp,Check,SpotTheError}.jsx`, new `stress/*` +
+  `playwright.stress.config.js`, `package.json`, `CLAUDE.md`.
+- **Status:** Code complete + stress-validated. **Owner action to activate C1:** enable Anonymous
+  auth in the Firebase console, confirm the deployed app still reads data, THEN
+  `firebase deploy --only firestore:rules,firestore:indexes`.
 
 ### 2026-07-01 — Playwright end-to-end test harness added
 - **What changed:** Added Playwright so browser flows can actually be verified locally (the app's
@@ -2150,9 +2255,10 @@ stateDiagram-v2
   they hit 10+ responses. Sub-20% correct rate triggers a "Review Required" flag with a "Can-Teach
   signal" if expert-level navigators are also failing — the Reverse QA feature. Raw `answers` are
   now stored on every new result doc; legacy docs (pre-this-change) are skipped silently.
-- **Counts (today):** 6 domains (shared, dept-neutral) · 9 competencies · 18 Pediatrics + 14
-  OB/GYN = **32** seed questions (bank grows in Firestore per dept) · 4 departments (**Pediatrics
-  + OB/GYN live**, 2 mockup) · **223** unit tests (8 test files) · **9** Firestore collections
+- **Counts (today):** 6 domains (job-aligned 2026-07-02: intake · classification · routing ·
+  scheduling · boundaries · documentation) · 9 competencies · 21 Pediatrics + 16
+  OB/GYN = **37** seed questions (bank grows in Firestore per dept) · 4 departments (**Pediatrics
+  + OB/GYN live**, 2 mockup) · **228** unit tests (8 test files) · **9** Firestore collections
   (`roster`, `results`, `resultHistory`, `questions`, `interviews`, `completions`, `pairings`,
   `supervisorFeedback`, `learningProposals`) ·
   **8** REST serverless functions (`generate-scenarios`, `generate-coaching`, `interview-turn`,
@@ -2185,10 +2291,12 @@ stateDiagram-v2
 ### Data modules (the "knobs")
 - **[src/data/config.js](src/data/config.js):** `THRESHOLDS`, `LEVELS`, `LEVEL_ORDER`,
   `COLUMN_GAP_THRESHOLD`, `TRAINING_RULES`, `PALETTE`.
-- **[src/data/questions.js](src/data/questions.js):** `DOMAINS` (`{id,name,blurb}`),
-  `SEED_QUESTIONS` (`{id, domainId, competencies:[id], scenario, options:[{id,text,points,
-  rationale}], correctOptionId}`); `QUESTIONS` is a back-compat alias of `SEED_QUESTIONS`. The seed
-  seeds Firestore on first run and is the offline fallback; the live bank is the `questions` collection.
+- **[src/data/questions.js](src/data/questions.js):** `DOMAINS` (`{id,name,blurb}` — since
+  2026-07-02 the 6 job-aligned ids: `intake`, `classification`, `routing`, `scheduling`,
+  `boundaries`, `documentation`), `SEED_QUESTIONS` (`{id, domainId, competencies:[id], scenario,
+  options:[{id,text,points,rationale}], correctOptionId}`); `QUESTIONS` is a back-compat alias of
+  `SEED_QUESTIONS`. The seed seeds Firestore on first run and is the offline fallback; the live
+  bank is the `questions` collection.
 - **[src/data/competencies.js](src/data/competencies.js):** `COMPETENCIES` (9 × `{id,name,blurb}`),
   `competencyName(id)`, `COMPETENCY_IDS` (Set, for validating tags).
 - **[src/data/navigators.js](src/data/navigators.js):** placeholder only — `SAMPLE_NAVIGATORS`
@@ -2488,7 +2596,16 @@ npm run test:e2e     # run the Playwright browser tests (auto-builds + starts th
 3. **Supervisor grade override** — allow supervisors to adjust the AI-given score on a saved practice session.
 
 **Active work items:**
-- None outstanding (F17–F23 complete as of 2026-07-01).
+- **SOP manager (adder/builder/refiner)** — next build, agreed 2026-07-02: Firestore `sops`
+  collection (draft/active/archived, versioned) + supervisor editor UI + Gemini
+  build-from-document and refine-against-current endpoints + DB-backed `sopContextFor` (server
+  gains Firestore access; hardcoded contexts stay as fallback). Unblocks Behavioral Health and
+  Internal Medicine as live departments without code changes.
+- **Question bank regeneration** — the reset bank holds only the 37 seeds; supervisors should
+  generate + activate additional scenarios per new domain via the Question Bank UI.
+- Owner data note: `resultHistory`/`completions`/`pairings` could not be cleared in the
+  2026-07-02 reset (old deployed rules deny access) — after enabling Anonymous auth and deploying
+  rules (pending C1 action), run `node scripts/reset-pilot-data.mjs --delete` again.
 
 **Blockers:**
 - Adult Medicine and Behavioural Health remain mockup — each needs an owner-provided SOP before
