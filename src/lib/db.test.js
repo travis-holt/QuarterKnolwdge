@@ -92,6 +92,13 @@ describe('addToRoster', () => {
     expect(data.createdAt).toBe('__ts__');
     expect(id).toBe('new-uuid');
   });
+
+  it('allows a blank pin so the navigator can create one later', async () => {
+    mocks.addDoc.mockResolvedValue({ id: 'new-uuid' });
+    await addToRoster('Ada');
+    const [, data] = mocks.addDoc.mock.calls[0];
+    expect(data.pin).toBe('');
+  });
 });
 
 // ── updateRosterEntry ─────────────────────────────────────────────────────────

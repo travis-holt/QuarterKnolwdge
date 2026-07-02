@@ -63,9 +63,10 @@ Generated scenarios always land as **drafts**; nothing goes live until a supervi
 The Start screen asks **"I'm a navigator"** or **"I'm a supervisor."**
 
 - **Supervisor** (passcode) lands on the team **Overview** and has the full management app:
-  Overview · Matrix · **Navigators** (add people to the roster, each with a 4-digit PIN) · Training ·
+  Overview · Matrix · **Navigators** (add people to the roster) · Training ·
   Questions · Action center · Mentorship. Everything updates live as navigators submit.
-- **Navigator** picks their name from the roster and enters their PIN. First time → they take the
+- **Navigator** picks their name from the roster. If no PIN is set yet, they create their own
+  4-digit PIN there; returning navigators enter that PIN. First time → they take the
   check, then get a **coaching review** (answer-by-answer, with the best answer and why, plus
   competency strengths/gaps), then land on their personal dashboard (per-domain **and**
   per-competency breakdown, strengths, growth areas, suggested mentors, assigned training).

@@ -6,7 +6,8 @@
 // layer swappable and the rest of the app ignorant of Firestore.
 //
 // Seven collections, all UUID-keyed (never name-keyed → no typo/collision risk):
-//   roster        — supervisor-managed navigator list { name, pin, createdAt }
+//   roster        — navigator list { name, pin, createdAt }; blank pin means
+//                   the navigator creates it on first sign-in
 //   results       — assessment submissions { name, navigatorId, department,
 //                   assessmentType, scores, competencyScores, answers, submittedAt }.
 //                   Keyed `${navigatorId}__${department}` for MCQ and
@@ -115,10 +116,10 @@ const SOPS = 'sops';
 /**
  * Supervisor: add a navigator to the roster. Firestore auto-generates the UUID.
  * @param {string} name
- * @param {string} pin   4-digit PIN, shared privately with the navigator
+ * @param {string} [pin] optional 4-digit PIN; blank lets the navigator create it
  * @returns {Promise<string>} the new roster document id (UUID)
  */
-export async function addToRoster(name, pin) {
+export async function addToRoster(name, pin = '') {
   const ref = await addDoc(collection(db, ROSTER), {
     name: name.trim(),
     pin: String(pin).trim(),

@@ -10,7 +10,7 @@
 > [§8 Current System State](#8-current-system-state) and [§15 Current Priorities](#15-current-priorities)
 > accurate at all times.
 >
-> **Last updated:** 2026-07-02 (welcome page premium redesign) ·
+> **Last updated:** 2026-07-02 (navigator self-created PINs) ·
 > **Doc maintainer:** Claude (AI agent) + repo owner. Assumptions are explicitly marked **[ASSUMPTION]**.
 
 ---
@@ -590,7 +590,7 @@ training assignments.
 - **Routing:** None (no React Router). Navigation is a `view` string inside each role app.
   Supervisor views: `overview · matrix · navigators · navigator · training · module`. Navigator
   views: `check · dashboard · training · module`. The Start **gate** (role select → navigator
-  dropdown+PIN / supervisor passcode) shows when there is no session.
+  dropdown+PIN creation/login / supervisor passcode) shows when there is no session.
 - **UI systems:** Custom components in [src/components/](src/components/); shared data in
   [src/data/](src/data/); pure logic in [src/lib/scoring.js](src/lib/scoring.js).
 
@@ -656,8 +656,9 @@ QuarterKnolwdge/
   Gemini with structured-JSON/text outputs, and rotates keys on 429/403/503/500. Helper modules are
   `_`-prefixed (`api/_sop-context.js`, `api/_auth.js`). REST endpoints are gated by
   `GENERATION_SECRET` — pilot-grade.
-- **No auth system** (by design for the pilot): navigators pick their name from the roster + a
-  4-digit PIN; supervisors enter `SUPERVISOR_PASSCODE`. Session persistence is localStorage only,
+- **No auth system** (by design for the pilot): navigators pick their name from the roster and
+  create a 4-digit PIN on first sign-in when the roster row has none; returning navigators enter
+  that PIN. Supervisors enter `SUPERVISOR_PASSCODE`. Session persistence is localStorage only,
   isolated in [src/lib/session.js](src/lib/session.js). Security rules in `firestore.rules` are
   pilot-grade (open per-collection) — replace with real auth before production.
 - **Pre-pilot state (historical):** the original prototype was fully in-memory; then a static
@@ -783,9 +784,10 @@ stateDiagram-v2
 
 ### 2026-06-24 — Firebase pilot: roster+PIN identity, UUID keys, role-split apps
 - **Decision:** No login. Navigator picks their name from a supervisor-managed roster dropdown and
-  enters a 4-digit PIN; supervisor enters `SUPERVISOR_PASSCODE`. Firestore `roster` + `results`
-  collections are UUID-keyed. `App.jsx` is a thin session router delegating to `SupervisorApp` /
-  `NavigatorApp`. All Firestore access isolated in `db.js`; all session access in `session.js`.
+  uses a 4-digit PIN (created on first sign-in when blank); supervisor enters
+  `SUPERVISOR_PASSCODE`. Firestore `roster` + `results` collections are UUID-keyed. `App.jsx` is a
+  thin session router delegating to `SupervisorApp` / `NavigatorApp`. All Firestore access isolated
+  in `db.js`; all session access in `session.js`.
 - **Reasoning:** Roster dropdown eliminates name typos/collisions; PIN stops navigators opening each
   other's dashboards; UUID keys make same-name collisions impossible; role-split apps make the
   navigator's lack of access to team views *structural*, not just hidden UI; isolating db/session
@@ -882,6 +884,19 @@ stateDiagram-v2
 ---
 
 ## 7. Development History
+
+### 2026-07-02 — Navigator self-created PINs
+- **What changed:** Supervisors now add navigators by name only. A roster row with a blank `pin`
+  prompts the navigator to create a 4-digit PIN at the Start gate after choosing their name; that
+  PIN is saved back through `updateRosterEntry`. Existing PIN rows still use the old PIN check.
+- **Why:** Navigators should be able to create their own passcodes instead of relying on a
+  supervisor-assigned code.
+- **Tests:** Added component coverage for first-login PIN creation and existing-PIN login, plus a
+  `db.js` check that `addToRoster` can create blank-PIN rows.
+- **Files affected:** `src/components/Start.jsx`, `src/components/Navigators.jsx`,
+  `src/lib/db.js`, `src/components/components.test.jsx`, `src/lib/db.test.js`, `README.md`,
+  `CLAUDE.md`.
+- **Status:** Complete.
 
 ### 2026-07-02 — Welcome page premium redesign
 - **What changed:** Reworked the Start gate from generic explanatory copy to a premium first
@@ -1621,16 +1636,18 @@ stateDiagram-v2
 - **Key decisions locked:**
   - **Persistence:** Firebase/Firestore (free Spark tier). Two collections: `roster` + `results`,
     both UUID-keyed (never name-keyed — no typo/collision risk).
-  - **Identity:** Navigator selects name from supervisor-managed roster dropdown + enters a
-    4-digit PIN. Supervisor enters hardcoded passcode from `config.js`.
+  - **Identity:** Navigator selects name from supervisor-managed roster dropdown + creates a
+    4-digit PIN if none exists yet (otherwise enters the existing PIN). Supervisor enters hardcoded
+    passcode from `config.js`.
   - **Role split:** `navigator` (own dashboard: per-domain breakdown, strengths/gaps, mentor
     suggestions, assigned training) and `supervisor` (full matrix/overview/training, live via
     `onSnapshot`).
   - **Session:** `src/lib/session.js` owns all localStorage state; exposes `{ role, name,
     navigatorId }` contract; swappable for real auth with no downstream changes.
   - **Sample data:** `SAMPLE_NAVIGATORS` removed. Matrix starts empty; fills with real submissions.
-  - **Roster management:** Supervisor adds navigators (name + PIN) via "Add Navigator" form in
-    the Navigators tab. Roster shows all members including "Not yet taken" state.
+  - **Roster management:** Supervisor adds navigators by name in the Navigators tab; each
+    navigator creates their PIN at first sign-in. Roster shows all members including "Not yet taken"
+    state.
 - **Design doc:** `docs/superpowers/specs/2026-06-24-firebase-pilot-design.md`
 - **Implementation plan:** `docs/superpowers/plans/2026-06-24-firebase-pilot-plan.md`
 - **Status:** Design complete. (Implementation followed — see next entry.)
@@ -1641,13 +1658,14 @@ stateDiagram-v2
   - **New libs:** `src/lib/firebase.js` (defensive init — never crashes the app if config is
     absent), `src/lib/db.js` (all Firestore reads/writes: roster + results), `src/lib/session.js`
     (isolated localStorage session).
-  - **Start gate** (`Start.jsx`): role select → navigator (roster dropdown + PIN) / supervisor
-    (passcode). PIN validated against the roster entry; passcode against `SUPERVISOR_PASSCODE`.
+  - **Start gate** (`Start.jsx`): role select → navigator (roster dropdown + PIN create/login) /
+    supervisor (passcode). Existing PINs are validated against the roster entry; blank PINs are
+    set by the navigator through `updateRosterEntry`; passcode against `SUPERVISOR_PASSCODE`.
   - **Role split:** `App.jsx` reduced to a thin session/role router. New `SupervisorApp.jsx`
     (live `onSnapshot` results + roster, full management views) and `NavigatorApp.jsx` (own
     dashboard + my-training only; structurally no route to team views).
-  - **Roster management:** `Navigators.jsx` gained an "Add navigator" form (name + 4-digit PIN →
-    `addToRoster`) and shows "Not yet taken" for roster members without a submission.
+  - **Roster management:** `Navigators.jsx` gained an "Add navigator" form (name → `addToRoster`)
+    and shows "Not yet taken" for roster members without a submission.
   - **Navigator privacy:** `NavigatorDetail` renders mentor names as plain text (no drill-in) and
     hides the back button when used as a navigator's own dashboard; `TrainingModule` hides the
     cohort list for navigators (`showCohort={false}`); new `MyTraining.jsx` for the navigator's
@@ -2431,7 +2449,8 @@ stateDiagram-v2
 
 ### Database schemas / API endpoints / env vars
 - **Firestore collections** (UUID-keyed; levels never stored — always derived client-side):
-  - `roster/{uuid}` → `{ name, pin, createdAt }` — supervisor-managed navigator list.
+  - `roster/{uuid}` → `{ name, pin, createdAt }` — navigator list; blank `pin` means the navigator
+    creates it on first sign-in.
   - `results/{key}` → `{ name, navigatorId, department, assessmentType, scores:{domainId:pct},
     competencyScores:{compId:pct}, answers, submittedAt }`. Key is `${navigatorId}__${department}`
     for MCQ (legacy back-compat) and `${navigatorId}__${department}__spot` for Spot the Error, so a
@@ -2591,11 +2610,11 @@ npm run test:e2e     # run the Playwright browser tests (auto-builds + starts th
   case-insensitive check against the live roster before writing; blocks duplicates with an inline
   error message.
 - **Passcode/PIN are client-side (pilot):** `SUPERVISOR_PASSCODE` is in the public repo and PINs are
-  readable in Firestore; a determined user could bypass the gate. *Severity: low for a trusted pilot.*
+  readable/writable in Firestore by signed-in pilot clients; a determined user could bypass the gate. *Severity: low for a trusted pilot.*
   *Mitigation:* documented; must move to real auth before production.
-- **Visible PINs in Navigators tab:** supervisor can see all navigator PINs in plain text (by
-  design — supervisor assigns and shares them). *Severity: low.* A "Show PIN" toggle could be added
-  before any broader rollout.
+- **Visible PINs in Navigators tab:** supervisor can see set navigator PINs in plain text and blank
+  rows show "Not set yet." *Severity: low.* A "Show PIN" toggle could be added before any broader
+  rollout.
 - **Silent save failure for navigator:** if `saveResult` fails after submission, the navigator sees
   their results from local state but the supervisor's matrix doesn't update. *Severity: low for
   pilot.* A future toast notification would improve this.

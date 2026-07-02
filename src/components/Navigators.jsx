@@ -132,7 +132,7 @@ export default function Navigators({
           <p className="nav-card__pending-note">Waiting on this navigator to complete the check.</p>
         )}
         {!row && !isInactive && (
-          <p className="nav-card__pin">PIN: {member.pin}</p>
+          <p className="nav-card__pin">PIN: {member.pin || 'Not set yet'}</p>
         )}
 
         {/* ── Management panel ──────────────────────────────────────── */}
@@ -184,7 +184,7 @@ export default function Navigators({
                     startConfirm(
                       member.id,
                       'reactivate',
-                      `Reactivate ${member.name}? They'll be able to sign in again with their existing PIN.`
+                      `Reactivate ${member.name}? They'll be able to sign in again.`
                     )
                   }
                 >
@@ -260,8 +260,8 @@ export default function Navigators({
         <div className="card empty__card">
           <h2 className="empty__title">No navigators yet</h2>
           <p className="empty__body">
-            Add your team with <strong>+ Add navigator</strong>. Each person gets a 4-digit PIN you
-            share with them privately — they use it to sign in and take the check.
+            Add your team with <strong>+ Add navigator</strong>. Each person creates their 4-digit
+            PIN the first time they sign in.
           </p>
         </div>
       ) : (
@@ -315,7 +315,7 @@ function ConfirmPrompt({ label, busy, onConfirm, onCancel }) {
 // ── Inline edit form ───────────────────────────────────────────────────────────
 function EditForm({ member, roster, hasResult, onSave, onCancel }) {
   const [name, setName] = useState(member.name);
-  const [pin, setPin] = useState(member.pin);
+  const [pin, setPin] = useState(member.pin ?? '');
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
 
@@ -325,7 +325,7 @@ function EditForm({ member, roster, hasResult, onSave, onCancel }) {
     const trimmedName = name.trim();
     const trimmedPin = pin.trim();
     if (!trimmedName) { setError('Name cannot be empty.'); return; }
-    if (!/^\d{4}$/.test(trimmedPin)) { setError('PIN must be exactly 4 digits.'); return; }
+    if (trimmedPin && !/^\d{4}$/.test(trimmedPin)) { setError('PIN must be blank or exactly 4 digits.'); return; }
     // Dup check: exclude the current member
     const dup = roster.some(
       (r) => r.id !== member.id && r.name.toLowerCase() === trimmedName.toLowerCase()
@@ -381,10 +381,9 @@ function EditForm({ member, roster, hasResult, onSave, onCancel }) {
   );
 }
 
-// ── Add navigator form (unchanged) ─────────────────────────────────────────────
+// ── Add navigator form ─────────────────────────────────────────────────────────
 function AddNavigatorForm({ roster, onAdd, onDone }) {
   const [name, setName] = useState('');
-  const [pin, setPin] = useState('');
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
 
@@ -393,16 +392,14 @@ function AddNavigatorForm({ roster, onAdd, onDone }) {
     setError('');
     const trimmed = name.trim();
     if (!trimmed) { setError('Enter a name.'); return; }
-    if (!/^\d{4}$/.test(pin.trim())) { setError('PIN must be exactly 4 digits.'); return; }
     if (roster.some((r) => r.name.toLowerCase() === trimmed.toLowerCase())) {
       setError('A navigator with that name already exists.');
       return;
     }
     setBusy(true);
     try {
-      await onAdd(trimmed, pin.trim());
+      await onAdd(trimmed, '');
       setName('');
-      setPin('');
       onDone();
     } catch {
       setError("Couldn't save. Check the database connection and try again.");
@@ -415,8 +412,7 @@ function AddNavigatorForm({ roster, onAdd, onDone }) {
     <form className="card add-nav" onSubmit={submit}>
       <h2 className="overview__panel-title">Add a navigator</h2>
       <p className="readoff__sub">
-        They&rsquo;ll pick their name from a list and enter this PIN to sign in. Share the PIN with
-        them privately.
+        They&rsquo;ll pick their name from a list and create their 4-digit PIN the first time they sign in.
       </p>
       <div className="add-nav__fields">
         <label className="gate__field">
@@ -427,18 +423,6 @@ function AddNavigatorForm({ roster, onAdd, onDone }) {
             value={name}
             onChange={(e) => { setName(e.target.value); setError(''); }}
             placeholder="e.g. Sarah Chen"
-          />
-        </label>
-        <label className="gate__field">
-          <span className="gate__label">4-digit PIN</span>
-          <input
-            className="gate__input"
-            type="text"
-            inputMode="numeric"
-            maxLength={4}
-            value={pin}
-            onChange={(e) => { setPin(e.target.value.replace(/\D/g, '')); setError(''); }}
-            placeholder="e.g. 4821"
           />
         </label>
       </div>

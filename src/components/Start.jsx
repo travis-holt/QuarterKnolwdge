@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import { DOMAINS } from '../data/questions.js';
 import { SUPERVISOR_PASSCODE } from '../data/config.js';
 import { isFirebaseConfigured } from '../lib/firebase.js';
-import { getRoster } from '../lib/db.js';
+import { getRoster, updateRosterEntry } from '../lib/db.js';
 
 // The Start gate. Three sub-screens controlled by `mode`:
 //   'role'       — pick navigator vs supervisor
@@ -121,6 +121,7 @@ function NavigatorGate({ onBack, onEnter }) {
   const [selectedId, setSelectedId] = useState('');
   const [pin, setPin] = useState('');
   const [error, setError] = useState('');
+  const [busy, setBusy] = useState(false);
 
   useEffect(() => {
     let active = true;
@@ -145,7 +146,7 @@ function NavigatorGate({ onBack, onEnter }) {
     };
   }, []);
 
-  const submit = (e) => {
+  const submit = async (e) => {
     e.preventDefault();
     setError('');
     const entry = roster?.find((r) => r.id === selectedId);
@@ -153,12 +154,31 @@ function NavigatorGate({ onBack, onEnter }) {
       setError('Please choose your name from the list.');
       return;
     }
-    if (String(entry.pin) !== pin.trim()) {
+    const trimmedPin = pin.trim();
+    const hasPin = Boolean(String(entry.pin ?? '').trim());
+    if (!/^\d{4}$/.test(trimmedPin)) {
+      setError(hasPin ? 'Enter your 4-digit PIN.' : 'Create a 4-digit PIN.');
+      return;
+    }
+    if (hasPin && String(entry.pin) !== trimmedPin) {
       setError('That PIN doesn’t match. Check with your supervisor.');
       return;
     }
+    if (!hasPin) {
+      setBusy(true);
+      try {
+        await updateRosterEntry(entry.id, { pin: trimmedPin });
+      } catch {
+        setError("Couldn't save your PIN. Check the connection and try again.");
+        setBusy(false);
+        return;
+      }
+    }
     onEnter(entry.id, entry.name);
   };
+
+  const selectedEntry = roster?.find((r) => r.id === selectedId);
+  const needsPin = selectedEntry && !String(selectedEntry.pin ?? '').trim();
 
   return (
     <div className="gate">
@@ -191,6 +211,7 @@ function NavigatorGate({ onBack, onEnter }) {
               value={selectedId}
               onChange={(e) => {
                 setSelectedId(e.target.value);
+                setPin('');
                 setError('');
               }}
             >
@@ -202,25 +223,26 @@ function NavigatorGate({ onBack, onEnter }) {
           </label>
 
           <label className="gate__field">
-            <span className="gate__label">Your PIN</span>
+            <span className="gate__label">{needsPin ? 'Create your PIN' : 'Your PIN'}</span>
             <input
               className="gate__input"
               type="password"
               inputMode="numeric"
+              maxLength={4}
               autoComplete="off"
               value={pin}
               onChange={(e) => {
-                setPin(e.target.value);
+                setPin(e.target.value.replace(/\D/g, ''));
                 setError('');
               }}
-              placeholder="4-digit PIN from your supervisor"
+              placeholder={needsPin ? 'Choose 4 digits' : '4-digit PIN'}
             />
           </label>
 
           {error && <p className="gate__error">{error}</p>}
 
-          <button className="btn btn--primary btn--lg" type="submit">
-            Continue
+          <button className="btn btn--primary btn--lg" type="submit" disabled={busy}>
+            {busy ? 'Saving…' : 'Continue'}
           </button>
         </form>
       )}

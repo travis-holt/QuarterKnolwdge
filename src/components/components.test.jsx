@@ -4,12 +4,26 @@
 // Uses @testing-library/react.
 // ─────────────────────────────────────────────────────────────────────────────
 
-import { describe, it, expect, vi } from 'vitest';
-import { render, screen, fireEvent } from '@testing-library/react';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 
 import EmptyState from './EmptyState.jsx';
 import Footer     from './Footer.jsx';
 import Nav        from './Nav.jsx';
+import Start      from './Start.jsx';
+
+const startMocks = vi.hoisted(() => ({
+  getRoster: vi.fn(),
+  updateRosterEntry: vi.fn(),
+}));
+
+vi.mock('../lib/firebase.js', () => ({ isFirebaseConfigured: true }));
+vi.mock('../lib/db.js', () => ({
+  getRoster: startMocks.getRoster,
+  updateRosterEntry: startMocks.updateRosterEntry,
+}));
+
+beforeEach(() => vi.clearAllMocks());
 
 // ── EmptyState ───────────────────────────────────────────────────────────────
 
@@ -132,5 +146,38 @@ describe('Nav — navigator role', () => {
   it('does not render the dept-switch pill when activeDeptName is absent', () => {
     render(<Nav {...navigatorProps()} />);
     expect(screen.queryByTitle('Switch department')).not.toBeInTheDocument();
+  });
+});
+
+describe('Start navigator gate', () => {
+  it('lets a navigator create a PIN when their roster row has none', async () => {
+    startMocks.getRoster.mockResolvedValue([{ id: 'ada', name: 'Ada', pin: '' }]);
+    startMocks.updateRosterEntry.mockResolvedValue();
+    const onNavigatorEntry = vi.fn();
+
+    render(<Start onNavigatorEntry={onNavigatorEntry} onSupervisorEntry={vi.fn()} />);
+
+    fireEvent.click(screen.getByRole('button', { name: /I.m a navigator/i }));
+    fireEvent.change(await screen.findByLabelText('Your name'), { target: { value: 'ada' } });
+    fireEvent.change(screen.getByLabelText('Create your PIN'), { target: { value: '1234' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Continue' }));
+
+    await waitFor(() => expect(startMocks.updateRosterEntry).toHaveBeenCalledWith('ada', { pin: '1234' }));
+    expect(onNavigatorEntry).toHaveBeenCalledWith('ada', 'Ada');
+  });
+
+  it('uses an existing PIN without overwriting it', async () => {
+    startMocks.getRoster.mockResolvedValue([{ id: 'bea', name: 'Bea', pin: '2222' }]);
+    const onNavigatorEntry = vi.fn();
+
+    render(<Start onNavigatorEntry={onNavigatorEntry} onSupervisorEntry={vi.fn()} />);
+
+    fireEvent.click(screen.getByRole('button', { name: /I.m a navigator/i }));
+    fireEvent.change(await screen.findByLabelText('Your name'), { target: { value: 'bea' } });
+    fireEvent.change(screen.getByLabelText('Your PIN'), { target: { value: '2222' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Continue' }));
+
+    await waitFor(() => expect(onNavigatorEntry).toHaveBeenCalledWith('bea', 'Bea'));
+    expect(startMocks.updateRosterEntry).not.toHaveBeenCalled();
   });
 });
