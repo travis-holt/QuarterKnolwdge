@@ -34,22 +34,67 @@
 // absence (competency views simply skip those rows).
 // ─────────────────────────────────────────────────────────────────────────────
 
-import { db } from './firebase.js';
+import { db, authReady } from './firebase.js';
 import {
   collection,
   doc,
-  addDoc,
-  setDoc,
-  getDoc,
-  getDocs,
+  addDoc as fbAddDoc,
+  setDoc as fbSetDoc,
+  getDoc as fbGetDoc,
+  getDocs as fbGetDocs,
   onSnapshot,
   serverTimestamp,
   query,
   where,
   writeBatch,
-  updateDoc,
-  deleteDoc,
+  updateDoc as fbUpdateDoc,
+  deleteDoc as fbDeleteDoc,
 } from 'firebase/firestore';
+
+// ── Auth gating (C1) ─────────────────────────────────────────────────────────
+// The hardened firestore.rules require an authenticated caller. `authReady`
+// resolves once the anonymous sign-in attempt has settled (see firebase.js). All
+// one-time reads/writes await it; all live subscriptions defer their onSnapshot
+// listen until it resolves via liveQuery() so the first listen carries a token.
+
+// Auth-gated wrappers around the Firestore read/write primitives. Every existing
+// call site uses these names unchanged, so all one-time reads/writes now await
+// the anonymous sign-in before touching Firestore. (Ref builders — collection,
+// doc, query, where — are synchronous and need no gating; onSnapshot is deferred
+// separately by liveQuery below.)
+const getDoc     = async (...a) => { await authReady; return fbGetDoc(...a); };
+const getDocs    = async (...a) => { await authReady; return fbGetDocs(...a); };
+const setDoc     = async (...a) => { await authReady; return fbSetDoc(...a); };
+const addDoc     = async (...a) => { await authReady; return fbAddDoc(...a); };
+const updateDoc  = async (...a) => { await authReady; return fbUpdateDoc(...a); };
+const deleteDoc  = async (...a) => { await authReady; return fbDeleteDoc(...a); };
+
+const mapDocs = (snap) => snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+
+/**
+ * Start a live onSnapshot only AFTER auth is ready, returning an unsubscribe
+ * synchronously (so callers keep the same contract). If the caller unsubscribes
+ * before auth resolves, the listen is never attached.
+ * @param {*} ref            a collection or query ref
+ * @param {(rows:object[]) => void} cb
+ * @param {(err:Error) => void} [onError]
+ * @returns {() => void} unsubscribe
+ */
+function liveQuery(ref, cb, onError) {
+  const handleErr = onError ?? ((err) => console.error('subscription:', err));
+  let unsub = () => {};
+  let cancelled = false;
+  authReady
+    .then(() => {
+      if (cancelled) return;
+      unsub = onSnapshot(ref, (snap) => cb(mapDocs(snap)), handleErr);
+    })
+    .catch(handleErr);
+  return () => {
+    cancelled = true;
+    unsub();
+  };
+}
 
 const ROSTER = 'roster';
 const RESULTS = 'results';
@@ -136,11 +181,7 @@ export async function getRoster() {
  * @returns {() => void} unsubscribe
  */
 export function subscribeRoster(cb, onError) {
-  return onSnapshot(
-    collection(db, ROSTER),
-    (snap) => cb(snap.docs.map((d) => ({ id: d.id, ...d.data() }))),
-    onError ?? ((err) => console.error('subscribeRoster:', err))
-  );
+  return liveQuery(collection(db, ROSTER), cb, onError ?? ((err) => console.error('subscribeRoster:', err)));
 }
 
 // ── Results ──────────────────────────────────────────────────────────────────
@@ -221,11 +262,32 @@ export async function saveResult(navigatorId, name, scores, competencyScores = {
  * @returns {() => void} unsubscribe
  */
 export function subscribeResults(cb, onError) {
-  return onSnapshot(
-    collection(db, RESULTS),
-    (snap) => cb(snap.docs.map((d) => ({ id: d.id, ...d.data() }))),
-    onError ?? ((err) => console.error('subscribeResults:', err))
-  );
+  return liveQuery(collection(db, RESULTS), cb, onError ?? ((err) => console.error('subscribeResults:', err)));
+}
+
+/**
+ * C4 — minimized floor projection for the NAVIGATOR app's mentor suggestions.
+ *
+ * The navigator only needs to know which colleagues can teach a domain, so this
+ * returns a one-time, projected list of `{ name, scores }` ONLY — deliberately
+ * dropping `answers` (the most sensitive field: exactly which option each person
+ * chose), `competencyScores`, and `navigatorId`. This replaces the old full-
+ * collection live subscription that streamed every peer's complete result doc to
+ * every navigator's browser.
+ *
+ * NOTE: peers' per-domain SCORES still reach the client (mentor matching needs
+ * them). Fully hiding them would require computing mentor suggestions on the
+ * server; that is the documented next step. This is a substantial reduction of
+ * the leak surface, not a complete elimination.
+ * @returns {Promise<{name:string, scores:Record<string,number>}[]>}
+ */
+export async function getFloorScores() {
+  await authReady;
+  const snap = await getDocs(collection(db, RESULTS));
+  return snap.docs.map((d) => {
+    const data = d.data();
+    return { name: data.name, scores: data.scores ?? {} };
+  });
 }
 
 // ── Result History (longitudinal trends) ─────────────────────────────────────
@@ -258,11 +320,7 @@ export async function getResultHistory(navigatorId, department = 'pediatrics') {
  * @returns {() => void} unsubscribe
  */
 export function subscribeResultHistory(cb, onError) {
-  return onSnapshot(
-    collection(db, RESULT_HISTORY),
-    (snap) => cb(snap.docs.map((d) => ({ id: d.id, ...d.data() }))),
-    onError ?? ((err) => console.error('subscribeResultHistory:', err))
-  );
+  return liveQuery(collection(db, RESULT_HISTORY), cb, onError ?? ((err) => console.error('subscribeResultHistory:', err)));
 }
 
 // ── Interviews (practice roleplay transcripts) ────────────────────────────────
@@ -323,11 +381,7 @@ export async function getInterviews(navigatorId) {
  * @returns {() => void} unsubscribe
  */
 export function subscribeInterviews(cb, onError) {
-  return onSnapshot(
-    collection(db, INTERVIEWS),
-    (snap) => cb(snap.docs.map((d) => ({ id: d.id, ...d.data() }))),
-    onError ?? ((err) => console.error('subscribeInterviews:', err))
-  );
+  return liveQuery(collection(db, INTERVIEWS), cb, onError ?? ((err) => console.error('subscribeInterviews:', err)));
 }
 
 // ── Completions (exercise completions) ───────────────────────────────────────
@@ -375,11 +429,7 @@ export async function getCompletions(navigatorId) {
  * @returns {() => void} unsubscribe
  */
 export function subscribeCompletions(cb, onError) {
-  return onSnapshot(
-    collection(db, COMPLETIONS),
-    (snap) => cb(snap.docs.map((d) => ({ id: d.id, ...d.data() }))),
-    onError ?? ((err) => console.error('subscribeCompletions:', err))
-  );
+  return liveQuery(collection(db, COMPLETIONS), cb, onError ?? ((err) => console.error('subscribeCompletions:', err)));
 }
 
 // ── Questions (live, supervisor-managed bank) ──────────────────────────────────
@@ -406,11 +456,7 @@ const QUESTION_FIELDS = (q) => ({
  * @returns {() => void} unsubscribe
  */
 export function subscribeQuestions(cb, onError) {
-  return onSnapshot(
-    collection(db, QUESTIONS_COL),
-    (snap) => cb(snap.docs.map((d) => ({ id: d.id, ...d.data() }))),
-    onError ?? ((err) => console.error('subscribeQuestions:', err))
-  );
+  return liveQuery(collection(db, QUESTIONS_COL), cb, onError ?? ((err) => console.error('subscribeQuestions:', err)));
 }
 
 /**
@@ -473,6 +519,7 @@ export async function saveDraftQuestions(drafts, source = 'gemini', department =
       createdAt: serverTimestamp(),
     });
   }
+  await authReady;
   await batch.commit();
   return ids;
 }
@@ -530,11 +577,7 @@ export async function updatePairingStatus(id, status) {
  * @returns {() => void} unsubscribe
  */
 export function subscribePairings(cb, onError) {
-  return onSnapshot(
-    collection(db, PAIRINGS),
-    (snap) => cb(snap.docs.map((d) => ({ id: d.id, ...d.data() }))),
-    onError ?? ((err) => console.error('subscribePairings:', err))
-  );
+  return liveQuery(collection(db, PAIRINGS), cb, onError ?? ((err) => console.error('subscribePairings:', err)));
 }
 
 // ── Learning Loop (feedback + review-safe proposals) ─────────────────────────
@@ -565,11 +608,7 @@ export async function saveSupervisorFeedback(feedback) {
  * @returns {() => void} unsubscribe
  */
 export function subscribeSupervisorFeedback(cb, onError) {
-  return onSnapshot(
-    collection(db, SUPERVISOR_FEEDBACK),
-    (snap) => cb(snap.docs.map((d) => ({ id: d.id, ...d.data() }))),
-    onError ?? ((err) => console.error('subscribeSupervisorFeedback:', err))
-  );
+  return liveQuery(collection(db, SUPERVISOR_FEEDBACK), cb, onError ?? ((err) => console.error('subscribeSupervisorFeedback:', err)));
 }
 
 /**
@@ -613,9 +652,5 @@ export async function updateLearningProposalStatus(id, status, review = {}) {
  * @returns {() => void} unsubscribe
  */
 export function subscribeLearningProposals(cb, onError) {
-  return onSnapshot(
-    collection(db, LEARNING_PROPOSALS),
-    (snap) => cb(snap.docs.map((d) => ({ id: d.id, ...d.data() }))),
-    onError ?? ((err) => console.error('subscribeLearningProposals:', err))
-  );
+  return liveQuery(collection(db, LEARNING_PROPOSALS), cb, onError ?? ((err) => console.error('subscribeLearningProposals:', err)));
 }

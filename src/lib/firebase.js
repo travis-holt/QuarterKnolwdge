@@ -13,6 +13,7 @@
 
 import { initializeApp } from 'firebase/app';
 import { getFirestore } from 'firebase/firestore';
+import { getAuth, signInAnonymously } from 'firebase/auth';
 
 const firebaseConfig = {
   apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
@@ -35,13 +36,40 @@ export const isFirebaseConfigured = Boolean(
 // created the Firebase project), never let a top-level throw take down the whole
 // app — the gate and empty states must still render.
 let db = null;
+let auth = null;
+
+// authReady resolves once an anonymous sign-in attempt has SETTLED (success or
+// failure). It NEVER rejects — that is deliberate. db.js awaits it before every
+// Firestore read/write/listen so that, once the hardened firestore.rules
+// (`request.auth != null`) are deployed, requests carry an auth token.
+//
+// Why it must never block on failure: if the Firebase console's Anonymous auth
+// provider is not yet enabled, signInAnonymously throws. If that rejection
+// blocked db access, the live app (which still runs the current OPEN rules until
+// the owner deploys the new ones) would break. So a failed sign-in logs and
+// resolves `false`, and Firestore calls proceed unauthenticated — which still
+// works under the open rules. The safe rollout order is documented in
+// firestore.rules: enable Anonymous auth FIRST, ship this code, THEN tighten rules.
+let authReady = Promise.resolve(false);
+
 if (isFirebaseConfigured) {
   try {
     const app = initializeApp(firebaseConfig);
     db = getFirestore(app);
+    auth = getAuth(app);
+    authReady = signInAnonymously(auth)
+      .then(() => true)
+      .catch((err) => {
+        console.warn(
+          'Anonymous sign-in failed — Firestore will proceed unauthenticated ' +
+          '(fine under open rules; enable Anonymous auth before tightening them):',
+          err?.code || err
+        );
+        return false;
+      });
   } catch (err) {
     console.error('Firebase init failed:', err);
   }
 }
 
-export { db };
+export { db, auth, authReady };

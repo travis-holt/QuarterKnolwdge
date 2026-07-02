@@ -27,6 +27,30 @@ import { apiFetch } from '../lib/apiFetch.js';
 
 const GENERATE_TIMEOUT_MS = 25_000;
 
+// H3: full-profile mode generates one item PER DOMAIN. Firing all 6 Gemini calls
+// at once spikes the rate limit — and with many navigators doing this together it
+// exhausts the shared key rotation fast. Cap how many generate-audit calls are
+// in flight per assessment. Returns Promise.allSettled-shaped results, in order.
+const SPOT_GEN_CONCURRENCY = 2;
+
+async function runPooled(items, limit, worker) {
+  const results = new Array(items.length);
+  let next = 0;
+  const runner = async () => {
+    while (true) {
+      const i = next++;
+      if (i >= items.length) return;
+      try {
+        results[i] = { status: 'fulfilled', value: await worker(items[i], i) };
+      } catch (reason) {
+        results[i] = { status: 'rejected', reason };
+      }
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, runner));
+  return results;
+}
+
 export default function SpotTheError({
   navigatorId, // eslint-disable-line no-unused-vars
   name,        // eslint-disable-line no-unused-vars
@@ -66,13 +90,11 @@ export default function SpotTheError({
     setPicks([]);
     setCurrent(0);
     try {
-      // Fire the item generations in parallel; keep whatever succeeds so a single
-      // rate-limited call doesn't sink the whole assessment.
-      const results = await Promise.allSettled(
-        plan.map((domainId) =>
-          apiFetch('/api/generate-audit', { domain: domainId, department }, GENERATE_TIMEOUT_MS)
-            .then((data) => ({ domainId, data }))
-        )
+      // Fire the item generations with BOUNDED concurrency (H3); keep whatever
+      // succeeds so a single rate-limited call doesn't sink the whole assessment.
+      const results = await runPooled(plan, SPOT_GEN_CONCURRENCY, (domainId) =>
+        apiFetch('/api/generate-audit', { domain: domainId, department }, GENERATE_TIMEOUT_MS)
+          .then((data) => ({ domainId, data }))
       );
       const got = results
         .filter((r) => r.status === 'fulfilled' && Array.isArray(r.value?.data?.transcript))

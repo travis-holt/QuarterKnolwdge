@@ -1,5 +1,18 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect } from 'react';
 import { SEED_QUESTIONS, domainName } from '../data/questions.js';
+
+// M1: read any saved in-progress state for this check (survives a refresh /
+// accidental tab close). Returns { answers, step } or null. Guarded so a corrupt
+// value or unavailable sessionStorage never throws.
+function readProgress(persistKey) {
+  if (!persistKey) return null;
+  try {
+    const raw = sessionStorage.getItem(persistKey);
+    return raw ? JSON.parse(raw) : null;
+  } catch {
+    return null;
+  }
+}
 
 // Stepped flow: one scenario per step, with a progress bar. The taker can move
 // back and forth and must answer before advancing past each step.
@@ -12,10 +25,14 @@ import { SEED_QUESTIONS, domainName } from '../data/questions.js';
 //
 // Mini-check mode: pass `miniDomain` (a domainId string) + `limit` (default 4)
 // to run a short re-validation for a single domain only.
-export default function Check({ onSubmit, onCancel, questions = SEED_QUESTIONS, hideName = false, greetingName, deptName, miniDomain, limit }) {
+export default function Check({ onSubmit, onCancel, questions = SEED_QUESTIONS, hideName = false, greetingName, deptName, miniDomain, limit, persistKey }) {
   const [name, setName] = useState('');
-  const [step, setStep] = useState(0);
-  const [answers, setAnswers] = useState({});
+  // M1: restore in-progress answers/step for a persisted check on first render.
+  const [saved] = useState(() => readProgress(persistKey));
+  const [step, setStep] = useState(() =>
+    Math.max(0, Math.min(saved?.step ?? 0, (questions?.length ?? 1) - 1))
+  );
+  const [answers, setAnswers] = useState(() => saved?.answers ?? {});
 
   // In mini-check mode, filter to the target domain and cap at `limit` questions.
   const activeQuestions = useMemo(() => {
@@ -25,35 +42,63 @@ export default function Check({ onSubmit, onCancel, questions = SEED_QUESTIONS, 
   }, [questions, miniDomain, limit]);
 
   const isMini = Boolean(miniDomain);
-  const q = activeQuestions[step];
   const total = activeQuestions.length;
-  const isLast = step === total - 1;
+  // Clamp against the live bank in case a saved step points past a changed bank.
+  const safeStep = Math.min(step, Math.max(0, total - 1));
+  const q = activeQuestions[safeStep];
+  const isLast = safeStep === total - 1;
   const answeredCurrent = answers[q.id] != null;
   const answeredCount = Object.keys(answers).length;
+
+  // M1: persist progress on every change (no-op when persistKey is absent, e.g.
+  // the mini-check). Cleared on submit/cancel below.
+  useEffect(() => {
+    if (!persistKey) return;
+    try {
+      sessionStorage.setItem(persistKey, JSON.stringify({ answers, step: safeStep }));
+    } catch {
+      /* sessionStorage unavailable — progress just won't persist */
+    }
+  }, [persistKey, answers, safeStep]);
+
+  const clearProgress = () => {
+    if (!persistKey) return;
+    try {
+      sessionStorage.removeItem(persistKey);
+    } catch {
+      /* ignore */
+    }
+  };
 
   const choose = (optionId) =>
     setAnswers((prev) => ({ ...prev, [q.id]: optionId }));
 
   const next = () => {
     if (isLast) {
+      clearProgress();
       onSubmit(name, answers);
     } else {
-      setStep((s) => Math.min(s + 1, total - 1));
+      setStep(() => Math.min(safeStep + 1, total - 1));
     }
+  };
+
+  const cancel = () => {
+    clearProgress();
+    onCancel();
   };
 
   return (
     <section className="check view-enter">
       <div className="check__head">
-        <div className="progress" aria-label={`Question ${step + 1} of ${total}`}>
+        <div className="progress" aria-label={`Question ${safeStep + 1} of ${total}`}>
           <div
             className="progress__fill"
-            style={{ width: `${((step + 1) / total) * 100}%` }}
+            style={{ width: `${((safeStep + 1) / total) * 100}%` }}
           />
         </div>
         <div className="check__meta">
           <span>
-            Question {step + 1} of {total}
+            Question {safeStep + 1} of {total}
           </span>
           {hideName ? (
             greetingName && (
@@ -100,14 +145,14 @@ export default function Check({ onSubmit, onCancel, questions = SEED_QUESTIONS, 
       </div>
 
       <div className="check__actions">
-        <button className="btn btn--ghost" onClick={onCancel}>
+        <button className="btn btn--ghost" onClick={cancel}>
           Cancel
         </button>
         <div className="check__actions-right">
           <button
             className="btn btn--ghost"
-            onClick={() => setStep((s) => Math.max(s - 1, 0))}
-            disabled={step === 0}
+            onClick={() => setStep(() => Math.max(safeStep - 1, 0))}
+            disabled={safeStep === 0}
           >
             Back
           </button>

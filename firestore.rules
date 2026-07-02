@@ -1,18 +1,31 @@
 // ─────────────────────────────────────────────────────────────────────────────
-// Firestore security rules — PILOT GRADE.
+// Firestore security rules — PILOT GRADE, AUTHENTICATED.
 //
-// This pilot has no authentication (navigators use a name + PIN, supervisors a
-// passcode — all client-side). Firestore therefore cannot identify callers, so
-// these rules simply scope access to the two collections the app uses and block
-// everything else. They are NOT production-secure: anyone with the project URL
-// and these collection names could read/write. That trade-off is acceptable for
-// a small, trusted, short-lived pilot with no sensitive data.
+// These require an authenticated caller (`request.auth != null`). The app signs
+// every visitor in with Firebase ANONYMOUS AUTH at load (see src/lib/firebase.js
+// → authReady), so normal users are transparently authenticated. The practical
+// effect vs. the old open rules: the database is no longer readable/writable by
+// anonymous internet callers hitting the REST/SDK endpoints directly — access now
+// requires loading the app and obtaining a token.
 //
-// BEFORE any public/production deployment: add Firebase Auth and rewrite these
-// rules to check request.auth.
+// HONEST LIMITATION: with anonymous auth there are no per-user identities or
+// roles, so these rules do NOT stop a determined *signed-in navigator* from
+// reading another navigator's data if they craft their own queries. Eliminating
+// that requires real Firebase Auth + role claims (custom claims for supervisors)
+// and per-document ownership checks. This is the documented next step before any
+// broad/production rollout. Treat this as a meaningful hardening of a pilot, not
+// production-grade access control.
 //
-// To apply: paste into Firestore → Rules in the Firebase console, or run
-//   firebase deploy --only firestore:rules
+// ── SAFE DEPLOY ORDER (do these in order — skipping a step can brick the app) ──
+//   1. Firebase console → Authentication → Sign-in method → enable "Anonymous".
+//   2. Deploy the app code that performs the anonymous sign-in (already in
+//      src/lib/firebase.js). Confirm the live app still loads and reads data.
+//   3. ONLY THEN deploy these rules:  firebase deploy --only firestore:rules
+//   4. Deploy the composite index too:  firebase deploy --only firestore:indexes
+//
+// If you deploy these rules BEFORE step 1+2, every request is denied and the app
+// breaks. The app-side sign-in fails gracefully (it logs and proceeds), so the
+// old open rules keep working until you deliberately tighten them here.
 // ─────────────────────────────────────────────────────────────────────────────
 
 rules_version = '2';
@@ -20,40 +33,46 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
 
+    // A signed-in (incl. anonymous) caller. Replace with role/ownership checks
+    // when real auth lands (e.g. isSupervisor() via request.auth.token.role).
+    function signedIn() {
+      return request.auth != null;
+    }
+
     // Supervisor-managed roster and navigator submissions.
     match /roster/{docId} {
-      allow read, write: if true;
+      allow read, write: if signedIn();
     }
     match /results/{docId} {
-      allow read, write: if true;
+      allow read, write: if signedIn();
     }
     // Supervisor-managed question bank (draft / active / archived scenarios).
     match /questions/{docId} {
-      allow read, write: if true;
+      allow read, write: if signedIn();
     }
     // "Spot the Error" exercise completions.
     match /completions/{docId} {
-      allow read, write: if true;
+      allow read, write: if signedIn();
     }
     // Practice roleplay interview transcripts.
     match /interviews/{docId} {
-      allow read, write: if true;
+      allow read, write: if signedIn();
     }
     // Append-only score history snapshots for longitudinal trends.
     match /resultHistory/{docId} {
-      allow read, write: if true;
+      allow read, write: if signedIn();
     }
     // Supervisor-managed mentor-mentee pairings.
     match /pairings/{docId} {
-      allow read, write: if true;
+      allow read, write: if signedIn();
     }
     // Supervisor feedback on AI/generated recommendations.
     match /supervisorFeedback/{docId} {
-      allow read, write: if true;
+      allow read, write: if signedIn();
     }
     // Human-review queue for adaptive learning proposals.
     match /learningProposals/{docId} {
-      allow read, write: if true;
+      allow read, write: if signedIn();
     }
 
     // Everything else is denied.

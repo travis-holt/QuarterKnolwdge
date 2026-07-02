@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import Nav from './Nav.jsx';
 import Check from './Check.jsx';
 import Coaching from './Coaching.jsx';
@@ -17,7 +17,7 @@ import {
   departmentMatrix,
   findRow,
 } from '../lib/scoring.js';
-import { getResult, saveResult, subscribeResults, getActiveQuestions, getCompletions, getInterviews, saveCompletion } from '../lib/db.js';
+import { getResult, saveResult, getFloorScores, getActiveQuestions, getCompletions, getInterviews, saveCompletion } from '../lib/db.js';
 import { MINICHECK_SIZE, MINICHECK_PASS } from '../data/config.js';
 import { isFirebaseConfigured } from '../lib/firebase.js';
 import { SEED_QUESTIONS, SEED_QUESTIONS_OBGYN, DOMAINS } from '../data/questions.js';
@@ -56,6 +56,13 @@ export default function NavigatorApp({ navigatorId, name, onSignOut }) {
   const [completions, setCompletions] = useState([]);
   const [interviews, setInterviews] = useState([]);
   const [loadError, setLoadError] = useState(false);
+  // H2: surface (and allow retry of) failed result saves instead of swallowing
+  // them. When a save to Firestore fails, the navigator's dashboard still renders
+  // from local state, but the supervisor never sees the result — so we must tell
+  // the navigator and let them retry rather than leaving them falsely "done".
+  const [saveError, setSaveError] = useState(false);
+  const [retrying, setRetrying] = useState(false);
+  const pendingSaveRef = useRef(null); // { args:[...saveResult args], onSuccess? }
   // Cross-dept scores keyed by deptId — populated on mount + updated after each check.
   // Feeds deptMatrix so the "Strength across departments" strip shows real data for
   // every dept the navigator has taken, not just the currently active one.
@@ -129,14 +136,19 @@ export default function NavigatorApp({ navigatorId, name, onSignOut }) {
     }
   };
 
-  // Live floor results — used only to compute mentor suggestions.
+  // Floor scores — used ONLY to compute mentor suggestions (which colleagues can
+  // teach a domain). C4: a one-time, minimized `{ name, scores }` projection
+  // instead of a live subscription to every peer's full result doc. This drops
+  // peers' raw `answers` + competency detail from the navigator's client and
+  // stops the continuous broadcast. Mentor suggestions no longer update live —
+  // acceptable (they were already flagged non-critical).
   useEffect(() => {
     if (!isFirebaseConfigured) return undefined;
-    const unsub = subscribeResults(setResults, (err) => {
-      console.error('subscribeResults (navigator):', err);
-      // Non-critical — mentor suggestions just won't update live.
-    });
-    return () => unsub();
+    let active = true;
+    getFloorScores()
+      .then((list) => { if (active) setResults(list); })
+      .catch((err) => console.error('getFloorScores (navigator):', err));
+    return () => { active = false; };
   }, []);
 
   // Load exercise/interview evidence when views need progress indicators.
@@ -173,6 +185,39 @@ export default function NavigatorApp({ navigatorId, name, onSignOut }) {
   // (Must live with the other hooks, above the early returns — never after them.)
   useEffect(() => { if (view !== 'interview') setPracticeMode(null); }, [view]);
 
+  // Persist a result to Firestore, surfacing failures for retry. Local UI state
+  // is updated by the callers BEFORE this runs, so the navigator always sees
+  // their score; this only governs whether the supervisor's copy is written.
+  const persistResult = async (args, onSuccess) => {
+    try {
+      await saveResult(...args);
+      setSaveError(false);
+      pendingSaveRef.current = null;
+      onSuccess?.();
+      return true;
+    } catch {
+      pendingSaveRef.current = { args, onSuccess };
+      setSaveError(true);
+      return false;
+    }
+  };
+
+  const retrySave = async () => {
+    const pending = pendingSaveRef.current;
+    if (!pending || retrying) return;
+    setRetrying(true);
+    try {
+      await saveResult(...pending.args);
+      setSaveError(false);
+      pendingSaveRef.current = null;
+      pending.onSuccess?.();
+    } catch {
+      setSaveError(true);
+    } finally {
+      setRetrying(false);
+    }
+  };
+
   const handleSubmit = async (_ignoredName, answers) => {
     const dept = activeDept ?? 'pediatrics';
     const scores = scorePerDomain(answers, questions);
@@ -184,11 +229,7 @@ export default function NavigatorApp({ navigatorId, name, onSignOut }) {
     setAllDeptResults((prev) => ({ ...prev, [dept]: scores }));
     setLastAnswers(answers);
     setView('coaching');
-    try {
-      await saveResult(navigatorId, name, scores, competencyScores, dept, answers, 'mcq');
-    } catch {
-      // Dashboard shows from local state; a failed write means supervisor won't see it.
-    }
+    await persistResult([navigatorId, name, scores, competencyScores, dept, answers, 'mcq']);
   };
 
   const handleChangeDept = () => {
@@ -256,16 +297,16 @@ export default function NavigatorApp({ navigatorId, name, onSignOut }) {
     setResultsByType((prev) => ({ ...prev, [targetType]: result }));
     setActiveType(targetType);
     setAllDeptResults((prev) => ({ ...prev, [dept]: allScores }));
-    try {
-      await saveResult(navigatorId, name, allScores, competencyScores, dept, answers, targetType);
-    } catch {/* non-critical — dashboard reflects local state */}
+    await persistResult([navigatorId, name, allScores, competencyScores, dept, answers, targetType]);
   };
 
-  // Merge own result into the floor results for mentor suggestions.
+  // Merge own result into the floor results for mentor suggestions. Floor rows
+  // come from the minimized projection (name + scores only, keyed by name); the
+  // navigator's own row is keyed by name too so it replaces any floor copy.
   const merged = new Map();
-  for (const r of results) merged.set(r.navigatorId ?? r.id, r);
+  for (const r of results) merged.set(r.navigatorId ?? r.name, r);
   if (ownResult)
-    merged.set(navigatorId, {
+    merged.set(name, {
       name,
       navigatorId,
       scores: ownResult.scores,
@@ -339,6 +380,17 @@ export default function NavigatorApp({ navigatorId, name, onSignOut }) {
       activeDeptName={showDeptSwitcher ? deptName : null}
       onChangeDept={handleChangeDept}
     >
+      {saveError && (
+        <div className="subscribe-error" role="alert">
+          ⚠ Your latest result hasn’t saved to the server yet — your supervisor can’t see it. Stay
+          on this page and{' '}
+          <button className="linkbtn" onClick={retrySave} disabled={retrying}>
+            {retrying ? 'retrying…' : 'retry now'}
+          </button>
+          .
+        </div>
+      )}
+
       {view === 'typeselect' && (
         <AssessmentTypeChooser
           deptName={deptName}
@@ -355,6 +407,7 @@ export default function NavigatorApp({ navigatorId, name, onSignOut }) {
           hideName
           greetingName={name}
           deptName={deptName}
+          persistKey={`qkc_progress_${navigatorId}_${dept}`}
         />
       )}
 
@@ -495,23 +548,24 @@ export default function NavigatorApp({ navigatorId, name, onSignOut }) {
                 ? scorePerCompetency(mergedAnswers, questions)
                 : (target?.competencyScores ?? {});
               const savedAnswers = hasFullAnswerContext ? mergedAnswers : answers;
-              try {
-                await saveResult(navigatorId, name, allScores, competencyScores, dept, savedAnswers, targetType);
-                setResultsByType((prev) => ({
-                  ...prev,
-                  [targetType]: {
-                    ...(prev[targetType] ?? {}),
-                    name,
-                    navigatorId,
-                    department: dept,
-                    assessmentType: targetType,
-                    scores: allScores,
-                    competencyScores,
-                    answers: savedAnswers,
-                  },
-                }));
-                setAllDeptResults((prev) => ({ ...prev, [dept]: allScores }));
-              } catch {/* non-critical */}
+              // Update local state immediately so the navigator sees the new
+              // score, then persist (with retry-on-failure surfacing) for the
+              // supervisor's copy.
+              setResultsByType((prev) => ({
+                ...prev,
+                [targetType]: {
+                  ...(prev[targetType] ?? {}),
+                  name,
+                  navigatorId,
+                  department: dept,
+                  assessmentType: targetType,
+                  scores: allScores,
+                  competencyScores,
+                  answers: savedAnswers,
+                },
+              }));
+              setAllDeptResults((prev) => ({ ...prev, [dept]: allScores }));
+              await persistResult([navigatorId, name, allScores, competencyScores, dept, savedAnswers, targetType]);
             }
             setCompletions((prev) => [
               ...prev,

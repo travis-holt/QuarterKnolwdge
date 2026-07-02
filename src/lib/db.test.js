@@ -52,7 +52,14 @@ vi.mock('firebase/firestore', () => ({
 vi.mock('./firebase.js', () => ({
   db:                 mocks.db,
   isFirebaseConfigured: true,
+  // authReady gates every read/write and defers each subscription's onSnapshot
+  // (see db.js). A resolved promise here keeps the gating a single microtask.
+  authReady:          Promise.resolve(true),
 }));
+
+// Flush the microtask/task queue so a deferred (authReady-gated) subscription has
+// attached its onSnapshot before we assert on it.
+const flush = () => new Promise((r) => setTimeout(r, 0));
 
 // Import the module under test AFTER mocks are registered.
 import {
@@ -198,7 +205,7 @@ describe('getRoster', () => {
 // ── subscribeRoster ───────────────────────────────────────────────────────────
 
 describe('subscribeRoster', () => {
-  it('invokes the callback with mapped roster data from the snapshot', () => {
+  it('invokes the callback with mapped roster data from the snapshot', async () => {
     const fakeDocs = [{ id: 'id-1', data: () => ({ name: 'Ada', pin: '1111' }) }];
     mocks.onSnapshot.mockImplementation((ref, cb) => {
       cb({ docs: fakeDocs });
@@ -206,10 +213,11 @@ describe('subscribeRoster', () => {
     });
     const cb = vi.fn();
     subscribeRoster(cb);
+    await flush(); // listen is deferred until authReady resolves
     expect(cb).toHaveBeenCalledWith([{ id: 'id-1', name: 'Ada', pin: '1111' }]);
   });
 
-  it('calls onError when the snapshot errors', () => {
+  it('calls onError when the snapshot errors', async () => {
     const fakeErr = new Error('Firestore offline');
     mocks.onSnapshot.mockImplementation((ref, cb, errCb) => {
       errCb(fakeErr);
@@ -217,14 +225,18 @@ describe('subscribeRoster', () => {
     });
     const onError = vi.fn();
     subscribeRoster(() => {}, onError);
+    await flush();
     expect(onError).toHaveBeenCalledWith(fakeErr);
   });
 
-  it('returns the unsubscribe function', () => {
+  it('returns an unsubscribe function that tears down the underlying listener', async () => {
     const unsub = vi.fn();
     mocks.onSnapshot.mockReturnValue(unsub);
     const result = subscribeRoster(() => {});
-    expect(result).toBe(unsub);
+    expect(typeof result).toBe('function');
+    await flush(); // let the deferred onSnapshot attach
+    result();
+    expect(unsub).toHaveBeenCalledOnce();
   });
 });
 
@@ -274,7 +286,7 @@ describe('learning loop db helpers', () => {
     expect(data.reviewedAt).toBe('__ts__');
   });
 
-  it('subscribeSupervisorFeedback maps snapshot docs', () => {
+  it('subscribeSupervisorFeedback maps snapshot docs', async () => {
     const fakeDocs = [{ id: 'fb1', data: () => ({ status: 'helpful' }) }];
     mocks.onSnapshot.mockImplementation((ref, cb) => {
       cb({ docs: fakeDocs });
@@ -282,10 +294,11 @@ describe('learning loop db helpers', () => {
     });
     const cb = vi.fn();
     subscribeSupervisorFeedback(cb);
+    await flush();
     expect(cb).toHaveBeenCalledWith([{ id: 'fb1', status: 'helpful' }]);
   });
 
-  it('subscribeLearningProposals maps snapshot docs', () => {
+  it('subscribeLearningProposals maps snapshot docs', async () => {
     const fakeDocs = [{ id: 'lp1', data: () => ({ status: 'pending' }) }];
     mocks.onSnapshot.mockImplementation((ref, cb) => {
       cb({ docs: fakeDocs });
@@ -293,6 +306,7 @@ describe('learning loop db helpers', () => {
     });
     const cb = vi.fn();
     subscribeLearningProposals(cb);
+    await flush();
     expect(cb).toHaveBeenCalledWith([{ id: 'lp1', status: 'pending' }]);
   });
 });

@@ -1,0 +1,15 @@
+{
+  "//": "Firestore composite indexes. Deploy with: firebase deploy --only firestore:indexes",
+  "//2": "getResultHistory() in src/lib/db.js filters resultHistory by BOTH navigatorId AND department (two equality filters on different fields), which REQUIRES this composite index. Without it, the navigator dashboard trend panel throws FAILED_PRECONDITION at runtime.",
+  "indexes": [
+    {
+      "collectionGroup": "resultHistory",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "navigatorId", "order": "ASCENDING" },
+        { "fieldPath": "department", "order": "ASCENDING" }
+      ]
+    }
+  ],
+  "fieldOverrides": []
+}
