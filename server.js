@@ -10,9 +10,9 @@ import { dirname, join } from 'path';
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const app = express();
 
-// 1mb limit (Express default is 100kb): the SOP manager posts whole pasted
-// SOP documents to /api/refine-sop.
-app.use(express.json({ limit: '1mb' }));
+// 20mb limit (Express default is 100kb): the SOP manager posts pasted SOP
+// documents and base64-encoded PDF uploads (~10 MB binary) to /api/refine-sop.
+app.use(express.json({ limit: '20mb' }));
 
 // --- API routes (import the same handlers used on Vercel) ---
 import generateScenarios from './api/generate-scenarios.js';

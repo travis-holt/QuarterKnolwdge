@@ -1,6 +1,6 @@
-// Unit tests for the pure validation helper of POST /api/refine-sop.
+// Unit tests for the pure validation helpers of POST /api/refine-sop.
 import { describe, it, expect } from 'vitest';
-import { validateSopRefineResponse } from './refine-sop.js';
+import { validateSopRefineResponse, validateSopFile, validateSopAudit } from './refine-sop.js';
 
 const LONG_BODY = 'CALL OPENING & IDENTIFICATION\n' + 'Rule line. '.repeat(40);
 
@@ -85,5 +85,60 @@ describe('validateSopRefineResponse', () => {
       'build'
     );
     expect(data.title).toHaveLength(200);
+  });
+});
+
+describe('validateSopFile', () => {
+  const pdf = { mimeType: 'application/pdf', data: 'A'.repeat(500) };
+
+  it('accepts a valid PDF payload', () => {
+    expect(validateSopFile(pdf)).toBeNull();
+  });
+
+  it('rejects missing / non-object files', () => {
+    expect(validateSopFile(null)).toMatch(/missing/);
+    expect(validateSopFile('nope')).toMatch(/missing/);
+  });
+
+  it('rejects non-PDF mime types', () => {
+    expect(validateSopFile({ ...pdf, mimeType: 'application/msword' })).toMatch(/PDF only/);
+    expect(validateSopFile({ ...pdf, mimeType: 'image/png' })).toMatch(/PDF only/);
+  });
+
+  it('rejects empty or absent data', () => {
+    expect(validateSopFile({ mimeType: 'application/pdf', data: '' })).toMatch(/data missing/);
+    expect(validateSopFile({ mimeType: 'application/pdf' })).toMatch(/data missing/);
+  });
+
+  it('rejects oversized data', () => {
+    expect(validateSopFile({ mimeType: 'application/pdf', data: 'A'.repeat(14_000_001) })).toMatch(/too large/);
+  });
+});
+
+describe('validateSopAudit', () => {
+  it('normalises a valid audit (trims, drops non-strings)', () => {
+    const audit = validateSopAudit({ omissions: ['  rule one  ', 42, ''], inventions: [] });
+    expect(audit).toEqual({ omissions: ['rule one'], inventions: [] });
+  });
+
+  it('accepts an { audit: {...} } wrapper', () => {
+    const audit = validateSopAudit({ audit: { omissions: [], inventions: ['made-up rule'] } });
+    expect(audit).toEqual({ omissions: [], inventions: ['made-up rule'] });
+  });
+
+  it('returns null for unusable shapes', () => {
+    expect(validateSopAudit(null)).toBeNull();
+    expect(validateSopAudit([])).toBeNull();
+    expect(validateSopAudit({ omissions: 'not-an-array', inventions: [] })).toBeNull();
+    expect(validateSopAudit({})).toBeNull();
+  });
+
+  it('caps each list at 20 entries and 300 chars per entry', () => {
+    const audit = validateSopAudit({
+      omissions: Array.from({ length: 30 }, () => 'y'.repeat(400)),
+      inventions: [],
+    });
+    expect(audit.omissions).toHaveLength(20);
+    expect(audit.omissions[0]).toHaveLength(300);
   });
 });

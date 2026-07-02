@@ -10,7 +10,7 @@
 > [§8 Current System State](#8-current-system-state) and [§15 Current Priorities](#15-current-priorities)
 > accurate at all times.
 >
-> **Last updated:** 2026-07-02 (navigator self-created PINs) ·
+> **Last updated:** 2026-07-03 (F24 upgrade: PDF upload + fidelity audit + SOP tab redesign) ·
 > **Doc maintainer:** Claude (AI agent) + repo owner. Assumptions are explicitly marked **[ASSUMPTION]**.
 
 ---
@@ -534,18 +534,29 @@ training assignments.
   - **`sopContextFor(deptId)` resolution order:** live active SOP → hardcoded dept context →
     Pediatrics. Role context (`NAVIGATOR_ROLE_CONTEXT`) is always prepended.
   - **[api/refine-sop.js](api/refine-sop.js)** — `POST /api/refine-sop`, two modes (temp 0.2,
-    JSON output, key rotation, exported pure `validateSopRefineResponse` + 10 tests):
-    **build** `{rawText, department}` → `{sop:{title, body, notes[]}}` structures a raw document
-    into the 6-domain SOP layout; **refine** `{rawText, currentSop, department}` →
-    `{sop:{title, body, changes:[{type: contradiction|outdated|addition|clarification,
-    summary}]}}` merges new material into the active SOP (new material wins, every diff flagged).
-    Inputs capped at 48k chars; `server.js` JSON body limit raised to 1mb for pasted documents.
+    JSON output, key rotation, exported pure validators `validateSopRefineResponse` /
+    `validateSopFile` / `validateSopAudit` + 22 tests):
+    **build** `{rawText|file, department}` → `{sop:{title, body, notes[], audit}}` structures a
+    raw document into the 6-domain SOP layout; **refine** `{rawText|file, currentSop,
+    department}` → `{sop:{title, body, changes:[{type: contradiction|outdated|addition|
+    clarification, summary}], audit}}` merges new material into the active SOP (new material
+    wins, every diff flagged). **File upload (2026-07-03):** `file = { data: base64, mimeType:
+    'application/pdf' }` is passed to Gemini natively as a document part (handles scanned PDFs;
+    ≤10 MB); `server.js` JSON body limit raised to 20mb. **Fidelity audit:** a second Gemini
+    pass (temp 0.1) compares the draft against the source and returns `audit = { omissions[],
+    inventions[] }` — source rules missing from the draft and draft statements not traceable to
+    the source. Best-effort (null on failure, never blocks). Text inputs capped at 48k chars.
   - **[src/components/SopManager.jsx](src/components/SopManager.jsx)** — supervisor "SOPs" tab
-    (dept-scoped via DeptBar, works for non-assessed depts too): active-version card,
-    drafts-awaiting-review list (edit/activate/delete with inline confirm), archived versions
-    (restorable), import panel (Save verbatim / Build with AI / Refine current SOP), refine
-    proposal preview with typed change chips. Editing the ACTIVE version always saves a NEW
-    draft version — active docs are never mutated.
+    (dept-scoped via DeptBar, works for non-assessed depts too). Redesigned 2026-07-03:
+    drag-and-drop **upload zone** (PDF → base64 → Gemini; TXT/MD read into the paste area; Word
+    → "export as PDF" hint), **active-version hero** (pulsing LIVE badge, meta chips: version /
+    source / date / section count / word count), **parsed document view** (`parseSopSections`
+    renders ALL-CAPS headings as numbered styled sections with rule rows instead of a raw
+    `<pre>`; collapsed with a fade + "Read full document"), **version timeline** (rail-dot list
+    for drafts/archived), **fidelity chips + detail panels** on AI drafts (✓ passed / ⚠ N
+    findings; omissions amber, inventions red — persisted on the draft doc via `saveSopDraft`'s
+    new `notes`/`changes`/`audit` fields so they survive reload). Editing the ACTIVE version
+    always saves a NEW draft version — active docs are never mutated.
 - **Safety:** AI output is always a **draft** the supervisor reviews and activates — the endpoint
   never writes Firestore; nothing goes live without a human click. Same review-gate philosophy as
   F14/F23.
@@ -884,6 +895,33 @@ stateDiagram-v2
 ---
 
 ## 7. Development History
+
+### 2026-07-03 — F24 upgrade: PDF upload, fidelity audit, SOP tab redesign
+- **Context:** Owner review of the first SOP manager: "bland and generic", questioned whether
+  "Build with AI" can be trusted, and flagged the missing file-upload option. All three addressed
+  in one pass (scope approved by owner).
+- **PDF upload:** `/api/refine-sop` now accepts `file` (base64 PDF ≤10 MB) as the source for both
+  modes, passed to Gemini **natively as a document part** — no text-extraction library, works on
+  scanned PDFs. TXT/MD files are read client-side into the paste area; Word gets an
+  "export as PDF" hint. `server.js` JSON limit 1mb → 20mb. New pure `validateSopFile`.
+- **Fidelity audit (the trust answer):** every AI draft now gets a second Gemini pass (temp 0.1)
+  comparing the draft against the source: `audit = { omissions[], inventions[] }`. Shown on the
+  draft as a chip (✓ passed / ⚠ N findings) with amber/red detail panels; persisted on the draft
+  doc (new `notes`/`changes`/`audit` fields in `saveSopDraft`) so the report survives reload.
+  Best-effort — audit failure returns null and never blocks the draft. New pure `validateSopAudit`.
+- **Redesign (`SopManager.jsx` + `.sops*`/`.sopdoc*`/`.sop-*` CSS rewritten):** drag-and-drop
+  upload zone; active-version hero with pulsing LIVE badge + meta chips; SOP bodies rendered as a
+  **parsed document** (ALL-CAPS headings → numbered styled sections, rules as marked rows) with
+  collapse/fade instead of a grey `<pre>`; drafts/archived as a **version timeline** with status
+  dots; spinner status line during AI runs; reduced-motion safe.
+- **Verification:** `npm test` → **250 passing** (9 files; +12 for the new validators);
+  `npm run build` → clean; **live smoke test**: posted the real in-repo `SOP Guide.pdf` (115 KB)
+  through build mode → structured 6-domain SOP + 3 review notes + audit reporting **8 omissions /
+  0 inventions** — the audit correctly caught provider-affiliation details the restructuring
+  dropped, demonstrating exactly the trust layer the owner asked for.
+- **Files affected:** `api/refine-sop.js`, `api/refine-sop.test.js`, `server.js`,
+  `src/lib/db.js`, `src/components/SopManager.jsx`, `src/styles.css`, `CLAUDE.md`.
+- **Status:** Complete.
 
 ### 2026-07-02 — Navigator self-created PINs
 - **What changed:** Supervisors now add navigators by name only. A roster row with a blank `pin`
@@ -2381,7 +2419,7 @@ stateDiagram-v2
 - **Counts (today):** 6 domains (job-aligned 2026-07-02: intake · classification · routing ·
   scheduling · boundaries · documentation) · 9 competencies · 21 Pediatrics + 16
   OB/GYN = **37** seed questions (bank grows in Firestore per dept) · 4 departments (**Pediatrics
-  + OB/GYN live**, 2 mockup) · **238** unit tests (9 test files) · **10** Firestore collections
+  + OB/GYN live**, 2 mockup) · **250** unit tests (9 test files) · **10** Firestore collections
   (`roster`, `results`, `resultHistory`, `questions`, `interviews`, `completions`, `pairings`,
   `supervisorFeedback`, `learningProposals`, `sops`) ·
   **9** REST serverless functions (`generate-scenarios`, `generate-coaching`, `interview-turn`,

@@ -682,7 +682,11 @@ export function subscribeSops(cb, onError) {
 
 /**
  * Supervisor: save a new SOP version as a draft (never live until activated).
- * @param {{ department:string, title:string, body:string, version:number, source?:string }} sop
+ * AI-produced drafts also carry their review metadata so it survives reload:
+ * `notes` (build-mode gaps/ambiguities), `changes` (refine-mode typed diffs),
+ * and `audit` ({ omissions, inventions } fidelity check, or null).
+ * @param {{ department:string, title:string, body:string, version:number,
+ *           source?:string, notes?:string[], changes?:object[], audit?:object|null }} sop
  * @returns {Promise<string>} the new SOP doc id
  */
 export async function saveSopDraft(sop) {
@@ -694,6 +698,9 @@ export async function saveSopDraft(sop) {
     version: sop.version,
     status: 'draft',
     source: sop.source ?? 'manual',
+    notes: sop.notes ?? [],
+    changes: sop.changes ?? [],
+    audit: sop.audit ?? null,
     createdAt: serverTimestamp(),
   });
   return ref.id;
