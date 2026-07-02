@@ -885,10 +885,13 @@ stateDiagram-v2
 
 ### 2026-07-02 — Welcome page premium redesign
 - **What changed:** Reworked the Start gate from generic explanatory copy to a premium first
-  screen: product-name hero, concise readiness/capability language, summary chips, a lightweight
-  capability-map preview, stronger role cards, and responsive domain tiles.
+  screen: product-name hero, concise readiness/capability language, stable summary chips, an
+  animated lightweight capability-map preview, stronger role cards, and overflow-safe domain tiles.
 - **Why:** The old opening line ("development and fit, not pass/fail") no longer matched how the
   check is being used, and made the page feel generic.
+- **Follow-up 2026-07-02:** Removed the variable scenario-count chip, changed the eyebrow to
+  "Knowledge & Adaptability", animated the map preview bars, and fixed long domain labels colliding
+  with blurbs at tablet/mobile widths.
 - **Verification:** `npm test` → **238 passing**; `npm run build` → clean (existing large-chunk
   warning only).
 - **Files affected:** `src/components/Start.jsx`, `src/styles.css`, `CLAUDE.md`.
@@ -2526,8 +2529,9 @@ npm run test:e2e     # run the Playwright browser tests (auto-builds + starts th
   names (`.matrix__cell`, `.kpi__value`, `.deptbar__pill`, …), CSS variables, responsive grids.
 - **Layout rules:** centered max-width container (`--maxw: 1100px`); layered cards with hairline
   borders + multi-layer warm shadow; the **matrix is the visual centrepiece**.
-- **Start gate:** premium product-name hero with summary chips, capability-map preview, and
-  role-entry cards; no "development and fit, not pass/fail" positioning on the welcome screen.
+- **Start gate:** premium product-name hero with stable summary chips, animated capability-map
+  preview, and role-entry cards; no scenario-count chip or "development and fit, not pass/fail"
+  positioning on the welcome screen.
 - **Key user flows:** see [§3](#3-product-usage) and the view diagram in [§5](#5-architecture-overview).
 - **Navigation:** top `Nav` tabs (Overview · Take the check · Matrix · Navigators · Training) +
   `DeptBar` department selector on data views.

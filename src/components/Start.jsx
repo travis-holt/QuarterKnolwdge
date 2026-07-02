@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { DOMAINS, QUESTIONS } from '../data/questions.js';
+import { DOMAINS } from '../data/questions.js';
 import { SUPERVISOR_PASSCODE } from '../data/config.js';
 import { isFirebaseConfigured } from '../lib/firebase.js';
 import { getRoster } from '../lib/db.js';
@@ -36,17 +36,16 @@ function RoleSelect({ onPick }) {
       <div className="start__hero">
         <div className="start__copy">
           <p className="start__eyebrow">
-            <span className="start__eyebrow-dot" /> Quarterly capability check
+            <span className="start__eyebrow-dot" /> Knowledge &amp; Adaptability
           </p>
           <h1 className="start__title">Knowledge Check</h1>
           <p className="start__lede">
-            Real call scenarios become a clear domain-by-domain capability map for navigators,
-            supervisors, coaching, and training decisions.
+            Classify the call, route it, schedule it, hold the boundary, and document the handoff.
+            Each result rolls into a domain map supervisors can actually use.
           </p>
-          <div className="start__stats" aria-label="Check summary">
-            <span><strong>{QUESTIONS.length}</strong> scenarios</span>
+          <div className="start__stats" aria-label="Capability summary">
             <span><strong>{DOMAINS.length}</strong> domains</span>
-            <span><strong>1</strong> team map</span>
+            <span><strong>1</strong> capability map</span>
           </div>
         </div>
 
