@@ -10,7 +10,7 @@
 > [§8 Current System State](#8-current-system-state) and [§15 Current Priorities](#15-current-priorities)
 > accurate at all times.
 >
-> **Last updated:** 2026-07-02 (F24 SOP manager + domain redesign) ·
+> **Last updated:** 2026-07-02 (welcome page premium redesign) ·
 > **Doc maintainer:** Claude (AI agent) + repo owner. Assumptions are explicitly marked **[ASSUMPTION]**.
 
 ---
@@ -43,7 +43,7 @@
   situation is Y — what do you do?"), each tagged to a knowledge **domain**, and scores
   **per domain per person** — never a single overall grade.
 - **Core mission:** Turn a team's operational knowledge into a clear, actionable capability map
-  that drives development — framed as **"development and fit, not pass/fail."**
+  that supports readiness decisions, coaching, and training by domain.
 - **Vision statement:** Become the standing instrument a contact-centre team lead uses each
   quarter to see exactly who is strong where, where the floor-wide gaps are, who can mentor whom,
   and what training to assign — across every department they run.
@@ -745,7 +745,8 @@ stateDiagram-v2
 
 ### 2026-06-23 — Per-domain scoring, never a single total
 - **Decision:** Scores and levels are per domain; no overall grade anywhere.
-- **Reasoning:** Core product principle ("development and fit, not pass/fail").
+- **Reasoning:** Keep the signal actionable and domain-keyed, including when thresholds are used
+  for readiness or mini-check decisions.
 - **Impact:** All UI and analytics are domain-keyed.
 
 ### 2026-06-23 — Centralised tunable knobs in `config.js`
@@ -881,6 +882,17 @@ stateDiagram-v2
 ---
 
 ## 7. Development History
+
+### 2026-07-02 — Welcome page premium redesign
+- **What changed:** Reworked the Start gate from generic explanatory copy to a premium first
+  screen: product-name hero, concise readiness/capability language, summary chips, a lightweight
+  capability-map preview, stronger role cards, and responsive domain tiles.
+- **Why:** The old opening line ("development and fit, not pass/fail") no longer matched how the
+  check is being used, and made the page feel generic.
+- **Verification:** `npm test` → **238 passing**; `npm run build` → clean (existing large-chunk
+  warning only).
+- **Files affected:** `src/components/Start.jsx`, `src/styles.css`, `CLAUDE.md`.
+- **Status:** Complete.
 
 ### 2026-07-02 — Firebase deploy manifest for Firestore rules/indexes
 - **What changed:** Added root `firebase.json` pointing Firestore deploys at `firestore.rules`
@@ -2514,6 +2526,8 @@ npm run test:e2e     # run the Playwright browser tests (auto-builds + starts th
   names (`.matrix__cell`, `.kpi__value`, `.deptbar__pill`, …), CSS variables, responsive grids.
 - **Layout rules:** centered max-width container (`--maxw: 1100px`); layered cards with hairline
   borders + multi-layer warm shadow; the **matrix is the visual centrepiece**.
+- **Start gate:** premium product-name hero with summary chips, capability-map preview, and
+  role-entry cards; no "development and fit, not pass/fail" positioning on the welcome screen.
 - **Key user flows:** see [§3](#3-product-usage) and the view diagram in [§5](#5-architecture-overview).
 - **Navigation:** top `Nav` tabs (Overview · Take the check · Matrix · Navigators · Training) +
   `DeptBar` department selector on data views.

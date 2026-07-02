@@ -3,7 +3,6 @@ import { DOMAINS, QUESTIONS } from '../data/questions.js';
 import { SUPERVISOR_PASSCODE } from '../data/config.js';
 import { isFirebaseConfigured } from '../lib/firebase.js';
 import { getRoster } from '../lib/db.js';
-import Reveal from './Reveal.jsx';
 
 // The Start gate. Three sub-screens controlled by `mode`:
 //   'role'       — pick navigator vs supervisor
@@ -29,19 +28,51 @@ export default function Start({ onNavigatorEntry, onSupervisorEntry }) {
 
 // ── Role selection ─────────────────────────────────────────────────────────────
 function RoleSelect({ onPick }) {
+  const previewDomains = DOMAINS.slice(0, 4);
+  const previewLevels = ['can-teach', 'solid', 'learning', 'solid'];
+
   return (
-    <div className="view-enter">
-      <p className="start__eyebrow">
-        <span className="start__eyebrow-dot" /> Knowledge Check
-      </p>
-      <h1 className="start__title">
-        Real scenarios — <span className="accent">development and fit</span>, not pass/fail.
-      </h1>
-      <p className="start__lede">
-        {QUESTIONS.length} situation-based questions across {DOMAINS.length} knowledge domains.
-        You won&rsquo;t get a single grade — you&rsquo;ll get a clear read on where you&rsquo;re
-        already strong, where you&rsquo;re solid, and where a little more practice would help.
-      </p>
+    <div className="start__shell view-enter">
+      <div className="start__hero">
+        <div className="start__copy">
+          <p className="start__eyebrow">
+            <span className="start__eyebrow-dot" /> Quarterly capability check
+          </p>
+          <h1 className="start__title">Knowledge Check</h1>
+          <p className="start__lede">
+            Real call scenarios become a clear domain-by-domain capability map for navigators,
+            supervisors, coaching, and training decisions.
+          </p>
+          <div className="start__stats" aria-label="Check summary">
+            <span><strong>{QUESTIONS.length}</strong> scenarios</span>
+            <span><strong>{DOMAINS.length}</strong> domains</span>
+            <span><strong>1</strong> team map</span>
+          </div>
+        </div>
+
+        <div className="start__preview" aria-label="Capability map preview">
+          <div className="start__preview-head">
+            <span>Capability map</span>
+            <span>Quarter view</span>
+          </div>
+          <div className="start__map">
+            {previewDomains.map((domain, i) => (
+              <div className="start__map-row" key={domain.id}>
+                <span>{domain.name}</span>
+                <span
+                  className={`start__map-cell start__map-cell--${previewLevels[i]}`}
+                  aria-hidden="true"
+                />
+              </div>
+            ))}
+          </div>
+          <div className="start__preview-foot">
+            <span>Learning</span>
+            <span>Solid</span>
+            <span>Can-Teach</span>
+          </div>
+        </div>
+      </div>
 
       <div className="gate__roles">
         <button className="card card--interactive gate__role" onClick={() => onPick('navigator')}>
@@ -51,8 +82,8 @@ function RoleSelect({ onPick }) {
             </svg>
           </span>
           <span className="gate__role-title">I&rsquo;m a navigator</span>
-          <span className="gate__role-sub">Take the check and see my own development picture.</span>
-          <span className="gate__role-go">Start the check →</span>
+          <span className="gate__role-sub">Take the check and see your domain results.</span>
+          <span className="gate__role-go">Start the check &rarr;</span>
         </button>
         <button className="card card--interactive gate__role" onClick={() => onPick('supervisor')}>
           <span className="gate__role-icon" aria-hidden="true">
@@ -64,19 +95,19 @@ function RoleSelect({ onPick }) {
             </svg>
           </span>
           <span className="gate__role-title">I&rsquo;m a supervisor</span>
-          <span className="gate__role-sub">Open the team capability map and dashboards.</span>
-          <span className="gate__role-go">Open the dashboard →</span>
+          <span className="gate__role-sub">Open the team map, dashboards, and training view.</span>
+          <span className="gate__role-go">Open the dashboard &rarr;</span>
         </button>
       </div>
 
       <div className="start__domains">
-        <p className="start__domains-label">What it covers</p>
+        <p className="start__domains-label">Measured domains</p>
         <ul className="start__domain-list">
-          {DOMAINS.map((d, i) => (
-            <Reveal as="li" key={d.id} className="start__domain" delay={i * 60}>
+          {DOMAINS.map((d) => (
+            <li key={d.id} className="start__domain">
               <span className="tag">{d.name}</span>
               <span className="start__domain-blurb">{d.blurb}</span>
-            </Reveal>
+            </li>
           ))}
         </ul>
       </div>
