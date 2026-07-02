@@ -551,12 +551,13 @@ training assignments.
   F14/F23.
 - **Status:** Complete. Verified live: build mode structured a raw BH guide; refine mode caught
   the psych-nurse contradiction + refill-continuity addition while preserving untouched rules.
-  **Depends on the pending C1 owner action:** the old deployed Firestore rules deny the `sops`
-  collection, so saves/reads against the LIVE project fail until Anonymous auth is enabled and
-  the new rules are deployed.
+  C1 is now active in Firebase: Anonymous auth is enabled, the current Firestore rules/indexes are
+  deployed, and `sops` saves are allowed for signed-in anonymous app users. `firebase.json` maps the
+  deploy command to `firestore.rules` + `firestore.indexes.json`; pass `--project <id>` if the
+  Firebase CLI has no active project alias.
 - **Files:** new `api/{_sop-store,refine-sop,refine-sop.test}.js`,
   `src/components/SopManager.jsx`; edited `src/lib/db.js`, `api/_sop-context.js`, `server.js`,
-  `firestore.rules`, `src/components/{SupervisorApp,Nav}.jsx`, `src/styles.css`.
+  `firestore.rules`, `firebase.json`, `src/components/{SupervisorApp,Nav}.jsx`, `src/styles.css`.
 
 ### F14 — Question Bank + Gemini Scenario Generation (review gate)
 - **Purpose:** Grow the check from the SOP; questions are live Firestore data, not a static file.
@@ -881,6 +882,18 @@ stateDiagram-v2
 
 ## 7. Development History
 
+### 2026-07-02 — Firebase deploy manifest for Firestore rules/indexes
+- **What changed:** Added root `firebase.json` pointing Firestore deploys at `firestore.rules`
+  and `firestore.indexes.json`.
+- **Why:** The local rules already allow the new `sops` collection, but the live project still
+  needs the pending C1 deploy. Without `firebase.json`, `firebase deploy --only
+  firestore:rules,firestore:indexes` may not know which local files to publish from this repo.
+- **Verification:** `firebase.cmd deploy --project quarterly-knowledge-check --only
+  firestore:rules,firestore:indexes` completed successfully; `node scripts/reset-pilot-data.mjs
+  --delete` then completed cleanly on retry (first pass hit a transient `resultHistory`
+  permission-denied while rules propagated).
+- **Status:** Complete. C1 is active in the live Firebase project.
+
 ### 2026-07-02 — F24: SOP Manager (adder / builder / refiner)
 - **What changed:** Department SOPs moved from hardcoded strings to live, supervisor-managed,
   versioned Firestore data with AI-assisted authoring. See the F24 feature entry (§4) for the full
@@ -902,12 +915,12 @@ stateDiagram-v2
   + real Gemini keys: 401/400 validation paths, build mode (structured a raw BH guide, flagged the
   thin intake section), refine mode (caught the psych-nurse → provider-direct contradiction,
   added the refill-continuity rule, preserved all untouched rules, left crisis routing alone).
-- **Known gate:** the LIVE project's old deployed rules deny the `sops` collection — the feature
-  works fully only after the pending C1 owner action (enable Anonymous auth → deploy
-  `firestore.rules`).
+- **Known gate:** resolved. The live project now has Anonymous auth enabled and current
+  `firestore.rules` + `firestore.indexes.json` deployed (wired by root `firebase.json`).
 - **Files affected:** new `api/{_sop-store,refine-sop,refine-sop.test}.js`,
   `src/components/SopManager.jsx`; edited `src/lib/db.js`, `api/_sop-context.js`, `server.js`,
-  `firestore.rules`, `src/components/{SupervisorApp,Nav}.jsx`, `src/styles.css`, `CLAUDE.md`.
+  `firestore.rules`, `firebase.json`, `src/components/{SupervisorApp,Nav}.jsx`, `src/styles.css`,
+  `CLAUDE.md`.
 - **Status:** Complete.
 
 ### 2026-07-02 — Domain redesign: 6 job-aligned Patient Navigator domains (+ pilot data reset)
@@ -942,9 +955,9 @@ stateDiagram-v2
 - **Pilot data reset** (owner-approved): new `scripts/reset-pilot-data.mjs` (web SDK +
   `.env.local`, dry-run by default, `--delete` to execute, per-collection permission tolerance).
   Deleted live `results` (5) and the old `questions` bank (23). `resultHistory`/`completions`/
-  `pairings` are **blocked by the old deployed rules** (unauthenticated access denied; anonymous
-  auth not yet enabled — the pending C1 owner action) — re-run the script after enabling
-  Anonymous auth + deploying rules to clear any stragglers. New bank auto-seeds from
+  `pairings` were blocked by the then-deployed old rules (unauthenticated access denied) —
+  *(resolved later the same day: after the C1 activation — see the "Firebase deploy manifest"
+  entry above — the script was re-run and all collections cleared).* New bank auto-seeds from
   `ALL_SEED_QUESTIONS` on next app load. Old `interviews` docs keep old domain tags (render as
   raw ids — cosmetic; clear manually if desired).
 - **Also:** `stress/quota-probe.mjs` domain list updated. Tests derive from `DOMAINS`
@@ -1009,7 +1022,9 @@ stateDiagram-v2
   `playwright.stress.config.js`, `package.json`, `CLAUDE.md`.
 - **Status:** Code complete + stress-validated. **Owner action to activate C1:** enable Anonymous
   auth in the Firebase console, confirm the deployed app still reads data, THEN
-  `firebase deploy --only firestore:rules,firestore:indexes`.
+  `firebase deploy --only firestore:rules,firestore:indexes`. *(Completed 2026-07-02 — see the
+  "Firebase deploy manifest" entry: Anonymous auth enabled, rules + indexes deployed, verified
+  live.)*
 
 ### 2026-07-01 — Playwright end-to-end test harness added
 - **What changed:** Added Playwright so browser flows can actually be verified locally (the app's
@@ -2678,11 +2693,6 @@ npm run test:e2e     # run the Playwright browser tests (auto-builds + starts th
 3. **Supervisor grade override** — allow supervisors to adjust the AI-given score on a saved practice session.
 
 **Active work items:**
-- **Owner action (C1 — now gates F24 too):** enable Anonymous auth in the Firebase console,
-  confirm the deployed app still loads, then `firebase deploy --only
-  firestore:rules,firestore:indexes`. Until then the LIVE project denies the new `sops`
-  collection (SOP manager saves fail) plus `resultHistory`/`completions`/`pairings`. Afterwards,
-  run `node scripts/reset-pilot-data.mjs --delete` once more to clear old-domain stragglers.
 - **Question bank regeneration** — the reset bank holds only the 37 seeds; supervisors should
   generate + activate additional scenarios per new domain via the Question Bank UI.
 - **SOP content** — paste the real Pediatrics / OB/GYN SOPs (and later Behavioral Health /
