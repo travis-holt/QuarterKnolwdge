@@ -1,5 +1,6 @@
 // SOP contexts used to ground scenario generation. The leading underscore keeps
 // Express from turning this file into an HTTP route — it is a helper module.
+import { getLiveSopSync } from './_sop-store.js';
 //
 // SOP_CONTEXTS is a map keyed by department id. Use sopContextFor(deptId) in
 // API handlers — it defaults to the Pediatrics context for unknown departments.
@@ -559,8 +560,16 @@ export const SOP_CONTEXTS = {
 };
 
 /** Return the SOP grounding text for a department (role context + department SOP).
- *  Falls back to Pediatrics. */
+ *
+ *  Department SOP resolution order:
+ *    1. the ACTIVE supervisor-managed SOP from the Firestore `sops` collection
+ *       (F24 SOP manager — cached sync read via _sop-store.js), else
+ *    2. the hardcoded department context above, else
+ *    3. the Pediatrics context.
+ *  Live SOPs make Behavioral Health / Internal Medicine AI-groundable without a
+ *  code change. */
 export function sopContextFor(deptId) {
-  const dept = SOP_CONTEXTS[deptId] ?? SOP_CONTEXTS.pediatrics;
+  const live = getLiveSopSync(deptId);
+  const dept = live ?? SOP_CONTEXTS[deptId] ?? SOP_CONTEXTS.pediatrics;
   return `${NAVIGATOR_ROLE_CONTEXT}\n\n${dept}`;
 }

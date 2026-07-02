@@ -25,6 +25,7 @@ export default function Nav({ role, view, setView, onSignOut, activeDeptName, on
           { id: 'mentorship', label: 'Mentorship' },
           { id: 'learning', label: 'Learning Loop' },
           { id: 'questions', label: 'Questions' },
+          { id: 'sops', label: 'SOPs' },
         ];
 
   const home = role === 'navigator' ? 'dashboard' : 'overview';

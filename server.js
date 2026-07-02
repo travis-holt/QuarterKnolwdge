@@ -10,7 +10,9 @@ import { dirname, join } from 'path';
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const app = express();
 
-app.use(express.json());
+// 1mb limit (Express default is 100kb): the SOP manager posts whole pasted
+// SOP documents to /api/refine-sop.
+app.use(express.json({ limit: '1mb' }));
 
 // --- API routes (import the same handlers used on Vercel) ---
 import generateScenarios from './api/generate-scenarios.js';
@@ -20,6 +22,7 @@ import gradeInterview from './api/grade-interview.js';
 import generateAudit from './api/generate-audit.js';
 import coachAudit from './api/coach-audit.js';
 import sequencePath from './api/sequence-path.js';
+import refineSop from './api/refine-sop.js';
 import health from './api/health.js';
 import { attachLiveRelay } from './api/live-relay.js';
 
@@ -30,6 +33,7 @@ app.post('/api/grade-interview', gradeInterview);
 app.post('/api/generate-audit', generateAudit);
 app.post('/api/coach-audit', coachAudit);
 app.post('/api/sequence-path', sequencePath);
+app.post('/api/refine-sop', refineSop);
 app.get('/api/health', health);
 
 // --- Static SPA ---

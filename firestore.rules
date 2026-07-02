@@ -74,6 +74,10 @@ service cloud.firestore {
     match /learningProposals/{docId} {
       allow read, write: if signedIn();
     }
+    // Supervisor-managed, versioned department SOPs (draft / active / archived).
+    match /sops/{docId} {
+      allow read, write: if signedIn();
+    }
 
     // Everything else is denied.
     match /{document=**} {

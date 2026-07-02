@@ -10,7 +10,7 @@
 > [§8 Current System State](#8-current-system-state) and [§15 Current Priorities](#15-current-priorities)
 > accurate at all times.
 >
-> **Last updated:** 2026-07-02 (domain redesign: 6 job-aligned Patient Navigator domains) ·
+> **Last updated:** 2026-07-02 (F24 SOP manager + domain redesign) ·
 > **Doc maintainer:** Claude (AI agent) + repo owner. Assumptions are explicitly marked **[ASSUMPTION]**.
 
 ---
@@ -512,6 +512,52 @@ training assignments.
 - **Safety:** AI and learning-loop output is advisory. No raw check score can be edited, no generated
   question becomes active without supervisor review, and no training-plan change is silently applied.
 
+### F24 — SOP Manager (adder / builder / refiner)
+- **Purpose:** Make department SOPs live, supervisor-managed data instead of hardcoded strings —
+  add, structure, refine, version, and activate SOPs from the UI. The active SOP grounds all AI
+  features for its department.
+- **User benefit:** Supervisors onboard a new department (Behavioral Health, Internal Medicine)
+  or absorb a floor-rule change by pasting a document — no code deploy. The refiner flags every
+  contradiction/outdated rule between new material and the current SOP (e.g. the BH psych-nurse →
+  provider-direct routing change).
+- **Technical implementation:**
+  - **Firestore `sops` collection** — versioned docs `{ department, title, body, version,
+    status: draft|active|archived, source: manual|ai-build|ai-refine, createdAt, activatedAt }`.
+    At most one active doc per department (`activateSop` archives the rest in one batch).
+    `db.js`: `subscribeSops`, `saveSopDraft`, `updateSop`, `activateSop`, `archiveSop`,
+    `deleteSop`. Rule added to `firestore.rules`.
+  - **[api/_sop-store.js](api/_sop-store.js)** — server-side cached reader (firebase web SDK in
+    Node, named app `sop-store`, defensive init from `process.env.VITE_FIREBASE_*`, anonymous
+    sign-in tolerated to fail). `getLiveSopSync(dept)` is a SYNC cache read (60s TTL, lazy
+    non-blocking refresh) so `sopContextFor()` stays synchronous and none of the 7 AI handlers
+    changed. Returns null → hardcoded fallback.
+  - **`sopContextFor(deptId)` resolution order:** live active SOP → hardcoded dept context →
+    Pediatrics. Role context (`NAVIGATOR_ROLE_CONTEXT`) is always prepended.
+  - **[api/refine-sop.js](api/refine-sop.js)** — `POST /api/refine-sop`, two modes (temp 0.2,
+    JSON output, key rotation, exported pure `validateSopRefineResponse` + 10 tests):
+    **build** `{rawText, department}` → `{sop:{title, body, notes[]}}` structures a raw document
+    into the 6-domain SOP layout; **refine** `{rawText, currentSop, department}` →
+    `{sop:{title, body, changes:[{type: contradiction|outdated|addition|clarification,
+    summary}]}}` merges new material into the active SOP (new material wins, every diff flagged).
+    Inputs capped at 48k chars; `server.js` JSON body limit raised to 1mb for pasted documents.
+  - **[src/components/SopManager.jsx](src/components/SopManager.jsx)** — supervisor "SOPs" tab
+    (dept-scoped via DeptBar, works for non-assessed depts too): active-version card,
+    drafts-awaiting-review list (edit/activate/delete with inline confirm), archived versions
+    (restorable), import panel (Save verbatim / Build with AI / Refine current SOP), refine
+    proposal preview with typed change chips. Editing the ACTIVE version always saves a NEW
+    draft version — active docs are never mutated.
+- **Safety:** AI output is always a **draft** the supervisor reviews and activates — the endpoint
+  never writes Firestore; nothing goes live without a human click. Same review-gate philosophy as
+  F14/F23.
+- **Status:** Complete. Verified live: build mode structured a raw BH guide; refine mode caught
+  the psych-nurse contradiction + refill-continuity addition while preserving untouched rules.
+  **Depends on the pending C1 owner action:** the old deployed Firestore rules deny the `sops`
+  collection, so saves/reads against the LIVE project fail until Anonymous auth is enabled and
+  the new rules are deployed.
+- **Files:** new `api/{_sop-store,refine-sop,refine-sop.test}.js`,
+  `src/components/SopManager.jsx`; edited `src/lib/db.js`, `api/_sop-context.js`, `server.js`,
+  `firestore.rules`, `src/components/{SupervisorApp,Nav}.jsx`, `src/styles.css`.
+
 ### F14 — Question Bank + Gemini Scenario Generation (review gate)
 - **Purpose:** Grow the check from the SOP; questions are live Firestore data, not a static file.
 - **User benefit:** Supervisors generate, review, and curate the assessment without a code change.
@@ -834,6 +880,35 @@ stateDiagram-v2
 ---
 
 ## 7. Development History
+
+### 2026-07-02 — F24: SOP Manager (adder / builder / refiner)
+- **What changed:** Department SOPs moved from hardcoded strings to live, supervisor-managed,
+  versioned Firestore data with AI-assisted authoring. See the F24 feature entry (§4) for the full
+  design. Highlights:
+  - New `sops` Firestore collection + `db.js` CRUD (`subscribeSops`, `saveSopDraft`, `updateSop`,
+    `activateSop` — batch-archives the previous active version — `archiveSop`, `deleteSop`) +
+    `firestore.rules` entry.
+  - New `api/_sop-store.js`: the Express server now reads Firestore (first time ever) via the
+    firebase web SDK with defensive init and a 60s sync cache, so `sopContextFor()` stays
+    synchronous and zero AI-handler call sites changed. Resolution: live active SOP → hardcoded
+    context → Pediatrics.
+  - New `POST /api/refine-sop` (build = structure raw document into the 6-domain layout; refine =
+    merge new material into the current SOP with typed change flags). `validateSopRefineResponse`
+    exported pure; `server.js` JSON limit 100kb → 1mb.
+  - New supervisor "SOPs" tab (`SopManager.jsx`): active/draft/archived versions, inline confirms,
+    import panel (verbatim / Build with AI / Refine), proposal preview with change chips.
+- **Verification:** `npm test` → **238 passing** (9 files; +10 refine-sop tests); `npm run build`
+  → clean; `node --check` on all new/edited api files; **live smoke test** against a local server
+  + real Gemini keys: 401/400 validation paths, build mode (structured a raw BH guide, flagged the
+  thin intake section), refine mode (caught the psych-nurse → provider-direct contradiction,
+  added the refill-continuity rule, preserved all untouched rules, left crisis routing alone).
+- **Known gate:** the LIVE project's old deployed rules deny the `sops` collection — the feature
+  works fully only after the pending C1 owner action (enable Anonymous auth → deploy
+  `firestore.rules`).
+- **Files affected:** new `api/{_sop-store,refine-sop,refine-sop.test}.js`,
+  `src/components/SopManager.jsx`; edited `src/lib/db.js`, `api/_sop-context.js`, `server.js`,
+  `firestore.rules`, `src/components/{SupervisorApp,Nav}.jsx`, `src/styles.css`, `CLAUDE.md`.
+- **Status:** Complete.
 
 ### 2026-07-02 — Domain redesign: 6 job-aligned Patient Navigator domains (+ pilot data reset)
 - **Context:** The owner provided a comprehensive Patient Navigator role description (cross-
@@ -2258,13 +2333,14 @@ stateDiagram-v2
 - **Counts (today):** 6 domains (job-aligned 2026-07-02: intake · classification · routing ·
   scheduling · boundaries · documentation) · 9 competencies · 21 Pediatrics + 16
   OB/GYN = **37** seed questions (bank grows in Firestore per dept) · 4 departments (**Pediatrics
-  + OB/GYN live**, 2 mockup) · **228** unit tests (8 test files) · **9** Firestore collections
+  + OB/GYN live**, 2 mockup) · **238** unit tests (9 test files) · **10** Firestore collections
   (`roster`, `results`, `resultHistory`, `questions`, `interviews`, `completions`, `pairings`,
-  `supervisorFeedback`, `learningProposals`) ·
-  **8** REST serverless functions (`generate-scenarios`, `generate-coaching`, `interview-turn`,
-  `grade-interview`, `generate-audit`, `coach-audit`, `sequence-path`, `health`) + **1** WebSocket
-  relay (`live-relay.js` → `/api/live`) · **2** shared API helpers (`api/_gemini-client.js`,
-  `api/_auth.js`) · **1** shared client fetch helper (`src/lib/apiFetch.js`).
+  `supervisorFeedback`, `learningProposals`, `sops`) ·
+  **9** REST serverless functions (`generate-scenarios`, `generate-coaching`, `interview-turn`,
+  `grade-interview`, `generate-audit`, `coach-audit`, `sequence-path`, `refine-sop`, `health`) +
+  **1** WebSocket relay (`live-relay.js` → `/api/live`) · **3** shared API helpers
+  (`api/_gemini-client.js`, `api/_auth.js`, `api/_sop-store.js`) · **1** shared client fetch
+  helper (`src/lib/apiFetch.js`).
 
 ---
 
@@ -2338,6 +2414,9 @@ stateDiagram-v2
   - `learningProposals/{uuid}` → `{ type, title, target, payload, reasons, status, createdAt,
     reviewedAt }`. Proposals are review-only; approving a question proposal creates a draft, not an
     active question.
+  - `sops/{uuid}` → `{ department, title, body, version, status: 'draft'|'active'|'archived',
+    source: 'manual'|'ai-build'|'ai-refine', createdAt, activatedAt? }`. At most one active doc per
+    department; the active body grounds the server's AI features (read via `api/_sop-store.js`).
 - **Serverless endpoints:**
   - `POST /api/generate-scenarios` `{ domainId, count, secret }` → `{ questions }` (validated drafts).
   - `POST /api/generate-coaching` `{ answers, questions, competencyScores, name, completions?,
@@ -2348,6 +2427,7 @@ stateDiagram-v2
   - `POST /api/grade-interview` `{ domain, scenario, transcript, name, secret }` → `{ grade: { score:number(0–100), summary:string, strengths:string[], improvements:string[] } }`. Gemini reviews the full transcript against the SOP; temp 0.3 for consistency. Advisory only.
   - `POST /api/generate-audit` `{ domain, secret }` → `{ transcript, errorIndex, hint, modelExplanation }` (~10-turn flawed transcript for the "Spot the Error" exercise).
   - `POST /api/coach-audit` `{ domain, modelExplanation, navigatorAnswer, name, secret }` → `{ reply }` (warm 2–3 sentence mentor coaching note; advisory only).
+  - `POST /api/refine-sop` — `{ mode:'build', rawText, department, secret }` → `{ sop: { title, body, notes[] } }` (structures a raw document into the 6-domain SOP layout); `{ mode:'refine', rawText, currentSop, department, secret }` → `{ sop: { title, body, changes:[{type, summary}] } }` (merges new material into the active SOP, flagging contradictions/outdated rules/additions/clarifications). Output is always saved client-side as a draft — the endpoint never writes Firestore.
   - `GET /api/health` → `{ ok }`.
 - **WebSocket endpoint:**
   - `WS /api/live` — real-time voice practice call relay (F22). Client sends `{type:'start',
@@ -2374,7 +2454,9 @@ stateDiagram-v2
   completions — `saveCompletion(navigatorId, name, domainId)`, `getCompletions(navigatorId)`,
   `subscribeCompletions(cb, onError?)`; learning loop — `saveSupervisorFeedback`,
   `subscribeSupervisorFeedback`, `saveLearningProposal`, `updateLearningProposalStatus`,
-  `subscribeLearningProposals`.
+  `subscribeLearningProposals`; SOPs — `subscribeSops`, `saveSopDraft`, `updateSop`,
+  `activateSop(id, department)` (batch-archives the previous active version), `archiveSop`,
+  `deleteSop`.
 - **Secrets:** `SUPERVISOR_PASSCODE` is in the repo (pilot-acceptable); `GEMINI_API_KEYS` is a
   server-only Railway Variable, never committed or bundled.
 
@@ -2596,16 +2678,18 @@ npm run test:e2e     # run the Playwright browser tests (auto-builds + starts th
 3. **Supervisor grade override** — allow supervisors to adjust the AI-given score on a saved practice session.
 
 **Active work items:**
-- **SOP manager (adder/builder/refiner)** — next build, agreed 2026-07-02: Firestore `sops`
-  collection (draft/active/archived, versioned) + supervisor editor UI + Gemini
-  build-from-document and refine-against-current endpoints + DB-backed `sopContextFor` (server
-  gains Firestore access; hardcoded contexts stay as fallback). Unblocks Behavioral Health and
-  Internal Medicine as live departments without code changes.
+- **Owner action (C1 — now gates F24 too):** enable Anonymous auth in the Firebase console,
+  confirm the deployed app still loads, then `firebase deploy --only
+  firestore:rules,firestore:indexes`. Until then the LIVE project denies the new `sops`
+  collection (SOP manager saves fail) plus `resultHistory`/`completions`/`pairings`. Afterwards,
+  run `node scripts/reset-pilot-data.mjs --delete` once more to clear old-domain stragglers.
 - **Question bank regeneration** — the reset bank holds only the 37 seeds; supervisors should
   generate + activate additional scenarios per new domain via the Question Bank UI.
-- Owner data note: `resultHistory`/`completions`/`pairings` could not be cleared in the
-  2026-07-02 reset (old deployed rules deny access) — after enabling Anonymous auth and deploying
-  rules (pending C1 action), run `node scripts/reset-pilot-data.mjs --delete` again.
+- **SOP content** — paste the real Pediatrics / OB/GYN SOPs (and later Behavioral Health /
+  Internal Medicine) into the new SOPs tab and activate, taking grounding control away from the
+  hardcoded `_sop-context.js` fallbacks. Note: live SOPs in Firestore may hold real provider
+  names (not in the public repo), but rules are pilot-grade — treat PII accordingly until real
+  auth lands.
 
 **Blockers:**
 - Adult Medicine and Behavioural Health remain mockup — each needs an owner-provided SOP before

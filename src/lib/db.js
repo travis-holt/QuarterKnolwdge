@@ -27,6 +27,9 @@
 //   pairings      — mentor-mentee pairings { domainId, mentorId, mentorName,
 //                   menteeId, menteeName, menteeLevel, baselineScore, status,
 //                   createdAt }
+//   sops          — versioned department SOPs { department, title, body, version,
+//                   status: draft|active|archived, source, createdAt }. At most
+//                   one active doc per department; grounds the server's AI features.
 //
 // Levels (learning/solid/canTeach) are NEVER stored — always derived client-side
 // by scoreToLevel(), so thresholds stay tunable without a data migration. Older
@@ -105,6 +108,7 @@ const COMPLETIONS = 'completions';
 const PAIRINGS = 'pairings';
 const SUPERVISOR_FEEDBACK = 'supervisorFeedback';
 const LEARNING_PROPOSALS = 'learningProposals';
+const SOPS = 'sops';
 
 // ── Roster ───────────────────────────────────────────────────────────────────
 
@@ -653,4 +657,77 @@ export async function updateLearningProposalStatus(id, status, review = {}) {
  */
 export function subscribeLearningProposals(cb, onError) {
   return liveQuery(collection(db, LEARNING_PROPOSALS), cb, onError ?? ((err) => console.error('subscribeLearningProposals:', err)));
+}
+
+// ── SOPs (supervisor-managed, versioned department SOPs) ─────────────────────
+//
+// Each SOP doc is one version of one department's SOP:
+//   { department, title, body, version, status: 'draft'|'active'|'archived',
+//     source: 'manual'|'ai-build'|'ai-refine', createdAt, activatedAt? }
+// At most ONE doc per department is `active` — activateSop archives the rest.
+// The server (api/_sop-store.js) reads the active doc to ground AI features;
+// when no active doc exists it falls back to the hardcoded _sop-context.js.
+
+/**
+ * Supervisor: live subscription to ALL SOP docs (all departments + statuses).
+ * The collection stays small (a handful of versions per department).
+ * @param {(sops:object[]) => void} cb
+ * @param {(err:Error) => void} [onError]
+ * @returns {() => void} unsubscribe
+ */
+export function subscribeSops(cb, onError) {
+  return liveQuery(collection(db, SOPS), cb, onError ?? ((err) => console.error('subscribeSops:', err)));
+}
+
+/**
+ * Supervisor: save a new SOP version as a draft (never live until activated).
+ * @param {{ department:string, title:string, body:string, version:number, source?:string }} sop
+ * @returns {Promise<string>} the new SOP doc id
+ */
+export async function saveSopDraft(sop) {
+  const ref = doc(collection(db, SOPS));
+  await setDoc(ref, {
+    department: sop.department,
+    title: (sop.title ?? '').trim() || 'Untitled SOP',
+    body: sop.body,
+    version: sop.version,
+    status: 'draft',
+    source: sop.source ?? 'manual',
+    createdAt: serverTimestamp(),
+  });
+  return ref.id;
+}
+
+/** Supervisor: patch a draft SOP's editable fields (title/body). */
+export async function updateSop(id, patch) {
+  await updateDoc(doc(db, SOPS, id), patch);
+}
+
+/**
+ * Supervisor: make one SOP version live for its department. Archives any other
+ * active version of the same department in the same batch, so exactly one doc
+ * per department is ever `active`.
+ * @param {string} id          the SOP doc to activate
+ * @param {string} department  the doc's department (guards the archive query)
+ */
+export async function activateSop(id, department) {
+  const activeSnap = await getDocs(
+    query(collection(db, SOPS), where('department', '==', department), where('status', '==', 'active'))
+  );
+  const batch = writeBatch(db);
+  for (const d of activeSnap.docs) {
+    if (d.id !== id) batch.update(doc(db, SOPS, d.id), { status: 'archived' });
+  }
+  batch.update(doc(db, SOPS, id), { status: 'active', activatedAt: serverTimestamp() });
+  await batch.commit();
+}
+
+/** Supervisor: retire an SOP version (kept for history). */
+export async function archiveSop(id) {
+  await updateDoc(doc(db, SOPS, id), { status: 'archived' });
+}
+
+/** Supervisor: permanently delete an SOP version (drafts only — UI-enforced). */
+export async function deleteSop(id) {
+  await deleteDoc(doc(db, SOPS, id));
 }

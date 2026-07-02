@@ -8,6 +8,7 @@ import NavigatorDetail from './NavigatorDetail.jsx';
 import Training from './Training.jsx';
 import TrainingModule from './TrainingModule.jsx';
 import QuestionBank from './QuestionBank.jsx';
+import SopManager from './SopManager.jsx';
 import ActionCenter from './ActionCenter.jsx';
 import Mentorship from './Mentorship.jsx';
 import LearningLoop from './LearningLoop.jsx';
@@ -39,6 +40,12 @@ import {
   saveLearningProposal,
   subscribeLearningProposals,
   updateLearningProposalStatus,
+  subscribeSops,
+  saveSopDraft,
+  updateSop,
+  activateSop,
+  archiveSop,
+  deleteSop,
 } from '../lib/db.js';
 import { isFirebaseConfigured } from '../lib/firebase.js';
 import { ALL_SEED_QUESTIONS } from '../data/questions.js';
@@ -48,7 +55,7 @@ import { apiFetch } from '../lib/apiFetch.js';
 // Views where the DeptBar appears. The Navigators tab is intentionally NOT here:
 // roster management is global (not department-scoped), so it always shows the
 // live Pediatrics check plus the full roster regardless of department.
-const DEPT_SCOPED_VIEWS = ['overview', 'matrix', 'training', 'navigator', 'learning'];
+const DEPT_SCOPED_VIEWS = ['overview', 'matrix', 'training', 'navigator', 'learning', 'sops'];
 // Analytics views that should show an empty state when there's no live data.
 const DATA_VIEWS = ['overview', 'matrix', 'training', 'navigator'];
 
@@ -64,6 +71,7 @@ export default function SupervisorApp({ onSignOut }) {
   const [pairings, setPairings] = useState([]); // active/completed mentor pairings
   const [feedback, setFeedback] = useState([]); // supervisor judgments for the learning loop
   const [learningProposals, setLearningProposals] = useState([]); // human-review improvement queue
+  const [sops, setSops] = useState([]); // versioned department SOPs (F24)
   const [selected, setSelected] = useState(null);
   const [moduleDomain, setModuleDomain] = useState(null);
   const [moduleReturn, setModuleReturn] = useState('training');
@@ -97,6 +105,9 @@ export default function SupervisorApp({ onSignOut }) {
     const unsubProposals = subscribeLearningProposals(setLearningProposals, (err) => {
       console.error('subscribeLearningProposals:', err);
     });
+    const unsubSops = subscribeSops(setSops, (err) => {
+      console.error('subscribeSops:', err);
+    });
     return () => {
       unsubResults();
       unsubRoster();
@@ -106,6 +117,7 @@ export default function SupervisorApp({ onSignOut }) {
       unsubPairings();
       unsubFeedback();
       unsubProposals();
+      unsubSops();
     };
   }, []);
 
@@ -373,6 +385,19 @@ export default function SupervisorApp({ onSignOut }) {
                 onSaveProposal={handleSaveLearningProposal}
                 onUpdateProposal={handleUpdateLearningProposal}
                 onCreateQuestionDraft={handleCreateQuestionDraft}
+              />
+            )}
+
+            {view === 'sops' && (
+              <SopManager
+                sops={sops}
+                selectedDept={selectedDept}
+                deptName={deptName}
+                onSaveDraft={saveSopDraft}
+                onUpdateSop={updateSop}
+                onActivate={activateSop}
+                onArchive={archiveSop}
+                onDelete={deleteSop}
               />
             )}
 
