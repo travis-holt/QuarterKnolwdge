@@ -132,7 +132,7 @@ export default function Interview({ navigatorId, name, department = 'pediatrics'
     setPhase('saving');
     docIdRef.current = null;
     try {
-      docIdRef.current = await saveInterview(navigatorId, name, domainId, scenario, callerName, transcript);
+      docIdRef.current = await saveInterview(navigatorId, name, domainId, scenario, callerName, transcript, department);
     } catch (err) {
       console.error('Failed to save interview:', err);
       // Continue to grading even if save failed — navigator still sees feedback.

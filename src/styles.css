@@ -5059,6 +5059,38 @@ textarea:focus-visible {
 .qa-result--pass .qa-result__verdict { color: var(--level-canteach); }
 .qa-result--fail .qa-result__verdict { color: var(--level-learning); }
 
+.qa-latest {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 1rem;
+  margin-bottom: 1rem;
+  border-left: 4px solid var(--line);
+}
+.qa-latest--pass { border-left-color: var(--level-canteach); }
+.qa-latest--fail { border-left-color: var(--level-learning); }
+.qa-latest__eyebrow {
+  margin: 0 0 0.2rem;
+  color: var(--ink-soft);
+  font-size: 0.78rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+.qa-latest__title {
+  margin: 0;
+  font-size: 1.25rem;
+  letter-spacing: 0.04em;
+}
+.qa-latest--pass .qa-latest__title { color: var(--level-canteach); }
+.qa-latest--fail .qa-latest__title { color: var(--level-learning); }
+.qa-latest__meta {
+  margin: 0.2rem 0 0;
+  color: var(--ink-soft);
+  font-size: 0.9rem;
+}
+
 .qa-autofail {
   border-left: 4px solid var(--level-learning);
 }

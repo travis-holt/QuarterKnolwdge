@@ -71,7 +71,7 @@ function appendTranscriptFragment(existing, fragment) {
 
 // mode: 'practice' (advisory holistic review) | 'test' (hard rubric-based QA
 // test graded criterion-by-criterion against the call quality guide).
-export default function VoiceCall({ navigatorId, name, department = 'pediatrics', onExit, mode = 'practice' }) {
+export default function VoiceCall({ navigatorId, name, department = 'pediatrics', onExit, onDone, mode = 'practice' }) {
   const isTest = mode === 'test';
   // phases: setup | connecting | active | grading | reviewed | discarded | error
   const [phase, setPhase]         = useState('setup');
@@ -270,7 +270,7 @@ export default function VoiceCall({ navigatorId, name, department = 'pediatrics'
     setPhase('grading');
     let docId = null;
     try {
-      docId = await saveInterview(navigatorId, name, domainId, scenario, callerName, transcript);
+      docId = await saveInterview(navigatorId, name, domainId, scenario, callerName, transcript, department);
     } catch (err) {
       console.error('Failed to save voice call:', err);
     }
@@ -292,7 +292,10 @@ export default function VoiceCall({ navigatorId, name, department = 'pediatrics'
         if (data.qa && data.grade) {
           setQa(data.qa);
           setGrade(data.grade);
-          if (docId) updateInterviewGrade(docId, data.grade, data.qa).catch((e) => console.error('grade save failed:', e));
+          if (docId) {
+            try { await updateInterviewGrade(docId, data.grade, data.qa); }
+            catch (e) { console.error('grade save failed:', e); }
+          }
         }
       } else {
         const data = await apiFetch(
@@ -435,8 +438,8 @@ export default function VoiceCall({ navigatorId, name, department = 'pediatrics'
             </div>
           )}
 
-          <button className="btn btn--primary" onClick={() => setPhase('setup')} style={{ alignSelf: 'flex-start' }}>
-            Take the test again
+          <button className="btn btn--primary" onClick={onDone ?? (() => setPhase('setup'))} style={{ alignSelf: 'flex-start' }}>
+            {onDone ? 'Back to dashboard' : 'Take the test again'}
           </button>
         </div>
       </section>

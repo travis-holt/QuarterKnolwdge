@@ -344,13 +344,15 @@ export function subscribeResultHistory(cb, onError) {
  * @param {string} scenario              the navigator-facing briefing text
  * @param {string} callerName
  * @param {{role:'patient'|'navigator', text:string}[]} transcript
+ * @param {string} [department='pediatrics']
  * @returns {Promise<string>} the new interview doc id
  */
-export async function saveInterview(navigatorId, name, domainId, scenario, callerName, transcript) {
+export async function saveInterview(navigatorId, name, domainId, scenario, callerName, transcript, department = 'pediatrics') {
   const ref = doc(collection(db, INTERVIEWS));
   await setDoc(ref, {
     navigatorId,
     name,
+    department,
     domainId,
     scenario,
     callerName,

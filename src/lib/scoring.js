@@ -505,6 +505,8 @@ function optionPoints(question, optionId) {
   return optionId === question.correctOptionId ? 100 : 0;
 }
 
+const isDomainInterview = (iv) => !iv?.qa;
+
 /**
  * Build database-driven learning signals from stored attempts and review data.
  * This is intentionally deterministic: it explains patterns and produces
@@ -553,7 +555,7 @@ export function buildLearningSignals({
       const level = row.levels?.[d.id] ?? scoreToLevel(row.scores?.[d.id] ?? 0);
       if (level !== 'canTeach') {
         const navCompletions = completions.filter((c) => c.name === row.name && c.domainId === d.id);
-        const navInterviews = interviews.filter((iv) => iv.name === row.name && iv.domainId === d.id);
+        const navInterviews = interviews.filter((iv) => isDomainInterview(iv) && iv.name === row.name && iv.domainId === d.id);
         weakDomains.push({
           name: row.name,
           domainId: d.id,
@@ -617,6 +619,7 @@ export function buildLearningSignals({
   }
 
   for (const iv of interviews) {
+    if (!isDomainInterview(iv)) continue;
     if (iv.grade?.score != null && iv.grade.score < INTERVIEW_SCORE_BANDS.fair) {
       interviewRisks.push({
         name: iv.name,
@@ -739,7 +742,7 @@ export function adaptiveTrainingRecommendations(row, {
     const hasPractice = domainCompletions.some((c) => !c.kind || c.kind === 'practice');
     const hasMiniCheck = domainCompletions.some((c) => c.kind === 'minicheck');
     const latestInterview = latestBy(
-      interviews.filter((iv) => iv.domainId === domainId && iv.grade?.score != null),
+      interviews.filter((iv) => isDomainInterview(iv) && iv.domainId === domainId && iv.grade?.score != null),
       (iv) => tsSeconds(iv.endedAt)
     );
     const impact = trainingImpact(history, domainCompletions, domainId);
@@ -1058,7 +1061,7 @@ export function buildDossier(row, answers, questions, interviews = [], completio
     byDomain[d.id] = {
       domainId: d.id,
       interviews: interviews
-        .filter((iv) => iv.domainId === d.id)
+        .filter((iv) => isDomainInterview(iv) && iv.domainId === d.id)
         .map((iv) => ({ id: iv.id, callerName: iv.callerName, endedAt: iv.endedAt, grade: iv.grade ?? null })),
       completions: completions
         .filter((c) => c.domainId === d.id)
@@ -1128,6 +1131,7 @@ export function buildActionCenter(rows, { history = [], interviews = [], complet
   }
 
   for (const iv of interviews) {
+    if (!isDomainInterview(iv)) continue;
     if (iv.grade?.score != null && iv.grade.score < INTERVIEW_SCORE_BANDS.fair) {
       const row = rows.find((r) => r.name === iv.name);
       if (row) {
@@ -1178,7 +1182,7 @@ export function buildActionCenter(rows, { history = [], interviews = [], complet
 export function buildDevPath(row, completions = [], interviews = []) {
   return trainingForRow(row).map(({ domainId, level, priority }) => {
     const hasPractice = completions.some((c) => c.domainId === domainId && (!c.kind || c.kind === 'practice'));
-    const hasInterview = interviews.some((iv) => iv.domainId === domainId && iv.grade?.score != null);
+    const hasInterview = interviews.some((iv) => isDomainInterview(iv) && iv.domainId === domainId && iv.grade?.score != null);
     const hasMiniCheck = completions.some((c) => c.domainId === domainId && c.kind === 'minicheck');
 
     const steps = [

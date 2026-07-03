@@ -317,6 +317,8 @@ export default function NavigatorApp({ navigatorId, name, onSignOut }) {
 
   const dept = activeDept ?? 'pediatrics';
   const deptName = departmentName(dept);
+  const latestQa = latestQaForDept(interviews, dept);
+  const practiceInterviews = interviews.filter((iv) => !iv?.qa);
   // Include allDeptResults so the strip shows real scores for every dept taken,
   // not just the currently active one. Merge ownResult in case it's fresher.
   const deptScoresMap = ownResult?.scores
@@ -370,7 +372,7 @@ export default function NavigatorApp({ navigatorId, name, onSignOut }) {
   }
 
   // Only show dept switcher outside an in-progress assessment — switching mid-quiz would lose progress.
-  const showDeptSwitcher = activeDept && view !== 'check' && view !== 'spotfull' && view !== 'coaching';
+  const showDeptSwitcher = activeDept && view !== 'check' && view !== 'spotfull' && view !== 'qatest' && view !== 'coaching';
 
   return (
     <Shell
@@ -396,7 +398,8 @@ export default function NavigatorApp({ navigatorId, name, onSignOut }) {
         <AssessmentTypeChooser
           deptName={deptName}
           taken={{ mcq: hasMcq, spot: hasSpot }}
-          onPick={(type) => setView(type === 'spot' ? 'spotfull' : 'check')}
+          latestQa={latestQa}
+          onPick={(type) => setView(type === 'spot' ? 'spotfull' : type === 'qa' ? 'qatest' : 'check')}
         />
       )}
 
@@ -425,6 +428,17 @@ export default function NavigatorApp({ navigatorId, name, onSignOut }) {
         />
       )}
 
+      {view === 'qatest' && (
+        <VoiceCall
+          navigatorId={navigatorId}
+          name={name}
+          department={dept}
+          mode="test"
+          onExit={() => setView('typeselect')}
+          onDone={() => setView('dashboard')}
+        />
+      )}
+
       {view === 'coaching' && lastAnswers && ownResult && (
         <Coaching
           questions={questions}
@@ -432,44 +446,50 @@ export default function NavigatorApp({ navigatorId, name, onSignOut }) {
           competencyScores={ownResult.competencyScores}
           name={name}
           completions={completions}
-          interviews={interviews}
+          interviews={practiceInterviews}
           priorResults={Object.entries(allDeptResults).map(([department, scores]) => ({ department, scores }))}
           onContinue={() => setView('dashboard')}
         />
       )}
 
-      {view === 'dashboard' &&
-        (myRow ? (
-          <>
-            <AssessmentBar
-              activeType={activeType}
-              hasMcq={hasMcq}
-              hasSpot={hasSpot}
-              onSwitch={handleSwitchType}
-              onTakeAnother={handleTakeAnother}
-            />
-            <NavigatorDetail
-              rows={rows}
-              name={name}
-              deptName={deptName}
-              dept={activeDept ?? 'pediatrics'}
-              deptMatrix={deptMatrix}
-              onBack={null}
-              onOpenNavigator={null}
-              onPreviewModule={openModule}
-              onChangeDept={handleDeptSelect}
-              navigatorId={navigatorId}
-              completions={completions}
-              answers={ownResult?.answers ?? lastAnswers}
-              questions={questions}
-            />
-          </>
-        ) : (
-          <EmptyState title="No results yet">
-            It looks like your check hasn't been recorded.{' '}
-            <button className="linkbtn" onClick={() => setView('typeselect')}>Take an assessment</button>.
-          </EmptyState>
-        ))}
+      {view === 'dashboard' && (
+        <>
+          {latestQa && (
+            <QaLatestCard qa={latestQa.qa} endedAt={latestQa.endedAt} onRetake={() => setView('qatest')} />
+          )}
+          {myRow ? (
+            <>
+              <AssessmentBar
+                activeType={activeType}
+                hasMcq={hasMcq}
+                hasSpot={hasSpot}
+                onSwitch={handleSwitchType}
+                onTakeAnother={handleTakeAnother}
+              />
+              <NavigatorDetail
+                rows={rows}
+                name={name}
+                deptName={deptName}
+                dept={activeDept ?? 'pediatrics'}
+                deptMatrix={deptMatrix}
+                onBack={null}
+                onOpenNavigator={null}
+                onPreviewModule={openModule}
+                onChangeDept={handleDeptSelect}
+                navigatorId={navigatorId}
+                completions={completions}
+                answers={ownResult?.answers ?? lastAnswers}
+                questions={questions}
+              />
+            </>
+          ) : (
+            <EmptyState title="No domain results yet">
+              Your Call QA Test is saved separately.{' '}
+              <button className="linkbtn" onClick={() => setView('typeselect')}>Take a domain assessment</button>.
+            </EmptyState>
+          )}
+        </>
+      )}
 
       {view === 'history' && (
         <MyHistory
@@ -491,7 +511,7 @@ export default function NavigatorApp({ navigatorId, name, onSignOut }) {
             onStartMiniCheck={startMiniCheck}
             completedDomains={completedDomains}
             completions={completions}
-            interviews={interviews}
+            interviews={practiceInterviews}
             department={activeDept ?? 'pediatrics'}
           />
         ) : (
@@ -603,6 +623,27 @@ export default function NavigatorApp({ navigatorId, name, onSignOut }) {
 // navigator switch between their MCQ and Spot the Error results (when both exist),
 // and launches another assessment.
 const TYPE_LABEL = { mcq: 'Multiple choice', spot: 'Spot the Error' };
+
+function latestBy(items, score) {
+  return items.reduce((best, item) => (!best || score(item) > score(best) ? item : best), null);
+}
+
+function latestQaForDept(interviews, dept) {
+  return latestBy(
+    interviews.filter((iv) => iv?.qa && (iv.department ?? 'pediatrics') === dept),
+    (iv) => iv.endedAt?.seconds ?? 0
+  );
+}
+
+function formatQaDate(ts) {
+  if (!ts?.seconds) return 'Date pending';
+  return new Date(ts.seconds * 1000).toLocaleDateString(undefined, {
+    month: 'short',
+    day: 'numeric',
+    year: 'numeric',
+  });
+}
+
 function AssessmentBar({ activeType, hasMcq, hasSpot, onSwitch, onTakeAnother }) {
   const bothTaken = hasMcq && hasSpot;
   return (
@@ -634,16 +675,31 @@ function AssessmentBar({ activeType, hasMcq, hasSpot, onSwitch, onTakeAnother })
   );
 }
 
-// Assessment-type chooser — MCQ scenario check vs. the "Spot the Error" QA audit.
-// Both feed the capability matrix; the navigator picks how they want to be assessed.
-function AssessmentTypeChooser({ deptName, taken = {}, onPick }) {
+// Assessment-type chooser: MCQ and Spot feed the capability matrix; QA is standalone.
+function QaLatestCard({ qa, endedAt, onRetake }) {
+  return (
+    <div className={`card qa-latest ${qa.pass ? 'qa-latest--pass' : 'qa-latest--fail'}`}>
+      <div>
+        <p className="qa-latest__eyebrow">Latest Call QA Test</p>
+        <h2 className="qa-latest__title">{qa.pass ? 'PASS' : 'FAIL'}</h2>
+        <p className="qa-latest__meta">{qa.score}/100 - {formatQaDate(endedAt)}</p>
+      </div>
+      <button className="btn btn--ghost btn--sm" onClick={onRetake} type="button">
+        Retake
+      </button>
+    </div>
+  );
+}
+
+function AssessmentTypeChooser({ deptName, taken = {}, latestQa, onPick }) {
   return (
     <section className="interview view-enter">
       <header className="overview__head">
         <div>
           <h1 className="overview__title">Choose your assessment</h1>
           <p className="overview__lede">
-            Two ways to be assessed for {deptName}. Both score every domain — take either or both.
+            Choose how to be assessed for {deptName}. Multiple choice and Spot the Error update your
+            domain profile; Call QA Test is a standalone pass/fail voice record.
           </p>
         </div>
       </header>
@@ -664,6 +720,14 @@ function AssessmentTypeChooser({ deptName, taken = {}, onPick }) {
           <p className="practice-choice__desc">
             Read real call transcripts and find where the agent broke policy — one per domain. Scores
             your whole capability profile on click accuracy.
+          </p>
+        </button>
+        <button className="card practice-choice__card practice-choice__card--test" onClick={() => onPick('qa')} type="button">
+          {latestQa && <span className="practice-choice__taken">{latestQa.qa.pass ? 'PASS' : 'FAIL'} - retake</span>}
+          <span className="practice-choice__glyph" aria-hidden="true">QA</span>
+          <h2 className="practice-choice__title">Call QA Test</h2>
+          <p className="practice-choice__desc">
+            Graded voice call, pass/fail. Mic required.
           </p>
         </button>
       </div>

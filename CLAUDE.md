@@ -10,7 +10,7 @@
 > [Â§8 Current System State](#8-current-system-state) and [Â§15 Current Priorities](#15-current-priorities)
 > accurate at all times.
 >
-> **Last updated:** 2026-07-03 (F25 Call QA Test — hard rubric-graded voice test) Â·
+> **Last updated:** 2026-07-03 (F25 Call QA Test - first-class assessment card) Â·
 > **Doc maintainer:** Claude (AI agent) + repo owner. Assumptions are explicitly marked **[ASSUMPTION]**.
 
 ---
@@ -612,14 +612,22 @@ training assignments.
   results screen: PASS/FAIL banner, score, auto-fail cards with the quoted offending line,
   per-category bars, and a "Points you lost" list. Third `PracticeChooser` card ("Call QA Test",
   🎯) routes `practiceMode='test'`.
+- **Navigator assessment entry (2026-07-03):** The Call QA Test is also a first-class option in
+  `AssessmentTypeChooser` after department selection, alongside Multiple choice and Spot the
+  Error. That route reuses `VoiceCall mode='test'`, returns to the dashboard from the review
+  screen, and shows the latest department-scoped QA test as a small PASS/FAIL dashboard card
+  (score, date, Retake). The Practice-tab card remains available.
 - **Status:** Complete. Live-verified (see the 2026-07-03 history entry): a strong fixture call
   graded 100/PASS twice with identical per-criterion verdicts; a bad fixture call (read lab
   results + gave med advice + sarcasm + no verification) triggered the auto-fails and failed at 0.
 - **Notes:** QA test results do NOT feed the capability matrix — they're a separate
   certification-style record on the interview doc. Advisory practice grading (`grade-interview`)
-  is unchanged. Supervisor override remains Planned.
+  is unchanged. Domain-practice analytics ignore interview docs that have `qa`, so the random
+  scenario domain used to generate the voice call cannot count as domain practice evidence.
+  Supervisor override remains Planned.
 - **Files:** new `api/{_qa-rubric,grade-call-qa,grade-call-qa.test}.js`; edited `server.js`,
-  `src/lib/db.js`, `src/components/{VoiceCall,NavigatorApp,NavigatorDetail}.jsx`, `src/styles.css`.
+  `src/lib/{db,scoring,scoring.test}.js`,
+  `src/components/{VoiceCall,NavigatorApp,NavigatorDetail,Interview}.jsx`, `src/styles.css`.
 
 ### F14 â€” Question Bank + Gemini Scenario Generation (review gate)
 - **Purpose:** Grow the check from the SOP; questions are live Firestore data, not a static file.
@@ -946,6 +954,23 @@ stateDiagram-v2
 ---
 
 ## 7. Development History
+
+### 2026-07-03 - F25: Call QA Test promoted to first-class navigator assessment
+- **What changed:** Added **Call QA Test** as the third card in `NavigatorApp`'s
+  `AssessmentTypeChooser` (after department selection), alongside Multiple choice and Spot the
+  Error. It launches the existing `VoiceCall mode='test'` flow, keeps the Practice-tab entry
+  intact, and returns to the navigator dashboard from the test review screen.
+- **Standalone QA result:** QA results still never write `results`, `resultHistory`, domain scores,
+  competency scores, or capability-matrix data. They remain stored only on interview docs as
+  `qa` via `updateInterviewGrade(id, grade, qa)`. Domain-practice analytics now ignore
+  `interviews` with `qa` so the random call scenario domain cannot satisfy a training/path step.
+- **Dashboard UI:** Navigator dashboard now shows the latest department-scoped Call QA Test as a
+  small PASS/FAIL card with score, date, and Retake button. `saveInterview` now stores
+  `department` for new chat/voice/QA interview docs; old docs continue to fall back to Pediatrics.
+- **Verification:** `npm test` -> **292 passing** (10 files); `npm run build` -> clean (existing
+  Firebase chunk-size warning only).
+- **Files:** edited `src/components/{NavigatorApp,VoiceCall,Interview}.jsx`,
+  `src/lib/{db,scoring,scoring.test}.js`, `src/styles.css`, `CLAUDE.md`.
 
 ### 2026-07-03 — F25: Call QA Test — hard rubric-graded voice test (owner-provided quality guide)
 - **Context:** Owner wants the voice practice call to double as a real, RELIABLY-graded pass/fail
@@ -2539,7 +2564,7 @@ stateDiagram-v2
   the Error" assessment â†’ path stepper + mini re-check per weak domain â†’ supervisor Action Center +
   Mentorship tabs â†’ practice call offered as **voice (real-time) or text chat, plus the graded
   Call QA Test** â†’ navigator "My history" tab (attempt history + answer review). Build clean,
-  tests green (`npm test` â†’ **290 passing**, 10 test files).
+  tests green (`npm test` â†’ **292 passing**, 10 test files).
 - **Existing functionality:** features F1â€“F25 (see [Â§4](#4-feature-inventory)) are **Complete** in
   code. F17 adds longitudinal trends + Sparkline. F18 adds dossier evidence per competency. F19
   adds the supervisor Action Center. F20 adds AI-sequenced dev paths + mini re-check. F21 adds
@@ -2564,7 +2589,7 @@ stateDiagram-v2
 - **Experimental / mockup:**
   - Training **content** is mockup (flagged in UI). Logic is real.
   - **Adult Medicine and Behavioural Health** are not assessed; **Pediatrics and OB/GYN** are live.
-- **Test coverage:** **290 tests** across **10 test files**: `scoring.test.js` (all 26 exports
+- **Test coverage:** **292 tests** across **10 test files**: `scoring.test.js` (all 26 exports
   including F17â€“F21 functions: buildTrend, trainingImpact, teamTrend, buildDossier, buildActionCenter,
   buildDevPath, buildMentorMatches, pairingOutcomes, buildLearningSignals,
   buildQuestionImprovementSuggestions, adaptiveTrainingRecommendations, feedbackInsights +

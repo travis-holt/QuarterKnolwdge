@@ -1098,6 +1098,13 @@ describe('buildActionCenter', () => {
     expect(ac.failedPractice.some((f) => f.name === 'Ada')).toBe(false);
   });
 
+  it('ignores Call QA Test grades for domain practice flags', () => {
+    const rows = buildMatrixRows([{ name: 'Ada', scores: makeScores({}, SOLID) }], null);
+    const interviews = [{ id: 'qa1', name: 'Ada', domainId: D0, grade: { score: 0 }, qa: { pass: false } }];
+    const ac = buildActionCenter(rows, { interviews });
+    expect(ac.failedPractice).toHaveLength(0);
+  });
+
   it('includes canTeachCount for ready-for-more items', () => {
     const rows = buildMatrixRows([
       { name: 'Ada', scores: makeScores({}, TEACH) },
@@ -1151,6 +1158,14 @@ describe('buildDevPath', () => {
     const path = paths.find((p) => p.domainId === D0);
     expect(path.steps.find((s) => s.kind === 'minicheck').status).toBe('done');
     expect(path.percentComplete).toBe(100);
+  });
+
+  it('does not count a Call QA Test as the domain practice-call step', () => {
+    const completions = [{ domainId: D0, kind: 'practice' }];
+    const interviews = [{ domainId: D0, grade: { score: 100 }, qa: { pass: true } }];
+    const paths = buildDevPath(row, completions, interviews);
+    const path = paths.find((p) => p.domainId === D0);
+    expect(path.steps.find((s) => s.kind === 'interview').status).toBe('next');
   });
 
   it('returns empty array for a Can-Teach-across-the-board navigator', () => {
