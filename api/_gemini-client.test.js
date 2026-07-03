@@ -6,7 +6,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { getApiKeys, geminiWithRotation, MODEL, LITE_MODEL } from './_gemini-client.js';
+import { getApiKeys, geminiWithRotation, resetCooldowns, MODEL, LITE_MODEL } from './_gemini-client.js';
 
 // ── getApiKeys ────────────────────────────────────────────────────────────────
 
@@ -75,8 +75,14 @@ const errResponse = (status) => ({
 });
 
 describe('geminiWithRotation', () => {
-  beforeEach(() => { vi.stubGlobal('fetch', vi.fn()); });
-  afterEach(() => { vi.unstubAllGlobals(); });
+  beforeEach(() => {
+    vi.stubGlobal('fetch', vi.fn());
+    resetCooldowns(); // cooldown state is module-level — isolate tests
+  });
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+  });
 
   it('returns { ok: true, text } on a successful first call', async () => {
     fetch.mockResolvedValue(okResponse('hello'));
@@ -175,5 +181,66 @@ describe('geminiWithRotation', () => {
     const result = await geminiWithRotation(['k1'], {}, { label: 'test' });
     expect(result).toEqual({ ok: false, reason: 'exhausted' });
     expect(fetch).toHaveBeenCalledTimes(1); // no second-model retry
+  });
+
+  // ── per-key cooldown ───────────────────────────────────────────────────────
+
+  const err429WithDelay = (seconds) => ({
+    ok: false, status: 429,
+    json: async () => ({}),
+    text: async () => `{"error":{"details":[{"retryDelay":"${seconds}s"}]}}`,
+  });
+
+  it('skips a key that is cooling down after a 429 (no wasted round-trip)', async () => {
+    fetch.mockResolvedValue(errResponse(429));
+    await geminiWithRotation(['k1'], {}, { label: 'test' }); // trips the cooldown
+    expect(fetch).toHaveBeenCalledTimes(1);
+
+    const result = await geminiWithRotation(['k1'], {}, { label: 'test' });
+    expect(result).toEqual({ ok: false, reason: 'exhausted' });
+    expect(fetch).toHaveBeenCalledTimes(1); // second request made ZERO network calls
+  });
+
+  it('routes straight to the healthy key while another key is cooling', async () => {
+    vi.spyOn(Math, 'random').mockReturnValue(0); // start rotation at key index 0
+    fetch
+      .mockResolvedValueOnce(errResponse(429)) // ka trips cooldown
+      .mockResolvedValue(okResponse('ok'));
+    await geminiWithRotation(['ka', 'kb'], {}, { label: 'test' });
+    expect(fetch).toHaveBeenCalledTimes(2);
+
+    const result = await geminiWithRotation(['ka', 'kb'], {}, { label: 'test' });
+    expect(result).toEqual({ ok: true, text: 'ok' });
+    expect(fetch).toHaveBeenCalledTimes(3);
+    expect(fetch.mock.calls[2][0]).toContain('key=kb'); // ka was skipped
+  });
+
+  it('honors the retryDelay from the 429 body and lets the key back in after it', async () => {
+    const t0 = Date.now();
+    fetch.mockResolvedValueOnce(err429WithDelay(5)).mockResolvedValue(okResponse('back'));
+    await geminiWithRotation(['k1'], {}, { label: 'test' }); // cooling until t0+5s
+    expect(fetch).toHaveBeenCalledTimes(1);
+
+    vi.spyOn(Date, 'now').mockReturnValue(t0 + 1000); // 1s in — still cooling
+    expect(await geminiWithRotation(['k1'], {}, { label: 'test' }))
+      .toEqual({ ok: false, reason: 'exhausted' });
+    expect(fetch).toHaveBeenCalledTimes(1);
+
+    Date.now.mockReturnValue(t0 + 6000); // past the 5s retryDelay
+    expect(await geminiWithRotation(['k1'], {}, { label: 'test' }))
+      .toEqual({ ok: true, text: 'back' });
+    expect(fetch).toHaveBeenCalledTimes(2);
+  });
+
+  it('cooldown is per model — a key cooling on the primary is still tried on the fallback', async () => {
+    fetch
+      .mockResolvedValueOnce(errResponse(429)) // k1 on MODEL → cooldown for MODEL only
+      .mockResolvedValue(okResponse('lite-ok'));
+    await geminiWithRotation(['k1'], {}, { label: 'test' }); // MODEL-only request trips it
+    const result = await geminiWithRotation(['k1'], {}, { label: 'test', models: [MODEL, LITE_MODEL] });
+    expect(result).toEqual({ ok: true, text: 'lite-ok' });
+    // second request skipped MODEL (cooling) and went straight to LITE_MODEL
+    expect(fetch).toHaveBeenCalledTimes(2);
+    expect(fetch.mock.calls[1][0]).toContain(`/models/${LITE_MODEL}:`);
   });
 });

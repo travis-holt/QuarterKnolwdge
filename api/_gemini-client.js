@@ -61,6 +61,25 @@ export async function callGemini(apiKey, body, model = MODEL) {
   return { ok: true, status: 200, text: data?.candidates?.[0]?.content?.parts?.[0]?.text };
 }
 
+// ── Per-key cooldown ──────────────────────────────────────────────────────────
+// A key that just 429'd is rate-limited for the rest of its quota window, so
+// concurrent/subsequent requests skip it instead of burning a round-trip to
+// re-learn that. Keyed per model because quota buckets are per model per project.
+// Gemini's 429 body carries a RetryInfo retryDelay ("32s") — honored when present.
+
+const cooldowns = new Map(); // `${model}::${key}` → epoch ms when the key is usable again
+const DEFAULT_COOLDOWN_MS = 30_000;
+
+function retryDelayMs(detail) {
+  const m = String(detail ?? '').match(/"retryDelay"\s*:\s*"(\d+(?:\.\d+)?)s"/);
+  return m ? Math.ceil(parseFloat(m[1]) * 1000) : DEFAULT_COOLDOWN_MS;
+}
+
+// Test hook — cooldown state is module-level and would otherwise leak between tests.
+export function resetCooldowns() {
+  cooldowns.clear();
+}
+
 // Pull the quota that tripped out of a 429 body so Railway logs say WHICH limit
 // died (per-minute vs per-day) instead of a bare status code.
 function quotaInfo(detail) {
@@ -92,6 +111,8 @@ export async function geminiWithRotation(keys, body, { label = 'gemini', models 
     const start = Math.floor(Math.random() * keys.length);
     for (let i = 0; i < keys.length; i++) {
       const idx = (start + i) % keys.length;
+      const cdKey = `${model}::${keys[idx]}`;
+      if ((cooldowns.get(cdKey) ?? 0) > Date.now()) continue; // known rate-limited — skip
       let result;
       try {
         result = await callGemini(keys[idx], body, model);
@@ -109,6 +130,7 @@ export async function geminiWithRotation(keys, body, { label = 'gemini', models 
         } else {
           sawNonAuthFailure = true;
           const quota = result.status === 429 ? quotaInfo(result.detail) : '';
+          if (result.status === 429) cooldowns.set(cdKey, Date.now() + retryDelayMs(result.detail));
           console.warn(`${label}: key #${idx} (${model}) returned ${result.status}${quota} — rotating`);
         }
         continue;
