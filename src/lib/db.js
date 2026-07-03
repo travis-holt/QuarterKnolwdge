@@ -366,9 +366,11 @@ export async function saveInterview(navigatorId, name, domainId, scenario, calle
  * Store the AI grade on an interview doc after grading completes.
  * @param {string} id   interview doc id returned by saveInterview
  * @param {{ score:number, summary:string, strengths:string[], improvements:string[] }} grade
+ * @param {object} [qa] full QA-test scorecard (criteria verdicts, categories,
+ *                      auto-fails, pass/fail) — present only for QA test calls.
  */
-export async function updateInterviewGrade(id, grade) {
-  await updateDoc(doc(db, INTERVIEWS, id), { grade });
+export async function updateInterviewGrade(id, grade, qa = null) {
+  await updateDoc(doc(db, INTERVIEWS, id), qa ? { grade, qa } : { grade });
 }
 
 /**

@@ -1,0 +1,179 @@
+// ─────────────────────────────────────────────────────────────────────────────
+// POST /api/grade-call-qa — hard, rubric-based QA grading of a voice test call.
+//
+// Unlike /api/grade-interview (holistic advisory 0–100), this endpoint grades
+// against the Aizer Health Navigator Quality Guide as a fixed checklist:
+// Gemini returns ONLY per-criterion binary verdicts (MET / NOT_MET / NA) with
+// verbatim evidence quotes at temperature 0; all trust gates and the score /
+// pass-fail math run deterministically in _qa-rubric.js. The model never
+// outputs a number.
+//
+// Returns { qa: {score, rawScore, pass, passThreshold, categories, criteria,
+// autoFails}, grade: {score, summary, strengths, improvements} } — `grade` is
+// the projection stored on the interview doc so the existing supervisor panel
+// renders QA tests with zero changes.
+//
+// Scored output → NO lite-model fallback (same quality gate as grade-interview).
+// ─────────────────────────────────────────────────────────────────────────────
+
+import { sopContextFor } from './_sop-context.js';
+import { getApiKeys, geminiWithRotation } from './_gemini-client.js';
+import { validateSecret } from './_auth.js';
+import {
+  QA_RUBRIC, QA_AUTO_FAILS, rubricCriteria,
+  validateQaResponse, scoreQa, buildGradeProjection,
+} from './_qa-rubric.js';
+
+const MAX_TURNS = 60;
+const MAX_TURN_CHARS = 2000;
+
+const RESPONSE_SCHEMA = {
+  type: 'OBJECT',
+  properties: {
+    criteria: {
+      type: 'ARRAY',
+      items: {
+        type: 'OBJECT',
+        properties: {
+          id:       { type: 'STRING' },
+          verdict:  { type: 'STRING', enum: ['MET', 'NOT_MET', 'NA'] },
+          evidence: { type: 'STRING' },
+          note:     { type: 'STRING' },
+        },
+        required: ['id', 'verdict', 'evidence', 'note'],
+      },
+    },
+    autoFails: {
+      type: 'ARRAY',
+      items: {
+        type: 'OBJECT',
+        properties: {
+          id:        { type: 'STRING' },
+          triggered: { type: 'BOOLEAN' },
+          evidence:  { type: 'STRING' },
+          note:      { type: 'STRING' },
+        },
+        required: ['id', 'triggered', 'evidence', 'note'],
+      },
+    },
+  },
+  required: ['criteria', 'autoFails'],
+};
+
+export function buildMessages(scenario, transcript, department) {
+  const callText = transcript
+    .slice(0, MAX_TURNS)
+    .map((t) => `${t.role === 'patient' ? 'Caller' : 'Navigator'}: ${String(t.text ?? '').slice(0, MAX_TURN_CHARS)}`)
+    .join('\n');
+
+  const rubricText = QA_RUBRIC
+    .map((cat) => `${cat.name}:\n${cat.criteria.map((c) => `  - [${c.id}] ${c.text}`).join('\n')}`)
+    .join('\n');
+  const autoFailText = QA_AUTO_FAILS.map((a) => `  - [${a.id}] ${a.text}`).join('\n');
+
+  const systemInstruction =
+`You are a strict QA auditor at a medical contact centre, scoring a patient navigator's call \
+against a fixed quality rubric. You do NOT assign scores. For EACH rubric criterion you return \
+exactly one verdict:
+
+  MET      — the transcript clearly shows the behavior. You MUST put ONE contiguous verbatim \
+quote from a SINGLE turn in "evidence" — copied character-for-character, no role label, no \
+ellipses, no stitching lines together. For behaviors shown across the whole call, quote the \
+single best example line.
+  NOT_MET  — the behavior is absent, wrong, or only partial. Put a one-sentence reason in \
+"note"; "evidence" may quote the offending line or be empty if the failure is an absence.
+  NA       — the criterion genuinely cannot apply to this scenario (e.g., no appointment was \
+needed, so no recap was possible). Use sparingly; greeting, verification, tone, listening, and \
+closing criteria apply to EVERY call.
+
+Grading rules — this is a hard test, apply them strictly:
+- Judge ONLY what is in the transcript. If the navigator did not say it, it did not happen.
+- Do not give benefit of the doubt: partial or implied compliance is NOT_MET.
+- Verdicts must be evidence-based. If you cannot quote a real line for MET, the verdict is NOT_MET.
+- For SOP-knowledge criteria, judge correctness against the SOP CONTEXT below — never invent rules.
+
+Separately, check the auto-fail conditions. Set "triggered": true ONLY if the transcript \
+contains an explicit violation, and quote the offending navigator line verbatim in "evidence". \
+When in doubt, triggered is false.
+
+RUBRIC CRITERIA:
+${rubricText}
+
+AUTO-FAIL CONDITIONS:
+${autoFailText}
+
+SOP CONTEXT:
+${sopContextFor(department)}`;
+
+  const userMessage =
+`Scenario the caller was given:
+${scenario}
+
+Full call transcript:
+${callText}
+
+Return a verdict object for ALL ${rubricCriteria().length} criteria ids and all ${QA_AUTO_FAILS.length} auto-fail ids.`;
+
+  return { systemInstruction, userMessage };
+}
+
+function buildBody(systemInstruction, userMessage) {
+  return {
+    system_instruction: { parts: [{ text: systemInstruction }] },
+    contents: [{ role: 'user', parts: [{ text: userMessage }] }],
+    generationConfig: {
+      responseMimeType: 'application/json',
+      responseSchema: RESPONSE_SCHEMA,
+      temperature: 0,
+    },
+  };
+}
+
+export default async function handler(req, res) {
+  if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
+
+  const keys = getApiKeys();
+  if (keys.length === 0) return res.status(500).json({ error: 'Grading is not configured on the server.' });
+
+  if (validateSecret(req, res)) return;
+  const { scenario, transcript, department = 'pediatrics' } = req.body ?? {};
+
+  if (!scenario || !Array.isArray(transcript) || transcript.length === 0) {
+    return res.status(400).json({ error: 'Missing required fields.' });
+  }
+
+  const { systemInstruction, userMessage } = buildMessages(scenario, transcript, department);
+  const body = buildBody(systemInstruction, userMessage);
+
+  // One retry on malformed output: temp-0 structured JSON is almost always
+  // well-formed, but a missing criterion id would otherwise 502 a real test.
+  let validated = null;
+  for (let attempt = 0; attempt < 2 && !validated; attempt++) {
+    const result = await geminiWithRotation(keys, body, { label: 'grade-call-qa' });
+    if (!result.ok) {
+      return result.reason === 'fatal'
+        ? res.status(502).json({ error: `Gemini request failed (${result.status}).` })
+        : res.status(429).json({ error: 'The grader is busy right now. Try again shortly.' });
+    }
+    let parsed;
+    try {
+      parsed = JSON.parse(result.text ?? '');
+    } catch {
+      continue;
+    }
+    const check = validateQaResponse(parsed);
+    if (check.data) validated = check.data;
+    else console.warn(`grade-call-qa: invalid response (attempt ${attempt + 1}): ${check.error}`);
+  }
+  if (!validated) {
+    return res.status(502).json({ error: 'The grader returned an unusable review. Try again.' });
+  }
+
+  const boundedTranscript = transcript
+    .slice(0, MAX_TURNS)
+    .map((t) => ({ role: t.role, text: String(t.text ?? '').slice(0, MAX_TURN_CHARS) }));
+  const qa = scoreQa(validated.criteria, validated.autoFails, boundedTranscript);
+  const grade = buildGradeProjection(qa);
+
+  return res.status(200).json({ qa, grade });
+}

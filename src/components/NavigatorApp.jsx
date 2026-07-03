@@ -517,6 +517,9 @@ export default function NavigatorApp({ navigatorId, name, onSignOut }) {
       {view === 'interview' && practiceMode === 'voice' && (
         <VoiceCall navigatorId={navigatorId} name={name} department={dept} onExit={() => setPracticeMode(null)} />
       )}
+      {view === 'interview' && practiceMode === 'test' && (
+        <VoiceCall navigatorId={navigatorId} name={name} department={dept} onExit={() => setPracticeMode(null)} mode="test" />
+      )}
       {view === 'interview' && practiceMode === 'chat' && (
         <>
           <button className="linkbtn" onClick={() => setPracticeMode(null)} style={{ marginBottom: '1rem' }}>← Call type</button>
@@ -690,6 +693,14 @@ function PracticeChooser({ onPick }) {
           <span className="practice-choice__glyph" aria-hidden="true">💬</span>
           <h2 className="practice-choice__title">Text chat</h2>
           <p className="practice-choice__desc">Type your responses turn by turn. Works on any browser, no mic needed.</p>
+        </button>
+        <button className="card practice-choice__card practice-choice__card--test" onClick={() => onPick('test')} type="button">
+          <span className="practice-choice__glyph" aria-hidden="true">🎯</span>
+          <h2 className="practice-choice__title">Call QA Test</h2>
+          <p className="practice-choice__desc">
+            A graded voice call scored hard against the full quality scorecard — pass or fail,
+            with auto-fail rules. Needs a mic.
+          </p>
         </button>
       </div>
     </section>

@@ -438,6 +438,11 @@ export default function NavigatorDetail({ rows, name, deptName, dept, deptMatrix
                       aria-expanded={isOpen}
                     >
                       <span className="tag">{domainName(session.domainId)}</span>
+                      {session.qa && (
+                        <span className={`qa-log-badge ${session.qa.pass ? 'qa-log-badge--pass' : 'qa-log-badge--fail'}`}>
+                          QA TEST · {session.qa.pass ? 'PASS' : 'FAIL'}
+                        </span>
+                      )}
                       <span className="interview-log__caller">
                         Caller: <strong>{session.callerName}</strong>
                       </span>

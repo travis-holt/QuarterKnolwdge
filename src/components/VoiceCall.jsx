@@ -20,6 +20,7 @@ import { apiFetch } from '../lib/apiFetch.js';
 // ─────────────────────────────────────────────────────────────────────────────
 
 const GRADE_TIMEOUT_MS = 30_000;
+const QA_GRADE_TIMEOUT_MS = 60_000; // rubric grading is a bigger prompt + server-side retry
 const TARGET_IN_RATE = 16000;
 const OUT_RATE = 24000;
 
@@ -68,7 +69,10 @@ function appendTranscriptFragment(existing, fragment) {
   return `${existing}${needsSpace ? ' ' : ''}${next}`;
 }
 
-export default function VoiceCall({ navigatorId, name, department = 'pediatrics', onExit }) {
+// mode: 'practice' (advisory holistic review) | 'test' (hard rubric-based QA
+// test graded criterion-by-criterion against the call quality guide).
+export default function VoiceCall({ navigatorId, name, department = 'pediatrics', onExit, mode = 'practice' }) {
+  const isTest = mode === 'test';
   // phases: setup | connecting | active | grading | reviewed | discarded | error
   const [phase, setPhase]         = useState('setup');
   const [callerName, setCallerName] = useState('');
@@ -77,6 +81,7 @@ export default function VoiceCall({ navigatorId, name, department = 'pediatrics'
   const [speaking, setSpeaking]   = useState(false); // caller currently talking
   const [error, setError]         = useState('');
   const [grade, setGrade]         = useState(null);
+  const [qa, setQa]               = useState(null);  // full QA scorecard (test mode)
   const [gradeBusy, setGradeBusy] = useState(false);  // retrying a failed grade from the reviewed screen
   const [captions, setCaptions]   = useState([]);     // [{role, text}] shown live during the call
 
@@ -149,6 +154,7 @@ export default function VoiceCall({ navigatorId, name, department = 'pediatrics'
     segmentsRef.current = [];
     finalRef.current = null;
     setGrade(null);
+    setQa(null);
     setGradeBusy(false);
     setCaptions([]);
 
@@ -275,18 +281,29 @@ export default function VoiceCall({ navigatorId, name, department = 'pediatrics'
 
   // Grades the saved transcript; also used to retry from the reviewed screen when
   // the first attempt failed (e.g. the Gemini keys were rate-limited).
+  // Test mode grades against the fixed QA rubric (hard pass/fail); practice mode
+  // keeps the advisory holistic review.
   const runGrading = async () => {
     const { transcript, docId } = finalRef.current ?? {};
     if (!transcript) return;
     try {
-      const data = await apiFetch(
-        '/api/grade-interview',
-        { domain: domainId, department, scenario, transcript, name },
-        GRADE_TIMEOUT_MS,
-      );
-      if (data.grade) {
-        setGrade(data.grade);
-        if (docId) updateInterviewGrade(docId, data.grade).catch((e) => console.error('grade save failed:', e));
+      if (isTest) {
+        const data = await apiFetch('/api/grade-call-qa', { scenario, transcript, department }, QA_GRADE_TIMEOUT_MS);
+        if (data.qa && data.grade) {
+          setQa(data.qa);
+          setGrade(data.grade);
+          if (docId) updateInterviewGrade(docId, data.grade, data.qa).catch((e) => console.error('grade save failed:', e));
+        }
+      } else {
+        const data = await apiFetch(
+          '/api/grade-interview',
+          { domain: domainId, department, scenario, transcript, name },
+          GRADE_TIMEOUT_MS,
+        );
+        if (data.grade) {
+          setGrade(data.grade);
+          if (docId) updateInterviewGrade(docId, data.grade).catch((e) => console.error('grade save failed:', e));
+        }
       }
     } catch (err) {
       console.error('Failed to grade voice call:', err);
@@ -324,8 +341,103 @@ export default function VoiceCall({ navigatorId, name, department = 'pediatrics'
       <section className="interview view-enter">
         <div className="card interview__done">
           <div className="interview__grading-spinner" aria-hidden="true" />
-          <h2 className="overview__panel-title">Reviewing your call…</h2>
-          <p className="readoff__sub">Scoring your performance against the SOP. A few seconds.</p>
+          <h2 className="overview__panel-title">{isTest ? 'Grading your test…' : 'Reviewing your call…'}</h2>
+          <p className="readoff__sub">
+            {isTest
+              ? 'Auditing the call against every criterion on the quality scorecard.'
+              : 'Scoring your performance against the SOP. A few seconds.'}
+          </p>
+        </div>
+      </section>
+    );
+  }
+
+  if (phase === 'reviewed' && isTest) {
+    const missed = qa?.criteria?.filter((c) => c.verdict === 'NOT_MET') ?? [];
+    return (
+      <section className="interview view-enter">
+        <div className="interview__review">
+          <div className={`card qa-result ${qa ? (qa.pass ? 'qa-result--pass' : 'qa-result--fail') : ''}`}>
+            <p className="interview__score-label">Call QA Test</p>
+            {qa ? (
+              <>
+                <p className="qa-result__verdict">{qa.pass ? 'PASS' : 'FAIL'}</p>
+                <p className="interview__score-value" style={{ color: qa.pass ? 'var(--level-canteach)' : 'var(--level-learning)' }}>
+                  {qa.score}<span className="interview__score-denom">/100</span>
+                </p>
+                <p className="readoff__sub">Pass mark: {qa.passThreshold}. No partial credit — every criterion is met or missed.</p>
+              </>
+            ) : (
+              <>
+                <p className="interview__score-value interview__score-value--na">—</p>
+                <p className="readoff__sub" style={{ marginTop: '0.75rem' }}>
+                  Your call was saved, but the grading couldn&rsquo;t run — the grader may be busy right now.
+                </p>
+                <button
+                  className="btn btn--ghost btn--sm"
+                  style={{ marginTop: '0.75rem' }}
+                  disabled={gradeBusy}
+                  onClick={retryGrading}
+                  type="button"
+                >
+                  {gradeBusy ? 'Grading…' : 'Try grading again'}
+                </button>
+              </>
+            )}
+          </div>
+
+          {qa?.autoFails?.length > 0 && (
+            <div className="card qa-autofail">
+              <h3 className="interview__feedback-title"><span className="interview__feedback-icon" aria-hidden="true">⛔</span>Automatic fail</h3>
+              {qa.autoFails.map((a) => (
+                <div key={a.id} className="qa-autofail__item">
+                  <p className="qa-autofail__text">{a.text}</p>
+                  {a.evidence && <p className="qa-autofail__quote">&ldquo;{a.evidence}&rdquo;</p>}
+                  {a.note && <p className="readoff__sub">{a.note}</p>}
+                </div>
+              ))}
+            </div>
+          )}
+
+          {qa && (
+            <div className="card qa-breakdown">
+              <h3 className="interview__feedback-title">Scorecard</h3>
+              <ul className="qa-breakdown__list">
+                {qa.categories.map((c) => (
+                  <li key={c.id} className="qa-breakdown__row">
+                    <span className="qa-breakdown__name">{c.name}</span>
+                    <span className="qa-breakdown__bar" aria-hidden="true">
+                      <span
+                        className="qa-breakdown__fill"
+                        style={{ width: c.applicablePoints ? `${(c.earned / c.applicablePoints) * 100}%` : '0%' }}
+                      />
+                    </span>
+                    <span className="qa-breakdown__pts">
+                      {c.applicablePoints === 0 ? 'n/a' : `${c.earned}/${c.applicablePoints}`}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+
+          {missed.length > 0 && (
+            <div className="card interview__feedback-card interview__feedback-card--improvements">
+              <h3 className="interview__feedback-title"><span className="interview__feedback-icon" aria-hidden="true">→</span>Points you lost</h3>
+              <ul className="interview__feedback-list">
+                {missed.map((c) => (
+                  <li key={c.id} className="interview__feedback-item">
+                    <strong>{c.categoryName} (−{c.points}):</strong> {c.text}
+                    {c.note ? <span className="qa-missed__note"> — {c.note}</span> : null}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+
+          <button className="btn btn--primary" onClick={() => setPhase('setup')} style={{ alignSelf: 'flex-start' }}>
+            Take the test again
+          </button>
         </div>
       </section>
     );
@@ -388,10 +500,11 @@ export default function VoiceCall({ navigatorId, name, department = 'pediatrics'
     <section className="interview view-enter">
       <header className="overview__head">
         <div>
-          <h1 className="overview__title">Voice Practice Call</h1>
+          <h1 className="overview__title">{isTest ? 'Call QA Test' : 'Voice Practice Call'}</h1>
           <p className="overview__lede">
-            A simulated patient will call you. Talk to them as you would on a real call.
-            For best results, use headphones so the mic doesn&rsquo;t pick up the caller.
+            {isTest
+              ? 'A graded test call. You are scored on the full quality scorecard — greeting, verification, call control, communication, SOP knowledge, scheduling, and closing. Auto-fail rules apply.'
+              : 'A simulated patient will call you. Talk to them as you would on a real call. For best results, use headphones so the mic doesn’t pick up the caller.'}
           </p>
         </div>
       </header>
@@ -416,17 +529,21 @@ export default function VoiceCall({ navigatorId, name, department = 'pediatrics'
           )}
 
           <div className="interview__end-actions" style={{ justifyContent: 'center' }}>
-            <button className="btn btn--ghost btn--sm" onClick={discard} type="button">Discard</button>
-            <button className="btn btn--primary btn--sm" onClick={endCall} type="button">End &amp; get feedback</button>
+            <button className="btn btn--ghost btn--sm" onClick={discard} type="button">{isTest ? 'Abandon test' : 'Discard'}</button>
+            <button className="btn btn--primary btn--sm" onClick={endCall} type="button">{isTest ? 'End & get graded' : 'End & get feedback'}</button>
           </div>
         </div>
       ) : (
         <div className="card interview__setup">
           <h2 className="overview__panel-title">Ready when you are</h2>
-          <p className="readoff__sub">A scenario is generated for you. Every call is different. Your mic turns on when the call starts.</p>
+          <p className="readoff__sub">
+            {isTest
+              ? 'One take, graded hard: every criterion is met or missed against the transcript — no partial credit, no benefit of the doubt. Your mic turns on when the call starts.'
+              : 'A scenario is generated for you. Every call is different. Your mic turns on when the call starts.'}
+          </p>
           {error && <p className="gate__error">{error}</p>}
           <button className="btn btn--primary" disabled={phase === 'connecting'} onClick={startCall} type="button">
-            {phase === 'connecting' ? 'Connecting…' : 'Start voice call'}
+            {phase === 'connecting' ? 'Connecting…' : isTest ? 'Start the test call' : 'Start voice call'}
           </button>
           {onExit && <button className="linkbtn" onClick={onExit} style={{ marginTop: '0.75rem' }}>← Back</button>}
         </div>

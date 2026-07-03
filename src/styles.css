@@ -5032,3 +5032,97 @@ textarea:focus-visible {
   font-size: 0.9rem;
 }
 .history__chips { margin-top: 0.6rem; }
+
+/* ── Call QA Test (hard rubric-graded voice test) ──────────────────────────── */
+
+.practice-choice__card--test {
+  border-color: var(--accent);
+}
+
+.qa-result {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  gap: 0.35rem;
+  padding: 1.6rem 1.4rem;
+  border-top: 4px solid var(--line);
+}
+.qa-result--pass { border-top-color: var(--level-canteach); }
+.qa-result--fail { border-top-color: var(--level-learning); }
+.qa-result__verdict {
+  margin: 0;
+  font-size: 1.6rem;
+  font-weight: 800;
+  letter-spacing: 0.12em;
+}
+.qa-result--pass .qa-result__verdict { color: var(--level-canteach); }
+.qa-result--fail .qa-result__verdict { color: var(--level-learning); }
+
+.qa-autofail {
+  border-left: 4px solid var(--level-learning);
+}
+.qa-autofail__item { margin-top: 0.6rem; }
+.qa-autofail__text {
+  margin: 0;
+  font-weight: 600;
+}
+.qa-autofail__quote {
+  margin: 0.35rem 0 0;
+  padding-left: 0.75rem;
+  border-left: 2px solid var(--level-learning);
+  color: var(--ink-soft);
+  font-style: italic;
+  font-size: 0.92rem;
+}
+
+.qa-breakdown__list {
+  list-style: none;
+  margin: 0.9rem 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.55rem;
+}
+.qa-breakdown__row {
+  display: grid;
+  grid-template-columns: minmax(9rem, 14rem) 1fr 3.5rem;
+  align-items: center;
+  gap: 0.75rem;
+}
+.qa-breakdown__name { font-size: 0.92rem; font-weight: 600; }
+.qa-breakdown__bar {
+  height: 8px;
+  border-radius: 999px;
+  background: var(--surface-3);
+  overflow: hidden;
+}
+.qa-breakdown__fill {
+  display: block;
+  height: 100%;
+  border-radius: 999px;
+  background: var(--grad-accent);
+}
+.qa-breakdown__pts {
+  font-size: 0.85rem;
+  font-variant-numeric: tabular-nums;
+  color: var(--ink-soft);
+  text-align: right;
+}
+.qa-missed__note { color: var(--ink-soft); }
+
+@media (max-width: 560px) {
+  .qa-breakdown__row { grid-template-columns: 1fr 3.5rem; }
+  .qa-breakdown__bar { display: none; }
+}
+
+.qa-log-badge {
+  padding: 0.12rem 0.55rem;
+  border-radius: 999px;
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  color: #fff;
+}
+.qa-log-badge--pass { background: var(--level-canteach); }
+.qa-log-badge--fail { background: var(--level-learning); }

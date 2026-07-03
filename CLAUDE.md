@@ -10,7 +10,7 @@
 > [Â§8 Current System State](#8-current-system-state) and [Â§15 Current Priorities](#15-current-priorities)
 > accurate at all times.
 >
-> **Last updated:** 2026-07-03 (quota diagnosis + flash-lite overflow for chat/coaching) Â·
+> **Last updated:** 2026-07-03 (F25 Call QA Test — hard rubric-graded voice test) Â·
 > **Doc maintainer:** Claude (AI agent) + repo owner. Assumptions are explicitly marked **[ASSUMPTION]**.
 
 ---
@@ -578,6 +578,49 @@ training assignments.
   `src/components/SopManager.jsx`; edited `src/lib/db.js`, `api/_sop-context.js`, `server.js`,
   `firestore.rules`, `firebase.json`, `src/components/{SupervisorApp,Nav}.jsx`, `src/styles.css`.
 
+### F25 — Call QA Test (hard rubric-graded voice test)
+- **Purpose:** Turn the voice practice call into a real, reliably-graded pass/fail test scored
+  against the owner-provided call quality guide (`Aizer_Health_Navigator_Quality_Guide_SOP.pdf`,
+  a scanned PDF — transcribed via Gemini native PDF input).
+- **User benefit:** Navigators take a graded QA test call (separate Practice-tab card, alongside
+  Voice call / Text chat). They get a hard PASS/FAIL, a per-category scorecard, the exact criteria
+  they lost points on, and auto-fail alerts. Supervisors see a "QA TEST · PASS/FAIL" badge on the
+  session in NavigatorDetail plus the full grade breakdown.
+- **Reliability design (the core of the feature):** the AI never produces a score.
+  1. **Fixed binary rubric** ([api/_qa-rubric.js](api/_qa-rubric.js)): the guide's 100-point
+     scorecard as structured data — 9 categories / 20 criteria (Opening 10 · Verification 10 ·
+     Call Control 10 · Doc Reason 10 · Communication 15 · Active Listening 10 · Knowledge 15 ·
+     Scheduling 15 · Closing 5) + 3 auto-fails (HIPAA/verification, clinical scope, conduct).
+     Timing metrics from the guide (<5s answer, 11s dead air, 2-min hold) are not transcript-
+     observable and are folded into observable call-control criteria instead. The guide's
+     internal Closing inconsistency (5 vs 10 pts) resolved in favor of the 100-point scorecard.
+  2. **Gemini returns only verdicts** (`MET`/`NOT_MET`/`NA`) per criterion at **temperature 0**
+     with a **verbatim evidence quote** each ([api/grade-call-qa.js](api/grade-call-qa.js),
+     `POST /api/grade-call-qa`; scored output → no lite-model fallback; one retry on malformed
+     shape).
+  3. **Deterministic trust gates + scoring in code** (`scoreQa`): MET without evidence that
+     verifies against the transcript (normalized substring + single-turn word-set fallback) →
+     NOT_MET; NA on a core (always-expected) criterion → NOT_MET; auto-fail stands only with
+     verified evidence (anti-hallucination), and zeroes the score. Score = earned/applicable
+     points; **pass = ≥85 (`QA_PASS_THRESHOLD`) with zero auto-fails**. Same verdicts in → same
+     result out.
+  4. `buildGradeProjection` maps the scorecard onto the existing interview `grade` shape
+     (score/summary/strengths/improvements) so all existing supervisor UI renders it unchanged;
+     the full scorecard is stored as a new `qa` field via `updateInterviewGrade(id, grade, qa)`.
+- **UI:** `VoiceCall.jsx` gains a `mode='practice'|'test'` prop — test mode has its own copy
+  ("graded hard, no partial credit"), grading via `/api/grade-call-qa` (60s timeout), and a
+  results screen: PASS/FAIL banner, score, auto-fail cards with the quoted offending line,
+  per-category bars, and a "Points you lost" list. Third `PracticeChooser` card ("Call QA Test",
+  🎯) routes `practiceMode='test'`.
+- **Status:** Complete. Live-verified (see the 2026-07-03 history entry): a strong fixture call
+  graded 100/PASS twice with identical per-criterion verdicts; a bad fixture call (read lab
+  results + gave med advice + sarcasm + no verification) triggered the auto-fails and failed at 0.
+- **Notes:** QA test results do NOT feed the capability matrix — they're a separate
+  certification-style record on the interview doc. Advisory practice grading (`grade-interview`)
+  is unchanged. Supervisor override remains Planned.
+- **Files:** new `api/{_qa-rubric,grade-call-qa,grade-call-qa.test}.js`; edited `server.js`,
+  `src/lib/db.js`, `src/components/{VoiceCall,NavigatorApp,NavigatorDetail}.jsx`, `src/styles.css`.
+
 ### F14 â€” Question Bank + Gemini Scenario Generation (review gate)
 - **Purpose:** Grow the check from the SOP; questions are live Firestore data, not a static file.
 - **User benefit:** Supervisors generate, review, and curate the assessment without a code change.
@@ -903,6 +946,48 @@ stateDiagram-v2
 ---
 
 ## 7. Development History
+
+### 2026-07-03 — F25: Call QA Test — hard rubric-graded voice test (owner-provided quality guide)
+- **Context:** Owner wants the voice practice call to double as a real, RELIABLY-graded pass/fail
+  test — "actually really really hard", no vague scoring — and provided the call quality guide
+  (`Aizer_Health_Navigator_Quality_Guide_SOP.pdf`, scanned/no text layer; transcribed via Gemini
+  native PDF input, the same mechanism F24 uses).
+- **Why the old grading couldn't be the test:** `grade-interview` asks Gemini for one holistic
+  0–100 against prose bands at temp 0.3 — the same call can plausibly score 68 or 81 across runs.
+  The fix is structural, not prompt-tuning: **the model classifies, the code scores.**
+- **What was built:**
+  - `api/_qa-rubric.js` — the guide's 100-point scorecard as data: 9 categories / 20 binary
+    criteria + 3 auto-fails (HIPAA/verification · clinical scope · conduct), `QA_PASS_THRESHOLD
+    = 85`, and the pure pipeline: `verifyEvidence` (fragment-split, role-label-stripped
+    normalized matching), `validateQaResponse`, `scoreQa` (trust gates + deterministic math),
+    `buildGradeProjection` (maps the scorecard onto the existing interview `grade` shape).
+    Guide quirks resolved: timing metrics (<5s answer, 11s dead air) aren't transcript-observable
+    → folded into observable call-control criteria; Closing 5-vs-10 contradiction → 5 (the
+    100-point scorecard is authoritative).
+  - `api/grade-call-qa.js` (`POST /api/grade-call-qa`) — Gemini returns ONLY per-criterion
+    MET/NOT_MET/NA verdicts + verbatim evidence quotes at **temperature 0** (structured JSON,
+    no lite-model fallback, one retry on malformed shape). Trust gates in code: MET with
+    unverifiable evidence → NOT_MET; NA on a core criterion → NOT_MET; an auto-fail stands only
+    with verified evidence (anti-hallucination) and zeroes the score. Pass = ≥85, zero auto-fails.
+  - UI: `VoiceCall.jsx` `mode='test'` — hard-test copy, QA grading (60s timeout), results screen
+    with PASS/FAIL banner, auto-fail cards (quoted offending line), per-category bars, "Points
+    you lost" list. Third `PracticeChooser` card (🎯 Call QA Test). `updateInterviewGrade(id,
+    grade, qa)` stores the full scorecard on the interview doc; supervisor `NavigatorDetail`
+    shows a "QA TEST · PASS/FAIL" badge (grade breakdown renders via the existing panel).
+- **Live verification (real keys):** a strong fixture call graded **twice with identical verdicts
+  on all 20 criteria** (the determinism claim, demonstrated); a bad fixture call (read lab
+  results, gave med advice, sarcasm, no verification) → score 0, FAIL. First smoke run exposed
+  two evidence-gate fairness bugs — model quotes stitched from multiple turns / prefixed with
+  role labels were being rejected, and auto-fail evidence was filtered the same way — fixed by
+  fragment-splitting `verifyEvidence` (any genuine 2+ word fragment verifies) + a
+  single-contiguous-quote prompt rule.
+- **Verification:** `npm test` → **290 passing** (10 files; +28 QA pipeline tests);
+  `npm run build` → clean; `node --check` on both new api files; live smoke test above.
+- **Files:** new `api/{_qa-rubric,grade-call-qa,grade-call-qa.test}.js`; edited `server.js`,
+  `src/lib/db.js`, `src/components/{VoiceCall,NavigatorApp,NavigatorDetail}.jsx`,
+  `src/styles.css`, `CLAUDE.md`.
+- **Status:** Complete. QA test results do not feed the capability matrix (separate
+  certification-style record). Supervisor grade override remains the planned backstop.
 
 ### 2026-07-03 â€” Gemini quota diagnosis + flash-lite overflow lane (free-tier stopgap)
 - **Context:** Owner asked why the pilot exhausted the 4-key rotation so fast despite low daily
@@ -2452,16 +2537,17 @@ stateDiagram-v2
   `resultHistory` collection (powers trend views) â†’ supervisor matrix/overview update live per dept
   â†’ navigator/training dashboards â†’ **switch departments** â†’ practice interview â†’ per-domain "Spot
   the Error" assessment â†’ path stepper + mini re-check per weak domain â†’ supervisor Action Center +
-  Mentorship tabs â†’ practice call offered as **voice (real-time) or text chat** â†’ navigator "My
-  history" tab (attempt history + answer review). Build clean, tests green (`npm test` â†’
-  **262 passing**, 9 test files).
-- **Existing functionality:** features F1â€“F23 (see [Â§4](#4-feature-inventory)) are **Complete** in
+  Mentorship tabs â†’ practice call offered as **voice (real-time) or text chat, plus the graded
+  Call QA Test** â†’ navigator "My history" tab (attempt history + answer review). Build clean,
+  tests green (`npm test` â†’ **290 passing**, 10 test files).
+- **Existing functionality:** features F1â€“F25 (see [Â§4](#4-feature-inventory)) are **Complete** in
   code. F17 adds longitudinal trends + Sparkline. F18 adds dossier evidence per competency. F19
   adds the supervisor Action Center. F20 adds AI-sequenced dev paths + mini re-check. F21 adds
   the mentor matching engine with persisted pairings + outcome tracking. F22 adds a real-time
   voice practice call (Gemini Live API via a WebSocket relay), alongside the existing text chat.
   F23 adds the controlled adaptive learning loop: supervisor feedback, learning proposals,
-  question-improvement signals, and explainable next-best training recommendations.
+  question-improvement signals, and explainable next-best training recommendations. F25 adds the
+  hard rubric-graded Call QA Test (pass/fail voice test against the owner's call quality guide).
 - **SOP grounding:** Pediatrics AI features ground against `Pediatrics_SOP_Updated.pdf`; OB/GYN AI
   features ground against the sanitized `SOP_CONTEXT_OBGYN` in `api/_sop-context.js` (faithful to
   OB/GYN workflow but with generic role labels â€” no PII; repo is public). `SOP Guide.pdf` superseded.
@@ -2478,14 +2564,14 @@ stateDiagram-v2
 - **Experimental / mockup:**
   - Training **content** is mockup (flagged in UI). Logic is real.
   - **Adult Medicine and Behavioural Health** are not assessed; **Pediatrics and OB/GYN** are live.
-- **Test coverage:** **262 tests** across **9 test files**: `scoring.test.js` (all 26 exports
+- **Test coverage:** **290 tests** across **10 test files**: `scoring.test.js` (all 26 exports
   including F17â€“F21 functions: buildTrend, trainingImpact, teamTrend, buildDossier, buildActionCenter,
   buildDevPath, buildMentorMatches, pairingOutcomes, buildLearningSignals,
   buildQuestionImprovementSuggestions, adaptiveTrainingRecommendations, feedbackInsights +
   malformed-input edge cases), `session.test.js`,
   `db.test.js` (incl. audit-bank helpers), `api/api-handlers.test.js`, `api/generate-audit.test.js`,
   `api/_gemini-client.test.js`, `api/sequence-path.test.js` (9 tests for `validateSequenceResponse`),
-  `api/refine-sop.test.js`,
+  `api/refine-sop.test.js`, `api/grade-call-qa.test.js` (28 tests for the QA-test rubric pipeline),
   `src/components/components.test.jsx`. The F22 voice call (relay + Web Audio) is verified by live
   end-to-end probe rather than unit tests â€” audio I/O isn't unit-testable headlessly. Role-app
   integration tests remain the only other untested area.
@@ -2523,14 +2609,15 @@ stateDiagram-v2
 - **Counts (today):** 6 domains (job-aligned 2026-07-02: intake Â· classification Â· routing Â·
   scheduling Â· boundaries Â· documentation) Â· 9 competencies Â· 21 Pediatrics + 16
   OB/GYN = **37** seed questions (bank grows in Firestore per dept) Â· 4 departments (**Pediatrics
-  + OB/GYN live**, 2 mockup) Â· **262** unit tests (9 test files) Â· **11** Firestore collections
+  + OB/GYN live**, 2 mockup) Â· **290** unit tests (10 test files) Â· **11** Firestore collections
   (`roster`, `results`, `resultHistory`, `questions`, `audits`, `interviews`, `completions`,
   `pairings`, `supervisorFeedback`, `learningProposals`, `sops`) Â·
-  **9** REST serverless functions (`generate-scenarios`, `generate-coaching`, `interview-turn`,
-  `grade-interview`, `generate-audit`, `coach-audit`, `sequence-path`, `refine-sop`, `health`) +
-  **1** WebSocket relay (`live-relay.js` â†’ `/api/live`) Â· **3** shared API helpers
-  (`api/_gemini-client.js`, `api/_auth.js`, `api/_sop-store.js`) Â· **1** shared client fetch
-  helper (`src/lib/apiFetch.js`).
+  **10** REST serverless functions (`generate-scenarios`, `generate-coaching`, `interview-turn`,
+  `grade-interview`, `grade-call-qa`, `generate-audit`, `coach-audit`, `sequence-path`,
+  `refine-sop`, `health`) +
+  **1** WebSocket relay (`live-relay.js` â†’ `/api/live`) Â· **4** shared API helpers
+  (`api/_gemini-client.js`, `api/_auth.js`, `api/_sop-store.js`, `api/_qa-rubric.js`) Â· **1**
+  shared client fetch helper (`src/lib/apiFetch.js`).
 
 ---
 
