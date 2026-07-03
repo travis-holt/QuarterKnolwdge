@@ -1,4 +1,4 @@
-﻿# CLAUDE.md â€” Knowledge Check (Project Knowledge Base)
+# CLAUDE.md â€” Knowledge Check (Project Knowledge Base)
 
 > **Purpose of this file.** This is the single source of truth for the project: product
 > spec, architecture reference, development journal, decision log, and onboarding doc in one.
