@@ -156,6 +156,12 @@ describe('saveResult', () => {
     expect(mocks.doc).toHaveBeenCalledWith(mocks.db, 'results', 'nav-id__pediatrics');
   });
 
+  it('stores Call QA separately from MCQ and Spot results', async () => {
+    mocks.setDoc.mockResolvedValue();
+    await saveResult('nav-id', 'Ada', { d1: 88 }, {}, 'obgyn', {}, 'qa');
+    expect(mocks.doc).toHaveBeenCalledWith(mocks.db, 'results', 'nav-id__obgyn__qa');
+  });
+
   it('stores navigatorId, name, department, scores, competencyScores, and answers', async () => {
     mocks.setDoc.mockResolvedValue();
     const scores   = { d1: 70 };
@@ -172,14 +178,15 @@ describe('saveResult', () => {
 // ── clearResult ───────────────────────────────────────────────────────────────
 
 describe('clearResult', () => {
-  it('deletes both the MCQ and Spot docs for the department when they exist', async () => {
+  it('deletes MCQ, Spot, and Call QA docs for the department when they exist', async () => {
     mocks.getDoc.mockResolvedValue({ exists: () => true });
     mocks.deleteDoc.mockResolvedValue();
     await clearResult('nav-id', 'obgyn');
     const ids = mocks.doc.mock.calls.map(([, , id]) => id);
     expect(ids).toContain('nav-id__obgyn');        // MCQ (composite)
     expect(ids).toContain('nav-id__obgyn__spot');  // Spot the Error
-    expect(mocks.deleteDoc).toHaveBeenCalledTimes(2);
+    expect(ids).toContain('nav-id__obgyn__qa');    // Call QA Test
+    expect(mocks.deleteDoc).toHaveBeenCalledTimes(3);
   });
 
   it('also targets the legacy plain-id doc for pediatrics and skips non-existent docs', async () => {
@@ -189,6 +196,7 @@ describe('clearResult', () => {
     const ids = mocks.doc.mock.calls.map(([, , id]) => id);
     expect(ids).toContain('nav-id__pediatrics');       // MCQ composite
     expect(ids).toContain('nav-id__pediatrics__spot'); // Spot the Error
+    expect(ids).toContain('nav-id__pediatrics__qa');   // Call QA Test
     expect(ids).toContain('nav-id');                   // legacy plain-id
     expect(mocks.deleteDoc).not.toHaveBeenCalled();    // none existed → nothing deleted
   });

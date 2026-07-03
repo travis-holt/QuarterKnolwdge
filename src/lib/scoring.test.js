@@ -19,6 +19,7 @@ import {
   levelFor,
   scoreSpotTheError,
   scoreSpotTheErrorByDomain,
+  scoreQaAcrossDomains,
   buildMatrixRows,
   deptSamples,
   departmentOverall,
@@ -232,6 +233,20 @@ describe('scoreSpotTheErrorByDomain', () => {
     expect(scoreSpotTheErrorByDomain([])).toEqual({});
     expect(scoreSpotTheErrorByDomain(undefined)).toEqual({});
     expect(scoreSpotTheErrorByDomain([null, { correct: true }])).toEqual({});
+  });
+});
+
+// ── scoreQaAcrossDomains ─────────────────────────────────────────────────────
+
+describe('scoreQaAcrossDomains', () => {
+  it('applies the QA score to every domain', () => {
+    expect(scoreQaAcrossDomains({ score: 87 })).toEqual(makeScores({}, 87));
+  });
+
+  it('rounds and clamps edge values', () => {
+    expect(scoreQaAcrossDomains(101.7)).toEqual(makeScores({}, 100));
+    expect(scoreQaAcrossDomains(-4)).toEqual(makeScores({}, 0));
+    expect(scoreQaAcrossDomains({})).toEqual(makeScores({}, 0));
   });
 });
 

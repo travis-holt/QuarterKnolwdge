@@ -14,6 +14,7 @@ import Footer from './Footer.jsx';
 import {
   scorePerDomain,
   scorePerCompetency,
+  scoreQaAcrossDomains,
   buildMatrixRows,
   departmentMatrix,
   findRow,
@@ -44,8 +45,8 @@ export default function NavigatorApp({ navigatorId, name, onSignOut }) {
   // A navigator can hold BOTH an MCQ and a Spot the Error result per department;
   // both are kept so they can take (and view) either. `activeType` is the one
   // currently being viewed/updated; `ownResult` is derived from it.
-  const [resultsByType, setResultsByType] = useState({ mcq: null, spot: null });
-  const [activeType, setActiveType] = useState(null); // 'mcq' | 'spot' | null
+  const [resultsByType, setResultsByType] = useState({ mcq: null, spot: null, qa: null });
+  const [activeType, setActiveType] = useState(null); // 'mcq' | 'spot' | 'qa' | null
   const [lastAnswers, setLastAnswers] = useState(null); // answers from the just-taken check (for coaching)
   const [questions, setQuestions] = useState(SEED_QUESTIONS); // active bank (seed fallback)
   const [results, setResults] = useState([]); // whole floor (for mentor data)
@@ -73,13 +74,13 @@ export default function NavigatorApp({ navigatorId, name, onSignOut }) {
   const ownResult = activeType ? resultsByType[activeType] : null;
   const hasMcq = Boolean(resultsByType.mcq);
   const hasSpot = Boolean(resultsByType.spot);
+  const hasQa = Boolean(resultsByType.qa);
 
   // Given both loaded results, which one to show by default (the most recent).
   const pickActiveType = (byType) => {
-    const mcqAt = byType.mcq?.submittedAt?.seconds ?? -1;
-    const spotAt = byType.spot?.submittedAt?.seconds ?? -1;
-    if (byType.mcq && byType.spot) return spotAt >= mcqAt ? 'spot' : 'mcq';
-    return byType.mcq ? 'mcq' : byType.spot ? 'spot' : null;
+    return ['mcq', 'spot', 'qa']
+      .filter((type) => byType[type])
+      .sort((a, b) => (byType[b].submittedAt?.seconds ?? -1) - (byType[a].submittedAt?.seconds ?? -1))[0] ?? null;
   };
 
   // On mount: skip straight to deptselect so the navigator picks their department.
@@ -93,13 +94,15 @@ export default function NavigatorApp({ navigatorId, name, onSignOut }) {
     setView('deptselect');
     Promise.all(
       ASSESSED_DEPTS.map(async (deptId) => {
-        const [mcq, spot] = await Promise.all([
+        const [mcq, spot, qa] = await Promise.all([
           getResult(navigatorId, deptId, 'mcq').catch(() => null),
           getResult(navigatorId, deptId, 'spot').catch(() => null),
+          getResult(navigatorId, deptId, 'qa').catch(() => null),
         ]);
         // Most recent result's scores drive the cross-dept strip for this dept.
-        const type = pickActiveType({ mcq, spot });
-        return { deptId, scores: type ? { mcq, spot }[type].scores : null };
+        const byType = { mcq, spot, qa };
+        const type = pickActiveType(byType);
+        return { deptId, scores: type ? byType[type].scores : null };
       })
     ).then((entries) => {
       const map = {};
@@ -115,18 +118,20 @@ export default function NavigatorApp({ navigatorId, name, onSignOut }) {
     setActiveDept(dept);
     setView('loading');
     try {
-      const [mcq, spot] = await Promise.all([
+      const [mcq, spot, qa] = await Promise.all([
         getResult(navigatorId, dept, 'mcq'),
         getResult(navigatorId, dept, 'spot'),
+        getResult(navigatorId, dept, 'qa'),
       ]);
-      setResultsByType({ mcq, spot });
-      const type = pickActiveType({ mcq, spot });
+      setResultsByType({ mcq, spot, qa });
+      const byType = { mcq, spot, qa };
+      const type = pickActiveType(byType);
       setActiveType(type);
       // Fetch the active question bank for this department (needed by MCQ + coaching).
       const qs = await getActiveQuestions(dept).catch(() => []);
       setQuestions(qs.length > 0 ? qs : (SEED_BY_DEPT[dept] ?? SEED_QUESTIONS));
       if (type) {
-        setAllDeptResults((prev) => ({ ...prev, [dept]: { mcq, spot }[type].scores }));
+        setAllDeptResults((prev) => ({ ...prev, [dept]: byType[type].scores }));
         setView('dashboard');
       } else {
         setView('typeselect'); // no results yet → pick an assessment
@@ -235,7 +240,7 @@ export default function NavigatorApp({ navigatorId, name, onSignOut }) {
 
   const handleChangeDept = () => {
     setActiveDept(null);
-    setResultsByType({ mcq: null, spot: null });
+    setResultsByType({ mcq: null, spot: null, qa: null });
     setActiveType(null);
     setLastAnswers(null);
     setView('deptselect');
@@ -299,6 +304,16 @@ export default function NavigatorApp({ navigatorId, name, onSignOut }) {
     setActiveType(targetType);
     setAllDeptResults((prev) => ({ ...prev, [dept]: allScores }));
     await persistResult([navigatorId, name, allScores, competencyScores, dept, answers, targetType]);
+  };
+
+  const handleQaComplete = async (qa) => {
+    const scores = scoreQaAcrossDomains(qa);
+    const now = { seconds: Math.floor(Date.now() / 1000) };
+    const result = { name, navigatorId, department: dept, assessmentType: 'qa', scores, competencyScores: {}, answers: {}, submittedAt: now };
+    setResultsByType((prev) => ({ ...prev, qa: result }));
+    setActiveType('qa');
+    setAllDeptResults((prev) => ({ ...prev, [dept]: scores }));
+    await persistResult([navigatorId, name, scores, {}, dept, {}, 'qa']);
   };
 
   // Merge own result into the floor results for mentor suggestions. Floor rows
@@ -397,7 +412,7 @@ export default function NavigatorApp({ navigatorId, name, onSignOut }) {
       {view === 'typeselect' && (
         <AssessmentTypeChooser
           deptName={deptName}
-          taken={{ mcq: hasMcq, spot: hasSpot }}
+          taken={{ mcq: hasMcq, spot: hasSpot, qa: hasQa }}
           latestQa={latestQa}
           onPick={(type) => setView(type === 'spot' ? 'spotfull' : type === 'qa' ? 'qatest' : 'check')}
         />
@@ -434,6 +449,7 @@ export default function NavigatorApp({ navigatorId, name, onSignOut }) {
           name={name}
           department={dept}
           mode="test"
+          onQaResult={handleQaComplete}
           onExit={() => setView('typeselect')}
           onDone={() => setView('dashboard')}
         />
@@ -461,8 +477,7 @@ export default function NavigatorApp({ navigatorId, name, onSignOut }) {
             <>
               <AssessmentBar
                 activeType={activeType}
-                hasMcq={hasMcq}
-                hasSpot={hasSpot}
+                resultsByType={resultsByType}
                 onSwitch={handleSwitchType}
                 onTakeAnother={handleTakeAnother}
               />
@@ -484,8 +499,8 @@ export default function NavigatorApp({ navigatorId, name, onSignOut }) {
             </>
           ) : (
             <EmptyState title="No domain results yet">
-              Your Call QA Test is saved separately.{' '}
-              <button className="linkbtn" onClick={() => setView('typeselect')}>Take a domain assessment</button>.
+              Take any assessment and your six domain scores will appear here.{' '}
+              <button className="linkbtn" onClick={() => setView('typeselect')}>Start one now</button>.
             </EmptyState>
           )}
         </>
@@ -538,7 +553,14 @@ export default function NavigatorApp({ navigatorId, name, onSignOut }) {
         <VoiceCall navigatorId={navigatorId} name={name} department={dept} onExit={() => setPracticeMode(null)} />
       )}
       {view === 'interview' && practiceMode === 'test' && (
-        <VoiceCall navigatorId={navigatorId} name={name} department={dept} onExit={() => setPracticeMode(null)} mode="test" />
+        <VoiceCall
+          navigatorId={navigatorId}
+          name={name}
+          department={dept}
+          onExit={() => setPracticeMode(null)}
+          onQaResult={handleQaComplete}
+          mode="test"
+        />
       )}
       {view === 'interview' && practiceMode === 'chat' && (
         <>
@@ -620,9 +642,8 @@ export default function NavigatorApp({ navigatorId, name, onSignOut }) {
 }
 
 // Dashboard control bar — shows which assessment the profile is from, lets the
-// navigator switch between their MCQ and Spot the Error results (when both exist),
-// and launches another assessment.
-const TYPE_LABEL = { mcq: 'Multiple choice', spot: 'Spot the Error' };
+// navigator switch between saved assessment results, and launches another one.
+const TYPE_LABEL = { mcq: 'Multiple choice', spot: 'Spot the Error', qa: 'Call QA Test' };
 
 function latestBy(items, score) {
   return items.reduce((best, item) => (!best || score(item) > score(best) ? item : best), null);
@@ -644,14 +665,15 @@ function formatQaDate(ts) {
   });
 }
 
-function AssessmentBar({ activeType, hasMcq, hasSpot, onSwitch, onTakeAnother }) {
-  const bothTaken = hasMcq && hasSpot;
+function AssessmentBar({ activeType, resultsByType, onSwitch, onTakeAnother }) {
+  const takenTypes = ['mcq', 'spot', 'qa'].filter((t) => resultsByType[t]);
+  const multiTaken = takenTypes.length > 1;
   return (
     <div className="assess-bar">
-      {bothTaken ? (
+      {multiTaken ? (
         <div className="assess-bar__toggle" role="group" aria-label="Which assessment to view">
           <span className="assess-bar__label">Showing:</span>
-          {['mcq', 'spot'].map((t) => (
+          {takenTypes.map((t) => (
             <button
               key={t}
               type="button"
@@ -669,13 +691,13 @@ function AssessmentBar({ activeType, hasMcq, hasSpot, onSwitch, onTakeAnother })
         </span>
       )}
       <button type="button" className="btn btn--ghost btn--sm" onClick={onTakeAnother}>
-        {bothTaken ? 'Retake an assessment' : 'Take the other assessment'}
+        {multiTaken ? 'Retake an assessment' : 'Take another assessment'}
       </button>
     </div>
   );
 }
 
-// Assessment-type chooser: MCQ and Spot feed the capability matrix; QA is standalone.
+// Assessment-type chooser: all three assessment types feed the capability matrix.
 function QaLatestCard({ qa, endedAt, onRetake }) {
   return (
     <div className={`card qa-latest ${qa.pass ? 'qa-latest--pass' : 'qa-latest--fail'}`}>
@@ -698,8 +720,7 @@ function AssessmentTypeChooser({ deptName, taken = {}, latestQa, onPick }) {
         <div>
           <h1 className="overview__title">Choose your assessment</h1>
           <p className="overview__lede">
-            Choose how to be assessed for {deptName}. Multiple choice and Spot the Error update your
-            domain profile; Call QA Test is a standalone pass/fail voice record.
+            Choose how to be assessed for {deptName}. All assessment types update your domain profile.
           </p>
         </div>
       </header>
@@ -723,11 +744,11 @@ function AssessmentTypeChooser({ deptName, taken = {}, latestQa, onPick }) {
           </p>
         </button>
         <button className="card practice-choice__card practice-choice__card--test" onClick={() => onPick('qa')} type="button">
-          {latestQa && <span className="practice-choice__taken">{latestQa.qa.pass ? 'PASS' : 'FAIL'} - retake</span>}
+          {(latestQa || taken.qa) && <span className="practice-choice__taken">{latestQa ? (latestQa.qa.pass ? 'PASS' : 'FAIL') : 'Completed'} - retake</span>}
           <span className="practice-choice__glyph" aria-hidden="true">QA</span>
           <h2 className="practice-choice__title">Call QA Test</h2>
           <p className="practice-choice__desc">
-            Graded voice call, pass/fail. Mic required.
+            Graded voice call, pass/fail. Updates all six domain scores.
           </p>
         </button>
       </div>

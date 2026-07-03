@@ -71,7 +71,7 @@ function appendTranscriptFragment(existing, fragment) {
 
 // mode: 'practice' (advisory holistic review) | 'test' (hard rubric-based QA
 // test graded criterion-by-criterion against the call quality guide).
-export default function VoiceCall({ navigatorId, name, department = 'pediatrics', onExit, onDone, mode = 'practice' }) {
+export default function VoiceCall({ navigatorId, name, department = 'pediatrics', onExit, onDone, onQaResult, mode = 'practice' }) {
   const isTest = mode === 'test';
   // phases: setup | connecting | active | grading | reviewed | discarded | error
   const [phase, setPhase]         = useState('setup');
@@ -296,6 +296,7 @@ export default function VoiceCall({ navigatorId, name, department = 'pediatrics'
             try { await updateInterviewGrade(docId, data.grade, data.qa); }
             catch (e) { console.error('grade save failed:', e); }
           }
+          await onQaResult?.(data.qa);
         }
       } else {
         const data = await apiFetch(

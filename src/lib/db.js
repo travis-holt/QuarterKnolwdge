@@ -11,8 +11,8 @@
 //   results       — assessment submissions { name, navigatorId, department,
 //                   assessmentType, scores, competencyScores, answers, submittedAt }.
 //                   Keyed `${navigatorId}__${department}` for MCQ and
-//                   `${navigatorId}__${department}__spot` for Spot the Error, so a
-//                   navigator can hold BOTH an MCQ and a Spot result per department
+//                   `${navigatorId}__${department}__{type}` for other assessments, so a
+//                   navigator can hold MCQ, Spot, and Call QA results per department
 //                   (and separate results per department). A fallback read against
 //                   the plain navigatorId supports legacy pre-multi-dept MCQ docs.
 //   resultHistory — append-only score snapshots (one per submission/retake) for
@@ -157,8 +157,8 @@ export async function setRosterStatus(id, status) {
 }
 
 /**
- * Supervisor: delete a navigator's result(s) so they can retake. Removes BOTH
- * the MCQ and Spot the Error docs (and the legacy Pediatrics doc) for the
+ * Supervisor: delete a navigator's result(s) so they can retake. Removes
+ * MCQ, Spot the Error, Call QA docs (and the legacy Pediatrics doc) for the
  * department. The roster entry is untouched; only submissions are removed.
  * @param {string} navigatorId  roster UUID
  * @param {string} [department='pediatrics']
@@ -167,6 +167,7 @@ export async function clearResult(navigatorId, department = 'pediatrics') {
   const ids = [
     `${navigatorId}__${department}`,        // MCQ (composite)
     `${navigatorId}__${department}__spot`,  // Spot the Error
+    `${navigatorId}__${department}__qa`,    // Call QA Test
   ];
   if (department === 'pediatrics') ids.push(navigatorId); // legacy plain-id MCQ doc
   for (const id of ids) {
@@ -198,12 +199,12 @@ export function subscribeRoster(cb, onError) {
 
 /**
  * Doc id for a result. MCQ keeps the plain composite key (back-compat with all
- * pre-assessment-type data); Spot the Error gets a `__spot` suffix so both an
- * MCQ and a Spot result can coexist for the same navigator + department.
+ * pre-assessment-type data); other assessments get a suffix so they can coexist
+ * for the same navigator + department.
  */
 function resultDocId(navigatorId, department, assessmentType) {
-  return assessmentType === 'spot'
-    ? `${navigatorId}__${department}__spot`
+  return assessmentType && assessmentType !== 'mcq'
+    ? `${navigatorId}__${department}__${assessmentType}`
     : `${navigatorId}__${department}`;
 }
 
@@ -213,7 +214,7 @@ function resultDocId(navigatorId, department, assessmentType) {
  * pilot data loads without a migration; Spot has no legacy form.
  * @param {string} navigatorId
  * @param {string} [department='pediatrics']
- * @param {'mcq'|'spot'} [assessmentType='mcq']
+ * @param {'mcq'|'spot'|'qa'} [assessmentType='mcq']
  * @returns {Promise<{id:string,name:string,scores:Record<string,number>,department:string,assessmentType:string}|null>}
  */
 export async function getResult(navigatorId, department = 'pediatrics', assessmentType = 'mcq') {
@@ -230,15 +231,15 @@ export async function getResult(navigatorId, department = 'pediatrics', assessme
 /**
  * Navigator: write (or overwrite on retake) their result for one department +
  * assessment type, AND append an immutable snapshot to resultHistory for trend
- * tracking. The doc key includes the type (`__spot` suffix for Spot the Error)
- * so MCQ and Spot results coexist rather than overwriting each other.
+ * tracking. The doc key includes the type suffix for non-MCQ assessments so
+ * MCQ, Spot, and Call QA results coexist rather than overwriting each other.
  * @param {string} navigatorId
  * @param {string} name                  denormalised for display
  * @param {Record<string,number>} scores  domainId -> percent
  * @param {Record<string,number|null>} [competencyScores]
  * @param {string} [department='pediatrics']
  * @param {Record<string,string>} [answers]  questionId -> optionId (for question health)
- * @param {'mcq'|'spot'} [assessmentType='mcq']
+ * @param {'mcq'|'spot'|'qa'} [assessmentType='mcq']
  */
 export async function saveResult(navigatorId, name, scores, competencyScores = {}, department = 'pediatrics', answers = {}, assessmentType = 'mcq') {
   await setDoc(doc(db, RESULTS, resultDocId(navigatorId, department, assessmentType)), {

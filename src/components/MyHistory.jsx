@@ -20,7 +20,7 @@ import { isFirebaseConfigured } from '../lib/firebase.js';
 //      stored on the result doc, so this survives sign-out/sign-in.
 // ─────────────────────────────────────────────────────────────────────────────
 
-const TYPE_LABEL = { mcq: 'Multiple choice', spot: 'Spot the Error' };
+const TYPE_LABEL = { mcq: 'Multiple choice', spot: 'Spot the Error', qa: 'Call QA Test' };
 
 function toneFor(points) {
   if (points >= 85) return 'is-good';

@@ -148,6 +148,18 @@ export function scoreSpotTheErrorByDomain(graded) {
 }
 
 /**
+ * A Call QA Test is one full-call quality score, not six separate domain items.
+ * Until the QA rubric is domain-tagged, that score updates every domain equally.
+ * @param {{score:number}|number} qa
+ * @returns {Record<string, number>} domainId -> score
+ */
+export function scoreQaAcrossDomains(qa) {
+  const score = typeof qa === 'number' ? qa : qa?.score;
+  const pct = Number.isFinite(score) ? Math.max(0, Math.min(100, Math.round(score))) : 0;
+  return Object.fromEntries(DOMAINS.map((d) => [d.id, pct]));
+}
+
+/**
  * Build the matrix rows from sample navigators + the optional live taker.
  * Each row carries both scoring axes:
  *   { name, isLive, scores, levels,                 // per-domain

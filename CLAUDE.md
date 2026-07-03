@@ -616,15 +616,19 @@ training assignments.
   `AssessmentTypeChooser` after department selection, alongside Multiple choice and Spot the
   Error. That route reuses `VoiceCall mode='test'`, returns to the dashboard from the review
   screen, and shows the latest department-scoped QA test as a small PASS/FAIL dashboard card
-  (score, date, Retake). The Practice-tab card remains available.
+  (score, date, Retake). The Practice-tab card remains available. As of later 2026-07-03, this
+  route also writes a `results` doc with `assessmentType:'qa'`; `scoreQaAcrossDomains(qa)` applies
+  the QA score to all six domain scores so the matrix, training plan, trend history, and navigator
+  dashboard update from the Call QA Test.
 - **Status:** Complete. Live-verified (see the 2026-07-03 history entry): a strong fixture call
   graded 100/PASS twice with identical per-criterion verdicts; a bad fixture call (read lab
   results + gave med advice + sarcasm + no verification) triggered the auto-fails and failed at 0.
-- **Notes:** QA test results do NOT feed the capability matrix — they're a separate
-  certification-style record on the interview doc. Advisory practice grading (`grade-interview`)
-  is unchanged. Domain-practice analytics ignore interview docs that have `qa`, so the random
-  scenario domain used to generate the voice call cannot count as domain practice evidence.
-  Supervisor override remains Planned.
+- **Notes:** Call QA now feeds the capability matrix from both the assessment chooser and Practice tab,
+  while still storing the full scorecard on the interview doc. The QA rubric is not yet tagged to
+  the six SOP domains, so the one full-call QA score is applied evenly to all six domains. Advisory
+  practice grading (`grade-interview`) is unchanged. Domain-practice analytics ignore interview
+  docs that have `qa`, so the random scenario domain used to generate the voice call cannot count
+  as domain practice evidence. Supervisor override remains Planned.
 - **Files:** new `api/{_qa-rubric,grade-call-qa,grade-call-qa.test}.js`; edited `server.js`,
   `src/lib/{db,scoring,scoring.test}.js`,
   `src/components/{VoiceCall,NavigatorApp,NavigatorDetail,Interview}.jsx`, `src/styles.css`.
@@ -960,10 +964,11 @@ stateDiagram-v2
   `AssessmentTypeChooser` (after department selection), alongside Multiple choice and Spot the
   Error. It launches the existing `VoiceCall mode='test'` flow, keeps the Practice-tab entry
   intact, and returns to the navigator dashboard from the test review screen.
-- **Standalone QA result:** QA results still never write `results`, `resultHistory`, domain scores,
-  competency scores, or capability-matrix data. They remain stored only on interview docs as
-  `qa` via `updateInterviewGrade(id, grade, qa)`. Domain-practice analytics now ignore
-  `interviews` with `qa` so the random call scenario domain cannot satisfy a training/path step.
+- **Domain score feed (later 2026-07-03):** QA results now also write `results` +
+  `resultHistory` with `assessmentType:'qa'` and a `__qa` result-doc suffix. Because the QA rubric
+  is not domain-tagged yet, `scoreQaAcrossDomains(qa)` applies the one full-call QA score to all
+  six domains from either Call QA entry point. Domain-practice analytics still ignore `interviews`
+  with `qa` so the random call scenario domain cannot satisfy a training/path step.
 - **Dashboard UI:** Navigator dashboard now shows the latest department-scoped Call QA Test as a
   small PASS/FAIL card with score, date, and Retake button. `saveInterview` now stores
   `department` for new chat/voice/QA interview docs; old docs continue to fall back to Pediatrics.
@@ -1011,8 +1016,8 @@ stateDiagram-v2
 - **Files:** new `api/{_qa-rubric,grade-call-qa,grade-call-qa.test}.js`; edited `server.js`,
   `src/lib/db.js`, `src/components/{VoiceCall,NavigatorApp,NavigatorDetail}.jsx`,
   `src/styles.css`, `CLAUDE.md`.
-- **Status:** Complete. QA test results do not feed the capability matrix (separate
-  certification-style record). Supervisor grade override remains the planned backstop.
+- **Status:** Complete. QA test results also feed the capability matrix as a full-profile score
+  snapshot. Supervisor grade override remains the planned backstop.
 
 ### 2026-07-03 â€” Gemini quota diagnosis + flash-lite overflow lane (free-tier stopgap)
 - **Context:** Owner asked why the pilot exhausted the 4-key rotation so fast despite low daily
@@ -2707,10 +2712,10 @@ stateDiagram-v2
     creates it on first sign-in.
   - `results/{key}` â†’ `{ name, navigatorId, department, assessmentType, scores:{domainId:pct},
     competencyScores:{compId:pct}, answers, submittedAt }`. Key is `${navigatorId}__${department}`
-    for MCQ (legacy back-compat) and `${navigatorId}__${department}__spot` for Spot the Error, so a
-    navigator can hold **both** an MCQ and a Spot result per department. Supervisor views dedupe to
-    the most-recent per navigator+department. Older docs may lack `competencyScores`/`assessmentType`
-    (tolerated; treated as MCQ).
+    for MCQ (legacy back-compat), `${navigatorId}__${department}__spot` for Spot the Error, and
+    `${navigatorId}__${department}__qa` for Call QA Test, so a navigator can hold all three result
+    types per department. Supervisor views dedupe to the most-recent per navigator+department. Older
+    docs may lack `competencyScores`/`assessmentType` (tolerated; treated as MCQ).
   - `questions/{uuid}` â†’ the question shape above. Only `status:'active'` appears in the check.
   - `supervisorFeedback/{uuid}` â†’ `{ targetType, targetId, status, note, context, createdAt }`.
     Status is one of `helpful`, `inaccurate`, `needsAdjustment`, `approved`, `rejected`.
@@ -2748,7 +2753,7 @@ stateDiagram-v2
   `subscribeRoster(cb,onError?)`, `updateRosterEntry(id,patch)`, `setRosterStatus(id,status)`;
   results â€” `getResult(navigatorId, department?, assessmentType?)`,
   `saveResult(navigatorId, name, scores, competencyScores?, department?, answers?, assessmentType?)`,
-  `clearResult(navigatorId, department?)` (deletes both MCQ + Spot docs),
+  `clearResult(navigatorId, department?)` (deletes MCQ + Spot + QA docs),
   `subscribeResults(cb,onError?)`; questions â€” `subscribeQuestions(cb,onError?)`,
   `getActiveQuestions()`, `seedQuestionsIfEmpty(seed)`, `saveDraftQuestions(drafts, source?)`,
   `updateQuestion(id,patch)`, `activateQuestion(id)`, `archiveQuestion(id)`, `deleteQuestion(id)`;
