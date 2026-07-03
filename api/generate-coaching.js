@@ -13,7 +13,7 @@
 import { COMPETENCIES, competencyName } from '../src/data/competencies.js';
 import { DOMAINS } from '../src/data/questions.js';
 import { THRESHOLDS } from '../src/data/config.js';
-import { getApiKeys, geminiWithRotation } from './_gemini-client.js';
+import { getApiKeys, geminiWithRotation, MODEL, LITE_MODEL } from './_gemini-client.js';
 import { validateSecret } from './_auth.js';
 
 const domainName = (id) => DOMAINS.find((d) => d.id === id)?.name ?? id;
@@ -148,7 +148,10 @@ export default async function handler(req, res) {
   const { systemInstruction, userMessage } = buildMessages(name, weakComps, competencyScores, digestForPrompt);
   const body = buildBody(systemInstruction, userMessage, responseSchema);
 
-  const result = await geminiWithRotation(keys, body, { label: 'generate-coaching' });
+  // Coaching notes are advisory prose — overflow to flash-lite's separate quota
+  // bucket rather than falling back to rule-based when the primary model is
+  // rate-limited (the client silently drops this section on 429 anyway).
+  const result = await geminiWithRotation(keys, body, { label: 'generate-coaching', models: [MODEL, LITE_MODEL] });
   if (!result.ok) {
     if (result.reason === 'fatal') {
       return res.status(502).json({ error: `Gemini request failed (${result.status}).` });

@@ -6,7 +6,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { getApiKeys, geminiWithRotation } from './_gemini-client.js';
+import { getApiKeys, geminiWithRotation, MODEL, LITE_MODEL } from './_gemini-client.js';
 
 // ── getApiKeys ────────────────────────────────────────────────────────────────
 
@@ -130,5 +130,50 @@ describe('geminiWithRotation', () => {
       .mockResolvedValueOnce(errResponse(429));
     const result = await geminiWithRotation(['k1', 'k2'], {}, { label: 'test' });
     expect(result).toEqual({ ok: false, reason: 'exhausted' });
+  });
+
+  // ── model fallback (per-model quota buckets) ───────────────────────────────
+
+  it('falls back to the next model when all keys are rate-limited on the primary', async () => {
+    fetch
+      .mockResolvedValueOnce(errResponse(429)) // k1 on MODEL
+      .mockResolvedValueOnce(errResponse(429)) // k2 on MODEL
+      .mockResolvedValueOnce(okResponse('lite-ok')); // first key tried on LITE_MODEL
+    const result = await geminiWithRotation(['k1', 'k2'], {}, { label: 'test', models: [MODEL, LITE_MODEL] });
+    expect(result).toEqual({ ok: true, text: 'lite-ok' });
+    expect(fetch).toHaveBeenCalledTimes(3);
+    // first two calls hit the primary model, the third the fallback
+    expect(fetch.mock.calls[0][0]).toContain(`/models/${MODEL}:`);
+    expect(fetch.mock.calls[1][0]).toContain(`/models/${MODEL}:`);
+    expect(fetch.mock.calls[2][0]).toContain(`/models/${LITE_MODEL}:`);
+  });
+
+  it('does not touch the fallback model when the primary succeeds', async () => {
+    fetch.mockResolvedValue(okResponse('primary-ok'));
+    const result = await geminiWithRotation(['k1'], {}, { label: 'test', models: [MODEL, LITE_MODEL] });
+    expect(result).toEqual({ ok: true, text: 'primary-ok' });
+    expect(fetch).toHaveBeenCalledTimes(1);
+    expect(fetch.mock.calls[0][0]).toContain(`/models/${MODEL}:`);
+  });
+
+  it('returns exhausted when every key fails on every model', async () => {
+    fetch.mockResolvedValue(errResponse(429));
+    const result = await geminiWithRotation(['k1', 'k2'], {}, { label: 'test', models: [MODEL, LITE_MODEL] });
+    expect(result).toEqual({ ok: false, reason: 'exhausted' });
+    expect(fetch).toHaveBeenCalledTimes(4); // 2 keys × 2 models
+  });
+
+  it('a non-rotatable 400 aborts immediately without trying the fallback model', async () => {
+    fetch.mockResolvedValue(errResponse(400));
+    const result = await geminiWithRotation(['k1', 'k2'], {}, { label: 'test', models: [MODEL, LITE_MODEL] });
+    expect(result.reason).toBe('fatal');
+    expect(fetch).toHaveBeenCalledTimes(1);
+  });
+
+  it('defaults to the primary model only when models is not passed', async () => {
+    fetch.mockResolvedValue(errResponse(429));
+    const result = await geminiWithRotation(['k1'], {}, { label: 'test' });
+    expect(result).toEqual({ ok: false, reason: 'exhausted' });
+    expect(fetch).toHaveBeenCalledTimes(1); // no second-model retry
   });
 });

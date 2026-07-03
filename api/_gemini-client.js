@@ -5,9 +5,10 @@
 // ONE place (it was previously copy-pasted across 6 files and had begun to
 // drift). The leading `_` keeps Express from turning this module into a route.
 //
-// geminiWithRotation tries each configured key once, starting from a random
-// offset, rotating past transient / quota / permission failures. It returns a
-// normalized result the caller maps to an HTTP response:
+// geminiWithRotation tries each configured key once per model (primary model
+// first, then any fallback models), starting from a random offset, rotating past
+// transient / quota / permission failures. It returns a normalized result the
+// caller maps to an HTTP response:
 //
 //   { ok: true,  text }                     → 200 from Gemini (text MAY be empty;
 //                                              callers validate their own output)
@@ -18,7 +19,15 @@
 
 // gemini-2.5-flash has free-tier availability on the project keys in use (2.0-flash
 // returns a free-tier limit of 0 in this region). Swap here if quota/model changes.
-const MODEL = 'gemini-2.5-flash';
+export const MODEL = 'gemini-2.5-flash';
+
+// Overflow model. Free-tier rate limits are per MODEL per project, so when every
+// key is rate-limited on the primary model, retrying on flash-lite draws from a
+// separate quota bucket on the same keys. flash-lite free tier 503s under load
+// ("high demand") at times, so it is a cushion, not guaranteed capacity — callers
+// opt in via `models: [MODEL, LITE_MODEL]` only where a quality dip is acceptable
+// (chat roleplay turns, advisory coaching), never for scored/authoring output.
+export const LITE_MODEL = 'gemini-2.5-flash-lite';
 
 // Per-key failures where trying a DIFFERENT key may succeed (quota / rate limit /
 // permission / transient overload). A 400 (bad request) is our bug, not the key's,
@@ -40,8 +49,8 @@ if (getApiKeys().length === 0) {
 }
 
 // One Gemini call with a given key → { ok, status, text?, detail? }.
-export async function callGemini(apiKey, body) {
-  const url = `https://generativelanguage.googleapis.com/v1beta/models/${MODEL}:generateContent?key=${apiKey}`;
+export async function callGemini(apiKey, body, model = MODEL) {
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
   const resp = await fetch(url, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -52,46 +61,64 @@ export async function callGemini(apiKey, body) {
   return { ok: true, status: 200, text: data?.candidates?.[0]?.content?.parts?.[0]?.text };
 }
 
+// Pull the quota that tripped out of a 429 body so Railway logs say WHICH limit
+// died (per-minute vs per-day) instead of a bare status code.
+function quotaInfo(detail) {
+  const t = String(detail ?? '');
+  const metric = t.match(/"quotaMetric"\s*:\s*"([^"]+)"/)?.[1];
+  const id = t.match(/"quotaId"\s*:\s*"([^"]+)"/)?.[1];
+  const value = t.match(/"quotaValue"\s*:\s*"?(\d+)/)?.[1];
+  if (!metric && !id && !value) return '';
+  const kind = /perday/i.test(id ?? '') ? 'per-DAY' : /perminute/i.test(id ?? '') ? 'per-minute' : '';
+  return ` (quota: ${metric?.split('/').pop() ?? id ?? '?'}${value ? ` limit=${value}` : ''}${kind ? ` ${kind}` : ''})`;
+}
+
 /**
- * Try each key once (random start), rotating past transient/quota/permission
- * failures. See the module header for the return shape. `label` is used only in
- * log lines so the originating handler is identifiable.
+ * Try each key once per model (random start), rotating past transient/quota/
+ * permission failures. Models are tried in order — all keys on models[0], then
+ * all keys on models[1], … — because free-tier rate limits are per model per
+ * project, so a fallback model is a separate quota bucket on the same keys.
+ * See the module header for the return shape. `label` is used only in log lines
+ * so the originating handler is identifiable.
  * @param {string[]} keys  non-empty (callers guard `keys.length === 0` first)
  * @param {object} body    the Gemini generateContent request body
- * @param {{label?: string}} [opts]
+ * @param {{label?: string, models?: string[]}} [opts]
  */
-export async function geminiWithRotation(keys, body, { label = 'gemini' } = {}) {
-  const start = Math.floor(Math.random() * keys.length);
+export async function geminiWithRotation(keys, body, { label = 'gemini', models = [MODEL] } = {}) {
   let sawFailure = false;
   let sawNonAuthFailure = false; // a non-403 failure (transient/quota) anywhere
 
-  for (let i = 0; i < keys.length; i++) {
-    const idx = (start + i) % keys.length;
-    let result;
-    try {
-      result = await callGemini(keys[idx], body);
-    } catch (err) {
-      console.error(`${label}: fetch threw on key #${idx} — rotating:`, err);
-      sawFailure = true;
-      sawNonAuthFailure = true; // a network/transient throw is not an auth problem
-      continue;
-    }
-    if (result.ok) return { ok: true, text: result.text };
-    if (ROTATABLE.has(result.status)) {
-      sawFailure = true;
-      if (result.status === 403) {
-        console.error(`${label}: 403 on key #${idx} — auth/billing issue, rotating`);
-      } else {
-        sawNonAuthFailure = true;
-        console.warn(`${label}: key #${idx} returned ${result.status} — rotating`);
+  for (const model of models) {
+    const start = Math.floor(Math.random() * keys.length);
+    for (let i = 0; i < keys.length; i++) {
+      const idx = (start + i) % keys.length;
+      let result;
+      try {
+        result = await callGemini(keys[idx], body, model);
+      } catch (err) {
+        console.error(`${label}: fetch threw on key #${idx} (${model}) — rotating:`, err);
+        sawFailure = true;
+        sawNonAuthFailure = true; // a network/transient throw is not an auth problem
+        continue;
       }
-      continue;
+      if (result.ok) return { ok: true, text: result.text };
+      if (ROTATABLE.has(result.status)) {
+        sawFailure = true;
+        if (result.status === 403) {
+          console.error(`${label}: 403 on key #${idx} (${model}) — auth/billing issue, rotating`);
+        } else {
+          sawNonAuthFailure = true;
+          const quota = result.status === 429 ? quotaInfo(result.detail) : '';
+          console.warn(`${label}: key #${idx} (${model}) returned ${result.status}${quota} — rotating`);
+        }
+        continue;
+      }
+      console.error(`${label}: non-rotatable error`, result.status, String(result.detail ?? '').slice(0, 200));
+      return { ok: false, reason: 'fatal', status: result.status };
     }
-    console.error(`${label}: non-rotatable error`, result.status, String(result.detail ?? '').slice(0, 200));
-    return { ok: false, reason: 'fatal', status: result.status };
   }
 
-  // Every key was tried and failed. If every failure was a 403, surface as auth.
+  // Every key was tried on every model and failed. All-403 surfaces as auth.
   if (sawFailure && !sawNonAuthFailure) return { ok: false, reason: 'auth' };
   return { ok: false, reason: 'exhausted' };
 }

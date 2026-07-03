@@ -23,7 +23,12 @@
 import { DOMAINS } from '../src/data/questions.js';
 import { departmentName } from '../src/data/departments.js';
 import { sopContextFor } from './_sop-context.js';
-import { getApiKeys, geminiWithRotation } from './_gemini-client.js';
+import { getApiKeys, geminiWithRotation, MODEL, LITE_MODEL } from './_gemini-client.js';
+
+// Roleplay is conversational, not scored — a lighter model beats a 429 for the
+// navigator mid-call, so overflow to flash-lite's separate quota bucket when
+// every key is rate-limited on the primary model.
+const CHAT_MODELS = [MODEL, LITE_MODEL];
 import { validateSecret } from './_auth.js';
 
 // ── Schema for the init call ──────────────────────────────────────────────────
@@ -139,7 +144,7 @@ export default async function handler(req, res) {
       },
     };
 
-    const result = await geminiWithRotation(keys, body, { label: 'interview-turn' });
+    const result = await geminiWithRotation(keys, body, { label: 'interview-turn', models: CHAT_MODELS });
     if (!result.ok) {
       return result.reason === 'fatal'
         ? res.status(502).json({ error: 'Gemini returned an error generating the scenario.' })
@@ -172,7 +177,7 @@ export default async function handler(req, res) {
     generationConfig: { temperature: 0.5 },
   };
 
-  const result = await geminiWithRotation(keys, body, { label: 'interview-turn' });
+  const result = await geminiWithRotation(keys, body, { label: 'interview-turn', models: CHAT_MODELS });
   if (!result.ok) {
     return result.reason === 'fatal'
       ? res.status(502).json({ error: 'Gemini returned an error.' })

@@ -10,7 +10,7 @@
 > [§8 Current System State](#8-current-system-state) and [§15 Current Priorities](#15-current-priorities)
 > accurate at all times.
 >
-> **Last updated:** 2026-07-03 (pilot-feedback fixes: audit bank, grading retry, history view, code-splitting) ·
+> **Last updated:** 2026-07-03 (quota diagnosis + flash-lite overflow for chat/coaching) ·
 > **Doc maintainer:** Claude (AI agent) + repo owner. Assumptions are explicitly marked **[ASSUMPTION]**.
 
 ---
@@ -904,6 +904,39 @@ stateDiagram-v2
 
 ## 7. Development History
 
+### 2026-07-03 — Gemini quota diagnosis + flash-lite overflow lane (free-tier stopgap)
+- **Context:** Owner asked why the pilot exhausted the 4-key rotation so fast despite low daily
+  volume. Live key probes (tiny generateContent bursts against the real keys) established the
+  facts: (1) the 4 keys ARE independent quota pools — key #0 rate-limited while keys 1-3 kept
+  returning 200, so rotation works; (2) **the free-tier limit is now 5 RPM per project per model**
+  (the 429 body reports `generate_content_free_tier_requests limit=5` — Google's Dec-2025 quota
+  cut halved the old 10), so the whole pool is ~20 requests/min; (3) exhaustion was per-minute
+  burst pressure (a pre-audit-bank Spot = 6 heavy calls/min from ONE navigator; a practice chat =
+  1 call per message), never the daily cap; (4) `gemini-2.5-flash-lite` has a **separate**
+  per-model quota bucket on the same keys but its free tier intermittently 503s ("high demand") —
+  a cushion, not guaranteed capacity.
+- **What changed (all stopgap until paid-tier billing is approved for full deployment):**
+  - `api/_gemini-client.js` — `MODEL` + new `LITE_MODEL` (`gemini-2.5-flash-lite`) are exported;
+    `callGemini` takes a `model` param; `geminiWithRotation` accepts `models: [...]` and tries
+    every key on the primary model first, then every key on each fallback model (per-model quota
+    buckets). Default stays single-model — no behavior change for handlers that don't opt in.
+    New `quotaInfo()` parses the 429 body so Railway logs now say WHICH quota tripped
+    (metric, limit value, per-minute vs per-DAY) instead of a bare status code.
+  - `api/interview-turn.js` — init + turn calls opt into `models: [MODEL, LITE_MODEL]` (roleplay
+    is conversational, unscored; a lighter model beats a 429 mid-call).
+  - `api/generate-coaching.js` — same opt-in (advisory prose; client silently drops it on 429).
+  - Scored/authoring endpoints (grading, scenario/audit generation, refine-sop, sequence-path)
+    deliberately do NOT fall back — quality gate kept.
+- **Path to real capacity (owner decision):** enable billing on one Google project (Tier 1 ≈
+  hundreds+ RPM; ~$1-2/day at pilot volume), put that key first in `GEMINI_API_KEYS`, keep free
+  keys behind it as rotation backup. Zero code change needed. Free-tier stacking is confirmed
+  a dead end (5 RPM per extra account).
+- **Verification:** `npm test` → **258 passing** (9 files; +5 model-fallback rotation tests);
+  `npm run build` → clean; `node --check` on the 3 edited api files → OK.
+- **Files:** `api/{_gemini-client,_gemini-client.test,interview-turn,generate-coaching}.js`,
+  `CLAUDE.md`.
+- **Status:** Complete.
+
 ### 2026-07-03 — Pilot-feedback pass (6-7 navigator soft launch)
 - **Context:** The owner launched the webapp to 6-7 navigators and collected feedback
   ("Knowledge Check Webapp Bugs And Feature Tweaks.docx", untracked). This pass addressed 6 of
@@ -932,7 +965,7 @@ stateDiagram-v2
   the bank can't cover. `generate-audit.js` prompt gained REALISM RULES (specific ordinary
   requests grounded in SOP visit types/queues, natural phone speech, plausible rushed-agent
   mistakes — not cartoonish ones, near-miss distractor turns, English only). Rule added to
-  `firestore.rules` — **owner must `firebase deploy --only firestore:rules` to activate**.
+  `firestore.rules` — deployed to `quarterly-knowledge-check` on 2026-07-03.
 - **4 · MCQ best answer too obvious:** `generate-scenarios.js` prompt gained a DISTRACTOR QUALITY
   block — every wrong option must be a plausible near-miss failing on a specific SOP detail, all
   options the same length/tone (no longest-answer tell), at least one distractor more
@@ -2413,7 +2446,7 @@ stateDiagram-v2
   the Error" assessment → path stepper + mini re-check per weak domain → supervisor Action Center +
   Mentorship tabs → practice call offered as **voice (real-time) or text chat** → navigator "My
   history" tab (attempt history + answer review). Build clean, tests green (`npm test` →
-  **253 passing**, 9 test files).
+  **258 passing**, 9 test files).
 - **Existing functionality:** features F1–F23 (see [§4](#4-feature-inventory)) are **Complete** in
   code. F17 adds longitudinal trends + Sparkline. F18 adds dossier evidence per competency. F19
   adds the supervisor Action Center. F20 adds AI-sequenced dev paths + mini re-check. F21 adds
@@ -2437,7 +2470,7 @@ stateDiagram-v2
 - **Experimental / mockup:**
   - Training **content** is mockup (flagged in UI). Logic is real.
   - **Adult Medicine and Behavioural Health** are not assessed; **Pediatrics and OB/GYN** are live.
-- **Test coverage:** **253 tests** across **9 test files**: `scoring.test.js` (all 26 exports
+- **Test coverage:** **258 tests** across **9 test files**: `scoring.test.js` (all 26 exports
   including F17–F21 functions: buildTrend, trainingImpact, teamTrend, buildDossier, buildActionCenter,
   buildDevPath, buildMentorMatches, pairingOutcomes, buildLearningSignals,
   buildQuestionImprovementSuggestions, adaptiveTrainingRecommendations, feedbackInsights +
@@ -2482,7 +2515,7 @@ stateDiagram-v2
 - **Counts (today):** 6 domains (job-aligned 2026-07-02: intake · classification · routing ·
   scheduling · boundaries · documentation) · 9 competencies · 21 Pediatrics + 16
   OB/GYN = **37** seed questions (bank grows in Firestore per dept) · 4 departments (**Pediatrics
-  + OB/GYN live**, 2 mockup) · **253** unit tests (9 test files) · **11** Firestore collections
+  + OB/GYN live**, 2 mockup) · **258** unit tests (9 test files) · **11** Firestore collections
   (`roster`, `results`, `resultHistory`, `questions`, `audits`, `interviews`, `completions`,
   `pairings`, `supervisorFeedback`, `learningProposals`, `sops`) ·
   **9** REST serverless functions (`generate-scenarios`, `generate-coaching`, `interview-turn`,
@@ -2683,7 +2716,7 @@ npm run test:e2e     # run the Playwright browser tests (auto-builds + starts th
 - Heatmap intensity toggle (show % inside matrix cells).
 
 ### Technical Debt
-- **253 tests** across 9 test files as of 2026-07-03. **Role-app integration tests** (`SupervisorApp`,
+- **258 tests** across 9 test files as of 2026-07-03. **Role-app integration tests** (`SupervisorApp`,
   `NavigatorApp`, `App`) remain the only untested area — adding those is the next coverage priority.
 - ~~Components, role apps, and API handlers untested~~ — **resolved 2026-06-26**: component tests
   (jsdom + Testing Library), API handler pure-function tests, and db.js mocked tests all added.
@@ -2831,12 +2864,15 @@ npm run test:e2e     # run the Playwright browser tests (auto-builds + starts th
 3. **Supervisor grade override** — allow supervisors to adjust the AI-given score on a saved practice session.
 
 **Active work items:**
-- **Pilot-feedback follow-ups (2026-07-03):** deploy the updated Firestore rules
-  (`firebase deploy --only firestore:rules` — required for the new `audits` collection);
-  generate + activate audit transcripts per domain in the new Audit Bank (Questions tab) so
-  Spot the Error starts instantly; add more keys to `GEMINI_API_KEYS` in Railway (pilot
-  exhausted rotation quickly); get the specifics of the colour-scheme feedback (item was
+- **Pilot-feedback follow-ups (2026-07-03):** generate + activate audit transcripts per domain in
+  the new Audit Bank (Questions tab) so
+  Spot the Error starts instantly; get the specifics of the colour-scheme feedback (item was
   recorded without detail).
+- **Gemini capacity (2026-07-03 diagnosis):** free tier is **5 RPM per key per model** (probed
+  live; the 4 keys are confirmed independent projects → ~20 RPM pool). Real fix = enable billing
+  on one Google project and put that key first in `GEMINI_API_KEYS` (~$1-2/day at pilot volume;
+  no code change). Until approved, the flash-lite overflow lane (chat turns + coaching) and the
+  audit bank are the stopgaps; more free accounts add only 5 RPM each.
 - **Question bank regeneration** — the reset bank holds only the 37 seeds; supervisors should
   generate + activate additional scenarios per new domain via the Question Bank UI (the
   generation prompt now enforces distractor quality — regenerating also addresses the
