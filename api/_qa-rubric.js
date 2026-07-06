@@ -259,14 +259,141 @@ export function scoreQa(verdicts, autoFails, transcript) {
   const earnedTotal = categories.reduce((s, c) => s + c.earned, 0);
   const rawScore = applicableTotal > 0 ? Math.round((earnedTotal / applicableTotal) * 100) : 0;
 
-  const verifiedAutoFails = autoFails.filter((a) => verifyEvidence(transcript, a.evidence))
-    .map((a) => ({ ...a, text: QA_AUTO_FAILS.find((d) => d.id === a.id)?.text ?? a.id }));
+  const withText = (a) => ({ ...a, text: QA_AUTO_FAILS.find((d) => d.id === a.id)?.text ?? a.id });
+  const verifiedAutoFails = [];
+  const unverifiedAutoFails = [];
+  for (const a of autoFails) {
+    (verifyEvidence(transcript, a.evidence) ? verifiedAutoFails : unverifiedAutoFails).push(withText(a));
+  }
 
   const autoFailed = verifiedAutoFails.length > 0;
   const score = autoFailed ? 0 : rawScore;
   const pass = !autoFailed && score >= QA_PASS_THRESHOLD;
 
-  return { score, rawScore, pass, passThreshold: QA_PASS_THRESHOLD, categories, criteria, autoFails: verifiedAutoFails };
+  return {
+    score, rawScore, pass, passThreshold: QA_PASS_THRESHOLD, categories, criteria,
+    autoFails: verifiedAutoFails,
+    // Reported by the model but its quote didn't verify. It must never fail the
+    // navigator (anti-hallucination), but it must ALSO never vanish silently —
+    // the review layer surfaces it as a supervisor flag.
+    unverifiedAutoFails,
+  };
+}
+
+// ── Confidence & supervisor-review assessment ────────────────────────────────
+
+// Criteria whose failure represents a patient-safety / compliance risk, not
+// just lost quality points: identity verification, applying the right SOP rule,
+// and routing to the right queue/contact.
+export const SAFETY_CRITICAL_CRITERIA = new Set([
+  'verify-three', 'verify-before-access', 'know-rule', 'doc-te',
+]);
+
+// A score within this many points of the pass mark is "borderline" — the AI
+// result alone should not decide pass/fail there.
+export const QA_REVIEW_MARGIN = 5;
+
+/**
+ * Deterministic confidence + supervisor-review layer on top of a scorecard.
+ * Pure; no I/O, no model calls — every flag is derived from observable facts
+ * (verification failures, correction counts, score distance, NA coverage), so
+ * the same scorecard always produces the same review verdict.
+ *
+ * @param {ReturnType<typeof scoreQa>} qa
+ * @param {{role,text}[]} transcript        the (corrected) graded transcript
+ * @param {{correctedTurns?: number}} opts  transcript-quality stats from the glossary
+ * @returns {{ recommendation: 'pass'|'needs_review'|'fail',
+ *             confidence: 'high'|'medium'|'low',
+ *             safetyRisk: 'none'|'elevated'|'critical',
+ *             reviewFlags: {id:string, label:string, detail:string}[] }}
+ */
+export function assessQa(qa, transcript, { correctedTurns = 0 } = {}) {
+  const flags = [];
+
+  const navigatorTurns = (transcript ?? []).filter((t) => t?.role === 'navigator').length;
+  if (correctedTurns >= 3 || navigatorTurns < 3 || (transcript ?? []).length < 4) {
+    flags.push({
+      id: 'low-transcript-confidence',
+      label: 'Low transcript confidence',
+      detail: correctedTurns >= 3
+        ? `${correctedTurns} turns needed terminology correction — the transcription was struggling with this call.`
+        : 'The call is very short or has too few navigator responses to grade reliably.',
+    });
+  }
+
+  const unverified = qa.criteria.filter((c) => c.unverified);
+  if (unverified.length > 0) {
+    flags.push({
+      id: 'unverified-evidence',
+      label: 'Grader evidence did not verify',
+      detail: `${unverified.length} criterion verdict(s) cited quotes not found in the transcript and were scored NOT MET (${unverified.map((c) => c.id).join(', ')}). Confirm against the transcript.`,
+    });
+  }
+
+  if (qa.unverifiedAutoFails?.length > 0) {
+    flags.push({
+      id: 'possible-unsafe-behavior',
+      label: 'Possible unsafe behavior — unconfirmed',
+      detail: `The grader reported a possible violation (${qa.unverifiedAutoFails.map((a) => a.text).join(' ')}) but its quote could not be verified, so it did NOT fail the test. Review the transcript before accepting this result.`,
+    });
+  }
+
+  // Only non-core criteria (31 points total) can legitimately be NA; when most
+  // of them are, the score rests on a thin slice of the rubric.
+  const naPoints = qa.criteria
+    .filter((c) => c.verdict === 'NA')
+    .reduce((s, c) => s + c.points, 0);
+  if (naPoints > 25) {
+    flags.push({
+      id: 'thin-coverage',
+      label: 'Thin rubric coverage',
+      detail: `${naPoints} of 100 rubric points were not applicable to this scenario — the score rests on few criteria.`,
+    });
+  }
+
+  const safetyMissed = qa.criteria
+    .filter((c) => c.verdict === 'NOT_MET' && SAFETY_CRITICAL_CRITERIA.has(c.id));
+  if (safetyMissed.length > 0) {
+    flags.push({
+      id: 'safety-criterion-missed',
+      label: 'Safety-relevant criterion missed',
+      detail: `Missed: ${safetyMissed.map((c) => `${c.categoryName} — ${c.text}`).join(' · ')}`,
+    });
+  }
+
+  const borderline = qa.autoFails.length === 0
+    && Math.abs(qa.score - qa.passThreshold) <= QA_REVIEW_MARGIN;
+  if (borderline) {
+    flags.push({
+      id: 'borderline-score',
+      label: 'Borderline score',
+      detail: `Score ${qa.score} is within ${QA_REVIEW_MARGIN} points of the ${qa.passThreshold} pass mark — supervisor judgment recommended.`,
+    });
+  }
+
+  if (qa.autoFails.length > 0) {
+    flags.push({
+      id: 'requires-supervisor-judgment',
+      label: 'Auto-fail — supervisor confirmation required',
+      detail: 'A verified auto-fail zeroed this test. Confirm the quoted line and the context before treating the fail as final.',
+    });
+  }
+
+  const confidenceHits = flags.filter((f) =>
+    ['low-transcript-confidence', 'unverified-evidence', 'possible-unsafe-behavior', 'thin-coverage'].includes(f.id)).length;
+  const confidence = confidenceHits >= 2 ? 'low' : confidenceHits === 1 ? 'medium' : 'high';
+
+  const safetyRisk = qa.autoFails.length > 0 || qa.unverifiedAutoFails?.length > 0
+    ? 'critical'
+    : safetyMissed.length > 0 ? 'elevated' : 'none';
+
+  let recommendation;
+  if (qa.autoFails.length > 0) recommendation = 'fail';
+  else if (confidence === 'low' || borderline || qa.unverifiedAutoFails?.length > 0) recommendation = 'needs_review';
+  else if (qa.pass && safetyMissed.length > 0) recommendation = 'needs_review'; // never an unreviewed pass over a safety miss
+  else recommendation = qa.pass ? 'pass' : 'fail';
+
+  return { recommendation, confidence, safetyRisk, reviewFlags: flags };
 }
 
 // ── Grade projection (compat with the existing interview grade shape) ────────
@@ -280,22 +407,26 @@ export function buildGradeProjection(qa) {
     .map((c) => `${c.name} ${c.earned}/${c.applicablePoints || c.possible}`)
     .join(' · ');
   const verdictWord = qa.pass ? 'PASSED' : 'FAILED';
-  const summary = qa.autoFails.length > 0
+  let summary = qa.autoFails.length > 0
     ? `QA test FAILED — automatic fail: ${qa.autoFails.map((a) => a.text).join(' ')} Rubric score before the auto-fail was ${qa.rawScore}/100.`
     : `QA test ${verdictWord} with ${qa.score}/100 (pass mark ${qa.passThreshold}). ${catLine}.`;
+  if (qa.review?.recommendation === 'needs_review') {
+    summary += ` FLAGGED FOR SUPERVISOR REVIEW (${qa.review.reviewFlags.map((f) => f.label).join('; ')}).`;
+  }
 
+  const quote = (c) => (c.evidence && !c.unverified ? ` — "${c.evidence}"` : '');
   const strengths = qa.criteria
     .filter((c) => c.verdict === 'MET')
     .sort((a, b) => b.points - a.points)
     .slice(0, 4)
-    .map((c) => `${c.categoryName}: ${c.text}`);
+    .map((c) => `${c.categoryName}: ${c.text}${quote(c)}`);
 
   const improvements = [
-    ...qa.autoFails.map((a) => `AUTO-FAIL — ${a.text}${a.note ? ` (${a.note})` : ''}`),
+    ...qa.autoFails.map((a) => `AUTO-FAIL — ${a.text}${a.note ? ` (${a.note})` : ''}${a.evidence ? ` — "${a.evidence}"` : ''}`),
     ...qa.criteria
       .filter((c) => c.verdict === 'NOT_MET')
       .sort((a, b) => b.points - a.points)
-      .map((c) => `${c.categoryName} (−${c.points}): ${c.text}${c.note ? ` — ${c.note}` : ''}`),
+      .map((c) => `${c.categoryName} (−${c.points}): ${c.text}${c.note ? ` — ${c.note}` : ''}${quote(c)}`),
   ].slice(0, 8);
 
   return { score: qa.score, summary, strengths, improvements };

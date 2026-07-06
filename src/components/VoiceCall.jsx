@@ -358,18 +358,26 @@ export default function VoiceCall({ navigatorId, name, department = 'pediatrics'
 
   if (phase === 'reviewed' && isTest) {
     const missed = qa?.criteria?.filter((c) => c.verdict === 'NOT_MET') ?? [];
+    const needsReview = qa?.review?.recommendation === 'needs_review';
+    const verdictClass = qa ? (needsReview ? 'qa-result--review' : qa.pass ? 'qa-result--pass' : 'qa-result--fail') : '';
+    const verdictColor = needsReview ? 'var(--level-solid)' : qa?.pass ? 'var(--level-canteach)' : 'var(--level-learning)';
     return (
       <section className="interview view-enter">
         <div className="interview__review">
-          <div className={`card qa-result ${qa ? (qa.pass ? 'qa-result--pass' : 'qa-result--fail') : ''}`}>
+          <div className={`card qa-result ${verdictClass}`}>
             <p className="interview__score-label">Call QA Test</p>
             {qa ? (
               <>
-                <p className="qa-result__verdict">{qa.pass ? 'PASS' : 'FAIL'}</p>
-                <p className="interview__score-value" style={{ color: qa.pass ? 'var(--level-canteach)' : 'var(--level-learning)' }}>
+                <p className="qa-result__verdict">{needsReview ? 'NEEDS REVIEW' : qa.pass ? 'PASS' : 'FAIL'}</p>
+                <p className="interview__score-value" style={{ color: verdictColor }}>
                   {qa.score}<span className="interview__score-denom">/100</span>
                 </p>
                 <p className="readoff__sub">Pass mark: {qa.passThreshold}. No partial credit — every criterion is met or missed.</p>
+                {needsReview && (
+                  <p className="readoff__sub qa-result__review-note">
+                    This result is flagged for supervisor review — the score alone doesn&rsquo;t decide it.
+                  </p>
+                )}
               </>
             ) : (
               <>
@@ -389,6 +397,22 @@ export default function VoiceCall({ navigatorId, name, department = 'pediatrics'
               </>
             )}
           </div>
+
+          {qa?.review?.reviewFlags?.length > 0 && (
+            <div className="card qa-reviewflags">
+              <h3 className="interview__feedback-title"><span className="interview__feedback-icon" aria-hidden="true">⚑</span>Supervisor review flags</h3>
+              <p className="readoff__sub">
+                Grading confidence: <strong>{qa.review.confidence}</strong> · Safety risk: <strong>{qa.review.safetyRisk}</strong>
+              </p>
+              <ul className="qa-reviewflags__list">
+                {qa.review.reviewFlags.map((f) => (
+                  <li key={f.id} className="qa-reviewflags__item">
+                    <strong>{f.label}:</strong> {f.detail}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
 
           {qa?.autoFails?.length > 0 && (
             <div className="card qa-autofail">

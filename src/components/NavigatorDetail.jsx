@@ -439,8 +439,8 @@ export default function NavigatorDetail({ rows, name, deptName, dept, deptMatrix
                     >
                       <span className="tag">{domainName(session.domainId)}</span>
                       {session.qa && (
-                        <span className={`qa-log-badge ${session.qa.pass ? 'qa-log-badge--pass' : 'qa-log-badge--fail'}`}>
-                          QA TEST · {session.qa.pass ? 'PASS' : 'FAIL'}
+                        <span className={`qa-log-badge ${session.qa.review?.recommendation === 'needs_review' ? 'qa-log-badge--review' : session.qa.pass ? 'qa-log-badge--pass' : 'qa-log-badge--fail'}`}>
+                          QA TEST · {session.qa.review?.recommendation === 'needs_review' ? 'NEEDS REVIEW' : session.qa.pass ? 'PASS' : 'FAIL'}
                         </span>
                       )}
                       <span className="interview-log__caller">
@@ -475,6 +475,18 @@ export default function NavigatorDetail({ rows, name, deptName, dept, deptMatrix
                             </p>
                             {g.summary && (
                               <p className="interview-log__grade-summary">{g.summary}</p>
+                            )}
+                            {session.qa?.review?.reviewFlags?.length > 0 && (
+                              <div className="interview-log__grade-section interview-log__grade-section--flags">
+                                <p className="interview-log__grade-heading">
+                                  Supervisor review flags · confidence: {session.qa.review.confidence} · safety risk: {session.qa.review.safetyRisk}
+                                </p>
+                                <ul>
+                                  {session.qa.review.reviewFlags.map((f) => (
+                                    <li key={f.id}><strong>{f.label}:</strong> {f.detail}</li>
+                                  ))}
+                                </ul>
+                              </div>
                             )}
                             {g.strengths?.length > 0 && (
                               <div className="interview-log__grade-section">

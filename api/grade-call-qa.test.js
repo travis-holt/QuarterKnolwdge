@@ -3,8 +3,8 @@
 
 import { describe, it, expect } from 'vitest';
 import {
-  QA_RUBRIC, QA_AUTO_FAILS, QA_PASS_THRESHOLD, rubricCriteria,
-  verifyEvidence, validateQaResponse, scoreQa, buildGradeProjection,
+  QA_RUBRIC, QA_AUTO_FAILS, QA_PASS_THRESHOLD, QA_REVIEW_MARGIN, rubricCriteria,
+  verifyEvidence, validateQaResponse, scoreQa, assessQa, buildGradeProjection,
 } from './_qa-rubric.js';
 import { buildMessages } from './grade-call-qa.js';
 
@@ -222,6 +222,110 @@ describe('scoreQa', () => {
     expect(qa.pass).toBe(true);
     expect(qa.autoFails).toHaveLength(0);
   });
+
+  it('keeps unverified auto-fail reports instead of dropping them silently', () => {
+    const qa = scoreQa(allMetVerdicts(), [{ id: 'af-scope', evidence: 'an invented offending line', note: '' }], TRANSCRIPT);
+    expect(qa.unverifiedAutoFails).toHaveLength(1);
+    expect(qa.unverifiedAutoFails[0].id).toBe('af-scope');
+    expect(qa.pass).toBe(true); // it still must not fail the navigator
+  });
+});
+
+// ── assessQa (confidence + supervisor-review layer) ──────────────────────────
+
+describe('assessQa', () => {
+  const clean = () => scoreQa(allMetVerdicts(), [], TRANSCRIPT);
+
+  it('gives a clean strong pass high confidence and no flags', () => {
+    const review = assessQa(clean(), TRANSCRIPT, { correctedTurns: 0 });
+    expect(review).toEqual({
+      recommendation: 'pass', confidence: 'high', safetyRisk: 'none', reviewFlags: [],
+    });
+  });
+
+  it('recommends fail for a clear miss with high confidence', () => {
+    const failing = new Set(['comm-plain', 'comm-professional', 'comm-empathy', 'sched-flow', 'sched-recap']); // −30 → 70
+    const verdicts = allMetVerdicts().map((v) => (failing.has(v.id) ? { ...v, verdict: 'NOT_MET' } : v));
+    const qa = scoreQa(verdicts, [], TRANSCRIPT);
+    const review = assessQa(qa, TRANSCRIPT, { correctedTurns: 0 });
+    expect(review.recommendation).toBe('fail');
+    expect(review.confidence).toBe('high');
+  });
+
+  it('flags a borderline score for review even when it technically passes', () => {
+    const drop = new Set(['comm-empathy', 'listen-ack']); // −10 → 90, within the margin
+    const verdicts = allMetVerdicts().map((v) => (drop.has(v.id) ? { ...v, verdict: 'NOT_MET' } : v));
+    const qa = scoreQa(verdicts, [], TRANSCRIPT);
+    expect(Math.abs(qa.score - QA_PASS_THRESHOLD)).toBeLessThanOrEqual(QA_REVIEW_MARGIN);
+    const review = assessQa(qa, TRANSCRIPT, { correctedTurns: 0 });
+    expect(review.recommendation).toBe('needs_review');
+    expect(review.reviewFlags.some((f) => f.id === 'borderline-score')).toBe(true);
+  });
+
+  it('surfaces an unverified auto-fail as a critical review flag instead of losing it', () => {
+    const qa = scoreQa(allMetVerdicts(), [{ id: 'af-scope', evidence: 'a line never said', note: '' }], TRANSCRIPT);
+    const review = assessQa(qa, TRANSCRIPT, { correctedTurns: 0 });
+    expect(review.recommendation).toBe('needs_review'); // score is 100, but safety comes first
+    expect(review.safetyRisk).toBe('critical');
+    expect(review.reviewFlags.some((f) => f.id === 'possible-unsafe-behavior')).toBe(true);
+  });
+
+  it('a verified auto-fail recommends fail, critical risk, with a supervisor-confirmation flag', () => {
+    const qa = scoreQa(allMetVerdicts(), [{ id: 'af-hipaa', evidence: 'this is Dana', note: '' }], TRANSCRIPT);
+    const review = assessQa(qa, TRANSCRIPT, { correctedTurns: 0 });
+    expect(review.recommendation).toBe('fail');
+    expect(review.safetyRisk).toBe('critical');
+    expect(review.reviewFlags.some((f) => f.id === 'requires-supervisor-judgment')).toBe(true);
+  });
+
+  it('flags heavy transcript correction as low transcript confidence', () => {
+    const review = assessQa(clean(), TRANSCRIPT, { correctedTurns: 4 });
+    expect(review.confidence).toBe('medium');
+    expect(review.reviewFlags.some((f) => f.id === 'low-transcript-confidence')).toBe(true);
+  });
+
+  it('flags a too-short call as low transcript confidence', () => {
+    const shortCall = TRANSCRIPT.slice(0, 3); // navigator turns < 3
+    const review = assessQa(clean(), shortCall, { correctedTurns: 0 });
+    expect(review.reviewFlags.some((f) => f.id === 'low-transcript-confidence')).toBe(true);
+  });
+
+  it('flags unverified grader evidence and reduces confidence', () => {
+    const verdicts = allMetVerdicts().map((v) =>
+      v.id === 'know-rule' ? { ...v, evidence: 'a line never said' } : v);
+    const qa = scoreQa(verdicts, [], TRANSCRIPT);
+    const review = assessQa(qa, TRANSCRIPT, { correctedTurns: 0 });
+    expect(review.confidence).toBe('medium');
+    expect(review.reviewFlags.some((f) => f.id === 'unverified-evidence')).toBe(true);
+  });
+
+  it('two confidence hits drop confidence to low and force review', () => {
+    const verdicts = allMetVerdicts().map((v) =>
+      v.id === 'know-rule' ? { ...v, evidence: 'a line never said' } : v);
+    const qa = scoreQa(verdicts, [], TRANSCRIPT);
+    const review = assessQa(qa, TRANSCRIPT, { correctedTurns: 4 });
+    expect(review.confidence).toBe('low');
+    expect(review.recommendation).toBe('needs_review');
+  });
+
+  it('flags thin rubric coverage when most non-core criteria are NA', () => {
+    const naIds = new Set(['sched-flow', 'sched-recap', 'doc-reason', 'doc-te', 'know-details']); // 31 NA points
+    const verdicts = allMetVerdicts().map((v) => (naIds.has(v.id) ? { ...v, verdict: 'NA' } : v));
+    const qa = scoreQa(verdicts, [], TRANSCRIPT);
+    const review = assessQa(qa, TRANSCRIPT, { correctedTurns: 0 });
+    expect(review.reviewFlags.some((f) => f.id === 'thin-coverage')).toBe(true);
+  });
+
+  it('a missed safety-critical criterion elevates risk and blocks an unreviewed pass', () => {
+    const verdicts = allMetVerdicts().map((v) =>
+      v.id === 'verify-three' ? { ...v, verdict: 'NOT_MET' } : v); // −6 → 94, still passing
+    const qa = scoreQa(verdicts, [], TRANSCRIPT);
+    expect(qa.pass).toBe(true);
+    const review = assessQa(qa, TRANSCRIPT, { correctedTurns: 0 });
+    expect(review.safetyRisk).toBe('elevated');
+    expect(review.recommendation).toBe('needs_review');
+    expect(review.reviewFlags.some((f) => f.id === 'safety-criterion-missed')).toBe(true);
+  });
 });
 
 // ── buildGradeProjection ─────────────────────────────────────────────────────
@@ -241,6 +345,26 @@ describe('buildGradeProjection', () => {
     expect(grade.score).toBe(0);
     expect(grade.summary).toMatch(/automatic fail/i);
     expect(grade.improvements[0]).toMatch(/^AUTO-FAIL/);
+    expect(grade.improvements[0]).toContain('"this is Dana"'); // transcript evidence travels with the finding
+  });
+
+  it('quotes the transcript evidence in improvement notes', () => {
+    const verdicts = allMetVerdicts().map((v) =>
+      v.id === 'know-rule'
+        ? { ...v, verdict: 'NOT_MET', evidence: 'You are all set for Tuesday at 9', note: 'Wrong slot per PE frequency rule.' }
+        : v);
+    const grade = buildGradeProjection(scoreQa(verdicts, [], TRANSCRIPT));
+    const item = grade.improvements.find((s) => s.startsWith('Knowledge'));
+    expect(item).toContain('Wrong slot per PE frequency rule.');
+    expect(item).toContain('"You are all set for Tuesday at 9"');
+  });
+
+  it('marks a needs_review result in the stored summary', () => {
+    const qa = scoreQa(allMetVerdicts(), [{ id: 'af-scope', evidence: 'a line never said', note: '' }], TRANSCRIPT);
+    const review = assessQa(qa, TRANSCRIPT, { correctedTurns: 0 });
+    const grade = buildGradeProjection({ ...qa, review });
+    expect(grade.summary).toMatch(/FLAGGED FOR SUPERVISOR REVIEW/);
+    expect(grade.summary).toMatch(/unconfirmed/i);
   });
 });
 
@@ -257,5 +381,13 @@ describe('grade-call-qa buildMessages', () => {
     const { userMessage } = buildMessages('scenario', TRANSCRIPT, 'pediatrics');
     expect(userMessage).toContain('Caller: Hi, I need a checkup');
     expect(userMessage).toContain('Navigator: Good morning');
+  });
+
+  it('instructs context-aware judgment and SOP-rule citation in notes', () => {
+    const { systemInstruction } = buildMessages('scenario', TRANSCRIPT, 'obgyn');
+    expect(systemInstruction).toContain('CONTEXT-AWARE JUDGMENT');
+    expect(systemInstruction).toMatch(/NAME the specific SOP rule/);
+    expect(systemInstruction).toMatch(/pregnancy-related call routes differently/);
+    expect(systemInstruction).toMatch(/lab-result call/i);
   });
 });

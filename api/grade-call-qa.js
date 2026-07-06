@@ -17,12 +17,12 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { sopContextFor } from './_sop-context.js';
-import { correctTranscript, glossaryPromptBlock } from './_qa-glossary.js';
+import { correctTranscriptWithStats, glossaryPromptBlock } from './_qa-glossary.js';
 import { getApiKeys, geminiWithRotation } from './_gemini-client.js';
 import { validateSecret } from './_auth.js';
 import {
   QA_RUBRIC, QA_AUTO_FAILS, rubricCriteria,
-  validateQaResponse, scoreQa, buildGradeProjection,
+  validateQaResponse, scoreQa, assessQa, buildGradeProjection,
 } from './_qa-rubric.js';
 
 const MAX_TURNS = 60;
@@ -92,6 +92,28 @@ Grading rules — this is a hard test, apply them strictly:
 - Do not give benefit of the doubt: partial or implied compliance is NOT_MET.
 - Verdicts must be evidence-based. If you cannot quote a real line for MET, the verdict is NOT_MET.
 - For SOP-knowledge criteria, judge correctness against the SOP CONTEXT below — never invent rules.
+- In "note", when a criterion is NOT_MET for an SOP-related reason, NAME the specific SOP rule or \
+workflow principle involved (e.g., "refill TEs go to the PEDS Encounters queue, HIGH PRIORITY when \
+the patient is out") so a supervisor can coach from it. Never leave an SOP-related note vague.
+
+CONTEXT-AWARE JUDGMENT — the correct action depends on the CALL'S CONTEXT, not on keywords. \
+Before judging routing, scheduling, escalation, or knowledge criteria, establish from the \
+scenario and transcript: who the patient is (pediatric vs adult; new vs established; one child \
+vs several), what they are actually asking for (scheduling vs clinical question vs refill vs lab \
+result vs urgent issue), and which department's rules govern. The SAME navigator action can be \
+correct in one context and a violation in another:
+- Routing depends on patient state (e.g., in OB/GYN, a pregnancy-related call routes differently \
+from a non-pregnant GYN issue or an established MFM patient — apply the department's routing \
+table from the SOP CONTEXT, not a generic rule).
+- A refill request is complete only when the required details are gathered per the SOP \
+(medication, and whether the patient is out — which changes priority).
+- A lab-result call is handled correctly ONLY by routing per the SOP; any interpretation, \
+reading, or reassurance about the result content is a violation regardless of phrasing.
+- Escalation judgment: if the scenario contains an urgent, emergent, or escalation-matrix \
+trigger, failing to escalate is a knowledge failure even if the rest of the call is polite \
+and orderly. Conversely, do not demand escalation the SOP does not require.
+- Multiple patients on one call (e.g., a parent calling about several children): each child's \
+request must be handled per the SOP; verify the navigator did not conflate them.
 
 FAIRNESS RULES — apply these BEFORE marking a criterion NOT_MET. They scope the strictness \
 above so a navigator is never failed for something they actually did right:
@@ -161,7 +183,8 @@ export default async function handler(req, res) {
   // Snap mis-transcribed SOP proper nouns/terms to their canonical form BEFORE
   // grading, so both the model's judgment and the evidence-verification gate see
   // what the navigator actually said (bounded to the glossary — never invents).
-  const transcript = correctTranscript(rawTranscript, department);
+  // The correction count doubles as a transcript-quality signal for the review layer.
+  const { transcript, correctedTurns } = correctTranscriptWithStats(rawTranscript, department);
 
   const { systemInstruction, userMessage } = buildMessages(scenario, transcript, department);
   const body = buildBody(systemInstruction, userMessage);
@@ -193,7 +216,12 @@ export default async function handler(req, res) {
   const boundedTranscript = transcript
     .slice(0, MAX_TURNS)
     .map((t) => ({ role: t.role, text: String(t.text ?? '').slice(0, MAX_TURN_CHARS) }));
-  const qa = scoreQa(validated.criteria, validated.autoFails, boundedTranscript);
+  const scored = scoreQa(validated.criteria, validated.autoFails, boundedTranscript);
+  // Deterministic confidence / supervisor-review layer: the AI result is
+  // decision support — borderline scores, questionable transcripts, and
+  // unconfirmed safety reports are flagged instead of silently pass/failed.
+  const review = assessQa(scored, boundedTranscript, { correctedTurns });
+  const qa = { ...scored, review, correctedTurns };
   const grade = buildGradeProjection(qa);
 
   return res.status(200).json({ qa, grade });

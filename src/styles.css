@@ -5050,6 +5050,7 @@ textarea:focus-visible {
 }
 .qa-result--pass { border-top-color: var(--level-canteach); }
 .qa-result--fail { border-top-color: var(--level-learning); }
+.qa-result--review { border-top-color: var(--level-solid); }
 .qa-result__verdict {
   margin: 0;
   font-size: 1.6rem;
@@ -5058,6 +5059,26 @@ textarea:focus-visible {
 }
 .qa-result--pass .qa-result__verdict { color: var(--level-canteach); }
 .qa-result--fail .qa-result__verdict { color: var(--level-learning); }
+.qa-result--review .qa-result__verdict { color: var(--level-solid); }
+.qa-result__review-note { font-weight: 600; }
+
+.qa-reviewflags {
+  border-left: 4px solid var(--level-solid);
+}
+.qa-reviewflags__list {
+  list-style: none;
+  margin: 0.6rem 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+}
+.qa-reviewflags__item {
+  font-size: 0.92rem;
+  line-height: 1.45;
+  color: var(--ink-soft);
+}
+.qa-reviewflags__item strong { color: var(--ink); }
 
 .qa-latest {
   display: flex;
@@ -5158,3 +5179,9 @@ textarea:focus-visible {
 }
 .qa-log-badge--pass { background: var(--level-canteach); }
 .qa-log-badge--fail { background: var(--level-learning); }
+.qa-log-badge--review { background: var(--level-solid); }
+
+.interview-log__grade-section--flags {
+  border-left: 3px solid var(--level-solid);
+  padding-left: 0.75rem;
+}

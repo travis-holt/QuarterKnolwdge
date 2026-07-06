@@ -3,7 +3,7 @@
 
 import { describe, it, expect } from 'vitest';
 import {
-  glossaryFor, correctText, correctTranscript, glossaryPromptBlock,
+  glossaryFor, correctText, correctTranscript, correctTranscriptWithStats, glossaryPromptBlock,
 } from './_qa-glossary.js';
 
 describe('correctText — explicit aliases', () => {
@@ -25,6 +25,15 @@ describe('correctText — explicit aliases', () => {
 
   it('fixes a two-word alias for the hospital', () => {
     expect(correctText('born at Good Samaratin', g)).toBe('born at Good Samaritan');
+  });
+
+  it('fixes the standalone org name (Izer → Aizer)', () => {
+    expect(correctText("we're part of Izer, ma'am", g)).toBe("we're part of Aizer, ma'am");
+    expect(correctText('calling from Iser today', g)).toBe('calling from Aizer today');
+  });
+
+  it('still prefers the two-word form when the full phrase was said', () => {
+    expect(correctText('thank you for calling Izer Health', g)).toBe('thank you for calling Aizer Health');
   });
 });
 
@@ -65,6 +74,29 @@ describe('correctTranscript', () => {
   it('tolerates missing/blank text and non-arrays', () => {
     expect(correctTranscript([{ role: 'navigator' }])).toEqual([{ role: 'navigator', text: '' }]);
     expect(correctTranscript(null)).toBe(null);
+  });
+});
+
+describe('correctTranscriptWithStats', () => {
+  it('counts only the turns that actually changed', () => {
+    const { transcript, correctedTurns } = correctTranscriptWithStats([
+      { role: 'navigator', text: 'Thanks for calling Isr Pediatrics.' },
+      { role: 'patient', text: 'Hi there.' },
+      { role: 'navigator', text: 'Dr. Pollinger can see him at Baker Town.' },
+    ], 'pediatrics');
+    expect(correctedTurns).toBe(2);
+    expect(transcript[1].text).toBe('Hi there.');
+  });
+
+  it('reports zero corrections for a clean transcript', () => {
+    const { correctedTurns } = correctTranscriptWithStats([
+      { role: 'navigator', text: 'Thank you for calling Aizer Health.' },
+    ], 'pediatrics');
+    expect(correctedTurns).toBe(0);
+  });
+
+  it('tolerates non-arrays', () => {
+    expect(correctTranscriptWithStats(null)).toEqual({ transcript: null, correctedTurns: 0 });
   });
 });
 

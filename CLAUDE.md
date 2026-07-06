@@ -10,7 +10,7 @@
 > [Â§8 Current System State](#8-current-system-state) and [Â§15 Current Priorities](#15-current-priorities)
 > accurate at all times.
 >
-> **Last updated:** 2026-07-03 (F25 QA fairness pass â€” SOP transcript glossary + context-aware grading) Â·
+> **Last updated:** 2026-07-06 (F25 hardening â€” confidence/review layer + decision-support pass/fail) Â·
 > **Doc maintainer:** Claude (AI agent) + repo owner. Assumptions are explicitly marked **[ASSUMPTION]**.
 
 ---
@@ -607,6 +607,17 @@ training assignments.
   4. `buildGradeProjection` maps the scorecard onto the existing interview `grade` shape
      (score/summary/strengths/improvements) so all existing supervisor UI renders it unchanged;
      the full scorecard is stored as a new `qa` field via `updateInterviewGrade(id, grade, qa)`.
+     Strengths/improvements carry the verified transcript quote for each finding.
+  4b. **Confidence / supervisor-review layer (2026-07-06, `assessQa`):** a deterministic
+     assessment on top of the scorecard returns `recommendation`
+     (`pass`/`needs_review`/`fail`), `confidence`, `safetyRisk`, and `reviewFlags` (low
+     transcript confidence, unverified grader evidence, possible-unsafe-behavior for
+     unverified auto-fail reports, thin rubric coverage, safety-critical criterion missed,
+     borderline score, auto-fail supervisor confirmation). Borderline, low-confidence,
+     unconfirmed-unsafe, and pass-over-a-safety-miss results are flagged NEEDS REVIEW instead
+     of a confident verdict — the AI score is decision support, not the final word. Stored on
+     the `qa` field (`qa.review`) and rendered in both the navigator results screen and the
+     supervisor session panel.
   5. **Transcript fairness layer (2026-07-03):** Gemini Live's transcription has no domain
      vocabulary, so it mis-hears SOP proper nouns ("Aizer Health" â†’ "Isr Pediatrics", provider /
      queue / street names, "PE") and the literal grader then failed navigators for terms they
@@ -971,6 +982,57 @@ stateDiagram-v2
 ---
 
 ## 7. Development History
+
+### 2026-07-06 — F25 hardening: confidence/review layer, context-aware grading, decision-support pass/fail
+- **Context:** Owner asked for an audit + hardening of the Call QA grading so management can trust
+  it as a decision-support tool — reliability, context-awareness, evidence, and pass/fail safety
+  over raw scoring. Audit findings on the existing pipeline: the deterministic core was sound, but
+  (1) auto-fail reports whose quote didn't verify were **silently dropped** (a possible safety
+  event vanished), (2) there was **no confidence layer** — every call got a confident PASS/FAIL,
+  (3) standalone "Aizer" mis-hearings ("Izer") weren't in the glossary (only two-word phrases),
+  (4) the grader prompt didn't demand scenario-conditional judgment or SOP-rule citations, and
+  (5) improvement notes didn't carry the transcript quote.
+- **Review layer (`assessQa` in `api/_qa-rubric.js`, new):** a PURE, deterministic
+  confidence + supervisor-review assessment on top of the scorecard — no model call. Returns
+  `{ recommendation: 'pass'|'needs_review'|'fail', confidence: 'high'|'medium'|'low',
+  safetyRisk: 'none'|'elevated'|'critical', reviewFlags: [{id,label,detail}] }`. Flags:
+  `low-transcript-confidence` (≥3 glossary-corrected turns or too-short call),
+  `unverified-evidence` (grader quotes not found in the transcript), `possible-unsafe-behavior`
+  (auto-fail reported but unverified — now surfaced instead of dropped; forces needs_review +
+  critical risk), `thin-coverage` (>25 rubric points NA), `safety-criterion-missed`
+  (`SAFETY_CRITICAL_CRITERIA` = verify-three, verify-before-access, know-rule, doc-te — a passing
+  score over a safety miss becomes needs_review), `borderline-score` (within `QA_REVIEW_MARGIN`=5
+  of the pass mark), `requires-supervisor-judgment` (verified auto-fail). Two confidence hits →
+  low confidence → needs_review. `scoreQa` now also returns `unverifiedAutoFails`.
+- **Handler (`grade-call-qa.js`):** uses new `correctTranscriptWithStats` (corrected-turn count =
+  transcript-quality signal); attaches `review` + `correctedTurns` to the stored `qa`; prompt
+  gained a **CONTEXT-AWARE JUDGMENT** block (routing depends on patient state — pregnant vs
+  non-pregnant vs MFM; refill completeness incl. out-of-med priority; lab calls must be routed,
+  never interpreted; escalation triggers; multi-child calls must not conflate patients) and a rule
+  that NOT_MET notes must **name the specific SOP rule** so supervisors can coach from them.
+- **Glossary (`_qa-glossary.js`):** standalone org-name aliases (`izer`, `iser`, `eiser`, `ayzer`,
+  `eyzer`, `aizor`, `aiser` → Aizer) ordered after the two-word phrases so "Izer Health" still
+  becomes "Aizer Health"; new `correctTranscriptWithStats` counts changed turns.
+- **Evidence-based feedback:** `buildGradeProjection` now appends the verified transcript quote to
+  each strength/improvement and auto-fail line, and appends a `FLAGGED FOR SUPERVISOR REVIEW (…)`
+  sentence to the stored summary when the recommendation is needs_review — so the flags travel
+  into the interview doc the supervisor panel already renders.
+- **UI:** `VoiceCall.jsx` test results show a NEEDS REVIEW verdict (amber) when flagged, plus a
+  "Supervisor review flags" card (confidence + safety risk + each flag). `NavigatorDetail.jsx` QA
+  badge gains a `NEEDS REVIEW` variant and the expanded grade panel lists the review flags.
+  New `.qa-result--review` / `.qa-reviewflags*` / `.qa-log-badge--review` styles.
+- **Pass/fail safety model:** the AI result is decision support — a verified auto-fail still
+  recommends fail but carries a supervisor-confirmation flag; borderline, low-confidence,
+  unconfirmed-unsafe, and safety-miss-while-passing results all recommend supervisor review
+  instead of a confident verdict. Domain-score feed unchanged (scores stay deterministic).
+- **Verification:** `npm test` → **328 passing** (11 files; +20 regression tests covering
+  Izer→Aizer standalone, correction stats, unverified auto-fail retention, all review flags,
+  borderline/safety-miss recommendations, evidence quotes in feedback, and the context-judgment
+  prompt block); `npm run build` → clean; `node --check` on the 3 edited api files.
+- **Files:** edited `api/{_qa-rubric,grade-call-qa,_qa-glossary}.js` + both QA test files,
+  `src/components/{VoiceCall,NavigatorDetail}.jsx`, `src/styles.css`, `CLAUDE.md`.
+- **Status:** Complete (code). Supervisor grade override (writing a final human verdict back to
+  the doc) remains the planned next step; the review flags give supervisors the trigger list.
 
 ### 2026-07-03 â€” F25 QA fairness pass: SOP transcript glossary + context-aware grading
 - **Context (pilot feedback):** two linked complaints about the Call QA Test. (1) The grader was
@@ -2622,7 +2684,7 @@ stateDiagram-v2
   the Error" assessment â†’ path stepper + mini re-check per weak domain â†’ supervisor Action Center +
   Mentorship tabs â†’ practice call offered as **voice (real-time) or text chat, plus the graded
   Call QA Test** â†’ navigator "My history" tab (attempt history + answer review). Build clean,
-  tests green (`npm test` â†’ **308 passing**, 11 test files).
+  tests green (`npm test` â†’ **328 passing**, 11 test files).
 - **Existing functionality:** features F1â€“F25 (see [Â§4](#4-feature-inventory)) are **Complete** in
   code. F17 adds longitudinal trends + Sparkline. F18 adds dossier evidence per competency. F19
   adds the supervisor Action Center. F20 adds AI-sequenced dev paths + mini re-check. F21 adds
@@ -2647,7 +2709,7 @@ stateDiagram-v2
 - **Experimental / mockup:**
   - Training **content** is mockup (flagged in UI). Logic is real.
   - **Adult Medicine and Behavioural Health** are not assessed; **Pediatrics and OB/GYN** are live.
-- **Test coverage:** **308 tests** across **11 test files**: `scoring.test.js` (all 26 exports
+- **Test coverage:** **328 tests** across **11 test files**: `scoring.test.js` (all 26 exports
   including F17â€“F21 functions: buildTrend, trainingImpact, teamTrend, buildDossier, buildActionCenter,
   buildDevPath, buildMentorMatches, pairingOutcomes, buildLearningSignals,
   buildQuestionImprovementSuggestions, adaptiveTrainingRecommendations, feedbackInsights +
@@ -2693,7 +2755,7 @@ stateDiagram-v2
 - **Counts (today):** 6 domains (job-aligned 2026-07-02: intake Â· classification Â· routing Â·
   scheduling Â· boundaries Â· documentation) Â· 9 competencies Â· 21 Pediatrics + 16
   OB/GYN = **37** seed questions (bank grows in Firestore per dept) Â· 4 departments (**Pediatrics
-  + OB/GYN live**, 2 mockup) Â· **308** unit tests (11 test files) Â· **11** Firestore collections
+  + OB/GYN live**, 2 mockup) Â· **328** unit tests (11 test files) Â· **11** Firestore collections
   (`roster`, `results`, `resultHistory`, `questions`, `audits`, `interviews`, `completions`,
   `pairings`, `supervisorFeedback`, `learningProposals`, `sops`) Â·
   **10** REST serverless functions (`generate-scenarios`, `generate-coaching`, `interview-turn`,

@@ -35,6 +35,10 @@ const COMMON = [
     'isr pediatrics', 'izer health', 'iser health', 'eiser health', 'ayzer health',
     'eyzer health', 'aizor health', 'aizer pediatrics', 'izer pediatrics', 'iser pediatrics',
   ] },
+  // Standalone org-name mis-hearings ("we're part of Izer"). Must come AFTER the
+  // 'Aizer Health' entry so the two-word phrase aliases win first. These words
+  // don't occur in ordinary conversation, so bare-word replacement is safe.
+  { canonical: 'Aizer', aliases: ['izer', 'iser', 'eiser', 'ayzer', 'eyzer', 'aizor', 'aiser'] },
   { canonical: 'Intermedia', fuzzy: true },
 ];
 
@@ -156,9 +160,26 @@ export function correctText(text, glossary) {
 
 /** Correct every turn's text in a transcript. Pure; returns a new array. */
 export function correctTranscript(transcript, department = 'pediatrics') {
-  if (!Array.isArray(transcript)) return transcript;
+  return correctTranscriptWithStats(transcript, department).transcript;
+}
+
+/**
+ * Like correctTranscript, but also reports how many turns needed correction —
+ * a deterministic proxy for transcript quality. Many corrected turns means the
+ * transcription was struggling, which the review layer turns into a
+ * "low transcript confidence" flag rather than a confident pass/fail.
+ */
+export function correctTranscriptWithStats(transcript, department = 'pediatrics') {
+  if (!Array.isArray(transcript)) return { transcript, correctedTurns: 0 };
   const glossary = glossaryFor(department);
-  return transcript.map((t) => ({ ...t, text: correctText(String(t?.text ?? ''), glossary) }));
+  let correctedTurns = 0;
+  const out = transcript.map((t) => {
+    const original = String(t?.text ?? '');
+    const text = correctText(original, glossary);
+    if (text !== original) correctedTurns += 1;
+    return { ...t, text };
+  });
+  return { transcript: out, correctedTurns };
 }
 
 /** A short grounding block for the grader: canonical spellings + abbreviation
