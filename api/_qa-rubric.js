@@ -95,7 +95,7 @@ export const QA_RUBRIC = [
       { id: 'close-survey', points: 3, core: true,
         text: 'Prompted the caller to stay on the line for the survey before the call ended.' },
       { id: 'close-anything-thanks', points: 2, core: true,
-        text: 'Asked if there was anything else they could help with, and thanked the caller.' },
+        text: 'Closed the call courteously — offered further help and/or exchanged thanks and a goodbye. A natural, mutual close counts; exact scripted wording is not required.' },
     ],
   },
 ];

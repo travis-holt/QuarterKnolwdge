@@ -17,6 +17,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { sopContextFor } from './_sop-context.js';
+import { correctTranscript, glossaryPromptBlock } from './_qa-glossary.js';
 import { getApiKeys, geminiWithRotation } from './_gemini-client.js';
 import { validateSecret } from './_auth.js';
 import {
@@ -92,6 +93,19 @@ Grading rules — this is a hard test, apply them strictly:
 - Verdicts must be evidence-based. If you cannot quote a real line for MET, the verdict is NOT_MET.
 - For SOP-knowledge criteria, judge correctness against the SOP CONTEXT below — never invent rules.
 
+FAIRNESS RULES — apply these BEFORE marking a criterion NOT_MET. They scope the strictness \
+above so a navigator is never failed for something they actually did right:
+- Transcription tolerance: this transcript is auto-generated from a phone call and may mis-spell \
+proper nouns (organization, locations, provider or queue names) or numbers. Judge whether the \
+navigator conveyed the CORRECT entity or rule — never fail a criterion only because a name, \
+place, or term looks mis-transcribed or was said as a valid synonym (see the vocabulary below).
+- Natural closings count: for the closing pleasantry criteria, a courteous natural wrap-up is \
+enough. If the caller has already said thanks or goodbye and the navigator responds in kind, or \
+the navigator gives any polite sign-off, treat the closing pleasantry as MET even without the \
+exact scripted phrase. Do not require rote wording.
+These two carve-outs apply ONLY to closing pleasantries and mis-transcribed / synonymous terms. \
+Verification, privacy/scope, routing, scheduling, and SOP-knowledge criteria stay strict.
+
 Separately, check the auto-fail conditions. Set "triggered": true ONLY if the transcript \
 contains an explicit violation, and quote the offending navigator line verbatim in "evidence". \
 When in doubt, triggered is false.
@@ -101,6 +115,8 @@ ${rubricText}
 
 AUTO-FAIL CONDITIONS:
 ${autoFailText}
+
+${glossaryPromptBlock(department)}
 
 SOP CONTEXT:
 ${sopContextFor(department)}`;
@@ -136,11 +152,16 @@ export default async function handler(req, res) {
   if (keys.length === 0) return res.status(500).json({ error: 'Grading is not configured on the server.' });
 
   if (validateSecret(req, res)) return;
-  const { scenario, transcript, department = 'pediatrics' } = req.body ?? {};
+  const { scenario, transcript: rawTranscript, department = 'pediatrics' } = req.body ?? {};
 
-  if (!scenario || !Array.isArray(transcript) || transcript.length === 0) {
+  if (!scenario || !Array.isArray(rawTranscript) || rawTranscript.length === 0) {
     return res.status(400).json({ error: 'Missing required fields.' });
   }
+
+  // Snap mis-transcribed SOP proper nouns/terms to their canonical form BEFORE
+  // grading, so both the model's judgment and the evidence-verification gate see
+  // what the navigator actually said (bounded to the glossary — never invents).
+  const transcript = correctTranscript(rawTranscript, department);
 
   const { systemInstruction, userMessage } = buildMessages(scenario, transcript, department);
   const body = buildBody(systemInstruction, userMessage);

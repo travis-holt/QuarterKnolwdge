@@ -10,7 +10,7 @@
 > [Â§8 Current System State](#8-current-system-state) and [Â§15 Current Priorities](#15-current-priorities)
 > accurate at all times.
 >
-> **Last updated:** 2026-07-03 (F25 Call QA Test - first-class assessment card) Â·
+> **Last updated:** 2026-07-03 (F25 QA fairness pass â€” SOP transcript glossary + context-aware grading) Â·
 > **Doc maintainer:** Claude (AI agent) + repo owner. Assumptions are explicitly marked **[ASSUMPTION]**.
 
 ---
@@ -607,6 +607,19 @@ training assignments.
   4. `buildGradeProjection` maps the scorecard onto the existing interview `grade` shape
      (score/summary/strengths/improvements) so all existing supervisor UI renders it unchanged;
      the full scorecard is stored as a new `qa` field via `updateInterviewGrade(id, grade, qa)`.
+  5. **Transcript fairness layer (2026-07-03):** Gemini Live's transcription has no domain
+     vocabulary, so it mis-hears SOP proper nouns ("Aizer Health" â†’ "Isr Pediatrics", provider /
+     queue / street names, "PE") and the literal grader then failed navigators for terms they
+     actually said right. `api/_qa-glossary.js` snaps those mis-hearings to the canonical SOP term
+     **before grading** â€” bounded to a curated glossary (explicit aliases + high-threshold
+     single-word fuzzy on distinctive proper nouns), so it can never emit a word outside the
+     glossary (no hallucination). `grade-call-qa.js` corrects the transcript first, then grades /
+     verifies evidence against the corrected text, and the grader prompt now carries the canonical
+     vocabulary + abbreviation equivalences (PE = physical exam, TE = telephone encounter, â€¦) so a
+     synonym never costs a criterion. The grader also gets **scoped FAIRNESS RULES**: don't fail a
+     criterion on a mis-transcribed/synonymous term, and accept a natural mutual close for the
+     closing pleasantry criterion (`close-anything-thanks` reworded) â€” while verification, scope,
+     routing, scheduling, and SOP-knowledge stay strict.
 - **UI:** `VoiceCall.jsx` gains a `mode='practice'|'test'` prop — test mode has its own copy
   ("graded hard, no partial credit"), grading via `/api/grade-call-qa` (60s timeout), and a
   results screen: PASS/FAIL banner, score, auto-fail cards with the quoted offending line,
@@ -629,8 +642,8 @@ training assignments.
   practice grading (`grade-interview`) is unchanged. Domain-practice analytics ignore interview
   docs that have `qa`, so the random scenario domain used to generate the voice call cannot count
   as domain practice evidence. Supervisor override remains Planned.
-- **Files:** new `api/{_qa-rubric,grade-call-qa,grade-call-qa.test}.js`; edited `server.js`,
-  `src/lib/{db,scoring,scoring.test}.js`,
+- **Files:** new `api/{_qa-rubric,grade-call-qa,grade-call-qa.test,_qa-glossary,_qa-glossary.test}.js`;
+  edited `server.js`, `src/lib/{db,scoring,scoring.test}.js`,
   `src/components/{VoiceCall,NavigatorApp,NavigatorDetail,Interview}.jsx`, `src/styles.css`.
 
 ### F14 â€” Question Bank + Gemini Scenario Generation (review gate)
@@ -958,6 +971,46 @@ stateDiagram-v2
 ---
 
 ## 7. Development History
+
+### 2026-07-03 â€” F25 QA fairness pass: SOP transcript glossary + context-aware grading
+- **Context (pilot feedback):** two linked complaints about the Call QA Test. (1) The grader was
+  **too literal / context-blind** â€” it failed Closing because the navigator didn't say "thank you"
+  even though the caller had already thanked them and the call closed naturally. (2) The Gemini Live
+  **transcription has no domain vocabulary**, so it mis-heard SOP proper nouns ("Aizer Health" â†’
+  "Isr Pediatrics", "49 Forest Road", provider/queue names, "PE"), and the literal grader then
+  penalized the navigator (e.g. Opening âˆ’3 for the org name) for terms they actually said right.
+  Owner's constraint: correct the transcription toward the closest SOP reference **without making
+  it hallucinate words**. Decisions taken via question: **fairness fixes only** (keep verification /
+  scope / SOP-knowledge hard) and apply the correction on the **grading transcript** (not live
+  captions).
+- **Transcript glossary (`api/_qa-glossary.js`, new):** a curated, department-aware glossary of the
+  SOP's canonical terms (org name, locations, provider surnames, queues, hospital). `correctText` /
+  `correctTranscript` snap mis-hearings to canonical via (1) explicit alias phrases (fixes "Isr
+  Pediatrics" â†’ "Aizer Health", "peds encounter" â†’ "PEDS Encounters") and (2) a conservative
+  single-word fuzzy pass (Levenshtein ratio â‰¥ 0.82, distinctive proper nouns â‰¥ 6 chars only,
+  whole-word replace). **No-hallucination guarantee:** output is bounded to the glossary â€” an
+  unmatched span is left exactly as transcribed; ordinary conversation is untouched.
+  `glossaryPromptBlock` hands the grader the canonical spellings + abbreviation equivalences (PE =
+  physical exam, TE = telephone encounter, OV = office visit, GS = Good Samaritan, â€¦) so a synonym
+  or correct term never costs a criterion.
+- **Grading (`api/grade-call-qa.js`):** the handler now `correctTranscript`s the call BEFORE
+  building the prompt and scoring, so both the model verdicts and the evidence-verification gate see
+  the corrected text. The system instruction gained scoped **FAIRNESS RULES** (don't fail a
+  criterion on a mis-transcribed / synonymous proper noun; accept a natural mutual close for the
+  closing pleasantry) that explicitly leave verification, scope/HIPAA, routing, scheduling, and
+  SOP-knowledge strict. `_qa-rubric.js` reworded `close-anything-thanks` to accept a courteous
+  natural close (exact scripted wording no longer required); points unchanged.
+- **Verification:** `npm test` â†’ **308 passing** (11 files; +16 `_qa-glossary` tests); `npm run
+  build` â†’ clean (known Firebase chunk warning only); `node --check` on the new/edited api files.
+  Glossary tests cover the reported cases (Isr Pediatrics â†’ Aizer Health, provider near-spelling,
+  ordinary text untouched, no out-of-glossary output).
+- **Not changed:** live captions / the saved interview transcript keep the raw text (grading-only
+  scope, per the decision); advisory `grade-interview` is untouched but `_qa-glossary` is reusable
+  there later.
+- **Files:** new `api/{_qa-glossary,_qa-glossary.test}.js`; edited `api/{grade-call-qa,_qa-rubric}.js`,
+  `CLAUDE.md`.
+- **Status:** Complete (code). Needs an in-browser voice-call run to confirm end-to-end on the
+  real transcription, as with the rest of F22/F25.
 
 ### 2026-07-03 - F25: Call QA Test promoted to first-class navigator assessment
 - **What changed:** Added **Call QA Test** as the third card in `NavigatorApp`'s
@@ -2569,7 +2622,7 @@ stateDiagram-v2
   the Error" assessment â†’ path stepper + mini re-check per weak domain â†’ supervisor Action Center +
   Mentorship tabs â†’ practice call offered as **voice (real-time) or text chat, plus the graded
   Call QA Test** â†’ navigator "My history" tab (attempt history + answer review). Build clean,
-  tests green (`npm test` â†’ **292 passing**, 10 test files).
+  tests green (`npm test` â†’ **308 passing**, 11 test files).
 - **Existing functionality:** features F1â€“F25 (see [Â§4](#4-feature-inventory)) are **Complete** in
   code. F17 adds longitudinal trends + Sparkline. F18 adds dossier evidence per competency. F19
   adds the supervisor Action Center. F20 adds AI-sequenced dev paths + mini re-check. F21 adds
@@ -2594,14 +2647,15 @@ stateDiagram-v2
 - **Experimental / mockup:**
   - Training **content** is mockup (flagged in UI). Logic is real.
   - **Adult Medicine and Behavioural Health** are not assessed; **Pediatrics and OB/GYN** are live.
-- **Test coverage:** **292 tests** across **10 test files**: `scoring.test.js` (all 26 exports
+- **Test coverage:** **308 tests** across **11 test files**: `scoring.test.js` (all 26 exports
   including F17â€“F21 functions: buildTrend, trainingImpact, teamTrend, buildDossier, buildActionCenter,
   buildDevPath, buildMentorMatches, pairingOutcomes, buildLearningSignals,
   buildQuestionImprovementSuggestions, adaptiveTrainingRecommendations, feedbackInsights +
   malformed-input edge cases), `session.test.js`,
   `db.test.js` (incl. audit-bank helpers), `api/api-handlers.test.js`, `api/generate-audit.test.js`,
   `api/_gemini-client.test.js`, `api/sequence-path.test.js` (9 tests for `validateSequenceResponse`),
-  `api/refine-sop.test.js`, `api/grade-call-qa.test.js` (28 tests for the QA-test rubric pipeline),
+  `api/refine-sop.test.js`, `api/grade-call-qa.test.js` (25 tests for the QA-test rubric pipeline),
+  `api/_qa-glossary.test.js` (16 tests for the transcript-correction glossary),
   `src/components/components.test.jsx`. The F22 voice call (relay + Web Audio) is verified by live
   end-to-end probe rather than unit tests â€” audio I/O isn't unit-testable headlessly. Role-app
   integration tests remain the only other untested area.
@@ -2639,15 +2693,15 @@ stateDiagram-v2
 - **Counts (today):** 6 domains (job-aligned 2026-07-02: intake Â· classification Â· routing Â·
   scheduling Â· boundaries Â· documentation) Â· 9 competencies Â· 21 Pediatrics + 16
   OB/GYN = **37** seed questions (bank grows in Firestore per dept) Â· 4 departments (**Pediatrics
-  + OB/GYN live**, 2 mockup) Â· **290** unit tests (10 test files) Â· **11** Firestore collections
+  + OB/GYN live**, 2 mockup) Â· **308** unit tests (11 test files) Â· **11** Firestore collections
   (`roster`, `results`, `resultHistory`, `questions`, `audits`, `interviews`, `completions`,
   `pairings`, `supervisorFeedback`, `learningProposals`, `sops`) Â·
   **10** REST serverless functions (`generate-scenarios`, `generate-coaching`, `interview-turn`,
   `grade-interview`, `grade-call-qa`, `generate-audit`, `coach-audit`, `sequence-path`,
   `refine-sop`, `health`) +
-  **1** WebSocket relay (`live-relay.js` â†’ `/api/live`) Â· **4** shared API helpers
-  (`api/_gemini-client.js`, `api/_auth.js`, `api/_sop-store.js`, `api/_qa-rubric.js`) Â· **1**
-  shared client fetch helper (`src/lib/apiFetch.js`).
+  **1** WebSocket relay (`live-relay.js` â†’ `/api/live`) Â· **5** shared API helpers
+  (`api/_gemini-client.js`, `api/_auth.js`, `api/_sop-store.js`, `api/_qa-rubric.js`,
+  `api/_qa-glossary.js`) Â· **1** shared client fetch helper (`src/lib/apiFetch.js`).
 
 ---
 
