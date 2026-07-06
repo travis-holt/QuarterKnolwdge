@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import { DOMAINS, domainName } from '../data/questions.js';
 import { LEVELS, SPOT_ASSESSMENT_SIZE } from '../data/config.js';
 import { scoreSpotTheError, scoreSpotTheErrorByDomain, scoreToLevel } from '../lib/scoring.js';
-import { apiFetch, runPooled } from '../lib/apiFetch.js';
+import { apiFetch, runPooled, fetchErrorMessage } from '../lib/apiFetch.js';
 import { getActiveAudits } from '../lib/db.js';
 import { isFirebaseConfigured } from '../lib/firebase.js';
 
@@ -141,11 +141,7 @@ export default function SpotTheError({
       setItems(got);
       setPhase('active');
     } catch (err) {
-      setGenError(
-        err?.name === 'AbortError'
-          ? 'The request timed out — check your connection and try again.'
-          : err?.message || 'Failed to generate the assessment.'
-      );
+      setGenError(fetchErrorMessage(err, 'The request timed out — check your connection and try again.', 'Failed to generate the assessment.'));
     }
   };
 

@@ -4,10 +4,9 @@
 // Advisory: if Gemini fails or output is invalid, callers fall back to the deterministic order.
 
 import { validateSecret } from './_auth.js';
-import { geminiWithRotation, getApiKeys } from './_gemini-client.js';
+import { geminiWithRotation, getApiKeys, rotationFailure } from './_gemini-client.js';
 import { sopContextFor } from './_sop-context.js';
 
-const MODEL = 'gemini-2.5-flash';
 const VALID_KINDS = ['coaching', 'practice', 'interview', 'module', 'minicheck'];
 
 export function validateSequenceResponse(parsed) {
@@ -33,6 +32,8 @@ export default async function handler(req, res) {
   if (!weakDomains.length) return res.status(400).json({ error: 'weakDomains required' });
 
   const keys = getApiKeys();
+  if (!keys.length) return res.status(500).json({ error: 'AI sequencing is not configured on the server.' });
+
   const sopContext = sopContextFor(department);
 
   const domainList = weakDomains
@@ -83,7 +84,6 @@ Respond ONLY with valid JSON matching this schema exactly:
 }`;
 
   const body = {
-    model: MODEL,
     contents: [{ role: 'user', parts: [{ text: prompt }] }],
     generationConfig: {
       temperature: 0.3,
@@ -93,7 +93,10 @@ Respond ONLY with valid JSON matching this schema exactly:
 
   const result = await geminiWithRotation(keys, body, { label: 'sequence-path' });
   if (!result.ok) {
-    return res.status(result.status ?? 502).json({ error: 'AI unavailable — use default path order' });
+    // fatal → 502, auth → 500, exhausted → 429 (previously every non-fatal
+    // failure fell to 502 because auth/exhausted results carry no `.status`).
+    const { status, error } = rotationFailure(result, { fatal: 'AI unavailable — use default path order' });
+    return res.status(status).json({ error });
   }
 
   let parsed;

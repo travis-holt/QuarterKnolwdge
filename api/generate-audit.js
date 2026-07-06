@@ -12,7 +12,7 @@
 
 import { DOMAINS } from '../src/data/questions.js';
 import { sopContextFor } from './_sop-context.js';
-import { getApiKeys, geminiWithRotation } from './_gemini-client.js';
+import { getApiKeys, geminiWithRotation, rotationFailure } from './_gemini-client.js';
 import { validateSecret } from './_auth.js';
 
 const AUDIT_SCHEMA = {
@@ -115,10 +115,11 @@ export function validateAuditResponse(parsed) {
 export default async function handler(req, res) {
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
 
+  if (validateSecret(req, res)) return;
+
   const keys = getApiKeys();
   if (!keys.length) return res.status(500).json({ error: 'Gemini not configured on the server.' });
 
-  if (validateSecret(req, res)) return;
   const { domain: domainId, department = 'pediatrics' } = req.body ?? {};
 
   const domain = DOMAINS.find((d) => d.id === domainId);
@@ -135,9 +136,8 @@ export default async function handler(req, res) {
 
   const result = await geminiWithRotation(keys, body, { label: 'generate-audit' });
   if (!result.ok) {
-    return result.reason === 'fatal'
-      ? res.status(502).json({ error: 'Gemini returned an error generating the audit transcript.' })
-      : res.status(429).json({ error: 'All Gemini keys are rate-limited. Try again shortly.' });
+    const { status, error } = rotationFailure(result, { fatal: 'Gemini returned an error generating the audit transcript.' });
+    return res.status(status).json({ error });
   }
 
   let parsed;

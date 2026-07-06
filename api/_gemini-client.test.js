@@ -6,7 +6,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { getApiKeys, geminiWithRotation, resetCooldowns, MODEL, LITE_MODEL } from './_gemini-client.js';
+import { getApiKeys, geminiWithRotation, resetCooldowns, rotationFailure, redactKeys, MODEL, LITE_MODEL } from './_gemini-client.js';
 
 // ── getApiKeys ────────────────────────────────────────────────────────────────
 
@@ -242,5 +242,50 @@ describe('geminiWithRotation', () => {
     // second request skipped MODEL (cooling) and went straight to LITE_MODEL
     expect(fetch).toHaveBeenCalledTimes(2);
     expect(fetch.mock.calls[1][0]).toContain(`/models/${LITE_MODEL}:`);
+  });
+});
+
+// ── rotationFailure ───────────────────────────────────────────────────────────
+
+describe('rotationFailure', () => {
+  it('maps fatal to 502 with the status in the default message', () => {
+    expect(rotationFailure({ reason: 'fatal', status: 400 })).toEqual({
+      status: 502, error: 'Gemini request failed (400).',
+    });
+  });
+
+  it('maps auth to 500', () => {
+    expect(rotationFailure({ reason: 'auth' }).status).toBe(500);
+  });
+
+  it('maps exhausted (and any other reason) to 429', () => {
+    expect(rotationFailure({ reason: 'exhausted' }).status).toBe(429);
+    expect(rotationFailure({ reason: 'exhausted' }).error).toMatch(/rate-limited/);
+  });
+
+  it('honours per-handler message overrides without changing the status', () => {
+    expect(rotationFailure({ reason: 'fatal', status: 400 }, { fatal: 'custom fatal' }))
+      .toEqual({ status: 502, error: 'custom fatal' });
+    expect(rotationFailure({ reason: 'exhausted' }, { exhausted: 'busy' }))
+      .toEqual({ status: 429, error: 'busy' });
+  });
+});
+
+// ── redactKeys ────────────────────────────────────────────────────────────────
+
+describe('redactKeys', () => {
+  it('redacts key query params in URLs', () => {
+    expect(redactKeys('fetch failed: https://x.googleapis.com/v1?key=AIzaSecret123&x=1'))
+      .toBe('fetch failed: https://x.googleapis.com/v1?key=***&x=1');
+  });
+
+  it('redacts &key= as well as ?key=', () => {
+    expect(redactKeys('wss://host/path?alt=json&key=abc')).toBe('wss://host/path?alt=json&key=***');
+  });
+
+  it('leaves ordinary text untouched and tolerates non-strings', () => {
+    expect(redactKeys('plain message')).toBe('plain message');
+    expect(redactKeys(null)).toBe('');
+    expect(redactKeys(undefined)).toBe('');
   });
 });

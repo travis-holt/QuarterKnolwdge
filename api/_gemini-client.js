@@ -48,6 +48,30 @@ if (getApiKeys().length === 0) {
   console.warn('_gemini-client: no GEMINI_API_KEYS or GEMINI_API_KEY configured — all Gemini endpoints will fail.');
 }
 
+// Strip API keys from any text that might reach the logs — a thrown fetch error
+// (or its cause) can embed the full request URL, which carries `?key=<KEY>`.
+export function redactKeys(text) {
+  return String(text ?? '').replace(/([?&]key=)[^&\s"']+/gi, '$1***');
+}
+
+/**
+ * Map a failed geminiWithRotation result to the HTTP status + user-facing error
+ * every handler sends (the module-header contract: fatal → 502, auth → 500,
+ * exhausted → 429). Handlers pass `overrides` to keep endpoint-specific copy.
+ * @param {{reason:string, status?:number}} result  a `{ ok:false }` rotation result
+ * @param {{fatal?:string, auth?:string, exhausted?:string}} [overrides]
+ * @returns {{status:number, error:string}}
+ */
+export function rotationFailure(result, overrides = {}) {
+  if (result.reason === 'fatal') {
+    return { status: 502, error: overrides.fatal ?? `Gemini request failed (${result.status}).` };
+  }
+  if (result.reason === 'auth') {
+    return { status: 500, error: overrides.auth ?? 'All Gemini keys have auth or billing failures — check Railway Variables.' };
+  }
+  return { status: 429, error: overrides.exhausted ?? 'All Gemini keys are rate-limited right now. Try again shortly.' };
+}
+
 // One Gemini call with a given key → { ok, status, text?, detail? }.
 export async function callGemini(apiKey, body, model = MODEL) {
   const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
@@ -117,7 +141,9 @@ export async function geminiWithRotation(keys, body, { label = 'gemini', models 
       try {
         result = await callGemini(keys[idx], body, model);
       } catch (err) {
-        console.error(`${label}: fetch threw on key #${idx} (${model}) — rotating:`, err);
+        // Log the message only (redacted) — the raw error object can embed the
+        // key-bearing request URL via its cause/stack.
+        console.error(`${label}: fetch threw on key #${idx} (${model}) — rotating: ${redactKeys(err?.message ?? err)}`);
         sawFailure = true;
         sawNonAuthFailure = true; // a network/transient throw is not an auth problem
         continue;

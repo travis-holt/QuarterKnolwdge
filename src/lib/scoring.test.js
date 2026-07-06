@@ -49,6 +49,7 @@ import {
   buildDevPath,
   buildMentorMatches,
   pairingOutcomes,
+  optionPoints,
 } from './scoring.js';
 
 import { THRESHOLDS, LEVELS, COLUMN_GAP_THRESHOLD } from '../data/config.js';
@@ -1266,5 +1267,35 @@ describe('pairingOutcomes', () => {
     expect(outcomes[0].currentScore).toBeNull();
     expect(outcomes[0].delta).toBeNull();
     expect(outcomes[0].improved).toBe(false);
+  });
+});
+
+// ── optionPoints (canonical per-option scoring rule, newly exported) ─────────
+
+describe('optionPoints', () => {
+  const q = {
+    correctOptionId: 'b',
+    options: [
+      { id: 'a', points: 40 },
+      { id: 'b', points: 100 },
+      { id: 'c' }, // legacy option without points
+    ],
+  };
+
+  it('uses the option points when present', () => {
+    expect(optionPoints(q, 'a')).toBe(40);
+    expect(optionPoints(q, 'b')).toBe(100);
+  });
+
+  it('falls back to binary 100/0 for legacy options without points', () => {
+    const legacy = { correctOptionId: 'b', options: [{ id: 'b' }, { id: 'c' }] };
+    expect(optionPoints(legacy, 'b')).toBe(100);
+    expect(optionPoints(legacy, 'c')).toBe(0);
+  });
+
+  it('returns 0 for an unknown or missing choice, or missing options', () => {
+    expect(optionPoints(q, 'zzz')).toBe(0);
+    expect(optionPoints(q, undefined)).toBe(0);
+    expect(optionPoints({ correctOptionId: 'b' }, 'b')).toBe(0);
   });
 });

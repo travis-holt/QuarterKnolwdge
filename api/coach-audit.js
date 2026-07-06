@@ -11,7 +11,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { DOMAINS } from '../src/data/questions.js';
-import { getApiKeys, geminiWithRotation } from './_gemini-client.js';
+import { getApiKeys, geminiWithRotation, rotationFailure } from './_gemini-client.js';
 import { validateSecret } from './_auth.js';
 
 // Cap free-text inputs interpolated into the prompt to keep the token budget
@@ -22,10 +22,11 @@ const MAX_EXPLANATION_CHARS = 2000;
 export default async function handler(req, res) {
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
 
+  if (validateSecret(req, res)) return;
+
   const keys = getApiKeys();
   if (!keys.length) return res.status(500).json({ error: 'Gemini not configured on the server.' });
 
-  if (validateSecret(req, res)) return;
   const { domain: domainId, modelExplanation, navigatorAnswer, name } = req.body ?? {};
 
   if (!modelExplanation || !navigatorAnswer || !name) {
@@ -73,9 +74,8 @@ Return plain JSON: { "reply": "..." }`;
 
   const result = await geminiWithRotation(keys, body, { label: 'coach-audit' });
   if (!result.ok) {
-    return result.reason === 'fatal'
-      ? res.status(502).json({ error: 'Gemini returned an error generating coaching.' })
-      : res.status(429).json({ error: 'All Gemini keys are rate-limited. Try again shortly.' });
+    const { status, error } = rotationFailure(result, { fatal: 'Gemini returned an error generating coaching.' });
+    return res.status(status).json({ error });
   }
 
   let parsed;

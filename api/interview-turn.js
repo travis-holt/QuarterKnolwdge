@@ -23,7 +23,7 @@
 import { DOMAINS } from '../src/data/questions.js';
 import { departmentName } from '../src/data/departments.js';
 import { sopContextFor } from './_sop-context.js';
-import { getApiKeys, geminiWithRotation, MODEL, LITE_MODEL } from './_gemini-client.js';
+import { getApiKeys, geminiWithRotation, rotationFailure, MODEL, LITE_MODEL } from './_gemini-client.js';
 
 // Roleplay is conversational, not scored — a lighter model beats a 429 for the
 // navigator mid-call, so overflow to flash-lite's separate quota bucket when
@@ -117,10 +117,11 @@ export function buildContents(history, navigatorMessage) {
 export default async function handler(req, res) {
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
 
+  if (validateSecret(req, res)) return;
+
   const keys = getApiKeys();
   if (!keys.length) return res.status(500).json({ error: 'Gemini not configured on the server.' });
 
-  if (validateSecret(req, res)) return;
   const {
     domain: domainId,
     scenario,
@@ -146,9 +147,8 @@ export default async function handler(req, res) {
 
     const result = await geminiWithRotation(keys, body, { label: 'interview-turn', models: CHAT_MODELS });
     if (!result.ok) {
-      return result.reason === 'fatal'
-        ? res.status(502).json({ error: 'Gemini returned an error generating the scenario.' })
-        : res.status(429).json({ error: 'All Gemini keys are rate-limited. Try again shortly.' });
+      const { status, error } = rotationFailure(result, { fatal: 'Gemini returned an error generating the scenario.' });
+      return res.status(status).json({ error });
     }
 
     let parsed;
@@ -179,9 +179,8 @@ export default async function handler(req, res) {
 
   const result = await geminiWithRotation(keys, body, { label: 'interview-turn', models: CHAT_MODELS });
   if (!result.ok) {
-    return result.reason === 'fatal'
-      ? res.status(502).json({ error: 'Gemini returned an error.' })
-      : res.status(429).json({ error: 'All Gemini keys are rate-limited. Try again shortly.' });
+    const { status, error } = rotationFailure(result, { fatal: 'Gemini returned an error.' });
+    return res.status(status).json({ error });
   }
 
   const reply = result.text?.trim();

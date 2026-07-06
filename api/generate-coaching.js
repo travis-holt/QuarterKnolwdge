@@ -11,12 +11,11 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { COMPETENCIES, competencyName } from '../src/data/competencies.js';
-import { DOMAINS } from '../src/data/questions.js';
+import { domainName } from '../src/data/questions.js';
+import { optionPoints } from '../src/lib/scoring.js';
 import { THRESHOLDS } from '../src/data/config.js';
-import { getApiKeys, geminiWithRotation, MODEL, LITE_MODEL } from './_gemini-client.js';
+import { getApiKeys, geminiWithRotation, rotationFailure, MODEL, LITE_MODEL } from './_gemini-client.js';
 import { validateSecret } from './_auth.js';
-
-const domainName = (id) => DOMAINS.find((d) => d.id === id)?.name ?? id;
 
 // Dynamic Gemini responseSchema — built per-request from the actual weak
 // competency IDs for this navigator so the API enforces the exact output shape.
@@ -41,7 +40,7 @@ export function buildDigest(questions, answers) {
       const chosenId = answers?.[q.id];
       const chosen = q.options?.find((o) => o.id === chosenId);
       const best = q.options?.find((o) => o.id === q.correctOptionId);
-      const earned = typeof chosen?.points === 'number' ? chosen.points : (chosenId === q.correctOptionId ? 100 : 0);
+      const earned = optionPoints(q, chosenId);
       if (earned >= 100) return null;
       return [
         `[${domainName(q.domainId)} | ${(q.competencies || []).join(', ')}]`,
@@ -118,10 +117,11 @@ function buildBody(systemInstruction, userMessage, responseSchema) {
 export default async function handler(req, res) {
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
 
-  const keys = getApiKeys();
-  if (keys.length === 0) return res.status(500).json({ error: 'Coaching is not configured on the server.' });
-
   if (validateSecret(req, res)) return;
+
+  const keys = getApiKeys();
+  if (!keys.length) return res.status(500).json({ error: 'Coaching is not configured on the server.' });
+
   const { answers, questions, competencyScores, name, completions, interviews, priorResults, feedbackSummary } = req.body ?? {};
 
   if (!answers || !questions || !competencyScores || !name) {
@@ -153,13 +153,8 @@ export default async function handler(req, res) {
   // rate-limited (the client silently drops this section on 429 anyway).
   const result = await geminiWithRotation(keys, body, { label: 'generate-coaching', models: [MODEL, LITE_MODEL] });
   if (!result.ok) {
-    if (result.reason === 'fatal') {
-      return res.status(502).json({ error: `Gemini request failed (${result.status}).` });
-    }
-    if (result.reason === 'auth') {
-      return res.status(500).json({ error: 'All Gemini keys have auth or billing failures — check Railway Variables.' });
-    }
-    return res.status(429).json({ error: 'All Gemini keys are rate-limited right now. Try again shortly.' });
+    const { status, error } = rotationFailure(result);
+    return res.status(status).json({ error });
   }
 
   const text = result.text;

@@ -25,9 +25,8 @@
 // activates — this endpoint never touches Firestore itself.
 
 import { validateSecret } from './_auth.js';
-import { geminiWithRotation, getApiKeys } from './_gemini-client.js';
+import { geminiWithRotation, getApiKeys, rotationFailure } from './_gemini-client.js';
 
-const MODEL = 'gemini-2.5-flash';
 const MAX_INPUT_CHARS = 48_000; // bounds the token budget + prompt-injection surface
 const MAX_FILE_BASE64 = 14_000_000; // ~10 MB binary
 const FILE_MIME_TYPES = new Set(['application/pdf']);
@@ -99,7 +98,6 @@ export function validateSopRefineResponse(parsed, mode) {
 /** One Gemini JSON call with the shared rotation. Returns { parsed } or { failed }. */
 async function geminiJson(keys, parts, { label, temperature }) {
   const body = {
-    model: MODEL,
     contents: [{ role: 'user', parts }],
     generationConfig: { temperature, responseMimeType: 'application/json' },
   };
@@ -138,6 +136,7 @@ export default async function handler(req, res) {
   }
 
   const keys = getApiKeys();
+  if (!keys.length) return res.status(500).json({ error: 'AI SOP assistance is not configured on the server.' });
 
   const instruction =
     mode === 'build'
@@ -182,7 +181,10 @@ Respond ONLY with valid JSON matching this schema exactly:
     temperature: 0.2,
   });
   if (draftCall.failed) {
-    return res.status(draftCall.failed.status ?? 502).json({ error: 'AI unavailable — try again shortly' });
+    // fatal → 502, auth → 500, exhausted → 429 (previously every non-fatal
+    // failure fell to 502 because auth/exhausted results carry no `.status`).
+    const { status } = rotationFailure(draftCall.failed);
+    return res.status(status).json({ error: 'AI unavailable — try again shortly' });
   }
 
   const { data, error } = validateSopRefineResponse(draftCall.parsed, mode);

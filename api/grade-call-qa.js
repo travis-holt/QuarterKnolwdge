@@ -18,7 +18,7 @@
 
 import { sopContextFor } from './_sop-context.js';
 import { correctTranscriptWithStats, glossaryPromptBlock } from './_qa-glossary.js';
-import { getApiKeys, geminiWithRotation } from './_gemini-client.js';
+import { getApiKeys, geminiWithRotation, rotationFailure } from './_gemini-client.js';
 import { validateSecret } from './_auth.js';
 import {
   QA_RUBRIC, QA_AUTO_FAILS, rubricCriteria,
@@ -170,10 +170,11 @@ function buildBody(systemInstruction, userMessage) {
 export default async function handler(req, res) {
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
 
-  const keys = getApiKeys();
-  if (keys.length === 0) return res.status(500).json({ error: 'Grading is not configured on the server.' });
-
   if (validateSecret(req, res)) return;
+
+  const keys = getApiKeys();
+  if (!keys.length) return res.status(500).json({ error: 'Grading is not configured on the server.' });
+
   const { scenario, transcript: rawTranscript, department = 'pediatrics' } = req.body ?? {};
 
   if (!scenario || !Array.isArray(rawTranscript) || rawTranscript.length === 0) {
@@ -195,9 +196,8 @@ export default async function handler(req, res) {
   for (let attempt = 0; attempt < 2 && !validated; attempt++) {
     const result = await geminiWithRotation(keys, body, { label: 'grade-call-qa' });
     if (!result.ok) {
-      return result.reason === 'fatal'
-        ? res.status(502).json({ error: `Gemini request failed (${result.status}).` })
-        : res.status(429).json({ error: 'The grader is busy right now. Try again shortly.' });
+      const { status, error } = rotationFailure(result, { exhausted: 'The grader is busy right now. Try again shortly.' });
+      return res.status(status).json({ error });
     }
     let parsed;
     try {

@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { domainName } from '../data/questions.js';
 import { LEVELS } from '../data/config.js';
-import { scoreToLevel } from '../lib/scoring.js';
+import { scoreToLevel, optionPoints } from '../lib/scoring.js';
 import { getResultHistory } from '../lib/db.js';
 import { isFirebaseConfigured } from '../lib/firebase.js';
 
@@ -133,7 +133,7 @@ export default function MyHistory({ navigatorId, department = 'pediatrics', dept
                 const chosenId = answers[q.id];
                 const chosen = q.options.find((o) => o.id === chosenId);
                 const best = q.options.find((o) => o.id === q.correctOptionId) ?? q.options[0];
-                const earned = chosen ? (typeof chosen.points === 'number' ? chosen.points : chosenId === q.correctOptionId ? 100 : 0) : 0;
+                const earned = optionPoints(q, chosenId);
                 const pickedBest = chosenId === best.id;
                 return (
                   <li key={q.id} className="coaching__q">

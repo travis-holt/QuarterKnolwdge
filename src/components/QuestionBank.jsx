@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { DOMAINS, domainName } from '../data/questions.js';
 import { COMPETENCIES, competencyName } from '../data/competencies.js';
-import { computeQuestionHealth } from '../lib/scoring.js';
+import { computeQuestionHealth, optionPoints } from '../lib/scoring.js';
 import QuestionEditor from './QuestionEditor.jsx';
 import FeedbackControls from './FeedbackControls.jsx';
 
@@ -147,7 +147,7 @@ export default function QuestionBank({ questions, results = [], selectedDept = '
         <ul className="qbank__options">
           {(q.options ?? []).map((o) => (
             <li key={o.id} className={`qbank__opt ${o.id === q.correctOptionId ? 'is-best' : ''}`}>
-              <span className="qbank__opt-pts">{typeof o.points === 'number' ? o.points : o.id === q.correctOptionId ? 100 : 0}</span>
+              <span className="qbank__opt-pts">{optionPoints(q, o.id)}</span>
               <span className="qbank__opt-text">{o.text}</span>
             </li>
           ))}

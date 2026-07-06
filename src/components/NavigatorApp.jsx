@@ -290,7 +290,7 @@ export default function NavigatorApp({ navigatorId, name, onSignOut }) {
       ...domainIds.map((domainId) => ({ navigatorId, name, domainId, kind: 'practice', completedAt: now })),
     ]);
     for (const domainId of domainIds) {
-      try { await saveCompletion(navigatorId, name, domainId, 'practice'); } catch {/* non-critical */}
+      try { await saveCompletion(navigatorId, name, domainId, 'practice'); } catch (err) { console.error('saveCompletion (practice):', err); }
     }
 
     const targetType = mode === 'full' ? 'spot' : (activeType ?? 'spot');
@@ -591,7 +591,7 @@ export default function NavigatorApp({ navigatorId, name, onSignOut }) {
             // Always record the minicheck completion regardless of pass/fail
             try {
               await saveCompletion(navigatorId, name, miniCheckDomain, 'minicheck');
-            } catch {/* non-critical */}
+            } catch (err) { console.error('saveCompletion (minicheck):', err); }
             if (passed) {
               // Re-save the active profile with the updated domain so the trend chart gains a point.
               const targetType = activeType ?? 'mcq';

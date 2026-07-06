@@ -11,7 +11,7 @@
 
 import { sopContextFor } from './_sop-context.js';
 import { DOMAINS } from '../src/data/questions.js';
-import { getApiKeys, geminiWithRotation } from './_gemini-client.js';
+import { getApiKeys, geminiWithRotation, rotationFailure } from './_gemini-client.js';
 import { validateSecret } from './_auth.js';
 
 // Bound the transcript fed to Gemini: cap the number of turns and the length of
@@ -87,13 +87,25 @@ function buildBody(systemInstruction, userMessage) {
   };
 }
 
+// Clamp score to 0–100 and coerce required fields to safe strings/arrays.
+// Exported pure so the coercion contract is unit-testable like its siblings'.
+export function coerceGrade(parsed) {
+  return {
+    score:        Math.min(100, Math.max(0, Math.round(Number(parsed?.score) || 0))),
+    summary:      typeof parsed?.summary === 'string' ? parsed.summary.trim()          : '',
+    strengths:    Array.isArray(parsed?.strengths)    ? parsed.strengths.map(String)    : [],
+    improvements: Array.isArray(parsed?.improvements) ? parsed.improvements.map(String) : [],
+  };
+}
+
 export default async function handler(req, res) {
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
 
-  const keys = getApiKeys();
-  if (keys.length === 0) return res.status(500).json({ error: 'Grading is not configured on the server.' });
-
   if (validateSecret(req, res)) return;
+
+  const keys = getApiKeys();
+  if (!keys.length) return res.status(500).json({ error: 'Grading is not configured on the server.' });
+
   const { domain, scenario, transcript, name, department = 'pediatrics' } = req.body ?? {};
 
   if (!domain || !scenario || !Array.isArray(transcript) || transcript.length === 0 || !name) {
@@ -105,9 +117,8 @@ export default async function handler(req, res) {
 
   const result = await geminiWithRotation(keys, body, { label: 'grade-interview' });
   if (!result.ok) {
-    return result.reason === 'fatal'
-      ? res.status(502).json({ error: `Gemini request failed (${result.status}).` })
-      : res.status(429).json({ error: 'All Gemini keys are rate-limited. Try again shortly.' });
+    const { status, error } = rotationFailure(result);
+    return res.status(status).json({ error });
   }
 
   const text = result.text;
@@ -122,13 +133,5 @@ export default async function handler(req, res) {
     return res.status(502).json({ error: 'Gemini returned invalid JSON.' });
   }
 
-  // Clamp score to 0–100 and ensure required fields are present strings/arrays.
-  const grade = {
-    score:        Math.min(100, Math.max(0, Math.round(Number(parsed.score) || 0))),
-    summary:      typeof parsed.summary === 'string'          ? parsed.summary.trim()                  : '',
-    strengths:    Array.isArray(parsed.strengths)             ? parsed.strengths.map(String)            : [],
-    improvements: Array.isArray(parsed.improvements)          ? parsed.improvements.map(String)         : [],
-  };
-
-  return res.status(200).json({ grade });
+  return res.status(200).json({ grade: coerceGrade(parsed) });
 }

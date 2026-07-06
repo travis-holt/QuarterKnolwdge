@@ -16,6 +16,16 @@ blob-report/
 skills/
 gemini-extension.json
 
+# Generic secret patterns — a future .env or key/credential file must never
+# land in this public repo (only .env.local was covered before, via *.local)
+.env
+.env.*
+!.env.local.example
+*.pem
+*.key
+*.p12
+service-account*.json
+
 # Sensitive — never commit to this public repo (live API key / patient PII)
 roo-code-settings.json
 OB GYN SOP.pdf

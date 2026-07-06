@@ -24,7 +24,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { WebSocketServer } from 'ws';
-import { getApiKeys } from './_gemini-client.js';
+import { getApiKeys, redactKeys } from './_gemini-client.js';
 import { isValidSecret } from './_auth.js';
 import { buildSystemInstruction } from './interview-turn.js';
 
@@ -130,7 +130,8 @@ function bridge(client) {
       if (sc.turnComplete) send(client, { type: 'turnComplete' });
     };
 
-    upstream.onerror = (e) => { console.error('[live-relay] upstream error:', e?.message || e); send(client, { type: 'error', message: 'Lost connection to the voice service.' }); shutdown(); };
+    // Redact before logging — the error message can carry the key-bearing WS URL.
+    upstream.onerror = (e) => { console.error('[live-relay] upstream error:', redactKeys(e?.message || e)); send(client, { type: 'error', message: 'Lost connection to the voice service.' }); shutdown(); };
     upstream.onclose = (e) => { console.log('[live-relay] upstream closed', e?.code || '', (e?.reason || '').slice(0, 120)); shutdown(); };
   }
 }

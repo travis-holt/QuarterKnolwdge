@@ -2,7 +2,7 @@ import { useState, useRef, useEffect } from 'react';
 import { DOMAINS } from '../data/questions.js';
 import { interviewScoreColor } from '../data/config.js';
 import { saveInterview, updateInterviewGrade } from '../lib/db.js';
-import { apiFetch } from '../lib/apiFetch.js';
+import { apiFetch, fetchErrorMessage } from '../lib/apiFetch.js';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Interview — AI roleplay practice for navigators.
@@ -67,11 +67,7 @@ export default function Interview({ navigatorId, name, department = 'pediatrics'
       setTranscript([{ role: 'patient', text: data.reply }]);
       setPhase('active');
     } catch (err) {
-      setError(
-        err.name === 'AbortError'
-          ? 'The request timed out — check your connection and try again.'
-          : err.message || 'Failed to generate a scenario.'
-      );
+      setError(fetchErrorMessage(err, 'The request timed out — check your connection and try again.', 'Failed to generate a scenario.'));
       setPhase('setup');
     }
   };
@@ -93,11 +89,7 @@ export default function Interview({ navigatorId, name, department = 'pediatrics'
       );
       setTranscript([...withNav, { role: 'patient', text: data.reply }]);
     } catch (err) {
-      setError(
-        err.name === 'AbortError'
-          ? "The patient didn't respond in time — check your connection."
-          : err.message || 'Failed to get a response.'
-      );
+      setError(fetchErrorMessage(err, "The patient didn't respond in time — check your connection.", 'Failed to get a response.'));
     } finally {
       setBusy(false);
     }

@@ -17,20 +17,23 @@ import { moduleForDomain } from '../data/training.js';
 import { DEPARTMENTS } from '../data/departments.js';
 
 /**
- * Points earned for one question given the chosen option.
- * Uses the option's `points` (partial credit) when present; falls back to a
- * binary 100/0 against `correctOptionId` for legacy/ungraded options. An absent
- * or invalid answer earns 0.
- * @param {string|undefined} answer - chosen optionId
+ * Points earned for one question given the chosen option — THE canonical
+ * per-option scoring rule (exported so components and API handlers never
+ * re-derive it inline). Uses the option's `points` (partial credit) when
+ * present; falls back to a binary 100/0 against `correctOptionId` for
+ * legacy/ungraded options. An absent or invalid choice earns 0.
  * @param {object} question
+ * @param {string|undefined} optionId - chosen optionId
  * @returns {number} 0–100
  */
-function earnedPoints(answer, question) {
-  const opt = question.options?.find((o) => o.id === answer);
+export function optionPoints(question, optionId) {
+  const opt = question.options?.find((o) => o.id === optionId);
   if (!opt) return 0;
   if (typeof opt.points === 'number') return opt.points;
-  return answer === question.correctOptionId ? 100 : 0;
+  return optionId === question.correctOptionId ? 100 : 0;
 }
+
+const earnedPoints = (answer, question) => optionPoints(question, answer);
 
 /**
  * Score a set of answers into a per-domain map (0–100), averaging earned points
@@ -508,13 +511,6 @@ function tsSeconds(value) {
 
 function latestBy(items, getTs) {
   return [...items].sort((a, b) => getTs(b) - getTs(a))[0] ?? null;
-}
-
-function optionPoints(question, optionId) {
-  const opt = question.options?.find((o) => o.id === optionId);
-  if (!opt) return 0;
-  if (typeof opt.points === 'number') return opt.points;
-  return optionId === question.correctOptionId ? 100 : 0;
 }
 
 const isDomainInterview = (iv) => !iv?.qa;
@@ -1051,7 +1047,7 @@ export function buildDossier(row, answers, questions, interviews = [], completio
     const bestOpt = q.options?.find((o) => o.id === q.correctOptionId);
     if (!chosenOpt) continue;
     const isCorrect = chosen === q.correctOptionId;
-    const points = typeof chosenOpt.points === 'number' ? chosenOpt.points : (isCorrect ? 100 : 0);
+    const points = optionPoints(q, chosen);
     const item = {
       questionId: q.id,
       domainId: q.domainId,

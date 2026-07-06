@@ -10,7 +10,7 @@
 > [Â§8 Current System State](#8-current-system-state) and [Â§15 Current Priorities](#15-current-priorities)
 > accurate at all times.
 >
-> **Last updated:** 2026-07-06 (F25 hardening â€” confidence/review layer + decision-support pass/fail) Â·
+> **Last updated:** 2026-07-06 (stability audit â€” shared Gemini failure mapping, key-redacted logs, scoring helper unification) Â·
 > **Doc maintainer:** Claude (AI agent) + repo owner. Assumptions are explicitly marked **[ASSUMPTION]**.
 
 ---
@@ -982,6 +982,65 @@ stateDiagram-v2
 ---
 
 ## 7. Development History
+
+### 2026-07-06 — Codebase refactor & stability audit (no user-facing behavior change intended)
+- **Context:** Owner requested a full reliability/maintainability pass — find bugs, fragile
+  logic, duplication, and weak error handling; fix safely without changing product behavior.
+  A 6-agent audit (standards, duplication, logging, secrets, tests, dependencies) drove the pass.
+- **Bugs fixed:**
+  - `api/sequence-path.js` and `api/refine-sop.js` mapped EVERY non-fatal Gemini failure to 502
+    (`result.status ?? 502` — auth/exhausted results carry no `.status`), so rate-limit
+    exhaustion returned 502 instead of 429. Both also lacked the empty-keys guard; both had a
+    stray `model:` field inside the request body (the model lives in the URL) and a dead local
+    `MODEL` constant.
+  - Key-leak risk in server logs: `_gemini-client.js` logged the raw thrown fetch error (whose
+    cause/stack can embed the `?key=<KEY>` request URL) and `live-relay.js` logged the upstream
+    WS error message (same URL-key pattern). New exported `redactKeys()` strips `key=` query
+    params before logging.
+- **Consistency/DRY (all 9 Gemini handlers):**
+  - New `rotationFailure(result, overrides)` in `api/_gemini-client.js` — the single mapping of a
+    failed rotation to HTTP per the documented contract (fatal→502, auth→500, exhausted→429).
+    Handlers that previously had no auth branch (auth fell into 429) now correctly return 500
+    on all-keys-403; per-endpoint user-facing copy preserved via overrides.
+  - `validateSecret` now runs BEFORE the `getApiKeys()` guard in every handler (7 handlers
+    previously revealed server-config state to unauthenticated callers); the keys guard itself
+    standardized to `if (!keys.length)` and added where missing.
+  - `api/grade-interview.js` grade clamping extracted to exported pure `coerceGrade(parsed)`
+    (identical behavior, now unit-testable like its grade-call-qa siblings).
+  - Scoring rule unified: `optionPoints(question, optionId)` is now exported from
+    `src/lib/scoring.js` as THE canonical per-option scoring rule; the two internal duplicates
+    (`earnedPoints`, a second `optionPoints`) and one inline copy inside `buildDossier` collapse
+    onto it, and the inline re-implementations in `Coaching.jsx`, `MyHistory.jsx`,
+    `QuestionBank.jsx`, and `api/generate-coaching.js` (`buildDigest`) now import it.
+  - `api/generate-coaching.js` local `domainName` arrow replaced by the `domainName` export from
+    `src/data/questions.js`.
+  - `Interview.jsx`/`SpotTheError.jsx` inline AbortError message shaping replaced with the
+    existing `fetchErrorMessage` helper (helper hardened to tolerate null errors).
+  - `NavigatorApp.jsx` silent `catch {/* non-critical */}` around the two `saveCompletion` sites
+    now logs (`console.error`) so a failing completions collection is visible in the console.
+- **Hygiene:** `.gitignore` gains generic secret patterns (`.env`, `.env.*` with
+  `!.env.local.example`, `*.pem`, `*.key`, `*.p12`, `service-account*.json`).
+- **Tests:** 328 → **358** passing, 11 → **14** files. New: `src/lib/apiFetch.test.js`
+  (apiFetch success/error paths, `fetchErrorMessage`, `runPooled` order/rejection/concurrency),
+  `api/_auth.test.js` (`validateSecret`/`isValidSecret` — the previously untested security gate),
+  `api/grade-interview.test.js` (`coerceGrade`). Extended: `_gemini-client.test.js`
+  (+`rotationFailure`, +`redactKeys`), `scoring.test.js` (+`optionPoints`).
+- **Intentionally NOT changed:**
+  - The `'pediatrics'` literal defaults in `db.js` and the API handlers stay literals — they are
+    the legacy back-compat key for pre-multi-department docs/clients, not "the default
+    department"; if `DEFAULT_DEPT` ever changes, these must still read pediatrics.
+  - Vite stays on 5.4.21 (known moderate advisories; the fix is a semver-major jump to Vite 8 —
+    out of scope for a stability pass; recorded in §11 tech debt).
+  - `[live-relay] upstream closed` log kept (documented ops signal); `api/_sop-store.js` direct
+    Firestore access kept (the server can't import the client-only db.js — documented exception);
+    tracked `SOP Guide.pdf` left alone (removal is an owner call).
+- **Verification:** `npm test` → **358 passing** (14 files); `npm run build` → clean;
+  `node --check` on all touched api files → OK.
+- **Files:** edited `api/{_gemini-client,generate-scenarios,generate-coaching,interview-turn,
+  grade-interview,grade-call-qa,generate-audit,coach-audit,sequence-path,refine-sop,live-relay}.js`,
+  `src/lib/{scoring,apiFetch}.js`, `src/components/{Coaching,MyHistory,QuestionBank,Interview,
+  SpotTheError,NavigatorApp}.jsx`, `.gitignore`, test files as above, `CLAUDE.md`.
+- **Status:** Complete.
 
 ### 2026-07-06 — F25 hardening: confidence/review layer, context-aware grading, decision-support pass/fail
 - **Context:** Owner asked for an audit + hardening of the Call QA grading so management can trust
@@ -2684,7 +2743,7 @@ stateDiagram-v2
   the Error" assessment â†’ path stepper + mini re-check per weak domain â†’ supervisor Action Center +
   Mentorship tabs â†’ practice call offered as **voice (real-time) or text chat, plus the graded
   Call QA Test** â†’ navigator "My history" tab (attempt history + answer review). Build clean,
-  tests green (`npm test` â†’ **328 passing**, 11 test files).
+  tests green (`npm test` â†’ **358 passing**, 14 test files).
 - **Existing functionality:** features F1â€“F25 (see [Â§4](#4-feature-inventory)) are **Complete** in
   code. F17 adds longitudinal trends + Sparkline. F18 adds dossier evidence per competency. F19
   adds the supervisor Action Center. F20 adds AI-sequenced dev paths + mini re-check. F21 adds
@@ -2709,7 +2768,7 @@ stateDiagram-v2
 - **Experimental / mockup:**
   - Training **content** is mockup (flagged in UI). Logic is real.
   - **Adult Medicine and Behavioural Health** are not assessed; **Pediatrics and OB/GYN** are live.
-- **Test coverage:** **328 tests** across **11 test files**: `scoring.test.js` (all 26 exports
+- **Test coverage:** **358 tests** across **14 test files**: `scoring.test.js` (all exports incl. `optionPoints`,
   including F17â€“F21 functions: buildTrend, trainingImpact, teamTrend, buildDossier, buildActionCenter,
   buildDevPath, buildMentorMatches, pairingOutcomes, buildLearningSignals,
   buildQuestionImprovementSuggestions, adaptiveTrainingRecommendations, feedbackInsights +
@@ -2718,7 +2777,9 @@ stateDiagram-v2
   `api/_gemini-client.test.js`, `api/sequence-path.test.js` (9 tests for `validateSequenceResponse`),
   `api/refine-sop.test.js`, `api/grade-call-qa.test.js` (25 tests for the QA-test rubric pipeline),
   `api/_qa-glossary.test.js` (16 tests for the transcript-correction glossary),
-  `src/components/components.test.jsx`. The F22 voice call (relay + Web Audio) is verified by live
+  `src/components/components.test.jsx`, `src/lib/apiFetch.test.js` (apiFetch/`fetchErrorMessage`/`runPooled`),
+  `api/_auth.test.js` (secret gate), `api/grade-interview.test.js` (`coerceGrade`).
+  The F22 voice call (relay + Web Audio) is verified by live
   end-to-end probe rather than unit tests â€” audio I/O isn't unit-testable headlessly. Role-app
   integration tests remain the only other untested area.
 - **Client fetch layer:** `src/lib/apiFetch.js` â€” shared helper for all `/api` calls (AbortController
@@ -2755,7 +2816,7 @@ stateDiagram-v2
 - **Counts (today):** 6 domains (job-aligned 2026-07-02: intake Â· classification Â· routing Â·
   scheduling Â· boundaries Â· documentation) Â· 9 competencies Â· 21 Pediatrics + 16
   OB/GYN = **37** seed questions (bank grows in Firestore per dept) Â· 4 departments (**Pediatrics
-  + OB/GYN live**, 2 mockup) Â· **328** unit tests (11 test files) Â· **11** Firestore collections
+  + OB/GYN live**, 2 mockup) Â· **358** unit tests (14 test files) Â· **11** Firestore collections
   (`roster`, `results`, `resultHistory`, `questions`, `audits`, `interviews`, `completions`,
   `pairings`, `supervisorFeedback`, `learningProposals`, `sops`) Â·
   **10** REST serverless functions (`generate-scenarios`, `generate-coaching`, `interview-turn`,
@@ -2957,8 +3018,12 @@ npm run test:e2e     # run the Playwright browser tests (auto-builds + starts th
 - Heatmap intensity toggle (show % inside matrix cells).
 
 ### Technical Debt
-- **262 tests** across 9 test files as of 2026-07-03. **Role-app integration tests** (`SupervisorApp`,
+- **358 tests** across 14 test files as of 2026-07-06. **Role-app integration tests** (`SupervisorApp`,
   `NavigatorApp`, `App`) remain the only untested area â€” adding those is the next coverage priority.
+- **Vite 5.4.21 carries known moderate advisories** (`server.fs.deny` bypass on Windows, optimized-deps
+  `.map` path traversal, esbuild dev-server request exposure). The fix is a semver-major upgrade to
+  Vite 8 (+ plugin-react major) — deliberately deferred from the 2026-07-06 stability pass; these are
+  dev-server-side issues, not production-bundle issues, so risk in deployment is low.
 - ~~Components, role apps, and API handlers untested~~ â€” **resolved 2026-06-26**: component tests
   (jsdom + Testing Library), API handler pure-function tests, and db.js mocked tests all added.
 - ~~`getApiKeys`/`callGemini`/`geminiWithRotation` duplicated 6Ã—~~ â€” **extracted to

@@ -17,7 +17,7 @@
 import { DOMAINS } from '../src/data/questions.js';
 import { COMPETENCIES } from '../src/data/competencies.js';
 import { sopContextFor } from './_sop-context.js';
-import { getApiKeys, geminiWithRotation } from './_gemini-client.js';
+import { getApiKeys, geminiWithRotation, rotationFailure } from './_gemini-client.js';
 import { validateSecret } from './_auth.js';
 
 const COMPETENCY_IDS = new Set(COMPETENCIES.map((c) => c.id));
@@ -124,12 +124,13 @@ export default async function handler(req, res) {
     return res.status(405).json({ error: 'Method not allowed' });
   }
 
+  if (validateSecret(req, res)) return;
+
   const keys = getApiKeys();
-  if (keys.length === 0) {
+  if (!keys.length) {
     return res.status(500).json({ error: 'Generation is not configured on the server.' });
   }
 
-  if (validateSecret(req, res)) return;
   const { domainId, count = 3, department = 'pediatrics' } = req.body ?? {};
 
   const domain = DOMAINS.find((d) => d.id === domainId);
@@ -147,10 +148,8 @@ export default async function handler(req, res) {
 
   const result = await geminiWithRotation(keys, requestBody, { label: 'generate-scenarios' });
   if (!result.ok) {
-    if (result.reason === 'fatal') {
-      return res.status(502).json({ error: `Gemini request failed (${result.status}).` });
-    }
-    return res.status(429).json({ error: 'All Gemini keys are rate-limited right now. Try again shortly.' });
+    const { status, error } = rotationFailure(result);
+    return res.status(status).json({ error });
   }
 
   const text = result.text;

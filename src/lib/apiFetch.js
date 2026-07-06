@@ -44,8 +44,8 @@ export async function apiFetch(endpoint, body, timeoutMs = 30_000) {
 
 /** Shape a caught fetch error into a user-facing message string. */
 export function fetchErrorMessage(err, timeoutMessage, fallbackMessage) {
-  if (err.name === 'AbortError') return timeoutMessage;
-  return err.message || fallbackMessage;
+  if (err?.name === 'AbortError') return timeoutMessage;
+  return err?.message || fallbackMessage;
 }
 
 /**
