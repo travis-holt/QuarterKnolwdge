@@ -248,7 +248,9 @@ export default function SupervisorApp({ onSignOut }) {
   // supervisor reviews and activates before anything is served.
   const handleGenerateAudits = async ({ domainId, count, workflowType }) => {
     const domainAudits = audits.filter((a) => (
-      (a.department ?? 'pediatrics') === selectedDept && a.domainId === domainId
+      (a.status ?? 'active') !== 'archived'
+      && (a.department ?? 'pediatrics') === selectedDept
+      && a.domainId === domainId
     ));
     const plan = workflowType
       ? Array.from({ length: count }, () => workflowType)

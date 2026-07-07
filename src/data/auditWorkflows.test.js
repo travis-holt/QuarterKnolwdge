@@ -13,6 +13,16 @@ describe('auditWorkflows helpers', () => {
     expect(new Set(picks).size).toBeGreaterThan(1);
   });
 
+  it('balanced generation ignores archived audits when calculating coverage', () => {
+    const picks = chooseBalancedWorkflowTypes([
+      { domainId: 'routing', workflowType: 'standard_refill_queue', status: 'archived' },
+      { domainId: 'routing', workflowType: 'standard_refill_queue', status: 'archived' },
+      { domainId: 'routing', workflowType: 'controlled_substance_owner', status: 'active' },
+    ], 'routing', 1);
+
+    expect(picks).toEqual(['standard_refill_queue']);
+  });
+
   it('pickDiverseAudits rotates workflow types before repeating one', () => {
     const picked = pickDiverseAudits([
       { id: 'a1', workflowType: 'standard_refill_queue' },

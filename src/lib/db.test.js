@@ -378,12 +378,38 @@ describe('audit bank db helpers', () => {
     expect(data).toEqual({ status: 'active' });
   });
 
-  it('runContentQualityFixesMigration patches lookup-order seeds and archives blocked content', async () => {
-    mocks.getDoc.mockResolvedValue({ exists: () => true });
+  it('runContentQualityFixesMigration patches only failing seeds, archives blocked content, and records a marker', async () => {
+    mocks.getDoc.mockImplementation((ref) => {
+      if (ref.col === 'contentMigrations') {
+        return Promise.resolve({ exists: () => false });
+      }
+      if (ref.id === 'q-int-1') {
+        return Promise.resolve({
+          id: 'q-int-1',
+          exists: () => true,
+          data: () => ({
+            status: 'active',
+            scenario: 'What do you ask first, phone number or DOB?',
+            options: [{ text: 'Phone first', rationale: 'Phone must be first.' }],
+          }),
+        });
+      }
+      if (ref.id === 'q-obgyn-int-1') {
+        return Promise.resolve({
+          id: 'q-obgyn-int-1',
+          exists: () => true,
+          data: () => ({
+            status: 'active',
+            scenario: 'A caller asks about a sibling. What keeps you in the correct chart?',
+            options: [{ text: 'Confirm the patient and authorized caller before opening the chart.' }],
+          }),
+        });
+      }
+      return Promise.resolve({ exists: () => false });
+    });
     mocks.getDocs
       .mockResolvedValueOnce({
         docs: [
-          { id: 'q-int-1', data: () => ({ status: 'active' }) },
           { id: 'q-bad', data: () => ({
             status: 'active',
             scenario: 'What do you ask first, phone number or DOB?',
@@ -409,6 +435,10 @@ describe('audit bank db helpers', () => {
       { id: 'q-int-1', col: 'questions' },
       expect.objectContaining({ scenario: expect.stringContaining('family account') })
     );
+    expect(mocks.updateDoc).not.toHaveBeenCalledWith(
+      { id: 'q-obgyn-int-1', col: 'questions' },
+      expect.anything()
+    );
     expect(mocks.updateDoc).toHaveBeenCalledWith(
       { id: 'q-bad', col: 'questions' },
       expect.objectContaining({ status: 'archived', archivedReason: 'content-quality-fix-2026-07' })
@@ -417,6 +447,26 @@ describe('audit bank db helpers', () => {
       { id: 'a-bad', col: 'audits' },
       expect.objectContaining({ status: 'archived', archivedReason: 'content-quality-fix-2026-07' })
     );
+    expect(mocks.setDoc).toHaveBeenCalledWith(
+      { id: '2026-07-content-quality-fixes-v2', col: 'contentMigrations' },
+      expect.objectContaining({
+        version: '2026-07-content-quality-fixes-v2',
+        completedAt: '__ts__',
+        patchedSeeds: 1,
+        archivedQuestions: 1,
+        archivedAudits: 1,
+      })
+    );
+  });
+
+  it('runContentQualityFixesMigration skips scanning when its marker already exists', async () => {
+    mocks.getDoc.mockResolvedValue({ exists: () => true });
+
+    await expect(runContentQualityFixesMigration()).resolves.toBe(false);
+
+    expect(mocks.getDocs).not.toHaveBeenCalled();
+    expect(mocks.updateDoc).not.toHaveBeenCalled();
+    expect(mocks.setDoc).not.toHaveBeenCalled();
   });
 });
 

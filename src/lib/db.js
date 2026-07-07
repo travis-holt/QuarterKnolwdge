@@ -669,6 +669,8 @@ export async function deleteAudit(id) {
 // —— 2026-07 content-quality reliability fix ———————————————————————————————
 
 const CONTENT_FIX_REASON = 'content-quality-fix-2026-07';
+const CONTENT_FIX_MIGRATIONS_COL = 'contentMigrations';
+const CONTENT_FIX_VERSION = '2026-07-content-quality-fixes-v2';
 const CONTENT_FIX_SEEDS = new Map(
   ALL_SEED_QUESTIONS
     .filter((q) => q.id === 'q-int-1' || q.id === 'q-obgyn-int-1')
@@ -677,20 +679,32 @@ const CONTENT_FIX_SEEDS = new Map(
 
 /**
  * Idempotent cleanup for known unfair / stale assessment content:
- * - patches the two lookup-order seed questions in Firestore if they exist
+ * - patches the two lookup-order seed questions only if they still fail guards
  * - archives any live question/audit that fails the shared content guards
+ * - records a migration marker so supervisor loads do not rescan forever
  * Existing docs are preserved with archivedReason/archivedAt metadata.
  */
 export async function runContentQualityFixesMigration() {
   await authReady;
 
+  const markerRef = doc(db, CONTENT_FIX_MIGRATIONS_COL, CONTENT_FIX_VERSION);
+  const markerSnap = await getDoc(markerRef);
+  if (markerSnap.exists()) return false;
+
+  let patchedSeeds = 0;
+  let archivedQuestions = 0;
+  let archivedAudits = 0;
+
   for (const [id, seed] of CONTENT_FIX_SEEDS) {
     const snap = await getDoc(doc(db, QUESTIONS_COL, id));
     if (!snap.exists()) continue;
+    const current = { id: snap.id ?? id, ...snap.data() };
+    if (!validateQuestionContent(current).length) continue;
     await updateDoc(doc(db, QUESTIONS_COL, id), {
       ...QUESTION_FIELDS(seed),
       department: seed.department ?? 'pediatrics',
     });
+    patchedSeeds += 1;
   }
 
   const questionSnap = await getDocs(collection(db, QUESTIONS_COL));
@@ -703,6 +717,7 @@ export async function runContentQualityFixesMigration() {
       archivedReason: CONTENT_FIX_REASON,
       archivedAt: serverTimestamp(),
     });
+    archivedQuestions += 1;
   }
 
   const auditSnap = await getDocs(collection(db, AUDITS_COL));
@@ -715,7 +730,17 @@ export async function runContentQualityFixesMigration() {
       archivedReason: CONTENT_FIX_REASON,
       archivedAt: serverTimestamp(),
     });
+    archivedAudits += 1;
   }
+
+  await setDoc(markerRef, {
+    version: CONTENT_FIX_VERSION,
+    completedAt: serverTimestamp(),
+    patchedSeeds,
+    archivedQuestions,
+    archivedAudits,
+  });
+  return true;
 }
 
 // ── Pairings (mentor-mentee assignments) ──────────────────────────────────────

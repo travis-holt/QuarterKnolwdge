@@ -5,15 +5,20 @@
 > feature, decision, or fix. New entries are added HERE (newest first, same format),
 > not in CLAUDE.md.
 
-### 2026-07-07 � Content-quality reliability fix: lookup-order neutrality, balanced audits, refill grading
+### 2026-07-07 — PR #5 follow-up: encoding cleanup and migration safety
+- **Context:** Draft PR review found `CLAUDE.md` / `docs/HISTORY.md` mojibake, a supervisor-load migration that would keep scanning after success, and balanced audit generation that could still count archived refill-heavy items.
+- **Fix:** Repaired both docs to clean UTF-8 without BOM and verified zero hits for the reviewer-specified mojibake markers (U+00C3, U+00C2, U+00E2, and replacement-character variants). `runContentQualityFixesMigration()` now checks a version marker before scanning, records completion counts, and skips overwriting `q-int-1` / `q-obgyn-int-1` when the live docs already pass content guards. Balanced audit coverage now ignores archived audits in both the helper and supervisor generation path.
+- **Verification:** `npm test` → **395 passing** across 18 files; `npm run build` → clean with the existing large Firebase chunk warning; `git diff --check` → clean (Windows line-ending notices only).
+
+### 2026-07-07 — Content-quality reliability fix: lookup-order neutrality, balanced audits, refill grading
 - **Context:** Owner requested a reliability pass on live assessment content after pilot feedback: lookup-order questions were grading personal workflow preference, Spot the Error was overproducing refill scenarios, and standard refill grading was incorrectly treating PE status as a hard blocker.
-- **Lookup-order fix:** `q-int-1` and `q-obgyn-int-1` were rewritten to test correct chart / patient safety instead of phone-first vs DOB-first. Shared `src/lib/contentGuards.js` now blocks generated questions or audits that grade lookup order without a safety/privacy reason. `QuestionBank.jsx` and `AuditBank.jsx` surface blocked flags and disable Activate/Restore for them. `runContentQualityFixesMigration()` in `db.js` patches the two live seed docs in Firestore if present and archives any non-archived question/audit that trips the new guards with `archivedReason: 'content-quality-fix-2026-07'`.
-- **Spot the Error diversity fix:** new taxonomy `src/data/auditWorkflows.js`; audit docs now carry `workflowType`, `errorKind`, and `difficulty`. `/api/generate-audit` accepts workflow steering (`workflowType`, `avoidWorkflowTypes`) and returns the extra metadata. `SupervisorApp.jsx` now generates balanced audit batches by least-covered workflow type unless the supervisor explicitly requests a specific workflow. `AuditBank.jsx` shows workflow coverage within the selected domain and warns when one workflow dominates. `SpotTheError.jsx` now round-robins bank items by `workflowType` in single-domain mode so five-item runs do not collapse into repeated refill transcripts.
+- **Lookup-order fix:** `q-int-1` and `q-obgyn-int-1` were rewritten to test correct chart / patient safety instead of phone-first vs DOB-first. Shared `src/lib/contentGuards.js` now blocks generated questions or audits that grade lookup order without a safety/privacy reason. `QuestionBank.jsx` and `AuditBank.jsx` surface blocked flags and disable Activate/Restore for them. `runContentQualityFixesMigration()` in `db.js` patches the two live seed docs in Firestore only if their current content still fails guards, archives any non-archived question/audit that trips the new guards with `archivedReason: 'content-quality-fix-2026-07'`, and records a `contentMigrations/2026-07-content-quality-fixes-v2` marker after success so supervisor loads do not rescan repeatedly.
+- **Spot the Error diversity fix:** new taxonomy `src/data/auditWorkflows.js`; audit docs now carry `workflowType`, `errorKind`, and `difficulty`. `/api/generate-audit` accepts workflow steering (`workflowType`, `avoidWorkflowTypes`) and returns the extra metadata. `SupervisorApp.jsx` now generates balanced audit batches by least-covered non-archived workflow type unless the supervisor explicitly requests a specific workflow. `AuditBank.jsx` shows workflow coverage within the selected domain and warns when one workflow dominates. `SpotTheError.jsx` now round-robins bank items by `workflowType` in single-domain mode so five-item runs do not collapse into repeated refill transcripts.
 - **Refill / PE correction:** hardcoded Pediatrics SOP fallback in `api/_sop-context.js` no longer says standard refills cannot be processed when PE is not current. Generation and grading prompts (`generate-scenarios`, `generate-audit`, `interview-turn`, `grade-interview`, `grade-call-qa`) now explicitly treat standard refill success as medication name + preferred pharmacy + out-of-med priority + correct TE routing + no clinical advice / no promised approval, and explicitly forbid requiring PE verification unless the scenario makes PE status the governing rule.
-- **Tests:** added `src/lib/contentGuards.test.js`, `src/data/auditWorkflows.test.js`, `src/components/spotTheError.test.js`; extended `api/generate-audit.test.js`, `api/grade-call-qa.test.js`, and `src/lib/db.test.js`. Suite now **393 passing tests across 18 files**.
+- **Tests:** added `src/lib/contentGuards.test.js`, `src/data/auditWorkflows.test.js`, `src/components/spotTheError.test.js`; extended `api/generate-audit.test.js`, `api/grade-call-qa.test.js`, and `src/lib/db.test.js`. Suite now **395 passing tests across 18 files**.
 - **Verification:** `npm test`  **393 passing**; `npm run build`  clean with the existing chunk-size warning.
 
-### 2026-07-07 � Fix mojibake in NavigatorApp.jsx (Practice chooser emoji + punctuation)
+### 2026-07-07 — Fix mojibake in NavigatorApp.jsx (Practice chooser emoji + punctuation)
 - **Context:** The F26 commit saved `NavigatorApp.jsx` with UTF-8 content mis-decoded as
   Windows-1252 and re-encoded (double-encoded UTF-8 + a stray BOM). The Practice chooser
   rendered garbage glyphs instead of the mic/chat emoji, and 15 other spots (em-dashes,
@@ -22,7 +27,7 @@
   Only `NavigatorApp.jsx` was affected in `src/` and `api/`.
 - **Verification:** `npm test`  381 passing; `npm run build`  clean.
 
-### 2026-07-07 � 3-phase assessment flow (F26)
+### 2026-07-07 — 3-phase assessment flow (F26)
 - **Context:** Owner request to stop treating Multiple choice / Spot the Error / Call QA Test as three sibling choices and instead make them one sequenced department assessment.
 - **Decisions:** No data-model change; each phase keeps writing what it already wrote. Completion stays **derived, never stored**: MCQ from `resultsByType.mcq`, Spot from `resultsByType.spot`, QA from the latest department-scoped interview doc that has a `qa` field. The old chooser became `PhaseHub`; department select now lands on the hub until all 3 phases are done; coaching and full-profile Spot return to the hub while phases remain; completed phases can be retaken without re-locking later phases; the Practice tab drops the graded QA card so Phase 3 cannot be completed out of order; legacy `__qa` result docs remain fetchable for history but do not count toward phase completion.
 - **Files:** new `src/lib/{phases,phases.test}.js`, `src/components/PhaseHub.jsx`; edited `src/components/{NavigatorApp,components.test}.jsx`, `src/styles.css`, `CLAUDE.md`.
@@ -172,13 +177,13 @@
 - **Status:** Complete (code). Supervisor grade override (writing a final human verdict back to
   the doc) remains the planned next step; the review flags give supervisors the trigger list.
 
-### 2026-07-03 â€” F25 QA fairness pass: SOP transcript glossary + context-aware grading
+### 2026-07-03 — F25 QA fairness pass: SOP transcript glossary + context-aware grading
 - **Context (pilot feedback):** two linked complaints about the Call QA Test. (1) The grader was
-  **too literal / context-blind** â€” it failed Closing because the navigator didn't say "thank you"
+  **too literal / context-blind** — it failed Closing because the navigator didn't say "thank you"
   even though the caller had already thanked them and the call closed naturally. (2) The Gemini Live
-  **transcription has no domain vocabulary**, so it mis-heard SOP proper nouns ("Aizer Health" â†’
+  **transcription has no domain vocabulary**, so it mis-heard SOP proper nouns ("Aizer Health" →
   "Isr Pediatrics", "49 Forest Road", provider/queue names, "PE"), and the literal grader then
-  penalized the navigator (e.g. Opening âˆ’3 for the org name) for terms they actually said right.
+  penalized the navigator (e.g. Opening −3 for the org name) for terms they actually said right.
   Owner's constraint: correct the transcription toward the closest SOP reference **without making
   it hallucinate words**. Decisions taken via question: **fairness fixes only** (keep verification /
   scope / SOP-knowledge hard) and apply the correction on the **grading transcript** (not live
@@ -186,12 +191,12 @@
 - **Transcript glossary (`api/_qa-glossary.js`, new):** a curated, department-aware glossary of the
   SOP's canonical terms (org name, locations, provider surnames, queues, hospital). `correctText` /
   `correctTranscript` snap mis-hearings to canonical via (1) explicit alias phrases (fixes "Isr
-  Pediatrics" â†’ "Aizer Health", "peds encounter" â†’ "PEDS Encounters") and (2) a conservative
-  single-word fuzzy pass (Levenshtein ratio â‰¥ 0.82, distinctive proper nouns â‰¥ 6 chars only,
-  whole-word replace). **No-hallucination guarantee:** output is bounded to the glossary â€” an
+  Pediatrics" → "Aizer Health", "peds encounter" → "PEDS Encounters") and (2) a conservative
+  single-word fuzzy pass (Levenshtein ratio ≥ 0.82, distinctive proper nouns ≥ 6 chars only,
+  whole-word replace). **No-hallucination guarantee:** output is bounded to the glossary — an
   unmatched span is left exactly as transcribed; ordinary conversation is untouched.
   `glossaryPromptBlock` hands the grader the canonical spellings + abbreviation equivalences (PE =
-  physical exam, TE = telephone encounter, OV = office visit, GS = Good Samaritan, â€¦) so a synonym
+  physical exam, TE = telephone encounter, OV = office visit, GS = Good Samaritan, …) so a synonym
   or correct term never costs a criterion.
 - **Grading (`api/grade-call-qa.js`):** the handler now `correctTranscript`s the call BEFORE
   building the prompt and scoring, so both the model verdicts and the evidence-verification gate see
@@ -200,9 +205,9 @@
   closing pleasantry) that explicitly leave verification, scope/HIPAA, routing, scheduling, and
   SOP-knowledge strict. `_qa-rubric.js` reworded `close-anything-thanks` to accept a courteous
   natural close (exact scripted wording no longer required); points unchanged.
-- **Verification:** `npm test` â†’ **308 passing** (11 files; +16 `_qa-glossary` tests); `npm run
-  build` â†’ clean (known Firebase chunk warning only); `node --check` on the new/edited api files.
-  Glossary tests cover the reported cases (Isr Pediatrics â†’ Aizer Health, provider near-spelling,
+- **Verification:** `npm test` → **308 passing** (11 files; +16 `_qa-glossary` tests); `npm run
+  build` → clean (known Firebase chunk warning only); `node --check` on the new/edited api files.
+  Glossary tests cover the reported cases (Isr Pediatrics → Aizer Health, provider near-spelling,
   ordinary text untouched, no out-of-glossary output).
 - **Not changed:** live captions / the saved interview transcript keep the raw text (grading-only
   scope, per the decision); advisory `grade-interview` is untouched but `_qa-glossary` is reusable
@@ -272,66 +277,66 @@
 - **Status:** Complete. QA test results also feed the capability matrix as a full-profile score
   snapshot. Supervisor grade override remains the planned backstop.
 
-### 2026-07-03 â€” Gemini quota diagnosis + flash-lite overflow lane (free-tier stopgap)
+### 2026-07-03 — Gemini quota diagnosis + flash-lite overflow lane (free-tier stopgap)
 - **Context:** Owner asked why the pilot exhausted the 4-key rotation so fast despite low daily
   volume. Live key probes (tiny generateContent bursts against the real keys) established the
-  facts: (1) the 4 keys ARE independent quota pools â€” key #0 rate-limited while keys 1-3 kept
+  facts: (1) the 4 keys ARE independent quota pools — key #0 rate-limited while keys 1-3 kept
   returning 200, so rotation works; (2) **the free-tier limit is now 5 RPM per project per model**
-  (the 429 body reports `generate_content_free_tier_requests limit=5` â€” Google's Dec-2025 quota
+  (the 429 body reports `generate_content_free_tier_requests limit=5` — Google's Dec-2025 quota
   cut halved the old 10), so the whole pool is ~20 requests/min; (3) exhaustion was per-minute
   burst pressure (a pre-audit-bank Spot = 6 heavy calls/min from ONE navigator; a practice chat =
   1 call per message), never the daily cap; (4) `gemini-2.5-flash-lite` has a **separate**
-  per-model quota bucket on the same keys but its free tier intermittently 503s ("high demand") â€”
+  per-model quota bucket on the same keys but its free tier intermittently 503s ("high demand") —
   a cushion, not guaranteed capacity.
 - **What changed (all stopgap until paid-tier billing is approved for full deployment):**
-  - `api/_gemini-client.js` â€” `MODEL` + new `LITE_MODEL` (`gemini-2.5-flash-lite`) are exported;
+  - `api/_gemini-client.js` — `MODEL` + new `LITE_MODEL` (`gemini-2.5-flash-lite`) are exported;
     `callGemini` takes a `model` param; `geminiWithRotation` accepts `models: [...]` and tries
     every key on the primary model first, then every key on each fallback model (per-model quota
-    buckets). Default stays single-model â€” no behavior change for handlers that don't opt in.
+    buckets). Default stays single-model — no behavior change for handlers that don't opt in.
     New `quotaInfo()` parses the 429 body so Railway logs now say WHICH quota tripped
     (metric, limit value, per-minute vs per-DAY) instead of a bare status code.
-  - `api/interview-turn.js` â€” init + turn calls opt into `models: [MODEL, LITE_MODEL]` (roleplay
+  - `api/interview-turn.js` — init + turn calls opt into `models: [MODEL, LITE_MODEL]` (roleplay
     is conversational, unscored; a lighter model beats a 429 mid-call).
-  - `api/generate-coaching.js` â€” same opt-in (advisory prose; client silently drops it on 429).
+  - `api/generate-coaching.js` — same opt-in (advisory prose; client silently drops it on 429).
   - Scored/authoring endpoints (grading, scenario/audit generation, refine-sop, sequence-path)
-    deliberately do NOT fall back â€” quality gate kept.
+    deliberately do NOT fall back — quality gate kept.
   - **Follow-up (same day): per-key cooldown.** A key that 429s now sits out for the
     `retryDelay` Gemini's 429 body specifies (default 30 s when absent), per model, so
     concurrent/subsequent requests skip known-limited keys instead of wasting a round-trip
     re-learning it. Module-level `cooldowns` Map + exported `resetCooldowns()` test hook.
     If every key+model is cooling, the rotation returns `exhausted` instantly with zero
-    network calls (callers already map that to 429 "try again shortly"). Latency win only â€”
+    network calls (callers already map that to 429 "try again shortly"). Latency win only —
     capacity is unchanged. +4 cooldown tests (skip, healthy-key routing, retryDelay expiry,
     per-model independence).
-- **Path to real capacity (owner decision):** enable billing on one Google project (Tier 1 â‰ˆ
+- **Path to real capacity (owner decision):** enable billing on one Google project (Tier 1 ≈
   hundreds+ RPM; ~$1-2/day at pilot volume), put that key first in `GEMINI_API_KEYS`, keep free
   keys behind it as rotation backup. Zero code change needed. Free-tier stacking is confirmed
   a dead end (5 RPM per extra account).
-- **Verification:** `npm test` â†’ **262 passing** (9 files; +5 model-fallback and +4 cooldown
-  rotation tests); `npm run build` â†’ clean; `node --check` on the 3 edited api files â†’ OK.
+- **Verification:** `npm test` → **262 passing** (9 files; +5 model-fallback and +4 cooldown
+  rotation tests); `npm run build` → clean; `node --check` on the 3 edited api files → OK.
 - **Files:** `api/{_gemini-client,_gemini-client.test,interview-turn,generate-coaching}.js`,
   `CLAUDE.md`.
 - **Status:** Complete.
 
-### 2026-07-03 â€” Pilot-feedback pass (6-7 navigator soft launch)
+### 2026-07-03 — Pilot-feedback pass (6-7 navigator soft launch)
 - **Context:** The owner launched the webapp to 6-7 navigators and collected feedback
   ("Knowledge Check Webapp Bugs And Feature Tweaks.docx", untracked). This pass addressed 6 of
   the 9 items; the remaining 3 are: add more keys to `GEMINI_API_KEYS` in Railway (owner action,
-  no code), colour-scheme feedback (content unknown â€” needs specifics), and Railway cold-start
+  no code), colour-scheme feedback (content unknown — needs specifics), and Railway cold-start
   (infra-side; the in-repo part was fixed here via code-splitting).
-- **1 Â· Practice caller switched language mid-call** (one navigator's chat "turned into indian"):
+- **1 · Practice caller switched language mid-call** (one navigator's chat "turned into indian"):
   `buildSystemInstruction()` in `api/interview-turn.js` had NO language rule, so nothing stopped
   Gemini drifting into Hindi at roleplay temperatures. Added a CRITICAL English-only rule (covers
-  BOTH the text chat and the voice call â€” the live relay reuses the same persona builder) and an
+  BOTH the text chat and the voice call — the live relay reuses the same persona builder) and an
   "everything in English" line in the init prompt.
-- **2 Â· Voice/chat practice review never appeared:** grading failures in `VoiceCall.jsx` and
-  `Interview.jsx` were swallowed (console.error â†’ reviewed screen with a bare "â€”"), and the
+- **2 · Voice/chat practice review never appeared:** grading failures in `VoiceCall.jsx` and
+  `Interview.jsx` were swallowed (console.error → reviewed screen with a bare "—"), and the
   transcript/docId were discarded so nothing could be retried. Both components now keep the saved
   transcript + doc id, explain the failure ("the reviewer may be busy"), and offer a **"Try the
   review again"** button that re-calls `/api/grade-interview` and writes the grade back to the
   interview doc. `VoiceCall` also resets stale grade state when starting a new call.
-- **3 Â· "Spot the Error" was slow (40â€“70 s) with unrealistic scenarios â†’ pre-generated audit
-  bank:** new Firestore `audits` collection (same draftâ†’active review-gate model as the question
+- **3 · "Spot the Error" was slow (40–70 s) with unrealistic scenarios → pre-generated audit
+  bank:** new Firestore `audits` collection (same draft→active review-gate model as the question
   bank). `db.js`: `subscribeAudits`, `getActiveAudits(dept)`, `saveDraftAudits`, `activateAudit`,
   `archiveAudit`, `deleteAudit` (+3 db tests). New supervisor UI `AuditBank.jsx` (rendered under
   the Question Bank in the Questions tab): per-domain active-coverage read-off, pooled generation
@@ -340,25 +345,25 @@
   bank first (instant, shuffled, no repeat within an assessment) and only live-generates domains
   the bank can't cover. `generate-audit.js` prompt gained REALISM RULES (specific ordinary
   requests grounded in SOP visit types/queues, natural phone speech, plausible rushed-agent
-  mistakes â€” not cartoonish ones, near-miss distractor turns, English only). Rule added to
-  `firestore.rules` â€” deployed to `quarterly-knowledge-check` on 2026-07-03.
-- **4 Â· MCQ best answer too obvious:** `generate-scenarios.js` prompt gained a DISTRACTOR QUALITY
-  block â€” every wrong option must be a plausible near-miss failing on a specific SOP detail, all
+  mistakes — not cartoonish ones, near-miss distractor turns, English only). Rule added to
+  `firestore.rules` — deployed to `quarterly-knowledge-check` on 2026-07-03.
+- **4 · MCQ best answer too obvious:** `generate-scenarios.js` prompt gained a DISTRACTOR QUALITY
+  block — every wrong option must be a plausible near-miss failing on a specific SOP detail, all
   options the same length/tone (no longest-answer tell), at least one distractor more
   cautious-sounding than the best answer, two-plus options tempting without SOP knowledge.
   Existing weak questions still need regeneration + curation through the Question Bank.
-- **5 Â· Navigators couldn't review answers / see history:** new `MyHistory.jsx` + "My history"
+- **5 · Navigators couldn't review answers / see history:** new `MyHistory.jsx` + "My history"
   navigator tab. Panel 1: attempt history from `resultHistory` (first navigator-facing read of
-  it) â€” every snapshot for the active dept, newest first, per-domain level chips. Panel 2:
+  it) — every snapshot for the active dept, newest first, per-domain level chips. Panel 2:
   answer-by-answer review of the latest MCQ from the stored `answers` on the result doc (same
   rendering as post-check Coaching; answers to since-retired questions are skipped with a note).
-- **6 Â· Welcome page slow to appear:** code-split at both seams. `App.jsx` lazy-loads
+- **6 · Welcome page slow to appear:** code-split at both seams. `App.jsx` lazy-loads
   `SupervisorApp`/`NavigatorApp` via `React.lazy` + `Suspense`; `Start.jsx` imports
   `firebase.js`/`db.js` **dynamically** (roster fetch + PIN save) so the Firebase SDK leaves the
-  entry chunk. Entry JS: **889 kB â†’ 197 kB** (62 kB gzip); Firebase (684 kB) + each role app now
+  entry chunk. Entry JS: **889 kB → 197 kB** (62 kB gzip); Firebase (684 kB) + each role app now
   load as separate lazy chunks. Railway cold-start remains a possible second cause (infra).
-- **Verification:** `npm test` â†’ **253 passing** (9 files; +3 audit-bank db tests);
-  `npm run build` â†’ clean, chunks split as above; `node --check` on the 3 edited api handlers.
+- **Verification:** `npm test` → **253 passing** (9 files; +3 audit-bank db tests);
+  `npm run build` → clean, chunks split as above; `node --check` on the 3 edited api handlers.
 - **Files:** new `src/components/{AuditBank,MyHistory}.jsx`; edited `api/{interview-turn,
   generate-audit,generate-scenarios}.js`, `src/components/{VoiceCall,Interview,SpotTheError,
   SupervisorApp,NavigatorApp,Nav,Start,App}.jsx`, `src/lib/{db,db.test,apiFetch}.js`,
@@ -366,34 +371,34 @@
 - **Status:** Complete (code). Owner actions: deploy rules; generate + activate audit transcripts
   per domain in the new bank; add more Gemini keys; report what the colour-scheme feedback was.
 
-### 2026-07-03 â€” F24 upgrade: PDF upload, fidelity audit, SOP tab redesign
+### 2026-07-03 — F24 upgrade: PDF upload, fidelity audit, SOP tab redesign
 - **Context:** Owner review of the first SOP manager: "bland and generic", questioned whether
   "Build with AI" can be trusted, and flagged the missing file-upload option. All three addressed
   in one pass (scope approved by owner).
-- **PDF upload:** `/api/refine-sop` now accepts `file` (base64 PDF â‰¤10 MB) as the source for both
-  modes, passed to Gemini **natively as a document part** â€” no text-extraction library, works on
+- **PDF upload:** `/api/refine-sop` now accepts `file` (base64 PDF ≤10 MB) as the source for both
+  modes, passed to Gemini **natively as a document part** — no text-extraction library, works on
   scanned PDFs. TXT/MD files are read client-side into the paste area; Word gets an
-  "export as PDF" hint. `server.js` JSON limit 1mb â†’ 20mb. New pure `validateSopFile`.
+  "export as PDF" hint. `server.js` JSON limit 1mb → 20mb. New pure `validateSopFile`.
 - **Fidelity audit (the trust answer):** every AI draft now gets a second Gemini pass (temp 0.1)
   comparing the draft against the source: `audit = { omissions[], inventions[] }`. Shown on the
-  draft as a chip (âœ“ passed / âš  N findings) with amber/red detail panels; persisted on the draft
+  draft as a chip (✓ passed / ⚠ N findings) with amber/red detail panels; persisted on the draft
   doc (new `notes`/`changes`/`audit` fields in `saveSopDraft`) so the report survives reload.
-  Best-effort â€” audit failure returns null and never blocks the draft. New pure `validateSopAudit`.
+  Best-effort — audit failure returns null and never blocks the draft. New pure `validateSopAudit`.
 - **Redesign (`SopManager.jsx` + `.sops*`/`.sopdoc*`/`.sop-*` CSS rewritten):** drag-and-drop
   upload zone; active-version hero with pulsing LIVE badge + meta chips; SOP bodies rendered as a
-  **parsed document** (ALL-CAPS headings â†’ numbered styled sections, rules as marked rows) with
+  **parsed document** (ALL-CAPS headings → numbered styled sections, rules as marked rows) with
   collapse/fade instead of a grey `<pre>`; drafts/archived as a **version timeline** with status
   dots; spinner status line during AI runs; reduced-motion safe.
-- **Verification:** `npm test` â†’ **250 passing** (9 files; +12 for the new validators);
-  `npm run build` â†’ clean; **live smoke test**: posted the real in-repo `SOP Guide.pdf` (115 KB)
-  through build mode â†’ structured 6-domain SOP + 3 review notes + audit reporting **8 omissions /
-  0 inventions** â€” the audit correctly caught provider-affiliation details the restructuring
+- **Verification:** `npm test` → **250 passing** (9 files; +12 for the new validators);
+  `npm run build` → clean; **live smoke test**: posted the real in-repo `SOP Guide.pdf` (115 KB)
+  through build mode → structured 6-domain SOP + 3 review notes + audit reporting **8 omissions /
+  0 inventions** — the audit correctly caught provider-affiliation details the restructuring
   dropped, demonstrating exactly the trust layer the owner asked for.
 - **Files affected:** `api/refine-sop.js`, `api/refine-sop.test.js`, `server.js`,
   `src/lib/db.js`, `src/components/SopManager.jsx`, `src/styles.css`, `CLAUDE.md`.
 - **Status:** Complete.
 
-### 2026-07-02 â€” Navigator self-created PINs
+### 2026-07-02 — Navigator self-created PINs
 - **What changed:** Supervisors now add navigators by name only. A roster row with a blank `pin`
   prompts the navigator to create a 4-digit PIN at the Start gate after choosing their name; that
   PIN is saved back through `updateRosterEntry`. Existing PIN rows still use the old PIN check.
@@ -406,7 +411,7 @@
   `CLAUDE.md`.
 - **Status:** Complete.
 
-### 2026-07-02 â€” Welcome page premium redesign
+### 2026-07-02 — Welcome page premium redesign
 - **What changed:** Reworked the Start gate from generic explanatory copy to a premium first
   screen: product-name hero, concise readiness/capability language, stable summary chips, an
   animated lightweight capability-map preview, stronger role cards, and overflow-safe domain tiles.
@@ -415,12 +420,12 @@
 - **Follow-up 2026-07-02:** Removed the variable scenario-count chip, changed the eyebrow to
   "Knowledge & Adaptability", animated the map preview bars, and fixed long domain labels colliding
   with blurbs at tablet/mobile widths.
-- **Verification:** `npm test` â†’ **238 passing**; `npm run build` â†’ clean (existing large-chunk
+- **Verification:** `npm test` → **238 passing**; `npm run build` → clean (existing large-chunk
   warning only).
 - **Files affected:** `src/components/Start.jsx`, `src/styles.css`, `CLAUDE.md`.
 - **Status:** Complete.
 
-### 2026-07-02 â€” Firebase deploy manifest for Firestore rules/indexes
+### 2026-07-02 — Firebase deploy manifest for Firestore rules/indexes
 - **What changed:** Added root `firebase.json` pointing Firestore deploys at `firestore.rules`
   and `firestore.indexes.json`.
 - **Why:** The local rules already allow the new `sops` collection, but the live project still
@@ -432,26 +437,26 @@
   permission-denied while rules propagated).
 - **Status:** Complete. C1 is active in the live Firebase project.
 
-### 2026-07-02 â€” F24: SOP Manager (adder / builder / refiner)
+### 2026-07-02 — F24: SOP Manager (adder / builder / refiner)
 - **What changed:** Department SOPs moved from hardcoded strings to live, supervisor-managed,
-  versioned Firestore data with AI-assisted authoring. See the F24 feature entry (Â§4) for the full
+  versioned Firestore data with AI-assisted authoring. See the F24 feature entry (§4) for the full
   design. Highlights:
   - New `sops` Firestore collection + `db.js` CRUD (`subscribeSops`, `saveSopDraft`, `updateSop`,
-    `activateSop` â€” batch-archives the previous active version â€” `archiveSop`, `deleteSop`) +
+    `activateSop` — batch-archives the previous active version — `archiveSop`, `deleteSop`) +
     `firestore.rules` entry.
   - New `api/_sop-store.js`: the Express server now reads Firestore (first time ever) via the
     firebase web SDK with defensive init and a 60s sync cache, so `sopContextFor()` stays
-    synchronous and zero AI-handler call sites changed. Resolution: live active SOP â†’ hardcoded
-    context â†’ Pediatrics.
+    synchronous and zero AI-handler call sites changed. Resolution: live active SOP → hardcoded
+    context → Pediatrics.
   - New `POST /api/refine-sop` (build = structure raw document into the 6-domain layout; refine =
     merge new material into the current SOP with typed change flags). `validateSopRefineResponse`
-    exported pure; `server.js` JSON limit 100kb â†’ 1mb.
+    exported pure; `server.js` JSON limit 100kb → 1mb.
   - New supervisor "SOPs" tab (`SopManager.jsx`): active/draft/archived versions, inline confirms,
     import panel (verbatim / Build with AI / Refine), proposal preview with change chips.
-- **Verification:** `npm test` â†’ **238 passing** (9 files; +10 refine-sop tests); `npm run build`
-  â†’ clean; `node --check` on all new/edited api files; **live smoke test** against a local server
+- **Verification:** `npm test` → **238 passing** (9 files; +10 refine-sop tests); `npm run build`
+  → clean; `node --check` on all new/edited api files; **live smoke test** against a local server
   + real Gemini keys: 401/400 validation paths, build mode (structured a raw BH guide, flagged the
-  thin intake section), refine mode (caught the psych-nurse â†’ provider-direct contradiction,
+  thin intake section), refine mode (caught the psych-nurse → provider-direct contradiction,
   added the refill-continuity rule, preserved all untouched rules, left crisis routing alone).
 - **Known gate:** resolved. The live project now has Anonymous auth enabled and current
   `firestore.rules` + `firestore.indexes.json` deployed (wired by root `firebase.json`).
@@ -461,81 +466,81 @@
   `CLAUDE.md`.
 - **Status:** Complete.
 
-### 2026-07-02 â€” Domain redesign: 6 job-aligned Patient Navigator domains (+ pilot data reset)
+### 2026-07-02 — Domain redesign: 6 job-aligned Patient Navigator domains (+ pilot data reset)
 - **Context:** The owner provided a comprehensive Patient Navigator role description (cross-
-  department inbound call handlers: classify â†’ route â†’ schedule â†’ protect scope/privacy â†’
+  department inbound call handlers: classify → route → schedule → protect scope/privacy →
   document; Peds/OB-GYN/BH/IM; Intermedia + eCW + Teams). The old 6 domains were pediatric-SOP-
   shaped ("Sites & Routing", "Provider Matching", "Insurance & Eligibility") and didn't match the
-  job. Decisions taken with the owner: use 6 new domains (not the 7 capability areas verbatim â€”
+  job. Decisions taken with the owner: use 6 new domains (not the 7 capability areas verbatim —
   "adaptability under complexity" belongs to the competency axis), reset pilot data, domains
   before the SOP-manager feature.
-- **New DOMAINS** (`src/data/questions.js`): `intake` â€” Call Opening & Identification (dept-
+- **New DOMAINS** (`src/data/questions.js`): `intake` — Call Opening & Identification (dept-
   adaptive lookup: parent-phone-first for Peds, DOB-first for adult depts, family accounts);
-  `classification` â€” Call Classification (scheduling vs clinical question vs refill vs lab vs
-  urgent vs wrong-department vs needs-approval); `routing` â€” Routing & Escalation (TE queues,
-  dept sub-routing, soft transfers, urgent paths); `scheduling` â€” Scheduling & Appointment Rules;
-  `boundaries` â€” Scope & Privacy (no advice/results/promises, caller authorization);
-  `documentation` â€” Documentation & Follow-through (TE destination + fields, reason fields,
-  entry conventions). Refills are deliberately NOT a domain â€” a refill call exercises
+  `classification` — Call Classification (scheduling vs clinical question vs refill vs lab vs
+  urgent vs wrong-department vs needs-approval); `routing` — Routing & Escalation (TE queues,
+  dept sub-routing, soft transfers, urgent paths); `scheduling` — Scheduling & Appointment Rules;
+  `boundaries` — Scope & Privacy (no advice/results/promises, caller authorization);
+  `documentation` — Documentation & Follow-through (TE destination + fields, reason fields,
+  entry conventions). Refills are deliberately NOT a domain — a refill call exercises
   classification + routing + documentation, so it appears as scenario content across domains.
 - **Seed banks rewritten:** Pediatrics **21** questions (best old questions re-tagged/re-IDed,
-  new ones authored for intake/classification/boundaries/documentation from the role doc â€” e.g.
-  multi-child family calls, refillâ†’PEDS Encounters queue with HIGH PRIORITY when out, no promised
-  approvals, complete refill-TE fields). OB/GYN **16** questions (sanitized as before â€” role
-  labels only) encoding the current floor routing table: pregnant/pregnancy-related â†’ **OB
-  Portal**, non-pregnant GYN visit issue â†’ **PSS OB**, established MFM patient â†’ **the MFM
-  coordinator**; plus DOB-first lookup and third-party privacy scenarios. Total seed 32 â†’ **37**.
+  new ones authored for intake/classification/boundaries/documentation from the role doc — e.g.
+  multi-child family calls, refill→PEDS Encounters queue with HIGH PRIORITY when out, no promised
+  approvals, complete refill-TE fields). OB/GYN **16** questions (sanitized as before — role
+  labels only) encoding the current floor routing table: pregnant/pregnancy-related → **OB
+  Portal**, non-pregnant GYN visit issue → **PSS OB**, established MFM patient → **the MFM
+  coordinator**; plus DOB-first lookup and third-party privacy scenarios. Total seed 32 → **37**.
 - **`src/data/training.js`:** all 6 modules rewritten for the new domains (still flagged mockup).
 - **`api/_sop-context.js`:** new exported `NAVIGATOR_ROLE_CONTEXT` (distilled from the role
-  description, sanitized: OB names â†’ role labels; BH psych-nurse routing treated as outdated per
-  the doc â€” questions/refills go provider-direct). `sopContextFor(deptId)` now prepends it to the
+  description, sanitized: OB names → role labels; BH psych-nurse routing treated as outdated per
+  the doc — questions/refills go provider-direct). `sopContextFor(deptId)` now prepends it to the
   department SOP, so all 7 AI features ground in the real role model + current routing rules.
 - **Pilot data reset** (owner-approved): new `scripts/reset-pilot-data.mjs` (web SDK +
   `.env.local`, dry-run by default, `--delete` to execute, per-collection permission tolerance).
   Deleted live `results` (5) and the old `questions` bank (23). `resultHistory`/`completions`/
-  `pairings` were blocked by the then-deployed old rules (unauthenticated access denied) â€”
-  *(resolved later the same day: after the C1 activation â€” see the "Firebase deploy manifest"
-  entry above â€” the script was re-run and all collections cleared).* New bank auto-seeds from
+  `pairings` were blocked by the then-deployed old rules (unauthenticated access denied) —
+  *(resolved later the same day: after the C1 activation — see the "Firebase deploy manifest"
+  entry above — the script was re-run and all collections cleared).* New bank auto-seeds from
   `ALL_SEED_QUESTIONS` on next app load. Old `interviews` docs keep old domain tags (render as
-  raw ids â€” cosmetic; clear manually if desired).
+  raw ids — cosmetic; clear manually if desired).
 - **Also:** `stress/quota-probe.mjs` domain list updated. Tests derive from `DOMAINS`
   dynamically, so no test-file changes were needed.
 - **Files affected:** `src/data/{questions,questions-obgyn,training}.js`, `api/_sop-context.js`,
   `stress/quota-probe.mjs`, new `scripts/reset-pilot-data.mjs`, `CLAUDE.md`.
-- **Verification:** `npm test` â†’ **228 passing** (8 files); `npm run build` â†’ clean (known
-  large-bundle warning); `node --check api/_sop-context.js` â†’ OK; reset script dry-run + delete
+- **Verification:** `npm test` → **228 passing** (8 files); `npm run build` → clean (known
+  large-bundle warning); `node --check api/_sop-context.js` → OK; reset script dry-run + delete
   executed against the live project.
-- **Next (agreed with owner):** SOP manager (adder/builder/refiner) â€” Firestore `sops`
+- **Next (agreed with owner):** SOP manager (adder/builder/refiner) — Firestore `sops`
   collection + supervisor editor UI + AI refine endpoint + DB-backed `sopContextFor`.
 - **Status:** Complete.
 
-### 2026-07-01 â€” Pre-rollout hardening (C1/C4/H1/H2/M1/H3) + stress harness + load results
+### 2026-07-01 — Pre-rollout hardening (C1/C4/H1/H2/M1/H3) + stress harness + load results
 - **Context:** Readiness audit ahead of a ~20-navigator rollout flagged the privacy/role model as
   UI-only. This pass closes the top items and adds a repeatable stress harness that measures real
   Gemini-quota and concurrency ceilings.
-- **C1 â€” Firebase Anonymous Auth + hardened rules:** `src/lib/firebase.js` now signs every visitor
+- **C1 — Firebase Anonymous Auth + hardened rules:** `src/lib/firebase.js` now signs every visitor
   in with `signInAnonymously` and exports an `authReady` promise that **never rejects** (a failed
   sign-in logs and resolves `false` so the app keeps working under the current open rules).
   `src/lib/db.js` gates every read/write behind `authReady` (via aliased `fb*` primitives wrapped in
-  auth-gated versions â€” zero call-site churn) and defers every `onSnapshot` behind `authReady` via a
+  auth-gated versions — zero call-site churn) and defers every `onSnapshot` behind `authReady` via a
   new `liveQuery()` helper. `firestore.rules` rewritten to require `request.auth != null` on all 9
-  collections, with a documented SAFE DEPLOY ORDER (enable Anonymous auth â†’ ship app code â†’ THEN
+  collections, with a documented SAFE DEPLOY ORDER (enable Anonymous auth → ship app code → THEN
   deploy rules). **Honest limit:** anonymous auth has no per-user identity, so this stops anonymous
-  internet scraping but not a determined signed-in navigator â€” real Auth + role claims is still the
+  internet scraping but not a determined signed-in navigator — real Auth + role claims is still the
   next step. `db.test.js` updated (mock `authReady`; 5 subscription tests made async).
-- **C4 â€” stop broadcasting all results to navigators:** new `getFloorScores()` returns a one-time,
+- **C4 — stop broadcasting all results to navigators:** new `getFloorScores()` returns a one-time,
   minimized `{ name, scores }` projection (drops peers' raw `answers`, competency detail,
   navigatorId). `NavigatorApp` uses it instead of the full-collection `subscribeResults` live stream.
   Residual (peers' scores still reach the client for mentor matching) noted for future server-side
   computation.
-- **H1 â€” `firestore.indexes.json`** declaring the `resultHistory (navigatorId, department)`
+- **H1 — `firestore.indexes.json`** declaring the `resultHistory (navigatorId, department)`
   composite index `getResultHistory` requires (`firebase deploy --only firestore:indexes`).
-- **H2 â€” visible save-failure + retry:** `NavigatorApp` surfaces a banner instead of swallowing
+- **H2 — visible save-failure + retry:** `NavigatorApp` surfaces a banner instead of swallowing
   `saveResult` failures; `persistResult`/`retrySave` wrap all three save sites (MCQ, Spot, mini-check).
-- **M1 â€” in-progress check persistence:** `Check.jsx` takes a `persistKey`, restoring/saving answers
+- **M1 — in-progress check persistence:** `Check.jsx` takes a `persistKey`, restoring/saving answers
   + step to `sessionStorage` (survives refresh); cleared on submit/cancel; step clamped to the live
   bank. Wired for the main MCQ check only.
-- **H3 â€” bounded Spot fan-out:** `SpotTheError` full-profile generation runs through a `runPooled`
+- **H3 — bounded Spot fan-out:** `SpotTheError` full-profile generation runs through a `runPooled`
   limiter (max 2 concurrent `/api/generate-audit`) instead of firing all 6 at once.
 - **Stress harness (new `stress/` + `playwright.stress.config.js`):** `stress/quota-probe.mjs`,
   `stress/voice-ws-probe.mjs`, `stress/load.spec.js`. Scripts: `test:stress`, `stress:quota`,
@@ -543,86 +548,86 @@
   `::1`; the server listens IPv4).
 - **Measured ceilings (live keys, 2026-07-01):**
   - **Gemini generateContent rotation:** clean 100% up to **8 concurrent** heavy calls; first
-    `429 "All Gemini keys are rate-limited"` at **12 concurrent**; majority-fail by 16â€“20 (each heavy
-    call ~11â€“23s). â‡’ with H3 (~2 calls/navigator) ~**4 navigators** can start a full Spot at once;
+    `429 "All Gemini keys are rate-limited"` at **12 concurrent**; majority-fail by 16–20 (each heavy
+    call ~11–23s). ⇒ with H3 (~2 calls/navigator) ~**4 navigators** can start a full Spot at once;
     coaching (1/navigator) tolerates ~**8 simultaneous** MCQ finishes before falling back to
     rule-based. The MCQ check uses NO AI in its critical path, so it never breaks.
   - **Voice relay (`/api/live`):** 5/5 concurrent sessions reached `ready` with no server errors, but
-    only 1/5 delivered caller audio in-window â€” the Gemini **Live preview** tier is the bottleneck,
-    not the relay. â‡’ cap concurrent voice calls to a few, or leave off preview.
+    only 1/5 delivered caller audio in-window — the Gemini **Live preview** tier is the bottleneck,
+    not the relay. ⇒ cap concurrent voice calls to a few, or leave off preview.
   - **20 concurrent navigators, full MCQ+coaching:** **20/20 completed end-to-end**, ~126s wall, no
-    crashes; AI endpoints degraded gracefully (429/400 â†’ fallback). Observed non-blocking console
-    signal: `getInterviews: Missing or insufficient permissions` in the LIVE project â€” reinforces that
+    crashes; AI endpoints degraded gracefully (429/400 → fallback). Observed non-blocking console
+    signal: `getInterviews: Missing or insufficient permissions` in the LIVE project — reinforces that
     Anonymous auth must be enabled and the new rules deployed together.
-- **Gates:** `npm test` â†’ **228 passing** (8 files); `npm run build` â†’ clean.
+- **Gates:** `npm test` → **228 passing** (8 files); `npm run build` → clean.
 - **Files:** `src/lib/{firebase,db,db.test}.js`, `firestore.rules`, new `firestore.indexes.json`,
   `src/components/{NavigatorApp,Check,SpotTheError}.jsx`, new `stress/*` +
   `playwright.stress.config.js`, `package.json`, `CLAUDE.md`.
 - **Status:** Code complete + stress-validated. **Owner action to activate C1:** enable Anonymous
   auth in the Firebase console, confirm the deployed app still reads data, THEN
-  `firebase deploy --only firestore:rules,firestore:indexes`. *(Completed 2026-07-02 â€” see the
+  `firebase deploy --only firestore:rules,firestore:indexes`. *(Completed 2026-07-02 — see the
   "Firebase deploy manifest" entry: Anonymous auth enabled, rules + indexes deployed, verified
   live.)*
 
-### 2026-07-01 â€” Playwright end-to-end test harness added
+### 2026-07-01 — Playwright end-to-end test harness added
 - **What changed:** Added Playwright so browser flows can actually be verified locally (the app's
   Firebase/Gemini/Web-Audio paths were previously "not verifiable headlessly").
   - `@playwright/test` dev dependency + Chromium browser installed (browsers live in the user-level
     `ms-playwright` cache, not the repo).
-  - `playwright.config.js` â€” `testDir: './e2e'`, headless Chromium, and a `webServer` that runs
+  - `playwright.config.js` — `testDir: './e2e'`, headless Chromium, and a `webServer` that runs
     `npm run build && npm start` and waits on `/api/health` (so tests hit the real Express server +
     `/api` routes + `.env.local`, exactly like Railway). `reuseExistingServer: true`.
-  - `e2e/smoke.spec.js` â€” Start gate renders + wrong supervisor passcode is rejected.
-  - `e2e/supervisor.spec.js` â€” signs in with the public pilot passcode (`0200`) and confirms the
+  - `e2e/smoke.spec.js` — Start gate renders + wrong supervisor passcode is rejected.
+  - `e2e/supervisor.spec.js` — signs in with the public pilot passcode (`0200`) and confirms the
     management shell loads, exercising the **live Firebase subscriptions** end to end.
-  - `e2e/navigator.spec.js` â€” signs in as a real test navigator (roster name + PIN), reaches the
-    MCQ/Spot chooser, completes an MCQ end to end (â†’ coaching â†’ dashboard), and â€” the headline
-    coverage â€” **takes a full live-Gemini Spot the Error assessment, then an MCQ, and asserts both
+  - `e2e/navigator.spec.js` — signs in as a real test navigator (roster name + PIN), reaches the
+    MCQ/Spot chooser, completes an MCQ end to end (→ coaching → dashboard), and — the headline
+    coverage — **takes a full live-Gemini Spot the Error assessment, then an MCQ, and asserts both
     results coexist and the dashboard toggle switches between them**. This is the browser proof of the
     "MCQ + Spot coexist" feature.
-  - `vite.config.js` â€” Vitest `include` pinned to `src/**` + `api/**` so it ignores `e2e/` (which
+  - `vite.config.js` — Vitest `include` pinned to `src/**` + `api/**` so it ignores `e2e/` (which
     uses `@playwright/test`, not Vitest). `npm run test:e2e` runs the Playwright suite.
-  - `.gitignore` â€” Playwright artifacts (`test-results/`, `playwright-report/`, â€¦).
-- **Gates now:** `npm test` (228 Vitest unit) Â· `npm run test:e2e` (6 Playwright e2e) Â· `npm run build`.
+  - `.gitignore` — Playwright artifacts (`test-results/`, `playwright-report/`, …).
+- **Gates now:** `npm test` (228 Vitest unit) · `npm run test:e2e` (6 Playwright e2e) · `npm run build`.
 - **Note:** the navigator specs write to live Firestore and the Spot journey calls live Gemini, so
   they need `.env.local` (Firebase + `GEMINI_API_KEYS`). The navigator credential is a pre-deploy
   test account; the supervisor passcode is the public pilot one. Swap both before any real rollout.
 - **Files affected:** new `playwright.config.js`, `e2e/{smoke,supervisor,navigator}.spec.js`; edited
   `package.json`, `vite.config.js`, `.gitignore`, `CLAUDE.md`.
-- **Verification:** `npm run test:e2e` â†’ **6 passed** (incl. the live take-both-and-switch journey);
-  `npm test` â†’ **228 passed** (unchanged).
+- **Verification:** `npm run test:e2e` → **6 passed** (incl. the live take-both-and-switch journey);
+  `npm test` → **228 passed** (unchanged).
 - **Status:** Complete.
 
-### 2026-07-01 â€” MCQ + Spot the Error results coexist (take/switch either)
+### 2026-07-01 — MCQ + Spot the Error results coexist (take/switch either)
 - **What changed:** A navigator can now hold **both** an MCQ result and a Spot the Error result per
   department, take the other type after finishing one, and switch which one their dashboard reflects
-  â€” instead of the second overwriting the first (owner request: "keep both separately", entry point
+  — instead of the second overwriting the first (owner request: "keep both separately", entry point
   on the dashboard).
-  - **Storage (`db.js`):** result docs are now keyed by assessment type â€” MCQ keeps the legacy
+  - **Storage (`db.js`):** result docs are now keyed by assessment type — MCQ keeps the legacy
     `${navigatorId}__${department}` key (full back-compat); Spot the Error uses
     `${navigatorId}__${department}__spot`. New `resultDocId()` helper; `getResult` and `saveResult`
     take an `assessmentType` param (`'mcq'` default) and stamp `assessmentType` on the doc + history
     snapshot; `clearResult` now deletes both docs (+ the legacy plain-id doc for pediatrics).
   - **Navigator (`NavigatorApp.jsx`):** single `ownResult` state replaced by `resultsByType`
     `{ mcq, spot }` + `activeType`; `ownResult` is derived. `handleDeptSelect` loads both types and
-    defaults the view to the most recent. New `AssessmentBar` on the dashboard: a **MCQ â‡„ Spot
-    toggle** (when both exist) + a **"Take the other / Retake"** button â†’ the chooser. `handleSubmit`
+    defaults the view to the most recent. New `AssessmentBar` on the dashboard: a **MCQ ⇄ Spot
+    toggle** (when both exist) + a **"Take the other / Retake"** button → the chooser. `handleSubmit`
     writes `mcq`; `handleSpotComplete` writes `spot` in full mode and merges into the **active** type
     in training mode; the mini-check likewise re-saves the active type. The chooser badges which types
     are already completed.
   - **Supervisor (`SupervisorApp.jsx`):** `subscribeResults` now returns up to two docs per
     navigator+department, so results are **deduped to the most recent** per navigator+department
-    before building the matrix / cross-dept strip â€” the matrix still shows one current row per person.
+    before building the matrix / cross-dept strip — the matrix still shows one current row per person.
   - **Tests:** `db.test.js` `clearResult` cases updated for dual-doc deletion (228 passing).
 - **Known limitation:** `resultHistory` now interleaves MCQ and Spot snapshots, so trend lines mix
   both assessment types (not filtered by type yet). Acceptable for the pilot.
 - **Files affected:** `src/lib/{db,db.test}.js`, `src/components/{NavigatorApp,SupervisorApp}.jsx`,
   `src/styles.css`, `CLAUDE.md`.
-- **Verification:** `npm test` â†’ **228 passing** (8 files); `npm run build` â†’ clean. Browser
+- **Verification:** `npm test` → **228 passing** (8 files); `npm run build` → clean. Browser
   click-through (take both, toggle, supervisor dedup) not run headlessly.
 - **Status:** Complete.
 
-### 2026-07-01 â€” Ponytail installed for Codex usage reduction (local only â€” NOT an app change)
+### 2026-07-01 — Ponytail installed for Codex usage reduction (local only — NOT an app change)
 - **What changed:** Installed `DietrichGebert/ponytail` for the repo owner's Codex environment to
   bias future agent work toward smaller, reused, stdlib/native-first changes. Because `git` is not
   available on this Windows PATH, the repo was downloaded as a GitHub zip to
@@ -635,7 +640,7 @@
 - **Files affected:** `CLAUDE.md` only.
 - **Status:** Complete.
 
-### 2026-07-01 â€” Assessment-type chooser: MCQ vs. full-profile Spot the Error
+### 2026-07-01 — Assessment-type chooser: MCQ vs. full-profile Spot the Error
 - **What changed:** Added a top-level choice of assessment. After a navigator picks a department,
   a new `typeselect` view (`AssessmentTypeChooser` in `NavigatorApp.jsx`) offers **Multiple choice**
   (the existing MCQ `check`) or **Spot the Error** (a new full-profile assessment, view `spotfull`).
@@ -645,65 +650,65 @@
     profile); **`domain`** = the existing `SPOT_ASSESSMENT_SIZE`-item single-domain training launch.
     Each item now carries its own `domainId` (shown as a tag); the review adds a per-domain breakdown
     in full mode. `onComplete` now hands back a `{ domainId: percent }` map + the mode.
-  - `scoring.js` â€” new pure `scoreSpotTheErrorByDomain(graded)` (`[{domainId,correct}]` â†’
-    `{domainId: percent}`); 2 tests added (`scoring.test.js`, 226 â†’ 228).
-  - `NavigatorApp.jsx` â€” `handleAuditComplete(domainId, score)` replaced by
-    `handleSpotComplete(domainScores, mode)`: full â†’ replace the whole profile and land on the
-    dashboard; domain â†’ merge just that domain and return to training. `handleDeptSelect`'s no-result
+  - `scoring.js` — new pure `scoreSpotTheErrorByDomain(graded)` (`[{domainId,correct}]` →
+    `{domainId: percent}`); 2 tests added (`scoring.test.js`, 226 → 228).
+  - `NavigatorApp.jsx` — `handleAuditComplete(domainId, score)` replaced by
+    `handleSpotComplete(domainScores, mode)`: full → replace the whole profile and land on the
+    dashboard; domain → merge just that domain and return to training. `handleDeptSelect`'s no-result
     branch now routes to `typeselect` (was `check`); the MCQ `check` cancel returns to `typeselect`;
     the dept switcher is hidden during `spotfull` (as it already was during `check`).
-  - `styles.css` â€” per-domain breakdown rows on the results screen.
+  - `styles.css` — per-domain breakdown rows on the results screen.
 - **Design choices (with owner):** full-profile covers **all domains, 1 item each** (fast, coarse
   0/100 per domain); chooser sits **after** department selection.
 - **Files affected:** `src/lib/{scoring,scoring.test}.js`, `src/components/{SpotTheError,NavigatorApp}.jsx`,
   `src/styles.css`, `CLAUDE.md`.
-- **Verification:** `npm test` â†’ **228 passing** (8 files); `npm run build` â†’ clean (known large
+- **Verification:** `npm test` → **228 passing** (8 files); `npm run build` → clean (known large
   main-bundle warning only). Browser click-through against live Gemini keys not run headlessly.
 - **Status:** Complete.
 
-### 2026-07-01 â€” F16 "Spot the Error" â†’ scored, matrix-feeding assessment
+### 2026-07-01 — F16 "Spot the Error" → scored, matrix-feeding assessment
 - **What changed:** Converted "Spot the Error" from advisory-only training into a real, scored
   assessment whose result feeds the per-domain capability rating (owner request). Design decisions
   taken with the owner: **feed the domain score**, **multiple items** (`SPOT_ASSESSMENT_SIZE = 5`),
   **click-accuracy scoring only** (no AI grading).
-  - `src/lib/scoring.js` â€” new pure `scoreSpotTheError(picks)` â†’ share of items found correctly
-    (0â€“100), on the same scale as the main check. 3 tests added (`scoring.test.js`, 223 â†’ 226).
-  - `src/data/config.js` â€” `SPOT_ASSESSMENT_SIZE = 5`.
-  - `src/components/SpotTheError.jsx` â€” rewritten as an item-by-item assessment: `loading` (fires
-    N `/api/generate-audit` calls in parallel via `Promise.allSettled`, keeps what succeeds) â†’
-    `active` (one click per item, correct/wrong reveal + Next) â†’ `review` (score + level badge +
-    per-item breakdown) â†’ `saving` â†’ `done`. Removed the hint/shake, the reflection textarea, and
+  - `src/lib/scoring.js` — new pure `scoreSpotTheError(picks)` → share of items found correctly
+    (0–100), on the same scale as the main check. 3 tests added (`scoring.test.js`, 223 → 226).
+  - `src/data/config.js` — `SPOT_ASSESSMENT_SIZE = 5`.
+  - `src/components/SpotTheError.jsx` — rewritten as an item-by-item assessment: `loading` (fires
+    N `/api/generate-audit` calls in parallel via `Promise.allSettled`, keeps what succeeds) →
+    `active` (one click per item, correct/wrong reveal + Next) → `review` (score + level badge +
+    per-item breakdown) → `saving` → `done`. Removed the hint/shake, the reflection textarea, and
     the AI-coaching step (those were training affordances). No longer calls `saveCompletion`
-    itself â€” the parent orchestrates the save.
-  - `src/components/NavigatorApp.jsx` â€” `handleAuditComplete(domainId, score)` is now async and
+    itself — the parent orchestrates the save.
+  - `src/components/NavigatorApp.jsx` — `handleAuditComplete(domainId, score)` is now async and
     merge-saves the domain score into the result doc (overwrites only that domain, preserves
     competency scores + answers, appends a `resultHistory` trend point) and records a
-    `kind:'practice'` completion â€” mirroring the mini-check merge pattern. Updates local `ownResult`/
+    `kind:'practice'` completion — mirroring the mini-check merge pattern. Updates local `ownResult`/
     `allDeptResults` immediately so the dashboard/matrix reflect the new rating without a round-trip.
-  - `src/styles.css` â€” assessment styles (progress pill, wrong-pick red reveal, per-item feedback,
+  - `src/styles.css` — assessment styles (progress pill, wrong-pick red reveal, per-item feedback,
     results scorecard with level-coloured score, per-item review list).
 - **Not touched but now dead:** `api/coach-audit.js` + the `POST /api/coach-audit` route are no
   longer wired (reflection step removed). Left in place; flagged in F16 notes.
 - **Files affected:** `src/lib/{scoring,scoring.test}.js`, `src/data/config.js`,
   `src/components/{SpotTheError,NavigatorApp}.jsx`, `src/styles.css`, `CLAUDE.md`.
-- **Verification:** `npm test` â†’ **226 passing** (8 test files); `npm run build` â†’ clean (known
+- **Verification:** `npm test` → **226 passing** (8 test files); `npm run build` → clean (known
   large main-bundle warning only). Browser click-through of the assessment flow not run headlessly.
 - **Status:** Complete.
 
-### 2026-07-01 â€” Learning Loop: trim inline feedback chips to signal-only
+### 2026-07-01 — Learning Loop: trim inline feedback chips to signal-only
 - **What changed:** `FeedbackControls` (the inline chips on adaptive next steps, question
   improvement signals, flagged questions, and supervisor-visible interview grades) no longer renders
   **Approve** / **Reject**. It now shows only **Helpful / Inaccurate / Adjust**. Approve/Reject were
-  ambiguous inline â€” they only logged a `supervisorFeedback` status string and did nothing
+  ambiguous inline — they only logged a `supervisorFeedback` status string and did nothing
   actionable, yet visually implied they approved the recommendation. Those two actions belong solely
   to proposals in the Learning Loop **Human review queue**, where Approve actually creates a draft
   question and advances the proposal. `feedbackInsights` still treats `approved` as a positive status
   (tolerates any legacy docs); no scoring/feedback-math change.
 - **Files affected:** `src/components/FeedbackControls.jsx`, `CLAUDE.md`.
-- **Verification:** `npm test` â†’ **223 passing** (8 test files); `npm run build` â†’ clean.
+- **Verification:** `npm test` → **223 passing** (8 test files); `npm run build` → clean.
 - **Status:** Complete.
 
-### 2026-07-01 â€” Learning Loop click feedback UX fix
+### 2026-07-01 — Learning Loop click feedback UX fix
 - **What changed:** Feedback and proposal buttons in the Learning Loop now show visible state instead
   of failing silently. `FeedbackControls` displays `Saving...`, then `Saved`, or `Could not save`.
   `LearningLoop` and `QuestionBank` show queued/approved/rejected status messages and surface Firestore
@@ -712,19 +717,19 @@
   because the original implementation wrote to Firestore without any success or error affordance.
 - **Files affected:** `src/components/{FeedbackControls,LearningLoop,QuestionBank}.jsx`,
   `src/styles.css`, `CLAUDE.md`.
-- **Verification:** `npm test` â†’ **223 passing** (8 test files); `npm run build` â†’ clean with the
+- **Verification:** `npm test` → **223 passing** (8 test files); `npm run build` → clean with the
   known large main-bundle warning.
 - **Status:** Complete.
 
-### 2026-07-01 â€” Learning Loop dead recomputation cleanup
+### 2026-07-01 — Learning Loop dead recomputation cleanup
 - **What changed:** Removed an unused `computeQuestionHealth(questions, results)` call inside
   `buildLearningSignals()`. Question health is still computed by `buildQuestionImprovementSuggestions()`;
   this only removes redundant work from the Learning Loop render path.
 - **Files affected:** `src/lib/scoring.js`, `CLAUDE.md`.
-- **Verification:** `npm test` â†’ **223 passing** (8 test files).
+- **Verification:** `npm test` → **223 passing** (8 test files).
 - **Status:** Complete.
 
-### 2026-07-01 â€” Adaptive learning feedback loop (controlled intelligence layer)
+### 2026-07-01 — Adaptive learning feedback loop (controlled intelligence layer)
 - **What changed:** Added a controlled, human-reviewed learning loop that uses stored data to produce
   explainable recommendations and improvement proposals without silently changing production logic.
   - `src/lib/scoring.js`: new pure helpers `buildLearningSignals`, `buildQuestionImprovementSuggestions`,
@@ -747,28 +752,28 @@
   `api/{generate-coaching,sequence-path}.js`, `src/components/{LearningLoop,FeedbackControls,
   SupervisorApp,Nav,QuestionBank,NavigatorDetail,Coaching,MyTraining}.jsx`, `src/styles.css`,
   `CLAUDE.md`.
-- **Verification:** `npm test` â†’ **223 passing** (8 test files); `node --check` on
-  `api/generate-coaching.js` and `api/sequence-path.js`; `npm run build` â†’ clean with the known
+- **Verification:** `npm test` → **223 passing** (8 test files); `node --check` on
+  `api/generate-coaching.js` and `api/sequence-path.js`; `npm run build` → clean with the known
   large main-bundle warning.
 - **Status:** Complete.
 
-### 2026-07-01 â€” Doc consistency fix (stale department references)
+### 2026-07-01 — Doc consistency fix (stale department references)
 - **What changed:** Corrected two stale lines in this CLAUDE.md and de-duplicated the global file.
-  - Â§14 "Common pitfalls" said *"the live check only assesses Pediatrics (`ASSESSED_DEPT`)"* â€” now
+  - §14 "Common pitfalls" said *"the live check only assesses Pediatrics (`ASSESSED_DEPT`)"* — now
     correctly states **Pediatrics and OB/GYN** are assessed (`ASSESSED_DEPTS` / `isAssessed(id)`),
-    consistent with F10 and Â§8.
-  - Â§9 data-modules list undersold `src/data/departments.js` (`DEPARTMENTS`, `ASSESSED_DEPT`) â€” now
+    consistent with F10 and §8.
+  - §9 data-modules list undersold `src/data/departments.js` (`DEPARTMENTS`, `ASSESSED_DEPT`) — now
     lists the real exports (`ASSESSED_DEPTS`, `DEFAULT_DEPT`, `isAssessed`, `departmentName`, with
     `ASSESSED_DEPT` as a back-compat alias), verified against the source.
   - The user-global `C:\Users\t.1223\CLAUDE.md` held a full stale copy of this project's knowledge
     base (2026-06-24: "Quarterly Knowledge Check", GitHub Pages, Pediatrics-only, 38 tests, Firebase
     "in design"), which injected contradictory context every session. Replaced with a short pointer
     to this authoritative file.
-- **Files affected:** `CLAUDE.md` (Â§9, Â§14, this entry); `C:\Users\t.1223\CLAUDE.md` (global â€” now a pointer).
+- **Files affected:** `CLAUDE.md` (§9, §14, this entry); `C:\Users\t.1223\CLAUDE.md` (global — now a pointer).
 - **Verification:** exports confirmed via grep of `src/data/departments.js`; docs-only change (no code touched).
 - **Status:** Complete.
 
-### 2026-06-30 â€” Local Codespace migration bundle guide
+### 2026-06-30 — Local Codespace migration bundle guide
 - **What changed:** Added a local migration guide and bundle script for moving the full Codespace
   state to a local machine before Codespace quota expires. The guide explicitly calls out the
   important ignored/local files that are not recoverable from GitHub alone: `.env.local`,
@@ -782,7 +787,7 @@
 - **Verification:** `bash -n scripts/create-migration-bundles.sh`.
 - **Status:** Complete.
 
-### 2026-06-30 â€” Live voice call freshness pass: opener, department, transcript quality
+### 2026-06-30 — Live voice call freshness pass: opener, department, transcript quality
 - **What changed:** The real-time voice call now carries the generated `openingLine` from
   `/api/interview-turn` into the `/api/live` WebSocket start payload, and the relay includes it in
   the Gemini Live system instruction. `buildSystemInstruction()` is now department-aware, so OB/GYN
@@ -796,11 +801,11 @@
 - **Files affected:** `api/interview-turn.js`, `api/live-relay.js`, `src/components/VoiceCall.jsx`,
   `api/api-handlers.test.js`, `CLAUDE.md`.
 - **Verification:** `node --check api/interview-turn.js`; `node --check api/live-relay.js`;
-  `npm test` â†’ **210 passing** (8 test files). Browser mic/playback still needs Chrome/Edge
+  `npm test` → **210 passing** (8 test files). Browser mic/playback still needs Chrome/Edge
   confirmation because Web Audio capture is not verifiable in the headless codespace.
 - **Status:** Complete.
 
-### 2026-06-30 â€” Add Codex bootstrap file for new-chat context
+### 2026-06-30 — Add Codex bootstrap file for new-chat context
 - **What changed:** Added a tracked root `AGENTS.md` that tells new Codex sessions to read
   `CLAUDE.md` first, treat it as the project source of truth, inspect relevant live files before
   editing, preserve the main architecture boundaries, and update `CLAUDE.md` with any project
@@ -813,7 +818,7 @@
 - **Verification:** Docs/bootstrap-only change; no runtime tests needed.
 - **Status:** Complete.
 
-### 2026-06-30 â€” Fix: dev-path/action-center contract bugs + stale README claims
+### 2026-06-30 — Fix: dev-path/action-center contract bugs + stale README claims
 - **What changed:** Fixed several follow-on issues discovered during a full repo orientation pass:
   - `api/sequence-path.js` had its `validateSecret` guard inverted, so valid "Personalize my path"
     calls returned before responding. The handler now matches the other Gemini endpoints.
@@ -832,13 +837,13 @@
 - **Files affected:** `api/sequence-path.js`, `api/sequence-path.test.js`, `api/_auth.js`,
   `src/lib/{scoring,scoring.test}.js`, `src/components/{ActionCenter,MyTraining,NavigatorApp,NavigatorDetail,SupervisorApp}.jsx`,
   `src/styles.css`, `README.md`, `CLAUDE.md`.
-- **Verification:** `npm test` â†’ **208 passing** (8 test files); `npm run build` â†’ clean with the
+- **Verification:** `npm test` → **208 passing** (8 test files); `npm run build` → clean with the
   known large main-bundle warning (~891 kB minified JS).
 - **Status:** Complete.
 
-### 2026-06-30 â€” Fix: voice call dropped on first mic frame (deprecated `mediaChunks` format)
+### 2026-06-30 — Fix: voice call dropped on first mic frame (deprecated `mediaChunks` format)
 - **What changed:** With audio finally flowing (after the suspended-AudioContext fix), the Gemini
-  Live session closed the instant the first mic frame arrived: `code 1007 â€” realtime_input.
+  Live session closed the instant the first mic frame arrived: `code 1007 — realtime_input.
   media_chunks is deprecated. Use audio, video, or text instead.` The relay was forwarding mic
   audio as `realtimeInput: { mediaChunks: [{mimeType, data}] }`, which newer Live models
   (`gemini-3.1-flash-live-preview`) reject. Changed to the current single-Blob form
@@ -848,24 +853,24 @@
 - **How it was found:** added server-side `[live-relay]` logs + an on-screen "caller audio chunks"
   counter and live captions in `VoiceCall.jsx`; the relay log showed the exact 1007 close reason.
   (Also surfaced an operational gotcha: a stale `npm start` left port 3000 bound, so later
-  `npm start`s hit `EADDRINUSE` and the browser kept hitting old code â€” kill with `pkill -f server.js`.)
+  `npm start`s hit `EADDRINUSE` and the browser kept hitting old code — kill with `pkill -f server.js`.)
 - **Verification:** new headless test (`relay-audio-test.mjs`, PORT 3100) sends mic frames through
-  the relay after `ready` â€” session now **survives** and streams **182KB** of caller audio +
-  transcript back (previously closed 1007 with 0 audio). `npm test` â†’ 206; `node --check` OK.
+  the relay after `ready` — session now **survives** and streams **182KB** of caller audio +
+  transcript back (previously closed 1007 with 0 audio). `npm test` → 206; `node --check` OK.
 - **Files affected:** `api/live-relay.js` (format fix), `src/components/VoiceCall.jsx` (live
   captions), `src/styles.css`. **Owner confirmed working in Chrome** (full call: heard the caller,
   spoke back, saw captions). The temporary diagnostics (on-screen chunk counter, per-frame
-  console logs) were removed in the same pass â€” kept the lifecycle/error logs in `live-relay.js`
+  console logs) were removed in the same pass — kept the lifecycle/error logs in `live-relay.js`
   (connect/disconnect/upstream-closed) since those are useful ops signal in Railway logs, and kept
   live captions in `VoiceCall.jsx` as real UX, not just a diagnostic.
 - **Status:** Complete. Real-time voice practice call works end to end.
 
-### 2026-06-30 â€” Fix: voice call connected but mic/audio were silent (suspended AudioContext)
+### 2026-06-30 — Fix: voice call connected but mic/audio were silent (suspended AudioContext)
 - **What changed:** After the previous env-loading fix, the voice call reached the active screen
-  but produced no audio either direction â€” mic didn't engage, no caller audio played. Root cause:
+  but produced no audio either direction — mic didn't engage, no caller audio played. Root cause:
   `VoiceCall.jsx` created both `AudioContext`s (`inCtx`/`outCtx`) **after** awaiting a network
   round-trip (scenario generation) and the mic permission prompt. By that point Chrome's autoplay
-  policy had very likely started both contexts in `'suspended'` state â€” and a suspended context
+  policy had very likely started both contexts in `'suspended'` state — and a suspended context
   renders **no** audio at all: `ScriptProcessorNode.onaudioprocess` never fires (mic never sends),
   and scheduled `AudioBufferSource`s for caller playback just sit queued (silence). Neither
   direction logs an error; it just does nothing, which matches exactly what was reported.
@@ -874,15 +879,15 @@
   inside the same gesture chain as the "Start voice call" click (promise/async chains without a
   `setTimeout` don't break Chrome's transient-activation window for `resume()`, even though the
   *initial* suspended-or-not state was already decided unfavorably). Added a guard: if either
-  context still isn't `'running'` after resume, show "Audio is blocked by the browser â€” click
+  context still isn't `'running'` after resume, show "Audio is blocked by the browser — click
   again" and return to setup, rather than silently failing a second time.
 - **Files affected:** `src/components/VoiceCall.jsx`.
-- **Verification:** `npm test` â†’ 206 passing; `npm run build` â†’ clean. **Not browser-verified** â€”
+- **Verification:** `npm test` → 206 passing; `npm run build` → clean. **Not browser-verified** —
   audio-context suspend/resume behavior can't be exercised in the headless codespace; needs an
   owner test in Chrome/Edge to confirm mic + playback now work.
 - **Status:** Complete (code); awaiting browser confirmation.
 
-### 2026-06-30 â€” F22: Real-time voice practice call (Gemini Live API) â€” replaced the TTS first attempt
+### 2026-06-30 — F22: Real-time voice practice call (Gemini Live API) — replaced the TTS first attempt
 - **Context:** An earlier attempt this session bolted one-shot Gemini TTS (`/api/speak`) + browser
   Web-Speech STT onto the chat `Interview.jsx`. It felt glitchy (auto-send on pauses, caller text
   appearing before its audio, no call rhythm). Owner flagged that chat + voice in one UI was the
@@ -891,171 +896,171 @@
 - **What changed:** New real-time voice call as its own screen, with a chooser separating it from
   the text chat.
   - **`api/live-relay.js` (new):** `ws` `WebSocketServer` at `/api/live`, attached to the Express
-    http server via `attachLiveRelay(server)` in `server.js`. Relays browser â‡„ Gemini Live
+    http server via `attachLiveRelay(server)` in `server.js`. Relays browser ⇄ Gemini Live
     (`BidiGenerateContent` WSS) so the key stays server-side. Builds the patient persona with
     `buildSystemInstruction()` (reused from `interview-turn.js`), validates the secret with the new
     `isValidSecret()` helper in `_auth.js`, model
     `gemini-3.1-flash-live-preview`, with input+output transcription enabled.
     Small JSON protocol (`start`/`audio`/`ready`/`transcript`/`interrupted`/`turnComplete`/`error`).
-  - **`src/components/VoiceCall.jsx` (new):** mic capture (`getUserMedia` â†’ `ScriptProcessorNode`
-    â†’ downsample 16kHz PCM16 â†’ relay), gapless 24kHz playback via scheduled `AudioBufferSource`s,
-    barge-in flush on `interrupted`, speaking/listening orb, end â†’ `saveInterview` â†’
-    `/api/grade-interview` â†’ same reviewed screen as the chat call.
+  - **`src/components/VoiceCall.jsx` (new):** mic capture (`getUserMedia` → `ScriptProcessorNode`
+    → downsample 16kHz PCM16 → relay), gapless 24kHz playback via scheduled `AudioBufferSource`s,
+    barge-in flush on `interrupted`, speaking/listening orb, end → `saveInterview` →
+    `/api/grade-interview` → same reviewed screen as the chat call.
   - **`src/components/NavigatorApp.jsx`:** `PracticeChooser` (voice vs chat) + `practiceMode` state
     routing the Practice tab to `<VoiceCall>` or `<Interview>`; resets on leaving the tab via a
     `useEffect` placed **with the other hooks above the early returns** (a first cut put it after
-    the `deptselect`/`loading` early returns, which violated the Rules of Hooks â€” clicking a
+    the `deptselect`/`loading` early returns, which violated the Rules of Hooks — clicking a
     department changed the hook count between renders and blanked the page; fixed by hoisting it).
   - **`src/styles.css`:** `.practice-choice*` cards + `.voicecall*` orb/pulse (reduced-motion safe).
   - **`package.json`:** `ws` added.
   - **Local-dev env fix (`load-env.js`):** `node server.js` never loaded `.env.local` (only Vite
-    did, for build-time `VITE_*`), so a plain local `npm start` ran with **no `GEMINI_API_KEYS`** â†’
-    every `/api/*` AI call 500'd "not configured" â†’ the voice/chat call showed "Could not set up
+    did, for build-time `VITE_*`), so a plain local `npm start` ran with **no `GEMINI_API_KEYS`** →
+    every `/api/*` AI call 500'd "not configured" → the voice/chat call showed "Could not set up
     the call scenario." New `load-env.js` (imported first by `server.js`) calls native
-    `process.loadEnvFile('.env.local')` when present â€” no-op on Railway (vars injected, file
+    `process.loadEnvFile('.env.local')` when present — no-op on Railway (vars injected, file
     absent) and on Node < 20.12 (guarded). Reminder: `/api` (incl. the `/api/live` WS) only runs
-    under `npm start`/Railway â€” **not** `npm run dev` (Vite, no proxy configured).
+    under `npm start`/Railway — **not** `npm run dev` (Vite, no proxy configured).
 - **Model note:** initially built on `gemini-2.5-flash-native-audio-preview-09-2025`, then
   switched to **`gemini-3.1-flash-live-preview`** (gemini-3 Live) after a `listModels` check showed
   it available + a setup handshake confirmed it. `gemini-3.5-flash` was raised as a candidate but
   it's text-only (no `bidiGenerateContent`) so it can't drive the voice call; it was also 503-ing
   ("high demand") on the free tier at the time, a reason the REST `MODEL` stayed on `gemini-2.5-flash`.
-- **Verification:** `npm test` â†’ **206 passing** (8 test files â€” back to pre-attempt count after
-  removing `pcmAudio.test.js`); `npm run build` â†’ clean; `node --check api/live-relay.js`,
-  `server.js` â†’ OK. **Live API verified before and after building:** (1) `listModels` â€” enumerated
-  the `bidiGenerateContent` models on the key; (2) full-turn probe â€” setup â†’ text prompt â†’ 163KB
-  audio + output transcript; (3) **relay round-trip** on the final gemini-3 Live model â€” node
-  client â†’ our `/api/live` relay â†’ Gemini â†’ `ready` + 250KB caller audio + transcript, key never
+- **Verification:** `npm test` → **206 passing** (8 test files — back to pre-attempt count after
+  removing `pcmAudio.test.js`); `npm run build` → clean; `node --check api/live-relay.js`,
+  `server.js` → OK. **Live API verified before and after building:** (1) `listModels` — enumerated
+  the `bidiGenerateContent` models on the key; (2) full-turn probe — setup → text prompt → 163KB
+  audio + output transcript; (3) **relay round-trip** on the final gemini-3 Live model — node
+  client → our `/api/live` relay → Gemini → `ready` + 250KB caller audio + transcript, key never
   leaving the server. In-browser mic capture/playback is **not** verifiable in the headless
   codespace and must be tested in Chrome/Edge.
 - **Status:** Complete. Server relay live-verified; **owner confirmed working end-to-end in
-  Chrome** (mic, caller voice, captions) after two follow-on fixes â€” see the two 2026-06-30
+  Chrome** (mic, caller voice, captions) after two follow-on fixes — see the two 2026-06-30
   history entries above this one (suspended `AudioContext` + deprecated `realtimeInput.mediaChunks`
   format).
 
-### 2026-06-30 â€” Fix: "Personalize my path" button did nothing (instant-abort bug)
+### 2026-06-30 — Fix: "Personalize my path" button did nothing (instant-abort bug)
 - **What changed:** `MyTraining.jsx` called `apiFetch('/api/sequence-path', {...})` with no
   `timeoutMs` argument. `apiFetch` did `setTimeout(() => controller.abort(), undefined)`, and a
-  `setTimeout` with an `undefined` delay fires on the next tick (treated as 0 ms) â€” so the
+  `setTimeout` with an `undefined` delay fires on the next tick (treated as 0 ms) — so the
   `AbortController` aborted the fetch before it could complete. The `AbortError` was swallowed by
   the silent `catch` in `handlePersonalize`, so the button just reset and nothing visible happened.
   Two fixes: (1) pass a 25 s timeout at the call site (matches the other Gemini-backed callers);
-  (2) root-cause guard â€” `apiFetch`'s `timeoutMs` now defaults to `30_000`, so any future caller
+  (2) root-cause guard — `apiFetch`'s `timeoutMs` now defaults to `30_000`, so any future caller
   that omits it gets a sane timeout instead of an instant abort.
 - **Files affected:** `src/components/MyTraining.jsx`, `src/lib/apiFetch.js`, `CLAUDE.md`.
-- **Verification:** `npm run build` â†’ clean.
+- **Verification:** `npm run build` → clean.
 - **Status:** Complete.
 
-### 2026-06-30 â€” Added ARCHITECTURE.md (maintenance/panic guide â€” docs only)
+### 2026-06-30 — Added ARCHITECTURE.md (maintenance/panic guide — docs only)
 - **What changed:** New top-level `ARCHITECTURE.md` written for the "something is down in 6 months
   and I need to know where to look" moment. Plain-language, non-exhaustive, aimed at a non-expert
   maintainer. Sections: (1) what the app does, (2) the stack, (3) 3 end-to-end data flows
-  (take-the-check, supervisor dashboard, AI feature), (4) **the seams** â€” the 5 connection points
-  that actually break (browserâ†’Firestore, browserâ†’Railway `/api`, serverâ†’Gemini, Railway hosting,
+  (take-the-check, supervisor dashboard, AI feature), (4) **the seams** — the 5 connection points
+  that actually break (browser→Firestore, browser→Railway `/api`, server→Gemini, Railway hosting,
   the fake PIN/passcode auth boundary), each with "what failure looks like" + "what to check first",
   (5) a load-bearing-vs-peripheral file map, (6) a literal down-the-checklist debug + rollback guide,
   (7) an honest "risky smells" list (fake auth + open Firestore rules, browser-talks-to-DB-directly,
-  SOP PDFs, 21-feature scope creep, no CI). Read-only documentation pass â€” **no `src/`, `api/`,
+  SOP PDFs, 21-feature scope creep, no CI). Read-only documentation pass — **no `src/`, `api/`,
   config, or build file was touched.**
 - **Files affected:** new `ARCHITECTURE.md`; `CLAUDE.md` (this entry).
 - **Verification:** N/A (docs only; grounded in a direct read of `server.js`, `src/lib/{db,firebase,
   apiFetch,session}.js`, `src/data/config.js`, `api/_gemini-client.js`, `api/_auth.js`,
   `api/generate-coaching.js`, `src/components/{Start,App}.jsx`, `firestore.rules`, and the role-app
-  subscription wiring â€” not assumptions).
+  subscription wiring — not assumptions).
 - **Status:** Complete.
 
-### 2026-06-30 â€” Drop the branch/PR ceremony (main-first workflow)
+### 2026-06-30 — Drop the branch/PR ceremony (main-first workflow)
 - **What changed:** Removed the feature-branch enforcement from the in-repo SAW harness. This is a
-  solo project with no CI and Railway auto-deploy on push to `main`, so the branch â†’ PR â†’ self-merge
-  loop was pure ceremony â€” every PR was reviewed by no one and merged seconds later. Work now commits
+  solo project with no CI and Railway auto-deploy on push to `main`, so the branch → PR → self-merge
+  loop was pure ceremony — every PR was reviewed by no one and merged seconds later. Work now commits
   straight to `main`.
-  - `.claude/settings.json` â€” removed three hooks: the "you're on main" UserPromptSubmit warning, the
+  - `.claude/settings.json` — removed three hooks: the "you're on main" UserPromptSubmit warning, the
     "block push to main" PreToolUse blocker, and the "/pre-pr before gh pr create" reminder. **Kept**
     the commit-format reminder and the block-push-with-uncommitted-changes guard (cheap insurance,
     not branch ceremony).
-  - `CLAUDE.md` Â§14 â€” harness bullet rewritten to describe the main-first flow; the `/start-work`,
+  - `CLAUDE.md` §14 — harness bullet rewritten to describe the main-first flow; the `/start-work`,
     `/pre-pr`, `/end-work` slash commands still exist but are optional (they don't fire on their own).
-    Â§14 "Required workflows" already described committing + pushing to `main` directly, so it's now
+    §14 "Required workflows" already described committing + pushing to `main` directly, so it's now
     consistent rather than contradicted by the hooks.
 - **Rationale:** A branch only earns its keep when something gates the merge (a reviewer or CI). With
   neither, branches added 4 steps around a 1-step push. If `npm test` ever runs as a GitHub Actions
-  check on PRs, revisit â€” at that point the PR gate becomes worth the ceremony.
+  check on PRs, revisit — at that point the PR gate becomes worth the ceremony.
 - **Files affected:** `.claude/settings.json`, `CLAUDE.md`.
 - **Status:** Complete.
 
-### 2026-06-29 â€” F17â€“F21: Longitudinal trends, dossier, action center, adaptive dev paths, mentor matching
+### 2026-06-29 — F17–F21: Longitudinal trends, dossier, action center, adaptive dev paths, mentor matching
 - **What changed:** Five new capability-platform features turning Knowledge Check into the standing
   quarterly instrument described in the vision. All builds are complete; no mockup stubs.
-  - **F17 â€” Longitudinal trends:** new `resultHistory` Firestore collection (append-only snapshot
+  - **F17 — Longitudinal trends:** new `resultHistory` Firestore collection (append-only snapshot
     on every `saveResult`); `buildTrend`, `trainingImpact`, `teamTrend` pure functions; `Sparkline.jsx`
     (inline SVG, no dep); trend panel in `NavigatorDetail` (per-domain sparklines + delta badges,
     lazy-fetched on mount); team-trend widget in `Overview` (floor solidPlusRate + avgReadiness);
     `subscribeResultHistory` live subscription wired into `SupervisorApp`.
-  - **F18 â€” Evidence dossier:** `buildDossier` maps each answered question to its competency,
+  - **F18 — Evidence dossier:** `buildDossier` maps each answered question to its competency,
     recording what was chosen vs best answer + rationale; competency cards in `NavigatorDetail` are
     now expandable; `answers` + `questions` threaded from both role apps.
-  - **F19 â€” Action center:** `buildActionCenter` produces 5 category arrays (critical gaps, training
+  - **F19 — Action center:** `buildActionCenter` produces 5 category arrays (critical gaps, training
     overdue, declining trends, failed practice, ready-for-more); new `ActionCenter.jsx` supervisor
     tab + `subscribeInterviews` live subscription in `SupervisorApp`.
-  - **F20 â€” Adaptive dev paths:** `buildDevPath` computes 5-step paths per weak domain (coaching â†’
-    practice â†’ module â†’ mini-check) with done/next/todo status; `MyTraining.jsx` rewritten as a
+  - **F20 — Adaptive dev paths:** `buildDevPath` computes 5-step paths per weak domain (coaching →
+    practice → module → mini-check) with done/next/todo status; `MyTraining.jsx` rewritten as a
     path stepper with "Personalize my path" button that calls the new `api/sequence-path.js` Gemini
     endpoint (temp 0.3, structured JSON, `validateSequenceResponse` tested); mini-check mode in
     `Check.jsx` via `miniDomain` + `limit` props (domain-filtered, saves completion + history point
     on pass); `minicheck` view wired in `NavigatorApp`.
-  - **F21 â€” Mentor matching:** `buildMentorMatches` load-balances Learning/Solid mentees to
+  - **F21 — Mentor matching:** `buildMentorMatches` load-balances Learning/Solid mentees to
     least-loaded Can-Teach mentors (capped at `MENTOR_MAX_LOAD = 3`); `pairingOutcomes` enriches
     saved pairings with score delta; `pairings` Firestore collection + `savePairing` /
     `subscribePairings` / `updatePairingStatus`; new `Mentorship.jsx` supervisor tab.
   - **Foundation (Phase 0):** `resultHistory` + `pairings` Firestore rules added; `MENTOR_MAX_LOAD`,
     `MINICHECK_SIZE`, `MINICHECK_PASS`, `TREND_SYNTH_POINTS` added to `config.js`.
-  - **Tests:** 197 â†’ **206** (8 test files); added `sequence-path.test.js` (9 tests for
+  - **Tests:** 197 → **206** (8 test files); added `sequence-path.test.js` (9 tests for
     `validateSequenceResponse`); 9 new `buildTrend`/`trainingImpact`/`teamTrend` tests; 5 dossier
     tests; 8 action-center tests; 6 dev-path tests; 5 mentor-match tests; 3 pairing-outcomes tests.
 - **Files affected:** new `src/components/{Sparkline,ActionCenter,Mentorship}.jsx`,
   `api/sequence-path.js`, `api/sequence-path.test.js`; edited `src/lib/{scoring,scoring.test,db}.js`,
   `src/data/config.js`, `src/components/{NavigatorDetail,Overview,MyTraining,Check,NavigatorApp,SupervisorApp,Nav}.jsx`,
   `src/styles.css`, `firestore.rules`, `server.js`.
-- **Verification:** `npm test` â†’ **206 passing** (8 test files); `npm run build` â†’ clean;
-  `node --check api/sequence-path.js` â†’ OK.
+- **Verification:** `npm test` → **206 passing** (8 test files); `npm run build` → clean;
+  `node --check api/sequence-path.js` → OK.
 - **Status:** Complete.
 
-### 2026-06-29 â€” Practice call: remove the domain picker (choice-friction cleanup)
+### 2026-06-29 — Practice call: remove the domain picker (choice-friction cleanup)
 - **What changed:** The Practice call (`Interview.jsx`) setup screen used to make the navigator pick
-  one of 6 domains before starting. Removed the picker â€” the setup screen is now just a one-line
+  one of 6 domains before starting. Removed the picker — the setup screen is now just a one-line
   description + "Start practice call". `startInterview` picks a random domain client-side purely to
   anchor the AI scenario (the API still requires a valid `domainId`; practice scores are advisory and
   never feed the matrix, so the specific domain is cosmetic). First of a planned set of
   choice-friction cleanups requested by the owner.
-- **Scope note:** "Spot the Error" was intentionally left alone â€” its domain comes from the
+- **Scope note:** "Spot the Error" was intentionally left alone — its domain comes from the
   navigator's training plan context (a "Practice scenario" button per assigned weak domain), which is
   meaningful, not a free picker.
 - **Files affected:** `src/components/Interview.jsx`, `CLAUDE.md`.
-- **Verification:** `npm run build` â†’ clean.
+- **Verification:** `npm run build` → clean.
 - **Status:** Complete.
 
-### 2026-06-29 â€” Fix: navigator duplicated in supervisor cross-department strip
+### 2026-06-29 — Fix: navigator duplicated in supervisor cross-department strip
 - **What changed:** The "Strength by department" strip (`departmentMatrix`) in the supervisor
   Overview listed a navigator who took two departments as **two separate rows** (one per result
   doc). Root cause: `SupervisorApp` mapped *each* `activeResults` doc into its own `departmentMatrix`
   sample, and a navigator with two dept checks has two result docs (composite keys
   `${navigatorId}__pediatrics` and `${navigatorId}__obgyn`). Fixed by grouping `activeResults` by
   `navigatorId` and merging each navigator's dept scores into a single sample before calling
-  `departmentMatrix` â€” so one navigator = one row with all their department columns populated.
-- **Scope note:** The main capability Matrix (`deptRows`/`buildMatrixRows`) was already correct â€”
+  `departmentMatrix` — so one navigator = one row with all their department columns populated.
+- **Scope note:** The main capability Matrix (`deptRows`/`buildMatrixRows`) was already correct —
   it filters to one department, so it never double-listed. Only the cross-department strip was affected.
 - **Files affected:** `src/components/SupervisorApp.jsx`.
-- **Verification:** `npm test` â†’ 158 passing; `npm run build` â†’ clean.
+- **Verification:** `npm test` → 158 passing; `npm run build` → clean.
 - **Status:** Complete.
 
-### 2026-06-23 â€” Initial prototype build
+### 2026-06-23 — Initial prototype build
 - **What changed:** Scaffolded Vite+React app; data layer (`config`, `questions`, `navigators`);
   `scoring.js`; components Start/Check/Results/Matrix/Nav; full stylesheet; README.
 - **Files affected:** entire initial `src/` tree, `package.json`, `vite.config.js`, `index.html`.
 - **Reason:** Deliver the lean prototype from the brief.
 - **Result:** End-to-end flow working; 6 domains / 20 questions; matrix + read-offs. (commit `2f72cf1`)
 
-### 2026-06-23 â€” Analytics dashboards
+### 2026-06-23 — Analytics dashboards
 - **What changed:** Added Team Overview, Navigators list, per-navigator dashboard; `floorStats`,
   `domainDistribution`, `mentorSuggestions`; clickable matrix rows; nav tabs.
 - **Files affected:** `App.jsx`, `Nav.jsx`, new `Overview.jsx`/`Navigators.jsx`/`NavigatorDetail.jsx`,
@@ -1063,7 +1068,7 @@
 - **Reason:** Make it useful to management beyond a raw matrix.
 - **Result:** Floor + individual analytics; mentor suggestions.
 
-### 2026-06-23 â€” Auto-assign training
+### 2026-06-23 — Auto-assign training
 - **What changed:** `training.js` catalog, `TRAINING_RULES`, training logic, Training tab,
   per-navigator "Assigned training".
 - **Files affected:** `data/training.js`, `data/config.js`, `lib/scoring.js`, `components/Training.jsx`,
@@ -1071,7 +1076,7 @@
 - **Reason:** Turn weak points into assigned action.
 - **Result:** Required/Stretch assignments by weak point.
 
-### 2026-06-23 â€” Previewable mockup training modules
+### 2026-06-23 — Previewable mockup training modules
 - **What changed:** Added lesson content + key takeaways to each module; module preview screen;
   Preview buttons; "assigned because <domain> is at <level>" reasons.
 - **Files affected:** `data/training.js`, new `components/TrainingModule.jsx`, `Training.jsx`,
@@ -1079,13 +1084,13 @@
 - **Reason:** Make training previewable for the demo.
 - **Result:** Clickable, previewable modules with cohorts.
 
-### 2026-06-23 â€” Traffic-light level colors
+### 2026-06-23 — Traffic-light level colors
 - **What changed:** Recolored `LEVELS` to red/amber/green.
 - **Files affected:** `data/config.js`. (commit `3d4e5d0`)
 - **Reason:** Urgency encoding requested by user.
 - **Result:** Consistent traffic-light coloring app-wide.
 
-### 2026-06-23 â€” Department dimension
+### 2026-06-23 — Department dimension
 - **What changed:** Added `departments.js`; restructured `navigators.js` to per-department scores;
   `deptSamples`/`departmentOverall`/`departmentMatrix`; `DeptBar`; cross-department grid in
   Overview; per-department strip in NavigatorDetail.
@@ -1095,26 +1100,26 @@
 - **Reason:** Measure strength across departments.
 - **Result:** Department-scoped app; Pediatrics live, 3 mockup departments.
 
-### 2026-06-23 â€” Deployment to GitHub Pages
+### 2026-06-23 — Deployment to GitHub Pages
 - **What changed:** Set Vite `base` for builds; published `dist/` to `gh-pages`.
 - **Files affected:** `vite.config.js`; `gh-pages` branch.
 - **Reason:** Stable public showcase URL.
 - **Result:** Live at https://travis-holt.github.io/QuarterKnolwdge/.
 
-### 2026-06-23 â€” Added this CLAUDE.md knowledge base
+### 2026-06-23 — Added this CLAUDE.md knowledge base
 - **What changed:** Created the comprehensive project knowledge base.
 - **Files affected:** `CLAUDE.md`.
 - **Reason:** Permanent project memory + onboarding doc.
 - **Result:** Single source of truth established (this file).
 
-### 2026-06-23 â€” First automated tests (scoring.js)
+### 2026-06-23 — First automated tests (scoring.js)
 - **What changed:** Added Vitest as the test runner and a unit-test suite covering all 18 exports
   of `lib/scoring.js` (scoring, level mapping, matrix build, read-offs, department views, training
   assignment, mentor suggestions). Added `test`/`test:watch` npm scripts. Fixtures are built from
   the real data modules and level boundaries are asserted relative to `THRESHOLDS`, so the tests
   survive future tuning of the config "knobs".
 - **Files affected:** new `src/lib/scoring.test.js`, `package.json` (scripts + `vitest` devDep).
-- **Reason:** Pay down the top technical-debt item â€” the pure logic was highly testable and had
+- **Reason:** Pay down the top technical-debt item — the pure logic was highly testable and had
   zero coverage.
 - **Result:** 38 tests passing (`npm test`); production build unaffected (test file is excluded
   from the app bundle).
@@ -1123,27 +1128,27 @@
 > Git commit short-SHAs are referenced where a discrete commit exists; some incremental work was
 > folded into later commits.
 
-### 2026-06-24 â€” Post-review robustness fixes (subscription errors + duplicate names)
+### 2026-06-24 — Post-review robustness fixes (subscription errors + duplicate names)
 - **What changed:** Two issues found in a systematic code review were fixed.
   1. **Silent Firestore subscription errors (moderate):** `subscribeRoster` and `subscribeResults`
      in `db.js` now accept an optional `onError` callback (defaulting to `console.error`).
      `SupervisorApp.jsx` passes a shared handler that sets `subscribeError` state and renders a
-     red banner: *"Lost connection to the database â€” data may be stale."* `NavigatorApp.jsx` logs
-     the error (mentor suggestions silently stop updating â€” non-critical for the pilot).
+     red banner: *"Lost connection to the database — data may be stale."* `NavigatorApp.jsx` logs
+     the error (mentor suggestions silently stop updating — non-critical for the pilot).
   2. **Duplicate navigator names (minor):** `AddNavigatorForm` in `Navigators.jsx` now receives
      the live `roster` prop and performs a case-insensitive name-equality check before calling
      `addToRoster`. Shows *"A navigator with that name already exists."* inline.
 - **Files affected:** `src/lib/db.js`, `src/components/SupervisorApp.jsx`,
   `src/components/NavigatorApp.jsx`, `src/components/Navigators.jsx`, `src/styles.css`
   (`.subscribe-error` banner style added).
-- **Verification:** `npm test` â†’ 38 passing; `npm run build` â†’ clean.
+- **Verification:** `npm test` → 38 passing; `npm run build` → clean.
 
-### 2026-06-24 â€” Firebase pilot design complete; implementation plan written
+### 2026-06-24 — Firebase pilot design complete; implementation plan written
 - **What happened:** Full design session completed. Spec and implementation plan written,
   reviewed, and committed.
 - **Key decisions locked:**
   - **Persistence:** Firebase/Firestore (free Spark tier). Two collections: `roster` + `results`,
-    both UUID-keyed (never name-keyed â€” no typo/collision risk).
+    both UUID-keyed (never name-keyed — no typo/collision risk).
   - **Identity:** Navigator selects name from supervisor-managed roster dropdown + creates a
     4-digit PIN if none exists yet (otherwise enters the existing PIN). Supervisor enters hardcoded
     passcode from `config.js`.
@@ -1158,21 +1163,21 @@
     state.
 - **Design doc:** `docs/superpowers/specs/2026-06-24-firebase-pilot-design.md`
 - **Implementation plan:** `docs/superpowers/plans/2026-06-24-firebase-pilot-plan.md`
-- **Status:** Design complete. (Implementation followed â€” see next entry.)
+- **Status:** Design complete. (Implementation followed — see next entry.)
 
-### 2026-06-24 â€” Firebase pilot IMPLEMENTED (all code, awaiting Firebase config)
-- **What changed:** Built the entire Firebase pilot end to end (Phases 1â€“9 of the plan). The app is
+### 2026-06-24 — Firebase pilot IMPLEMENTED (all code, awaiting Firebase config)
+- **What changed:** Built the entire Firebase pilot end to end (Phases 1–9 of the plan). The app is
   now a role-based multi-user webapp backed by Firestore.
-  - **New libs:** `src/lib/firebase.js` (defensive init â€” never crashes the app if config is
+  - **New libs:** `src/lib/firebase.js` (defensive init — never crashes the app if config is
     absent), `src/lib/db.js` (all Firestore reads/writes: roster + results), `src/lib/session.js`
     (isolated localStorage session).
-  - **Start gate** (`Start.jsx`): role select â†’ navigator (roster dropdown + PIN create/login) /
+  - **Start gate** (`Start.jsx`): role select → navigator (roster dropdown + PIN create/login) /
     supervisor (passcode). Existing PINs are validated against the roster entry; blank PINs are
     set by the navigator through `updateRosterEntry`; passcode against `SUPERVISOR_PASSCODE`.
   - **Role split:** `App.jsx` reduced to a thin session/role router. New `SupervisorApp.jsx`
     (live `onSnapshot` results + roster, full management views) and `NavigatorApp.jsx` (own
     dashboard + my-training only; structurally no route to team views).
-  - **Roster management:** `Navigators.jsx` gained an "Add navigator" form (name â†’ `addToRoster`)
+  - **Roster management:** `Navigators.jsx` gained an "Add navigator" form (name → `addToRoster`)
     and shows "Not yet taken" for roster members without a submission.
   - **Navigator privacy:** `NavigatorDetail` renders mentor names as plain text (no drill-in) and
     hides the back button when used as a navigator's own dashboard; `TrainingModule` hides the
@@ -1189,51 +1194,51 @@
   TrainingModule,MyTraining,EmptyState,Footer,Matrix}.jsx`, `src/App.jsx`, `src/data/{config,
   navigators}.js`, `src/styles.css`, `.env.local.example`, `firestore.rules`, `package.json`.
   `src/lib/scoring.js` and `scoring.test.js` unchanged.
-- **Verification:** `npm test` â†’ 38 passing; `npm run build` â†’ clean; `npm run dev` â†’ all modules
+- **Verification:** `npm test` → 38 passing; `npm run build` → clean; `npm run dev` → all modules
   transform and serve (200). Defensive Firebase init verified to not crash without config.
 - **Status:** Code complete and **deployed to GitHub Pages**. Firebase project is live (`quarterly-knowledge-check`); `.env.local` is configured; supervisor and navigator flows verified working end-to-end.
 
-### 2026-06-24 â€” Competency engine + Gemini scenario generation on Vercel (Phases 1aâ€“1d)
+### 2026-06-24 — Competency engine + Gemini scenario generation on Vercel (Phases 1a–1d)
 - **What changed:** Turned the check into a two-axis, scenario-based competency platform that grows
   its own question bank from the SOP via Gemini.
-  - **1a â€” Vercel migration:** `vite.config.js` base â†’ `/`; added `vercel.json` + `api/health.js`;
+  - **1a — Vercel migration:** `vite.config.js` base → `/`; added `vercel.json` + `api/health.js`;
     retired the gh-pages base-path hack.
-  - **1b â€” Competency engine:** new `src/data/competencies.js` (9 competencies). All 18 seed
+  - **1b — Competency engine:** new `src/data/competencies.js` (9 competencies). All 18 seed
     questions upgraded to per-option `points`+`rationale` and `competencies` tags (and renamed
-    `QUESTIONS` â†’ `SEED_QUESTIONS`, with a back-compat alias). `scoring.js` refactored:
+    `QUESTIONS` → `SEED_QUESTIONS`, with a back-compat alias). `scoring.js` refactored:
     `scorePerDomain(answers, questions)` is now points-based, new `scorePerCompetency()` +
     `competencyDistribution()`, `buildMatrixRows()` carries both axes. New `Coaching.jsx`
     (rule-based post-check feedback); competency panels on `NavigatorDetail` + `Overview`;
-    `db.saveResult` stores `competencyScores`. Tests 38 â†’ **46**.
-  - **1c â€” Question bank in Firestore:** new `questions` collection + `db.js` CRUD
+    `db.saveResult` stores `competencyScores`. Tests 38 → **46**.
+  - **1c — Question bank in Firestore:** new `questions` collection + `db.js` CRUD
     (`subscribeQuestions`, `getActiveQuestions`, `saveDraftQuestions`, `activate/archive/delete/
     updateQuestion`, `seedQuestionsIfEmpty`). `Check`/`NavigatorApp` read the **active** bank (seed
     fallback). New supervisor `QuestionBank.jsx` + `QuestionEditor.jsx` (review gate) + "Questions"
     nav tab. `firestore.rules` extended.
-  - **1d â€” Gemini generation:** `api/generate-scenarios.js` (gemini-2.5-flash, structured JSON,
+  - **1d — Gemini generation:** `api/generate-scenarios.js` (gemini-2.5-flash, structured JSON,
     validate/repair, multi-key rotation on 429/503) + `api/_sop-context.js`. Supervisor "Generate"
-    â†’ drafts â†’ review â†’ activate. (2.0-flash returns a free-tier limit of 0 on the project keys, so
+    → drafts → review → activate. (2.0-flash returns a free-tier limit of 0 on the project keys, so
     2.5-flash is used.)
 - **Files affected:** new `api/{generate-scenarios,health,_sop-context}.js`, `vercel.json`,
   `src/data/competencies.js`, `src/components/{Coaching,QuestionBank,QuestionEditor}.jsx`; edited
   `src/lib/{scoring,scoring.test,db}.js`, `src/data/questions.js`,
   `src/components/{Check,NavigatorApp,SupervisorApp,NavigatorDetail,Overview,Nav}.jsx`,
   `src/styles.css`, `vite.config.js`, `firestore.rules`, `.env.local.example`.
-- **Verification:** `npm test` â†’ **46 passing**; `npm run build` â†’ clean; `npm run dev` â†’ 200;
-  `node --check` on all `api/*` â†’ OK.
+- **Verification:** `npm test` → **46 passing**; `npm run build` → clean; `npm run dev` → 200;
+  `node --check` on all `api/*` → OK.
 - **Status:** Code complete. **[ASSUMPTION]** Awaiting owner to link Vercel + set `GEMINI_API_KEY`
   / `GENERATION_SECRET`; until then the in-app Generate button is the only feature that needs the
-  backend â€” the rest runs on the existing Firebase config.
+  backend — the rest runs on the existing Firebase config.
 
-### 2026-06-25 â€” Railway deployment: Express server + build fixes
-- **What changed:** Migrated hosting from Vercel â†’ Railway. Three rounds of build fixes were
+### 2026-06-25 — Railway deployment: Express server + build fixes
+- **What changed:** Migrated hosting from Vercel → Railway. Three rounds of build fixes were
   needed before the Railway pipeline passed.
   - **Migration:** `server.js` (Express 5, serves `dist/` + mounts `/api/*` handlers),
     `railway.toml` (Railpack config: build + start + nixpacksConfigPath), `express` dep +
     `"start"` script + `"engines": {"node":">=20.0.0"}` in `package.json`.
-  - **Express 5 wildcard fix:** SPA catch-all initially written as `app.get('*', â€¦)`. Express 5
-    (path-to-regexp v8) rejects a bare `*` wildcard â€” requires a named param. Changed to
-    `app.get('/*splat', â€¦)`.
+  - **Express 5 wildcard fix:** SPA catch-all initially written as `app.get('*', …)`. Express 5
+    (path-to-regexp v8) rejects a bare `*` wildcard — requires a named param. Changed to
+    `app.get('/*splat', …)`.
   - **Node version (Round 1):** Railway defaulted to Node 18; vitest@4 + vite@8 require Node 20+.
     Fixed: added `"engines": {"node":">=20.0.0"}` to `package.json` to tell Nixpacks/Railpack to
     select Node 20.
@@ -1242,42 +1247,42 @@
     `npm install` to fully regenerate the lockfile with both esbuild@0.21.5 (vite@5 dep) and
     esbuild@0.28.1 (vitest@4 dep).
   - **EBADPLATFORM (Round 3):** The clean lockfile includes all platform-specific esbuild
-    optional packages (netbsd-arm64, darwin-arm64, win32-x64, â€¦). `npm ci` on Railway's Linux
+    optional packages (netbsd-arm64, darwin-arm64, win32-x64, …). `npm ci` on Railway's Linux
     x64 fails when it encounters packages for incompatible platforms, even if they're optional.
     Fixed: `nixpacks.toml` overrides Railpack's install step from `npm ci` to `npm install`, which
     gracefully skips incompatible optional packages.
 - **Files affected:** new `server.js`, `railway.toml`, `nixpacks.toml`; `package.json`,
   `package-lock.json`.
-- **Verification:** `npm test` â†’ 46 passing; `node --check server.js` OK; pushed to `main`;
+- **Verification:** `npm test` → 46 passing; `node --check server.js` OK; pushed to `main`;
   Railway build in progress (nixpacks.toml override awaiting confirmation).
 - **Status:** Code complete; awaiting Railway deploy confirmation.
 
-### 2026-06-25 â€” Full SOP context + remove GENERATION_SECRET requirement
+### 2026-06-25 — Full SOP context + remove GENERATION_SECRET requirement
 - **What changed:** Two improvements to the Gemini scenario generation pipeline.
   1. **Full SOP context (`api/_sop-context.js`):** replaced the old distilled ~50-line summary with
-     the complete final SOP ("Pediatrics Department.pdf" â€” 12 pages). Now includes every provider's
+     the complete final SOP ("Pediatrics Department.pdf" — 12 pages). Now includes every provider's
      exact booking rules (slot durations, double-booking constraints, demographic comfort, specialist
-     schedules), the full referral decision tree (PE UTD/not-UTD Ã— in/out-of-Aizer's 5 specialties Ã—
+     schedules), the full referral decision tree (PE UTD/not-UTD × in/out-of-Aizer's 5 specialties ×
      emergency/non-emergency), Sally Carilli escalation triggers, all insurance indicators and
      plan-specific rules, immunization/lab routing with nurse schedules, arrival instruction nuances,
      family/sibling booking mechanics, and the full contact directory. Gemini now has sufficient
      grounding to generate high-specificity scenario questions for every domain.
   2. **Remove GENERATION_SECRET env var requirement (`api/generate-scenarios.js`):** the server now
      falls back to `SUPERVISOR_PASSCODE` (imported from `src/data/config.js`) when `GENERATION_SECRET`
-     is not set. The client already sends `SUPERVISOR_PASSCODE` as the secret â€” there was never a
+     is not set. The client already sends `SUPERVISOR_PASSCODE` as the secret — there was never a
      meaningful distinction. Eliminates the need for an extra Railway Variable.
 - **Files affected:** `api/_sop-context.js` (full rewrite), `api/generate-scenarios.js`
   (import `SUPERVISOR_PASSCODE`; fallback logic replacing the hard error).
-- **Verification:** `node --check api/generate-scenarios.js` â†’ OK; `node --check api/_sop-context.js` â†’ OK.
+- **Verification:** `node --check api/generate-scenarios.js` → OK; `node --check api/_sop-context.js` → OK.
 - **Status:** Complete. `GEMINI_API_KEYS` (already set in Railway) is the only server-side variable
   needed for generation to work; no `GENERATION_SECRET` required.
 
-### 2026-06-25 â€” SOP replaced with Pediatrics_SOP_Updated.pdf (pure replacement)
+### 2026-06-25 — SOP replaced with Pediatrics_SOP_Updated.pdf (pure replacement)
 - **What changed:** `api/_sop-context.js` fully replaced using **only** content from
   `Pediatrics_SOP_Updated.pdf` (Aizer Health Organization Operational Procedures v1.0). No content
   from the old `SOP Guide.pdf` is carried forward.
-  - **Providers:** Correct names and details â€” Dina Faiden (formerly Donna Deck, not Dick), Lazar
-    Khaimov, Robin Aschkenasy, Tamar Dachoh, Chana Heintz, Lily Namanworth â€” with languages and
+  - **Providers:** Correct names and details — Dina Faiden (formerly Donna Deck, not Dick), Lazar
+    Khaimov, Robin Aschkenasy, Tamar Dachoh, Chana Heintz, Lily Namanworth — with languages and
     patient caps exactly as in the updated document.
   - **New appointment types:** Tongue Tie (within 5 weeks; refer out if child is older), Weight Check
     (TE to Sally Carilli if PE up to date), Lactation (30 min OV; Robin/Tamar/Chana only), Early
@@ -1287,13 +1292,13 @@
     specialty care (Vision/Speech/PT-OT/Podiatry = transfer only, no TE), and medication refills
     (HIGH PRIORITY tag if patient is completely out).
   - **PE frequency calculator and consequences block** per the new SOP.
-  - Source reference in Â§1 updated from `SOP Guide.pdf` to `Pediatrics_SOP_Updated.pdf`.
-- **Files affected:** `api/_sop-context.js` (full rewrite), `CLAUDE.md` (Â§1 + Â§7).
-- **Verification:** `node --check api/_sop-context.js` â†’ OK; `npm test` â†’ 46 passing.
+  - Source reference in §1 updated from `SOP Guide.pdf` to `Pediatrics_SOP_Updated.pdf`.
+- **Files affected:** `api/_sop-context.js` (full rewrite), `CLAUDE.md` (§1 + §7).
+- **Verification:** `node --check api/_sop-context.js` → OK; `npm test` → 46 passing.
 - **Status:** Complete. All AI features (scenario generation, coaching, interview, audit) now ground
   against the updated SOP only.
 
-### 2026-06-25 â€” Interview caller consistency fix
+### 2026-06-25 — Interview caller consistency fix
 - **What changed:** Gemini was hallucinating inconsistent facts mid-call (e.g., stating a birthday
   of August 2017 in one turn, then saying "he just turned 6" two turns later). Root cause: at
   temperature 0.8 the model generated factual answers fresh each turn without cross-checking its own
@@ -1301,17 +1306,17 @@
   - Added a `CRITICAL` consistency rule to `buildSystemInstruction` in `api/interview-turn.js`:
     Gemini is now explicitly told to check its prior turns before answering any factual question about
     the caller (names, dates, ages, insurance, provider, reason for calling, etc.).
-  - Reduced turn temperature from 0.8 â†’ 0.5 to reduce free-form generation that diverges from the
+  - Reduced turn temperature from 0.8 → 0.5 to reduce free-form generation that diverges from the
     established conversation history.
 - **Files affected:** `api/interview-turn.js`.
-- **Verification:** `node --check api/interview-turn.js` â†’ OK; `npm test` â†’ 46 passing.
+- **Verification:** `node --check api/interview-turn.js` → OK; `npm test` → 46 passing.
 - **Status:** Complete.
 
-### 2026-06-26 â€” OB/GYN live check: multi-department architecture (F10 Phase 2)
+### 2026-06-26 — OB/GYN live check: multi-department architecture (F10 Phase 2)
 - **What changed:** Made OB/GYN a genuine live check alongside Pediatrics. Navigators now pick
   their department at check-start; results, questions, and all AI features are scoped per dept.
   **Hard constraint met:** all authored OB/GYN content uses sanitized generic role labels only
-  (no real names, phone numbers, or portal credentials â€” the repo is public).
+  (no real names, phone numbers, or portal credentials — the repo is public).
   1. **`src/data/departments.js`:** added `ASSESSED_DEPTS = ['pediatrics', 'obgyn']`,
      `DEFAULT_DEPT`, `isAssessed(id)` helper; kept `ASSESSED_DEPT` as back-compat alias.
   2. **`src/data/questions.js`:** domain names/blurbs neutralized (IDs unchanged);
@@ -1333,7 +1338,7 @@
   8. **`src/lib/scoring.js`:** `departmentMatrix` now uses `liveResult.department  'pediatrics'`
      (was hardcoded to `ASSESSED_DEPT`); removed now-unused `ASSESSED_DEPT` import.
   9. **`src/lib/scoring.test.js`:** updated `departmentMatrix` live-taker test, added OB/GYN
-     live-taker case, legacy-no-dept case, and new `isAssessed` test suite. **46 â†’ 50 tests**.
+     live-taker case, legacy-no-dept case, and new `isAssessed` test suite. **46 → 50 tests**.
   10. **`src/components/NavigatorApp.jsx`:** added `activeDept` state + `deptselect` view (dept
       picker with "Live check" badge cards); all DB calls and API features scoped to `activeDept`;
       seed fallback per dept via `SEED_BY_DEPT` map.
@@ -1353,14 +1358,14 @@
   `src/lib/db.js`, `src/lib/scoring.js`, `src/lib/scoring.test.js`,
   `src/components/{NavigatorApp,SupervisorApp,DeptBar,QuestionBank,Interview,SpotTheError,Check}.jsx`,
   `src/styles.css`, `CLAUDE.md`.
-- **Verification:** `npm test` â†’ **50 passing**; `npm run build` â†’ clean; `node --check` on all
-  4 edited API handlers â†’ OK. OB/GYN content grep confirmed zero leaked names/phone numbers.
+- **Verification:** `npm test` → **50 passing**; `npm run build` → clean; `node --check` on all
+  4 edited API handlers → OK. OB/GYN content grep confirmed zero leaked names/phone numbers.
 - **Status:** Complete.
 
-### 2026-06-26 â€” Question Health / SOP Drift flags
+### 2026-06-26 — Question Health / SOP Drift flags
 - **What changed:** Added automatic health indicators to every active question in the Question Bank.
   After a question has been answered 10+ times, a colored health dot appears next to it:
-  green (healthy â‰¥20% correct), red (Review Required <20% correct). A question with <10 responses
+  green (healthy ≥20% correct), red (Review Required <20% correct). A question with <10 responses
   shows a gray dot ("not enough data yet").
   - **`saveResult` in `db.js`:** now stores an `answers: { [questionId]: optionId }` field on every
     result doc. Legacy docs without the field are silently skipped by the health computation.
@@ -1369,8 +1374,8 @@
   - **`computeQuestionHealth(questions, results)` in `scoring.js`:** pure function that iterates
     result docs with `answers`, counts responses and correct picks per question, and derives
     `{ responseCount, correctCount, correctRate, canTeachCount, canTeachFailCount, status }` for
-    each question. Also tracks "Can-Teach signal" â€” when navigators who scored â‰¥85 in that question's
-    domain also get it wrong, the alert text says "X of Y Can-Teach navigators also missed this â€”
+    each question. Also tracks "Can-Teach signal" — when navigators who scored ≥85 in that question's
+    domain also get it wrong, the alert text says "X of Y Can-Teach navigators also missed this —
     the SOP may not match floor practice."
   - **`QuestionBank.jsx`:** accepts new `results` prop; calls `computeQuestionHealth(active, results)`;
     renders health indicator in each active question's header row. Flagged questions get a subtle
@@ -1384,50 +1389,50 @@
     multi-question independence, empty inputs.
 - **Files affected:** `src/lib/{scoring,scoring.test,db}.js`,
   `src/components/{NavigatorApp,QuestionBank,SupervisorApp}.jsx`, `src/styles.css`.
-- **Verification:** `npm test` â†’ **60 passing**; `npm run build` â†’ clean.
+- **Verification:** `npm test` → **60 passing**; `npm run build` → clean.
 - **Status:** Complete.
 
-### 2026-06-26 â€” Navigator department switcher UX fix
-- **What changed:** Navigators were previously locked to the department they picked at login â€”
+### 2026-06-26 — Navigator department switcher UX fix
+- **What changed:** Navigators were previously locked to the department they picked at login —
   there was no way to switch to another department (e.g., to see OB/GYN results after taking
   Pediatrics) without signing out and back in. Fixed in two layers:
   1. **Nav pill:** `Nav.jsx` accepts `activeDeptName` + `onChangeDept` props and renders a small
-     pill button (warm clay accent style) showing the current dept name with a â‡„ icon. Hidden
+     pill button (warm clay accent style) showing the current dept name with a ⇄ icon. Hidden
      during `check` and `coaching` views so navigators can't abandon mid-quiz. `NavigatorApp.jsx`
      passes these through an updated `Shell` component; clicking calls `handleChangeDept` which
      resets dept-specific state and returns to `deptselect`.
   2. **Clickable dept cards:** `NavigatorDetail.jsx` accepts a new `onChangeDept(deptId)` prop.
      In the "Strength across departments" `deptstrip`, assessed non-current dept cards render as
-     `<button>` elements (`is-switchable` class) â€” clicking jumps directly to that dept via
+     `<button>` elements (`is-switchable` class) — clicking jumps directly to that dept via
      `handleDeptSelect`, which checks for an existing result and lands on `dashboard` or `check`.
      Non-assessed depts stay as `<div>` (not clickable). An assessed dept with no result yet
-     shows "Take the check â†’" as its label instead of "â€” not assessed". `isAssessed` imported
+     shows "Take the check →" as its label instead of "— not assessed". `isAssessed` imported
      from `departments.js` in `NavigatorDetail`.
   - **`styles.css`:** `.nav__dept-switch` pill + `.deptstrip__item.is-switchable` hover/press
     states (lift + accent border on hover).
 - **Files affected:** `src/components/{Nav,NavigatorDetail,NavigatorApp}.jsx`, `src/styles.css`.
-- **Verification:** `npm test` â†’ 60 passing; `npm run build` â†’ clean.
+- **Verification:** `npm test` → 60 passing; `npm run build` → clean.
 - **Status:** Complete.
 
-### 2026-06-26 â€” Rebrand to Cruciby â€” Forged Under Pressure *(reverted 2026-06-29)*
-- **What changed:** Full product rebrand from "Quarterly Knowledge Check" to **Cruciby â€” Forged Under Pressure**.
-- **Status:** Reverted â€” see entry below.
+### 2026-06-26 — Rebrand to Cruciby — Forged Under Pressure *(reverted 2026-06-29)*
+- **What changed:** Full product rebrand from "Quarterly Knowledge Check" to **Cruciby — Forged Under Pressure**.
+- **Status:** Reverted — see entry below.
 
-### 2026-06-28 â€” `generate-audit` validation refactor + extra API-handler tests
+### 2026-06-28 — `generate-audit` validation refactor + extra API-handler tests
 - **What changed:** Extracted the response-validation logic of `api/generate-audit.js` into a pure,
   exported `validateAuditResponse(parsed)` helper (returns `{ data }` | `{ error }`; no I/O), and
-  routed the handler through it â€” behaviour and status codes unchanged. Added two more `api/` test
+  routed the handler through it — behaviour and status codes unchanged. Added two more `api/` test
   files on top of the 2026-06-26 audit pass: `api/generate-audit.test.js` (covers
-  `validateAuditResponse` â€” valid shape, incomplete transcript, bad/missing errorIndex, Patient-turn
+  `validateAuditResponse` — valid shape, incomplete transcript, bad/missing errorIndex, Patient-turn
   fallback to nearest Agent turn, sanitisation) and `api/_gemini-client.test.js` (`getApiKeys` env
-  parsing + `geminiWithRotation` with a stubbed `fetch`). Tests **130 â†’ 158** (7 test files).
+  parsing + `geminiWithRotation` with a stubbed `fetch`). Tests **130 → 158** (7 test files).
   Also added the ponytail agent-tooling files to `.gitignore`.
 - **Files affected:** `api/generate-audit.js`; **new** `api/generate-audit.test.js`,
   `api/_gemini-client.test.js`; `.gitignore`; `package-lock.json`.
-- **Verification:** `npm test` â†’ **158 passing**; `npm run build` â†’ clean.
+- **Verification:** `npm test` → **158 passing**; `npm run build` → clean.
 - **Status:** Complete.
 
-### 2026-06-26 â€” Code-audit pass: DRY cleanup, test coverage expansion, Vite CVE patch
+### 2026-06-26 — Code-audit pass: DRY cleanup, test coverage expansion, Vite CVE patch
 - **What changed:** Systematic code-quality pass driven by a 6-agent audit. All 16 tasks completed.
   1. **`src/data/questions.js`:** exported `domainName(id)` helper; removed 9 identical inline copies
      from 9 component files (`Coaching`, `Check`, `Matrix`, `MyTraining`, `NavigatorDetail`,
@@ -1438,14 +1443,14 @@
   3. **`src/lib/apiFetch.js` (new):** shared client helper encapsulating AbortController timeout,
      Content-Type header, `SUPERVISOR_PASSCODE` injection, error-body parsing, and `AbortError` name
      preservation. Used by `Interview.jsx`, `SpotTheError.jsx`, `Coaching.jsx`, `SupervisorApp.jsx`.
-  4. **`api/_auth.js` (new):** `validateSecret(req, res)` â€” shared secret-validation helper for all
+  4. **`api/_auth.js` (new):** `validateSecret(req, res)` — shared secret-validation helper for all
      6 Gemini handlers (replaces the identical 3-line block copy-pasted across them). The
      `GENERATION_SECRET || SUPERVISOR_PASSCODE` fallback now lives in one place.
   5. **`api/_gemini-client.js`:** added startup validation (warn if no keys configured); truncates
      error-body before logging to cap log noise.
   6. **`Coaching.jsx`:** standardised from `.then()/.catch()` to `async/await` for consistency with
      the rest of the codebase; replaced raw fetch with `apiFetch`.
-  7. **Vite:** upgraded from 5.4.11 â†’ **5.4.21** (latest v5 patch â€” fixes 3 CVEs: `server.fs.deny`
+  7. **Vite:** upgraded from 5.4.11 → **5.4.21** (latest v5 patch — fixes 3 CVEs: `server.fs.deny`
      bypass, path traversal, NTLMv2 hash disclosure).
   8. **Test coverage (130 tests, 5 test files):**
      - `scoring.test.js`: 9 new malformed-input edge-case tests (`undefined answers`, missing
@@ -1453,7 +1458,7 @@
      - `src/lib/session.test.js` (new, 12 tests): localStorage round-trips, overwrite behaviour,
        corrupt JSON graceful return, unavailability handling via `vi.stubGlobal`.
      - `api/api-handlers.test.js` (new, 30 tests): `sanitize` (generate-scenarios), `buildDigest`
-       (generate-coaching), `buildSystemInstruction` + `buildContents` (interview-turn) â€” all now
+       (generate-coaching), `buildSystemInstruction` + `buildContents` (interview-turn) — all now
        exported with `export` keyword.
      - `src/components/components.test.jsx` (new, 15 tests, `@vitest-environment jsdom`):
        `EmptyState` pure render, `Footer` pure render, `Nav` supervisor/navigator tabs, active-state
@@ -1471,55 +1476,55 @@
   **new** `src/components/components.test.jsx`, `src/test-setup.js`; edited
   `src/components/{Coaching,Interview,SpotTheError,SupervisorApp}.jsx`; all 6 Gemini `api/*.js`
   handlers; `api/_gemini-client.js`; `vite.config.js`; `package.json`/`package-lock.json`.
-- **Verification:** `npm test` â†’ **130 passing** (5 test files); `npm run build` â†’ clean;
-  `node --check` on all 6 Gemini handlers + `_auth.js` â†’ OK.
+- **Verification:** `npm test` → **130 passing** (5 test files); `npm run build` → clean;
+  `node --check` on all 6 Gemini handlers + `_auth.js` → OK.
 - **Status:** Complete.
 
-### 2026-06-29 â€” Rename back to Knowledge Check; logo removed
+### 2026-06-29 — Rename back to Knowledge Check; logo removed
 - **What changed:** Reverted the 2026-06-26 Cruciby rebrand and the 2026-06-28 logo addition.
   The displayed product name is **Knowledge Check** everywhere; no logo image is rendered. The
   git repo name (`QuarterKnolwdge`) is unchanged. During the push a rebase conflict was resolved:
-  the remote had added a favicon link alongside the Cruciby title â€” the favicon was kept, the name
+  the remote had added a favicon link alongside the Cruciby title — the favicon was kept, the name
   was changed.
-  - `index.html` â€” `<title>` â†’ `Knowledge Check`; favicon `<link>` retained from remote commit.
-  - `Nav.jsx` â€” logo `<img>` removed; brand button text â†’ `Knowledge Check`.
-  - `Footer.jsx` â€” footer line â†’ `Knowledge Check` (tagline removed).
-  - `Start.jsx` â€” logo `<img>` removed; eyebrow â†’ `Knowledge Check` (tagline removed).
-  - `CLAUDE.md` â€” header, Â§1, Â§7 rebrand entry updated.
+  - `index.html` — `<title>` → `Knowledge Check`; favicon `<link>` retained from remote commit.
+  - `Nav.jsx` — logo `<img>` removed; brand button text → `Knowledge Check`.
+  - `Footer.jsx` — footer line → `Knowledge Check` (tagline removed).
+  - `Start.jsx` — logo `<img>` removed; eyebrow → `Knowledge Check` (tagline removed).
+  - `CLAUDE.md` — header, §1, §7 rebrand entry updated.
   - **Note:** `styles.css` retains dead `@keyframes logo-float` / `.start__logo` / `.nav__logo`
-    rules from the 2026-06-28 commit â€” harmless but can be cleaned up.
+    rules from the 2026-06-28 commit — harmless but can be cleaned up.
 - **Files affected:** `index.html`, `src/components/{Nav,Footer,Start}.jsx`, `CLAUDE.md`.
-- **Verification:** `npm run build` â†’ clean.
+- **Verification:** `npm run build` → clean.
 - **Status:** Complete.
 
-### 2026-06-29 â€” ponytail agent tooling installed (local only â€” NOT an app change)
+### 2026-06-29 — ponytail agent tooling installed (local only — NOT an app change)
 - **What changed:** Installed the **ponytail** token-reduction plugin
   (github.com/DietrichGebert/ponytail) for the repo owner's Claude Code environment. **No repo/app
-  file changed** â€” it lives entirely in `~/.claude/` (runtime in `~/.claude/plugins/ponytail/`,
+  file changed** — it lives entirely in `~/.claude/` (runtime in `~/.claude/plugins/ponytail/`,
   hook wiring in `~/.claude/settings.json`). The app's `.gitignore` already treats ponytail as
   "agent tooling, not part of the app." Documented here only so future agents know it's active.
   - **Mechanism:** a `SessionStart` hook injects ponytail's "laziness ladder" ruleset (favour
     reuse / stdlib / one-liners over new abstractions) into context **autonomously every session**
-    â€” no trigger needed; default mode `full`. A `UserPromptSubmit` hook tracks mode.
+    — no trigger needed; default mode `full`. A `UserPromptSubmit` hook tracks mode.
   - **Control (typed as a normal prompt):** `/ponytail lite|full|ultra|off`, or `stop ponytail`
     / `normal mode` to disable. Statusline shows `[PONYTAIL:<MODE>]`.
-- **Files affected:** none in-repo (this Â§7 note + the Â§14 bullet are the only repo edits).
+- **Files affected:** none in-repo (this §7 note + the §14 bullet are the only repo edits).
 - **Status:** Complete. See also the `ponytail-installed` agent memory.
 
-### 2026-06-29 â€” SAFe Agentic Workflow harness installed (in-repo `.claude/`, tailored to this stack)
+### 2026-06-29 — SAFe Agentic Workflow harness installed (in-repo `.claude/`, tailored to this stack)
 - **What changed:** Installed a tailored adaptation of the **SAFe Agentic Workflow** harness
   (github.com/bybren-llc/safe-agentic-workflow) into the repo's `.claude/` directory. This is
-  **agent-workflow tooling, not an app change** â€” no `src/`, `api/`, or build file was touched.
+  **agent-workflow tooling, not an app change** — no `src/`, `api/`, or build file was touched.
   SAW ships for a Linear + Docker + Postgres-RLS + Stripe + multi-reviewer team stack; every piece
   was rewritten for this project's actual stack (React/Vite + Firebase + Railway + Vitest, solo dev,
   `main` branch, gates `npm test` / `npm run build`). ~40 irrelevant SAW files (Linear sync, Docker
   deploy, RLS/Stripe skills, remote-rollback, etc.) were intentionally **not** copied.
   - **Commands (8)** in `.claude/commands/`: `start-work`, `end-work`, `pre-pr`, `check-workflow`,
-    `quick-fix`, `retro`, `search-pattern`, `update-docs` â€” all reference npm gates and `main`, no Linear.
+    `quick-fix`, `retro`, `search-pattern`, `update-docs` — all reference npm gates and `main`, no Linear.
   - **Agents (5)** in `.claude/agents/`: `fe-developer`, `qas`, `system-architect`, `tech-writer`,
-    `rte` â€” grounded in this codebase's modules, conventions, and the CLAUDE.md-update rule.
+    `rte` — grounded in this codebase's modules, conventions, and the CLAUDE.md-update rule.
   - **Skills (4)** in `.claude/skills/`: `safe-workflow`, `pattern-discovery`, `testing-patterns`,
-    `git-advanced` â€” added alongside the existing BizOps/dev skills already in that dir (untouched).
+    `git-advanced` — added alongside the existing BizOps/dev skills already in that dir (untouched).
     `.gitignore` line 9 (`skills/`) normally keeps skills out of git by repo convention, but for
     codespace-migration safety they were **force-added** (`git add -f .claude/skills`) in a follow-up
     commit, so all 57 skill files (the 4 harness skills + existing BizOps/dev packs) are now committed.
@@ -1527,81 +1532,81 @@
     (guardrail hooks: warn on `main`, block push-to-`main`, block push with uncommitted changes,
     remind `/pre-pr` before `gh pr create`, session-end uncommitted-work check), `.claude/README.md`.
   - **Incidental fix:** `src/components/components.test.jsx` Footer test still asserted the old
-    "Cruciby" brand name (stale since the 2026-06-29 rename) â€” updated to "Knowledge Check".
+    "Cruciby" brand name (stale since the 2026-06-29 rename) — updated to "Knowledge Check".
   - **Sensitive files excluded + gitignored:** `roo-code-settings.json` (holds a live Cloudflare
     API key) and `OB GYN SOP.pdf` / `Pediatrics_SOP_Updated.pdf` (likely patient/provider PII) were
-    **not** committed â€” this is a public repo. All three were added to `.gitignore` and must be
+    **not** committed — this is a public repo. All three were added to `.gitignore` and must be
     preserved by manual download before the codespace expires. (`SOP Guide.pdf` was already tracked
     pre-session and is left as-is.)
 - **Files affected:** new `.claude/{README.md,team-config.json,settings.json}`,
   `.claude/commands/*.md` (8), `.claude/agents/*.md` (5), `.claude/skills/**` (4 harness skills +
   existing packs, force-added); edited `.gitignore`,
-  `src/components/components.test.jsx` (Crucibyâ†’Knowledge Check), `CLAUDE.md`.
-- **Delivery:** branch `chore/install-saw-harness` â†’ PR #1 (3 commits: harness, skills, gitignore).
-- **Verification:** `npm test` â†’ **158 passing** (Footer test fixed); harness is config/docs only.
+  `src/components/components.test.jsx` (Cruciby→Knowledge Check), `CLAUDE.md`.
+- **Delivery:** branch `chore/install-saw-harness` → PR #1 (3 commits: harness, skills, gitignore).
+- **Verification:** `npm test` → **158 passing** (Footer test fixed); harness is config/docs only.
 - **Status:** Complete.
 
-### 2026-06-26 â€” Remove Gemini/AI branding from UI
+### 2026-06-26 — Remove Gemini/AI branding from UI
 - **What changed:** Stripped all visible references to "Gemini" and "AI" from the navigator and
   supervisor-facing UI. The underlying features are unchanged; only the labels are removed.
-  - `Coaching.jsx` â€” removed "AI" badge from the personalised coaching heading (skeleton + loaded state).
-  - `SpotTheError.jsx` â€” removed "AI Coach" badge above the coaching reply text.
-  - `Interview.jsx` â€” replaced "Gemini plays a patient caller" with "A simulated patient caller will join";
-    "get an AI score" â†’ "get a score"; "Gemini is scoring your performance" â†’ "Reviewing your performance".
-  - `QuestionBank.jsx` â€” removed the `via {source}` tag that showed "via gemini" on generated question cards.
+  - `Coaching.jsx` — removed "AI" badge from the personalised coaching heading (skeleton + loaded state).
+  - `SpotTheError.jsx` — removed "AI Coach" badge above the coaching reply text.
+  - `Interview.jsx` — replaced "Gemini plays a patient caller" with "A simulated patient caller will join";
+    "get an AI score" → "get a score"; "Gemini is scoring your performance" → "Reviewing your performance".
+  - `QuestionBank.jsx` — removed the `via {source}` tag that showed "via gemini" on generated question cards.
 - **Files affected:** `src/components/{Coaching,Interview,SpotTheError,QuestionBank}.jsx`.
-- **Verification:** `npm run build` â†’ clean.
+- **Verification:** `npm run build` → clean.
 - **Status:** Complete.
 
-### 2026-06-26 â€” Craft pass: shared Gemini client + latent CSS-var bug fix
+### 2026-06-26 — Craft pass: shared Gemini client + latent CSS-var bug fix
 - **What changed:** A focused quality refactor from a craft review (no behaviour changes to the
   happy path; one latent rendering bug fixed).
-  1. **Extracted `api/_gemini-client.js`** â€” `getApiKeys`, `callGemini`, `geminiWithRotation`, the
+  1. **Extracted `api/_gemini-client.js`** — `getApiKeys`, `callGemini`, `geminiWithRotation`, the
      `ROTATABLE` set, and the `MODEL` constant were copy-pasted across all 6 Gemini handlers and had
      **diverged** (two handlers had a clean `geminiWithRotation` helper; three inlined the loop; one
      tracked auth failures the others lacked). Now one module. `geminiWithRotation(keys, body,
      {label})` returns a normalized result the caller maps to HTTP: `{ok:true,text}` |
-     `{ok:false,reason:'fatal',status}` (â†’502) | `{ok:false,reason:'auth'}` (â†’500, used by
-     generate-coaching) | `{ok:false,reason:'exhausted'}` (â†’429). Every handler's existing status
+     `{ok:false,reason:'fatal',status}` (→502) | `{ok:false,reason:'auth'}` (→500, used by
+     generate-coaching) | `{ok:false,reason:'exhausted'}` (→429). Every handler's existing status
      codes and error strings were preserved. All 6 handlers (`generate-scenarios`,
      `generate-coaching`, `interview-turn`, `grade-interview`, `generate-audit`, `coach-audit`) now
      import from it.
   2. **Latent CSS-var bug fixed.** The interview score colours used `var(--can-teach)` /
-     `var(--solid)` / `var(--learning)` and some new CSS used `var(--level-canteach)` etc. â€” **none
+     `var(--solid)` / `var(--learning)` and some new CSS used `var(--level-canteach)` etc. — **none
      of those variables were ever defined** (the matrix colours cells via inline JS from
-     `LEVELS[â€¦].color`, not CSS vars), so the score colours silently fell back to default text
+     `LEVELS[…].color`, not CSS vars), so the score colours silently fell back to default text
      colour. Fixed by defining `--level-learning/solid/canteach` in `styles.css :root` (kept in sync
      with `LEVELS`) and routing both `Interview.jsx` and `NavigatorDetail.jsx` through a new
      `interviewScoreColor(score)` helper in `config.js`.
   3. **Magic score-bands centralised.** The 75/60 green/amber/red thresholds (duplicated in two
      components) moved to `INTERVIEW_SCORE_BANDS` + `interviewScoreColor()` in `config.js`. This is a
-     separate scale from the capability `THRESHOLDS` (60/85) by design â€” documented in config.
-  4. **Prompt input caps.** `grade-interview.js` now caps the transcript at 40 turns Ã— 1500 chars
+     separate scale from the capability `THRESHOLDS` (60/85) by design — documented in config.
+  4. **Prompt input caps.** `grade-interview.js` now caps the transcript at 40 turns × 1500 chars
      each; `coach-audit.js` caps the reflection + model explanation at 2000 chars each. Bounds the
      token budget and trims the prompt-injection surface (output is advisory, but cheap insurance).
   5. **Redundant condition** `phase === 'loading' || (phase === 'loading' && genError)` in
      `SpotTheError.jsx` simplified to `phase === 'loading'`.
 - **Files affected:** new `api/_gemini-client.js`; edited all 6 `api/*` Gemini handlers,
   `src/data/config.js`, `src/styles.css`, `src/components/{Interview,NavigatorDetail,SpotTheError}.jsx`.
-- **Verification:** `npm test` â†’ 46 passing; `npm run build` â†’ clean; `node --check` on all handlers
-  â†’ OK; runtime `import()` smoke-test of all 6 handlers + the shared client â†’ resolves;
+- **Verification:** `npm test` → 46 passing; `npm run build` → clean; `node --check` on all handlers
+  → OK; runtime `import()` smoke-test of all 6 handlers + the shared client → resolves;
   `interviewScoreColor` returns the right band var for 80/65/40/null; confirmed no `--can-teach`
   refs remain and `--level-*` vars are in the built bundle.
 - **Status:** Complete.
 
-### 2026-06-25 â€” Interview discard option + AI grading after save (F15 Phase 2)
+### 2026-06-25 — Interview discard option + AI grading after save (F15 Phase 2)
 - **What changed:** Two navigator-requested additions to the practice call feature.
-  1. **Discard option:** the single "End call" button is replaced by two header buttons â€”
+  1. **Discard option:** the single "End call" button is replaced by two header buttons —
      **"Save & get feedback"** (primary) and **"Discard"** (ghost). Discarding shows a
-     "Session discarded â€” nothing was saved" screen and calls `reset()` without touching Firestore.
+     "Session discarded — nothing was saved" screen and calls `reset()` without touching Firestore.
   2. **AI grading:** after saving, the client calls the new `POST /api/grade-interview` endpoint
-     and transitions through a `grading` phase (spinner + "Reviewing your callâ€¦"). The `reviewed`
-     screen shows: a large color-coded score (green â‰¥75, amber â‰¥60, red <60), a 2â€“3 sentence
-     summary, a "What you did well" card (green left-border, 2â€“4 bullets), and a "What to work on"
-     card (amber left-border, 2â€“4 bullets). Grade is also written back to the Firestore interview
+     and transitions through a `grading` phase (spinner + "Reviewing your call…"). The `reviewed`
+     screen shows: a large color-coded score (green ≥75, amber ≥60, red <60), a 2–3 sentence
+     summary, a "What you did well" card (green left-border, 2–4 bullets), and a "What to work on"
+     card (amber left-border, 2–4 bullets). Grade is also written back to the Firestore interview
      doc via `updateInterviewGrade` so supervisors see it in the navigator's Practice sessions panel.
-  - **New file:** `api/grade-interview.js` â€” Gemini proxy (temp 0.3, structured JSON schema,
-    same key rotation pattern). Grounds judgment solely in `SOP_CONTEXT`; clamps score 0â€“100;
+  - **New file:** `api/grade-interview.js` — Gemini proxy (temp 0.3, structured JSON schema,
+    same key rotation pattern). Grounds judgment solely in `SOP_CONTEXT`; clamps score 0–100;
     validates output before returning `{ grade: { score, summary, strengths[], improvements[] } }`.
   - **`server.js`:** new `POST /api/grade-interview` route; dead `createRequire` import removed.
   - **`src/lib/db.js`:** `updateInterviewGrade(id, grade)` added.
@@ -1612,38 +1617,38 @@
     score badge (`interview-log__score-badge`), and grade breakdown (`interview-log__grade*`).
 - **Files affected:** new `api/grade-interview.js`; edited `server.js`, `src/lib/db.js`,
   `src/components/{Interview,NavigatorDetail}.jsx`, `src/styles.css`.
-- **Verification:** `npm test` â†’ 46 passing; `npm run build` â†’ clean; `node --check` on both
-  `api/grade-interview.js` and `server.js` â†’ OK.
+- **Verification:** `npm test` → 46 passing; `npm run build` → clean; `node --check` on both
+  `api/grade-interview.js` and `server.js` → OK.
 - **Status:** Complete.
 
-### 2026-06-25 â€” Code review: findings documented
+### 2026-06-25 — Code review: findings documented
 - **What reviewed:** F13 (AI Coaching), F15 (Interview), F16 (Spot the Error + completions), Roster
   CRUD, and the interview consistency fix. Full checklist pass across all 5 API handlers, `server.js`,
   `db.js`, `SpotTheError`, `Interview`, `Coaching`, `MyTraining`, `firestore.rules`.
 - **No blocking findings.** Moderate and minor findings documented:
-  - **â—† Dead import** â€” `createRequire` imported in `server.js:6` but never used.
-  - **â—† DRY violation** â€” `getApiKeys`, `callGemini`, `geminiWithRotation`, and `ROTATABLE` duplicated
+  - **◆ Dead import** — `createRequire` imported in `server.js:6` but never used.
+  - **◆ DRY violation** — `getApiKeys`, `callGemini`, `geminiWithRotation`, and `ROTATABLE` duplicated
     identically across all 5 `api/` handlers. Should be extracted to `api/_gemini-client.js`. The
     `generate-coaching.js` version has richer `authFailures` tracking that the other 4 lack.
-  - **â—† Zero test coverage** for new features (F13, F15, F16): `SpotTheError`, `Interview`,
+  - **◆ Zero test coverage** for new features (F13, F15, F16): `SpotTheError`, `Interview`,
     `Coaching`, `MyTraining`, the three new API handlers, and four new `db.js` exports.
-  - **â—‡ Redundant condition** in `SpotTheError.jsx:157`:
-    `if (phase === 'loading' || (phase === 'loading' && genError))` â†’ simplifies to
+  - **◇ Redundant condition** in `SpotTheError.jsx:157`:
+    `if (phase === 'loading' || (phase === 'loading' && genError))` → simplifies to
     `if (phase === 'loading')`.
-  - **â—‡ Prompt injection** â€” `navigatorAnswer` / `modelExplanation` / `name` inserted verbatim into
+  - **◇ Prompt injection** — `navigatorAnswer` / `modelExplanation` / `name` inserted verbatim into
     the `coach-audit` Gemini prompt. Output is advisory-only; blast radius = one coaching note
     visible to the attacker only. Low severity for pilot; add length cap + session token before
     production.
 - **Recommendation:** ship as-is; address DRY extraction and dead import before the next feature
   cycle; test coverage is the highest unresolved tech debt.
-- **No files changed** (findings only â€” no fixes in this session).
+- **No files changed** (findings only — no fixes in this session).
 
-### 2026-06-25 â€” Premium "refined-light" visual overhaul (design system + motion)
+### 2026-06-25 — Premium "refined-light" visual overhaul (design system + motion)
 - **What changed:** A non-functional, presentation-layer redesign elevating the app to a polished
   SaaS feel while keeping the warm ivory/clay identity (chosen over a dark theme for trust/fit).
   No business logic, data shapes, or routing changed.
   - **Design tokens (`styles.css` `:root`):** extended palette (surfaces, ink tiers, accent
-    strong/deep), an elevation scale (`--shadow-xsâ€¦lg`, `--shadow-glow`, focus `--ring`), gradient
+    strong/deep), an elevation scale (`--shadow-xs…lg`, `--shadow-glow`, focus `--ring`), gradient
     tokens (`--grad-accent` etc.), glass tokens (`--glass-bg/border/blur`), a radius scale, and
     motion tokens (`--ease-out/spring`, `--dur-1/2/3`). All **existing variable names preserved**
     so the rest of the sheet kept working.
@@ -1671,19 +1676,19 @@
   NavigatorDetail,Navigators,Training,MyTraining,Coaching,Check,QuestionBank,TrainingModule}.jsx`
   (Nav restyled via CSS only).
   `lib/scoring.js`, data modules, and `scoring.test.js` untouched.
-- **Verification:** `npm test` â†’ **46 passing**; `npm run build` â†’ clean; built app serves 200
+- **Verification:** `npm test` → **46 passing**; `npm run build` → clean; built app serves 200
   (root + CSS); new tokens/fonts confirmed in the bundle.
 - **Status:** Complete (code). Presentation-only; safe to deploy with the rest.
 
-### 2026-06-25 â€” Roster CRUD: edit, deactivate, reset with confirmation gate
-- **What changed:** Filled the CRUD gap in the roster layer â€” previously navigators could be added
+### 2026-06-25 — Roster CRUD: edit, deactivate, reset with confirmation gate
+- **What changed:** Filled the CRUD gap in the roster layer — previously navigators could be added
   but not edited, deactivated, or had their result cleared. Explicitly excluded fabricated
-  performance editing, permissions, and bulk operations (see Â§6 decisions for rationale).
-  - **`db.js`:** three new exports â€” `updateRosterEntry(id, patch)` (name/PIN patch),
+  performance editing, permissions, and bulk operations (see §6 decisions for rationale).
+  - **`db.js`:** three new exports — `updateRosterEntry(id, patch)` (name/PIN patch),
     `setRosterStatus(id, 'active'|'inactive')` (soft deactivation), `clearResult(navigatorId)`
     (deletes result so navigator can retake; roster entry untouched).
   - **`Navigators.jsx`:** rewritten. Cards are now `<div>` (not `<button>`) with an explicit "View
-    dashboard â†’" button inside, removing the invalid button-in-button HTML. Each card gets a
+    dashboard →" button inside, removing the invalid button-in-button HTML. Each card gets a
     "Manage" button revealing: **Edit name/PIN** (inline form, pre-filled, dup check excluding self),
     **Reset result** (only if they have a result), and **Deactivate** / **Reactivate**. All
     destructive actions (deactivate, reset, reactivate) require an inline confirmation prompt before
@@ -1691,7 +1696,7 @@
     with a dashed, de-emphasised card style.
   - **`SupervisorApp.jsx`:** four new handlers (`handleUpdateNavigator`, `handleDeactivateNavigator`,
     `handleReactivateNavigator`, `handleResetResult`). Inactive navigators are now filtered out of
-    `activeResults` before `buildMatrixRows` â€” deactivated team members don't skew floor gaps,
+    `activeResults` before `buildMatrixRows` — deactivated team members don't skew floor gaps,
     can-teach tallies, or training cohorts.
   - **`Start.jsx`:** navigator dropdown in the sign-in gate now filters out `status === 'inactive'`
     roster members so deactivated navigators can't sign in.
@@ -1702,94 +1707,94 @@
   activity history deferred to the quarter-over-quarter roadmap item.
 - **Files affected:** `src/lib/db.js`, `src/components/Navigators.jsx`, `src/components/SupervisorApp.jsx`,
   `src/components/Start.jsx`, `src/styles.css`.
-- **Verification:** `npm test` â†’ **46 passing**; `npm run build` â†’ clean.
+- **Verification:** `npm test` → **46 passing**; `npm run build` → clean.
 - **Status:** Complete.
 
-### 2026-06-25 â€” Interview transcripts in supervisor NavigatorDetail
+### 2026-06-25 — Interview transcripts in supervisor NavigatorDetail
 - **What changed:** Supervisors can now read a navigator's practice session transcripts from
   within the navigator's detail panel.
   - **`SupervisorApp.jsx`:** computes `selectedNavigatorId = roster.find(m => m.name === selected).id`
     and passes it as `navigatorId` to `<NavigatorDetail>`.
   - **`NavigatorDetail.jsx`:** accepts optional `navigatorId` prop; adds `useState`/`useEffect`
     to fetch `getInterviews(navigatorId)` on mount (sorted newest-first). New "Practice sessions"
-    panel renders a collapsible list â€” domain tag, caller name, response count, date â€” with
+    panel renders a collapsible list — domain tag, caller name, response count, date — with
     an expandable transcript view (patient lines left, navigator lines right with accent tint).
     Panel is hidden when `navigatorId` is absent (navigator's own dashboard in `NavigatorApp`).
   - **`styles.css`:** `.interview-log*` rules for the supervisor panel.
 - **Files affected:** `src/components/NavigatorDetail.jsx`, `src/components/SupervisorApp.jsx`,
   `src/styles.css`.
-- **Verification:** `npm test` â†’ 46 passing; `npm run build` â†’ clean.
+- **Verification:** `npm test` → 46 passing; `npm run build` → clean.
 - **Status:** Complete.
 
-### 2026-06-25 â€” AI interview simulation: roleplay phase
+### 2026-06-25 — AI interview simulation: roleplay phase
 - **What changed:** Navigators can now practice handling a patient call in the "Practice" tab.
-  Gemini acts as a patient caller â€” the navigator types responses turn by turn, and Gemini stays
+  Gemini acts as a patient caller — the navigator types responses turn by turn, and Gemini stays
   in character using a `system_instruction` seeded with the caller's scenario and SOP context.
-  - **New file:** `api/interview-turn.js` â€” two-mode handler: init call generates a scenario +
+  - **New file:** `api/interview-turn.js` — two-mode handler: init call generates a scenario +
     opening line via structured JSON schema (temperature 0.9 for variety); subsequent turn calls
     reconstruct the full conversation history into Gemini's alternating `user`/`model` format
     (with a synthetic `BEGIN_CALL` seed turn so the patient opens the call) and continue as the
     patient at temperature 0.8.
   - **`server.js`:** new `POST /api/interview-turn` route.
-  - **`src/components/Interview.jsx`:** setup â†’ loading â†’ active (chat bubbles, typing-dots
-    animation, auto-scroll, 20 s AbortController timeout per call) â†’ saving â†’ done. Transcript
+  - **`src/components/Interview.jsx`:** setup → loading → active (chat bubbles, typing-dots
+    animation, auto-scroll, 20 s AbortController timeout per call) → saving → done. Transcript
     saved to Firestore on "End call"; non-blocking (failure doesn't block the done screen).
   - **`src/lib/db.js`:** `saveInterview` and `getInterviews` added; `INTERVIEWS` collection
     constant; header comment updated to reflect all four collections.
   - **`src/components/Nav.jsx`:** "Practice" tab added for navigator role.
   - **`src/components/NavigatorApp.jsx`:** `Interview` imported; `interview` view wired in.
-  - **`src/styles.css`:** full chat UI â€” setup domain grid, header card, scrollable chat window,
+  - **`src/styles.css`:** full chat UI — setup domain grid, header card, scrollable chat window,
     patient/navigator bubbles (different alignment + colors), typing-dot animation,
     input row, done screen.
 - **Design decision:** Open-answer scores are advisory only and do not feed the capability matrix.
-  Phase 2 (criterion-based grading + supervisor override) is planned but not yet built â€” the
+  Phase 2 (criterion-based grading + supervisor override) is planned but not yet built — the
   roleplay phase ships first as the high-value, low-risk piece.
 - **Files affected:** new `api/interview-turn.js`, `src/components/Interview.jsx`; edited
   `server.js`, `src/lib/db.js`, `src/components/{Nav,NavigatorApp}.jsx`, `src/styles.css`.
-- **Verification:** `npm test` â†’ 46 passing; `npm run build` â†’ clean; `node --check
-  api/interview-turn.js` â†’ OK.
+- **Verification:** `npm test` → 46 passing; `npm run build` → clean; `node --check
+  api/interview-turn.js` → OK.
 - **Status:** Complete (roleplay only).
 
-### 2026-06-25 â€” "Spot the Error" QA audit training + completion tracking (F16)
+### 2026-06-25 — "Spot the Error" QA audit training + completion tracking (F16)
 - **What changed:** Added the "Flight Simulator" QA audit exercise to the training section.
   Navigators read an AI-generated flawed agent transcript, click the error message, write a
-  reflection, receive AI coaching, and earn a completion badge. Supervisors see "âœ“ Practiced"
+  reflection, receive AI coaching, and earn a completion badge. Supervisors see "✓ Practiced"
   badges on the training dashboard and navigator detail panels.
   - **New API files:** `api/generate-audit.js` (Gemini generates flawed transcript + errorIndex +
     hint + modelExplanation via structured JSON schema, temp 0.8); `api/coach-audit.js` (Gemini
-    coaches the navigator's written reflection, temp 0.4 â€” advisory only, never blocks).
-  - **New component:** `src/components/SpotTheError.jsx` â€” 7-phase flow with shake animation on
+    coaches the navigator's written reflection, temp 0.4 — advisory only, never blocks).
+  - **New component:** `src/components/SpotTheError.jsx` — 7-phase flow with shake animation on
     wrong clicks, hint reveal, reflection textarea, AI coaching skeleton, model-answer reveal,
     and non-blocking Firestore save.
-  - **New Firestore collection:** `completions` â€” `{ navigatorId, name, domainId, completedAt }`.
+  - **New Firestore collection:** `completions` — `{ navigatorId, name, domainId, completedAt }`.
     `db.js` gained `saveCompletion`, `getCompletions`, `subscribeCompletions`.
   - **`server.js`:** two new POST routes (`/api/generate-audit`, `/api/coach-audit`).
   - **`firestore.rules`:** `completions` + `interviews` collections added (both `allow read, write: if true`).
   - **`MyTraining.jsx`:** rewritten to accept `onStartAudit` + `completedDomains`; each training
-    item now has "Practice Scenario" / "Practice again" button + "âœ“ Practiced" badge.
+    item now has "Practice Scenario" / "Practice again" button + "✓ Practiced" badge.
   - **`NavigatorApp.jsx`:** `SpotTheError` imported + `audit` view wired; `getCompletions` fetched
     on mount; `handleAuditComplete` updates local `completedDomains` Set immediately on done.
   - **`SupervisorApp.jsx`:** `subscribeCompletions` live subscription added; `completionMap`
     derived; passed to `Training` (with `roster`) and `NavigatorDetail`.
   - **`Training.jsx`:** `completionMap` + `roster` props; `hasPracticed(name, domainId)` helper;
-    "âœ“ Practiced" badge in by-navigator assignments.
+    "✓ Practiced" badge in by-navigator assignments.
   - **`NavigatorDetail.jsx`:** `completedDomains` prop; badge in "Assigned training" panel.
   - **`styles.css`:** full SpotTheError UI (transcript bubbles, shake animation, hint box, reflect
     panel, coaching panel, model-answer block, done screen); practiced badges.
-- **Verification:** `npm test` â†’ 46 passing; `npm run build` â†’ clean; `node --check` on both new
-  API files â†’ OK.
+- **Verification:** `npm test` → 46 passing; `npm run build` → clean; `node --check` on both new
+  API files → OK.
 - **Status:** Complete.
 
-### 2026-06-25 â€” Generative AI coaching (Phase 2, first feature)
+### 2026-06-25 — Generative AI coaching (Phase 2, first feature)
 - **What changed:** Added a second coaching layer that runs Gemini asynchronously after a navigator
-  submits a check â€” producing a 2â€“3 sentence personalised coaching note per weak competency, grounded
+  submits a check — producing a 2–3 sentence personalised coaching note per weak competency, grounded
   in the authored option rationales (not free-form SOP knowledge). The rule-based layer is unchanged
   and always present as the baseline/fallback.
-  - **New file:** `api/generate-coaching.js` â€” Gemini proxy (same key rotation + `SUPERVISOR_PASSCODE`
+  - **New file:** `api/generate-coaching.js` — Gemini proxy (same key rotation + `SUPERVISOR_PASSCODE`
     gate as `generate-scenarios`). Builds a concise digest of only the missed/partial questions with
     their chosen rationale vs best rationale as grounding context. Calls `gemini-2.5-flash` at
     temperature 0.4. Validates output: only known competency IDs with non-empty strings kept. Returns
-    `{ coaching: { [compId]: "note" } }`. Advisory only â€” never writes to Firestore or affects scores.
+    `{ coaching: { [compId]: "note" } }`. Advisory only — never writes to Firestore or affects scores.
   - **`server.js`:** new `POST /api/generate-coaching` route.
   - **`Coaching.jsx`:** fires the fetch on mount; shows an `AI`-badged skeleton card while loading;
     renders coaching notes (one item per weak competency, accent-rail style) above the per-question
@@ -1797,16 +1802,13 @@
   - **`styles.css`:** new `.coaching__ai*` rules (badge, skeleton, list, item, comp label, note).
 - **Files affected:** new `api/generate-coaching.js`; edited `server.js`, `src/components/Coaching.jsx`,
   `src/styles.css`.
-- **Verification:** `npm test` â†’ **46 passing**; `npm run build` â†’ clean; `node --check
-  api/generate-coaching.js` â†’ OK; `node --check server.js` â†’ OK.
+- **Verification:** `npm test` → **46 passing**; `npm run build` → clean; `node --check
+  api/generate-coaching.js` → OK; `node --check server.js` → OK.
 - **Status:** Complete. Deploys on next push to `main`.
 
-### 2026-06-28 â€” Branding integration: Logo and favicon *(logo reverted 2026-06-29)*
+### 2026-06-28 — Branding integration: Logo and favicon *(logo reverted 2026-06-29)*
 - **What changed:** Added a favicon (`public/favicon.png`) + logo (`public/logo.png`) for the
   Cruciby branding. Favicon link added to `index.html`; logo `<img>` tags added to `Nav.jsx` and
   `Start.jsx`; `@keyframes logo-float` + `.start__logo`/`.nav__logo` CSS added to `styles.css`.
-- **Status:** Partially reverted 2026-06-29 â€” favicon retained; logo `<img>` tags removed from
+- **Status:** Partially reverted 2026-06-29 — favicon retained; logo `<img>` tags removed from
   Nav.jsx and Start.jsx; `public/logo.png` and the float CSS remain in the repo (orphaned).
-
-
-

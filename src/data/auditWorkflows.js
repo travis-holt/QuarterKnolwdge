@@ -55,6 +55,7 @@ export function chooseBalancedWorkflowTypes(existingAudits, domainId, count = 1)
 
   const counts = Object.fromEntries(workflows.map((type) => [type, 0]));
   for (const audit of existingAudits) {
+    if ((audit.status ?? 'active') === 'archived') continue;
     if (audit.domainId !== domainId) continue;
     const type = audit.workflowType;
     if (type in counts) counts[type] += 1;
