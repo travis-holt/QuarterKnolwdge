@@ -10,6 +10,7 @@ import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import EmptyState from './EmptyState.jsx';
 import Footer     from './Footer.jsx';
 import Nav        from './Nav.jsx';
+import PhaseHub   from './PhaseHub.jsx';
 import Start      from './Start.jsx';
 
 const startMocks = vi.hoisted(() => ({
@@ -179,5 +180,57 @@ describe('Start navigator gate', () => {
 
     await waitFor(() => expect(onNavigatorEntry).toHaveBeenCalledWith('bea', 'Bea'));
     expect(startMocks.updateRosterEntry).not.toHaveBeenCalled();
+  });
+});
+
+describe('PhaseHub', () => {
+  const noop = () => {};
+
+  it('locks phases 2 and 3 when nothing is done', () => {
+    render(<PhaseHub deptName="Pediatrics" done={{}} results={{}} latestQa={null} onStart={noop} />);
+    expect(screen.getByText('0 of 3 phases complete')).toBeTruthy();
+    const cards = screen.getAllByRole('button').filter((b) => b.className.includes('phase-card'));
+    expect(cards).toHaveLength(3);
+    expect(cards[0].disabled).toBe(false);
+    expect(cards[1].disabled).toBe(true);
+    expect(cards[2].disabled).toBe(true);
+    expect(screen.getAllByText(/Complete Phase \d first/)).toHaveLength(2);
+  });
+
+  it('starts the first phase on click', () => {
+    let picked = null;
+    render(<PhaseHub deptName="Pediatrics" done={{}} results={{}} latestQa={null} onStart={(id) => { picked = id; }} />);
+    const cards = screen.getAllByRole('button').filter((b) => b.className.includes('phase-card'));
+    fireEvent.click(cards[0]);
+    expect(picked).toBe('mcq');
+  });
+
+  it('unlocks phase 2 after the MCQ and shows its summary', () => {
+    const results = { mcq: { scores: { intake: 80, classification: 60 } } };
+    let picked = null;
+    render(<PhaseHub deptName="Pediatrics" done={{ mcq: true }} results={results} latestQa={null} onStart={(id) => { picked = id; }} />);
+    expect(screen.getByText('1 of 3 phases complete')).toBeTruthy();
+    expect(screen.getByText(/avg 70%/)).toBeTruthy();
+    const cards = screen.getAllByRole('button').filter((b) => b.className.includes('phase-card'));
+    fireEvent.click(cards[1]);
+    expect(picked).toBe('spot');
+    expect(cards[2].disabled).toBe(true);
+  });
+
+  it('shows the QA verdict and all-complete state when every phase is done', () => {
+    const latestQa = { qa: { pass: false, score: 62, review: null } };
+    render(
+      <PhaseHub
+        deptName="Pediatrics"
+        done={{ mcq: true, spot: true, qa: true }}
+        results={{ mcq: { scores: { intake: 90 } }, spot: { scores: { intake: 100 } } }}
+        latestQa={latestQa}
+        onStart={noop}
+      />
+    );
+    expect(screen.getByText('All 3 phases complete')).toBeTruthy();
+    expect(screen.getByText(/FAIL · 62\/100/)).toBeTruthy();
+    const cards = screen.getAllByRole('button').filter((b) => b.className.includes('phase-card'));
+    expect(cards.every((c) => !c.disabled)).toBe(true);
   });
 });

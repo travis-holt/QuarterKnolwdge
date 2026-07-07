@@ -5035,10 +5035,6 @@ textarea:focus-visible {
 
 /* ── Call QA Test (hard rubric-graded voice test) ──────────────────────────── */
 
-.practice-choice__card--test {
-  border-color: var(--accent);
-}
-
 .qa-result {
   display: flex;
   flex-direction: column;
@@ -5184,4 +5180,63 @@ textarea:focus-visible {
 .interview-log__grade-section--flags {
   border-left: 3px solid var(--level-solid);
   padding-left: 0.75rem;
+}
+
+/* ── 3-phase assessment hub (PhaseHub.jsx) ───────────────────────────────── */
+.phase-hub__progress {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  margin-bottom: 1.25rem;
+}
+.phase-hub__progress-label {
+  font-size: 0.9rem;
+  color: var(--ink-soft);
+  font-weight: 600;
+}
+.phase-hub__dots { display: inline-flex; gap: 0.4rem; }
+.phase-hub__dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--line);
+}
+.phase-hub__dot--done { background: var(--level-canteach); }
+.phase-hub__dot--next {
+  background: var(--accent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 25%, transparent);
+}
+.phase-hub__note { margin-top: 1rem; }
+
+.phase-card { position: relative; }
+.phase-card__phase {
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ink-faint, var(--ink-soft));
+}
+.phase-card--next { border-color: var(--accent); box-shadow: var(--shadow-md, 0 4px 14px rgba(0,0,0,0.08)); }
+.phase-card--locked {
+  opacity: 0.55;
+  cursor: not-allowed;
+  filter: saturate(0.4);
+}
+.phase-card__summary {
+  font-size: 0.8rem;
+  font-weight: 700;
+}
+.phase-card__summary--pass { color: var(--level-canteach); }
+.phase-card__summary--fail { color: var(--level-learning); }
+.phase-card__summary--review { color: var(--level-solid); }
+.phase-card__cta {
+  margin-top: 0.5rem;
+  font-weight: 700;
+  color: var(--accent);
+}
+.phase-card__cta--ghost { color: var(--ink-soft); font-weight: 600; }
+.phase-card__lock {
+  margin-top: 0.5rem;
+  font-size: 0.85rem;
+  color: var(--ink-soft);
 }

@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react';
+﻿import { useState, useEffect, useRef } from 'react';
 import Nav from './Nav.jsx';
 import Check from './Check.jsx';
 import Coaching from './Coaching.jsx';
@@ -9,18 +9,19 @@ import Interview from './Interview.jsx';
 import MyHistory from './MyHistory.jsx';
 import VoiceCall from './VoiceCall.jsx';
 import SpotTheError from './SpotTheError.jsx';
+import PhaseHub from './PhaseHub.jsx';
 import EmptyState from './EmptyState.jsx';
 import Footer from './Footer.jsx';
 import {
   scorePerDomain,
   scorePerCompetency,
-  scoreQaAcrossDomains,
   buildMatrixRows,
   departmentMatrix,
   findRow,
 } from '../lib/scoring.js';
 import { getResult, saveResult, getFloorScores, getActiveQuestions, getCompletions, getInterviews, saveCompletion } from '../lib/db.js';
 import { MINICHECK_SIZE, MINICHECK_PASS } from '../data/config.js';
+import { phasesComplete, completedCount } from '../lib/phases.js';
 import { isFirebaseConfigured } from '../lib/firebase.js';
 import { SEED_QUESTIONS, SEED_QUESTIONS_OBGYN, DOMAINS } from '../data/questions.js';
 import { ASSESSED_DEPTS, departmentName } from '../data/departments.js';
@@ -31,16 +32,16 @@ const SEED_BY_DEPT = {
   obgyn: SEED_QUESTIONS_OBGYN,
 };
 
-// Every domain id — the full-profile "Spot the Error" assessment covers them all.
+// Every domain id â€” the full-profile "Spot the Error" assessment covers them all.
 const ALL_DOMAIN_IDS = DOMAINS.map((d) => d.id);
 
 // The navigator's self-contained app. They can ONLY ever see their own data:
 // there is no route to the matrix, overview, or other navigators' dashboards.
-// (They do receive the floor's results — read-only — so mentor suggestions can
+// (They do receive the floor's results â€” read-only â€” so mentor suggestions can
 // name colleagues who can teach their growth domains, but those names are not
 // clickable and open nothing.)
 export default function NavigatorApp({ navigatorId, name, onSignOut }) {
-  const [view, setView] = useState('loading'); // loading · deptselect · typeselect · check · spotfull · coaching · dashboard · history · training · module · interview · audit · minicheck
+  const [view, setView] = useState('loading'); // loading Â· deptselect Â· phases Â· check Â· spotfull Â· coaching Â· dashboard Â· history Â· training Â· module Â· interview Â· audit Â· minicheck Â· qatest
   const [activeDept, setActiveDept] = useState(null); // chosen by navigator at deptselect
   // A navigator can hold BOTH an MCQ and a Spot the Error result per department;
   // both are kept so they can take (and view) either. `activeType` is the one
@@ -53,19 +54,19 @@ export default function NavigatorApp({ navigatorId, name, onSignOut }) {
   const [moduleDomain, setModuleDomain] = useState(null);
   const [auditDomain, setAuditDomain] = useState(null);
   const [miniCheckDomain, setMiniCheckDomain] = useState(null);
-  const [practiceMode, setPracticeMode] = useState(null); // null (chooser) · 'voice' · 'chat'
+  const [practiceMode, setPracticeMode] = useState(null); // null (chooser) Â· 'voice' Â· 'chat'
   const [completedDomains, setCompletedDomains] = useState(new Set());
   const [completions, setCompletions] = useState([]);
   const [interviews, setInterviews] = useState([]);
   const [loadError, setLoadError] = useState(false);
   // H2: surface (and allow retry of) failed result saves instead of swallowing
   // them. When a save to Firestore fails, the navigator's dashboard still renders
-  // from local state, but the supervisor never sees the result — so we must tell
+  // from local state, but the supervisor never sees the result â€” so we must tell
   // the navigator and let them retry rather than leaving them falsely "done".
   const [saveError, setSaveError] = useState(false);
   const [retrying, setRetrying] = useState(false);
   const pendingSaveRef = useRef(null); // { args:[...saveResult args], onSuccess? }
-  // Cross-dept scores keyed by deptId — populated on mount + updated after each check.
+  // Cross-dept scores keyed by deptId â€” populated on mount + updated after each check.
   // Feeds deptMatrix so the "Strength across departments" strip shows real data for
   // every dept the navigator has taken, not just the currently active one.
   const [allDeptResults, setAllDeptResults] = useState({});
@@ -74,11 +75,11 @@ export default function NavigatorApp({ navigatorId, name, onSignOut }) {
   const ownResult = activeType ? resultsByType[activeType] : null;
   const hasMcq = Boolean(resultsByType.mcq);
   const hasSpot = Boolean(resultsByType.spot);
-  const hasQa = Boolean(resultsByType.qa);
 
   // Given both loaded results, which one to show by default (the most recent).
   const pickActiveType = (byType) => {
     return ['mcq', 'spot', 'qa']
+      .filter((type) => type !== 'qa')
       .filter((type) => byType[type])
       .sort((a, b) => (byType[b].submittedAt?.seconds ?? -1) - (byType[a].submittedAt?.seconds ?? -1))[0] ?? null;
   };
@@ -118,51 +119,58 @@ export default function NavigatorApp({ navigatorId, name, onSignOut }) {
     setActiveDept(dept);
     setView('loading');
     try {
-      const [mcq, spot, qa] = await Promise.all([
+      const [mcq, spot, qa, ivs] = await Promise.all([
         getResult(navigatorId, dept, 'mcq'),
         getResult(navigatorId, dept, 'spot'),
         getResult(navigatorId, dept, 'qa'),
+        getInterviews(navigatorId).catch(() => []),
       ]);
       setResultsByType({ mcq, spot, qa });
+      setInterviews(ivs);
       const byType = { mcq, spot, qa };
       const type = pickActiveType(byType);
       setActiveType(type);
       // Fetch the active question bank for this department (needed by MCQ + coaching).
       const qs = await getActiveQuestions(dept).catch(() => []);
       setQuestions(qs.length > 0 ? qs : (SEED_BY_DEPT[dept] ?? SEED_QUESTIONS));
-      if (type) {
-        setAllDeptResults((prev) => ({ ...prev, [dept]: byType[type].scores }));
-        setView('dashboard');
-      } else {
-        setView('typeselect'); // no results yet → pick an assessment
-      }
+      if (type) setAllDeptResults((prev) => ({ ...prev, [dept]: byType[type].scores }));
+      // Land on the dashboard only when the full 3-phase assessment is complete;
+      // otherwise the phase hub shows what's next (D5).
+      const allDone = phasesComplete({
+        mcq: Boolean(mcq),
+        spot: Boolean(spot),
+        qa: Boolean(latestQaForDept(ivs, dept)),
+      });
+      setView(allDone ? 'dashboard' : 'phases');
     } catch {
       setLoadError(true);
       setView('error');
     }
   };
 
-  // Floor scores — used ONLY to compute mentor suggestions (which colleagues can
+  // Floor scores â€” used ONLY to compute mentor suggestions (which colleagues can
   // teach a domain). C4: a one-time, minimized `{ name, scores }` projection
   // instead of a live subscription to every peer's full result doc. This drops
   // peers' raw `answers` + competency detail from the navigator's client and
-  // stops the continuous broadcast. Mentor suggestions no longer update live —
+  // stops the continuous broadcast. Mentor suggestions no longer update live â€”
   // acceptable (they were already flagged non-critical).
   useEffect(() => {
     if (!isFirebaseConfigured) return undefined;
     let active = true;
-    getFloorScores()
+    if (!activeDept) return undefined;
+    getFloorScores(activeDept)
       .then((list) => { if (active) setResults(list); })
       .catch((err) => console.error('getFloorScores (navigator):', err));
     return () => { active = false; };
-  }, []);
+  }, [activeDept]);
 
   // Load exercise/interview evidence when views need progress indicators.
   useEffect(() => {
     if (!isFirebaseConfigured) return undefined;
     if (view !== 'dashboard' && view !== 'training') return undefined;
     let active = true;
-    getCompletions(navigatorId)
+    const dept = activeDept ?? 'pediatrics';
+    getCompletions(navigatorId, dept)
       .then((list) => {
         if (!active) return;
         setCompletions(list);
@@ -172,11 +180,11 @@ export default function NavigatorApp({ navigatorId, name, onSignOut }) {
       })
       .catch(() => { /* completions are non-critical */ });
     return () => { active = false; };
-  }, [navigatorId, view]);
+  }, [navigatorId, activeDept, view]);
 
   useEffect(() => {
     if (!isFirebaseConfigured) return undefined;
-    if (view !== 'dashboard' && view !== 'training') return undefined;
+    if (view !== 'dashboard' && view !== 'training' && view !== 'phases') return undefined;
     let active = true;
     getInterviews(navigatorId)
       .then((list) => {
@@ -188,7 +196,7 @@ export default function NavigatorApp({ navigatorId, name, onSignOut }) {
   }, [navigatorId, view]);
 
   // Reset the practice-type chooser whenever the navigator leaves the Practice tab.
-  // (Must live with the other hooks, above the early returns — never after them.)
+  // (Must live with the other hooks, above the early returns â€” never after them.)
   useEffect(() => { if (view !== 'interview') setPracticeMode(null); }, [view]);
 
   // Persist a result to Firestore, surfacing failures for retry. Local UI state
@@ -246,8 +254,8 @@ export default function NavigatorApp({ navigatorId, name, onSignOut }) {
     setView('deptselect');
   };
 
-  // From the dashboard: go take another assessment (MCQ or Spot) for this dept.
-  const handleTakeAnother = () => setView('typeselect');
+  // From the dashboard: back to the 3-phase assessment hub (continue or retake).
+  const handleTakeAnother = () => setView('phases');
 
   // Switch which stored result the dashboard/training views reflect.
   const handleSwitchType = (type) => {
@@ -278,8 +286,8 @@ export default function NavigatorApp({ navigatorId, name, onSignOut }) {
   // back into the navigator's capability ratings and record a practice completion
   // for each assessed domain. `domainScores` is a { domainId: percent } map (one
   // entry in training mode, all domains in full-profile mode).
-  //   mode 'full'   → this IS the Spot result: replace the whole Spot profile.
-  //   mode 'domain' → merge the assessed domain into whichever profile is active
+  //   mode 'full'   â†’ this IS the Spot result: replace the whole Spot profile.
+  //   mode 'domain' â†’ merge the assessed domain into whichever profile is active
   //                   (the training plan is derived from the active result).
   const handleSpotComplete = async (domainScores, mode) => {
     const domainIds = Object.keys(domainScores);
@@ -287,10 +295,10 @@ export default function NavigatorApp({ navigatorId, name, onSignOut }) {
     setCompletedDomains((prev) => new Set([...prev, ...domainIds]));
     setCompletions((prev) => [
       ...prev,
-      ...domainIds.map((domainId) => ({ navigatorId, name, domainId, kind: 'practice', completedAt: now })),
+      ...domainIds.map((domainId) => ({ navigatorId, name, department: dept, domainId, kind: 'practice', completedAt: now })),
     ]);
     for (const domainId of domainIds) {
-      try { await saveCompletion(navigatorId, name, domainId, 'practice'); } catch (err) { console.error('saveCompletion (practice):', err); }
+      try { await saveCompletion(navigatorId, name, domainId, 'practice', dept); } catch (err) { console.error('saveCompletion (practice):', err); }
     }
 
     const targetType = mode === 'full' ? 'spot' : (activeType ?? 'spot');
@@ -307,13 +315,10 @@ export default function NavigatorApp({ navigatorId, name, onSignOut }) {
   };
 
   const handleQaComplete = async (qa) => {
-    const scores = scoreQaAcrossDomains(qa);
-    const now = { seconds: Math.floor(Date.now() / 1000) };
-    const result = { name, navigatorId, department: dept, assessmentType: 'qa', scores, competencyScores: {}, answers: {}, submittedAt: now };
-    setResultsByType((prev) => ({ ...prev, qa: result }));
-    setActiveType('qa');
-    setAllDeptResults((prev) => ({ ...prev, [dept]: scores }));
-    await persistResult([navigatorId, name, scores, {}, dept, {}, 'qa']);
+    setInterviews((prev) => [
+      ...prev,
+      { name, navigatorId, department: dept, endedAt: { seconds: Math.floor(Date.now() / 1000) }, qa },
+    ]);
   };
 
   // Merge own result into the floor results for mentor suggestions. Floor rows
@@ -334,6 +339,12 @@ export default function NavigatorApp({ navigatorId, name, onSignOut }) {
   const deptName = departmentName(dept);
   const latestQa = latestQaForDept(interviews, dept);
   const practiceInterviews = interviews.filter((iv) => !iv?.qa);
+  // 3-phase assessment: completion is derived, never stored (see src/lib/phases.js).
+  // Phase 3 completion comes from the interview docs (the QA test does not write a
+  // results doc), so a saved-but-ungraded call does not count as complete.
+  const phaseDone = { mcq: hasMcq, spot: hasSpot, qa: Boolean(latestQa) };
+  // Where to go after finishing a phase: the hub while phases remain, else the dashboard.
+  const afterPhase = () => setView(phasesComplete(phaseDone) ? 'dashboard' : 'phases');
   // Include allDeptResults so the strip shows real scores for every dept taken,
   // not just the currently active one. Merge ownResult in case it's fresher.
   const deptScoresMap = ownResult?.scores
@@ -347,7 +358,7 @@ export default function NavigatorApp({ navigatorId, name, onSignOut }) {
   if (view === 'loading') {
     return (
       <Shell role="navigator" view="dashboard" setView={() => {}} onSignOut={onSignOut}>
-        <EmptyState title="Loading…">One moment while we pull up your check.</EmptyState>
+        <EmptyState title="Loadingâ€¦">One moment while we pull up your check.</EmptyState>
       </Shell>
     );
   }
@@ -386,7 +397,7 @@ export default function NavigatorApp({ navigatorId, name, onSignOut }) {
     );
   }
 
-  // Only show dept switcher outside an in-progress assessment — switching mid-quiz would lose progress.
+  // Only show dept switcher outside an in-progress assessment â€” switching mid-quiz would lose progress.
   const showDeptSwitcher = activeDept && view !== 'check' && view !== 'spotfull' && view !== 'qatest' && view !== 'coaching';
 
   return (
@@ -400,28 +411,29 @@ export default function NavigatorApp({ navigatorId, name, onSignOut }) {
     >
       {saveError && (
         <div className="subscribe-error" role="alert">
-          ⚠ Your latest result hasn’t saved to the server yet — your supervisor can’t see it. Stay
+          âš  Your latest result hasnâ€™t saved to the server yet â€” your supervisor canâ€™t see it. Stay
           on this page and{' '}
           <button className="linkbtn" onClick={retrySave} disabled={retrying}>
-            {retrying ? 'retrying…' : 'retry now'}
+            {retrying ? 'retryingâ€¦' : 'retry now'}
           </button>
           .
         </div>
       )}
 
-      {view === 'typeselect' && (
-        <AssessmentTypeChooser
+      {view === 'phases' && (
+        <PhaseHub
           deptName={deptName}
-          taken={{ mcq: hasMcq, spot: hasSpot, qa: hasQa }}
+          done={phaseDone}
+          results={resultsByType}
           latestQa={latestQa}
-          onPick={(type) => setView(type === 'spot' ? 'spotfull' : type === 'qa' ? 'qatest' : 'check')}
+          onStart={(id) => setView(id === 'spot' ? 'spotfull' : id === 'qa' ? 'qatest' : 'check')}
         />
       )}
 
       {view === 'check' && (
         <Check
           onSubmit={handleSubmit}
-          onCancel={() => setView('typeselect')}
+          onCancel={() => setView('phases')}
           questions={questions}
           hideName
           greetingName={name}
@@ -437,8 +449,8 @@ export default function NavigatorApp({ navigatorId, name, onSignOut }) {
           domains={ALL_DOMAIN_IDS}
           mode="full"
           department={dept}
-          onBack={() => setView('typeselect')}
-          onFinish={() => setView('dashboard')}
+          onBack={() => setView('phases')}
+          onFinish={afterPhase}
           onComplete={handleSpotComplete}
         />
       )}
@@ -450,7 +462,7 @@ export default function NavigatorApp({ navigatorId, name, onSignOut }) {
           department={dept}
           mode="test"
           onQaResult={handleQaComplete}
-          onExit={() => setView('typeselect')}
+          onExit={() => setView('phases')}
           onDone={() => setView('dashboard')}
         />
       )}
@@ -464,7 +476,7 @@ export default function NavigatorApp({ navigatorId, name, onSignOut }) {
           completions={completions}
           interviews={practiceInterviews}
           priorResults={Object.entries(allDeptResults).map(([department, scores]) => ({ department, scores }))}
-          onContinue={() => setView('dashboard')}
+          onContinue={afterPhase}
         />
       )}
 
@@ -480,6 +492,7 @@ export default function NavigatorApp({ navigatorId, name, onSignOut }) {
                 resultsByType={resultsByType}
                 onSwitch={handleSwitchType}
                 onTakeAnother={handleTakeAnother}
+                phasesDone={completedCount(phaseDone)}
               />
               <NavigatorDetail
                 rows={rows}
@@ -499,8 +512,8 @@ export default function NavigatorApp({ navigatorId, name, onSignOut }) {
             </>
           ) : (
             <EmptyState title="No domain results yet">
-              Take any assessment and your six domain scores will appear here.{' '}
-              <button className="linkbtn" onClick={() => setView('typeselect')}>Start one now</button>.
+              Complete the assessment phases and your six domain scores will appear here.{' '}
+              <button className="linkbtn" onClick={() => setView('phases')}>Start Phase 1 now</button>.
             </EmptyState>
           )}
         </>
@@ -542,7 +555,7 @@ export default function NavigatorApp({ navigatorId, name, onSignOut }) {
           onBack={() => setView('training')}
           onOpenNavigator={null}
           showCohort={false}
-          backLabel="← Back to my training"
+          backLabel="â† Back to my training"
         />
       )}
 
@@ -552,19 +565,9 @@ export default function NavigatorApp({ navigatorId, name, onSignOut }) {
       {view === 'interview' && practiceMode === 'voice' && (
         <VoiceCall navigatorId={navigatorId} name={name} department={dept} onExit={() => setPracticeMode(null)} />
       )}
-      {view === 'interview' && practiceMode === 'test' && (
-        <VoiceCall
-          navigatorId={navigatorId}
-          name={name}
-          department={dept}
-          onExit={() => setPracticeMode(null)}
-          onQaResult={handleQaComplete}
-          mode="test"
-        />
-      )}
       {view === 'interview' && practiceMode === 'chat' && (
         <>
-          <button className="linkbtn" onClick={() => setPracticeMode(null)} style={{ marginBottom: '1rem' }}>← Call type</button>
+          <button className="linkbtn" onClick={() => setPracticeMode(null)} style={{ marginBottom: '1rem' }}>â† Call type</button>
           <Interview navigatorId={navigatorId} name={name} department={dept} />
         </>
       )}
@@ -590,7 +593,7 @@ export default function NavigatorApp({ navigatorId, name, onSignOut }) {
             const passed = domainScore >= MINICHECK_PASS;
             // Always record the minicheck completion regardless of pass/fail
             try {
-              await saveCompletion(navigatorId, name, miniCheckDomain, 'minicheck');
+              await saveCompletion(navigatorId, name, miniCheckDomain, 'minicheck', dept);
             } catch (err) { console.error('saveCompletion (minicheck):', err); }
             if (passed) {
               // Re-save the active profile with the updated domain so the trend chart gains a point.
@@ -625,7 +628,7 @@ export default function NavigatorApp({ navigatorId, name, onSignOut }) {
             }
             setCompletions((prev) => [
               ...prev,
-              { navigatorId, name, domainId: miniCheckDomain, kind: 'minicheck', completedAt: { seconds: Math.floor(Date.now() / 1000) } },
+              { navigatorId, name, department: dept, domainId: miniCheckDomain, kind: 'minicheck', completedAt: { seconds: Math.floor(Date.now() / 1000) } },
             ]);
             setView('training');
           }}
@@ -641,7 +644,7 @@ export default function NavigatorApp({ navigatorId, name, onSignOut }) {
   );
 }
 
-// Dashboard control bar — shows which assessment the profile is from, lets the
+// Dashboard control bar â€” shows which assessment the profile is from, lets the
 // navigator switch between saved assessment results, and launches another one.
 const TYPE_LABEL = { mcq: 'Multiple choice', spot: 'Spot the Error', qa: 'Call QA Test' };
 
@@ -665,8 +668,8 @@ function formatQaDate(ts) {
   });
 }
 
-function AssessmentBar({ activeType, resultsByType, onSwitch, onTakeAnother }) {
-  const takenTypes = ['mcq', 'spot', 'qa'].filter((t) => resultsByType[t]);
+function AssessmentBar({ activeType, resultsByType, onSwitch, onTakeAnother, phasesDone = 0 }) {
+  const takenTypes = ['mcq', 'spot'].filter((t) => resultsByType[t]);
   const multiTaken = takenTypes.length > 1;
   return (
     <div className="assess-bar">
@@ -691,13 +694,12 @@ function AssessmentBar({ activeType, resultsByType, onSwitch, onTakeAnother }) {
         </span>
       )}
       <button type="button" className="btn btn--ghost btn--sm" onClick={onTakeAnother}>
-        {multiTaken ? 'Retake an assessment' : 'Take another assessment'}
+        {phasesDone >= 3 ? 'Retake a phase' : `Continue assessment (Phase ${phasesDone + 1} of 3)`}
       </button>
     </div>
   );
 }
 
-// Assessment-type chooser: all three assessment types feed the capability matrix.
 function QaLatestCard({ qa, endedAt, onRetake }) {
   return (
     <div className={`card qa-latest ${qa.pass ? 'qa-latest--pass' : 'qa-latest--fail'}`}>
@@ -713,51 +715,8 @@ function QaLatestCard({ qa, endedAt, onRetake }) {
   );
 }
 
-function AssessmentTypeChooser({ deptName, taken = {}, latestQa, onPick }) {
-  return (
-    <section className="interview view-enter">
-      <header className="overview__head">
-        <div>
-          <h1 className="overview__title">Choose your assessment</h1>
-          <p className="overview__lede">
-            Choose how to be assessed for {deptName}. All assessment types update your domain profile.
-          </p>
-        </div>
-      </header>
-      <div className="practice-choice">
-        <button className="card practice-choice__card" onClick={() => onPick('mcq')} type="button">
-          {taken.mcq && <span className="practice-choice__taken">✓ Completed — retake</span>}
-          <span className="practice-choice__glyph" aria-hidden="true">📝</span>
-          <h2 className="practice-choice__title">Multiple choice</h2>
-          <p className="practice-choice__desc">
-            Work through scenario questions and choose the best action. Measures every domain and
-            competency.
-          </p>
-        </button>
-        <button className="card practice-choice__card" onClick={() => onPick('spot')} type="button">
-          {taken.spot && <span className="practice-choice__taken">✓ Completed — retake</span>}
-          <span className="practice-choice__glyph" aria-hidden="true">🔍</span>
-          <h2 className="practice-choice__title">Spot the Error</h2>
-          <p className="practice-choice__desc">
-            Read real call transcripts and find where the agent broke policy — one per domain. Scores
-            your whole capability profile on click accuracy.
-          </p>
-        </button>
-        <button className="card practice-choice__card practice-choice__card--test" onClick={() => onPick('qa')} type="button">
-          {(latestQa || taken.qa) && <span className="practice-choice__taken">{latestQa ? (latestQa.qa.pass ? 'PASS' : 'FAIL') : 'Completed'} - retake</span>}
-          <span className="practice-choice__glyph" aria-hidden="true">QA</span>
-          <h2 className="practice-choice__title">Call QA Test</h2>
-          <p className="practice-choice__desc">
-            Graded voice call, pass/fail. Updates all six domain scores.
-          </p>
-        </button>
-      </div>
-    </section>
-  );
-}
-
 // Shared shell for the navigator: nav + main + footer.
-// Practice-type chooser — keeps the real-time voice call and the text chat as
+// Practice-type chooser â€” keeps the real-time voice call and the text chat as
 // two separate experiences rather than mixing voice into the chat UI.
 function PracticeChooser({ onPick }) {
   return (
@@ -770,22 +729,14 @@ function PracticeChooser({ onPick }) {
       </header>
       <div className="practice-choice">
         <button className="card practice-choice__card" onClick={() => onPick('voice')} type="button">
-          <span className="practice-choice__glyph" aria-hidden="true">🎙️</span>
+          <span className="practice-choice__glyph" aria-hidden="true">ðŸŽ™ï¸</span>
           <h2 className="practice-choice__title">Voice call</h2>
           <p className="practice-choice__desc">Talk out loud with a simulated patient in real time, like a real phone call. Needs a mic (works best in Chrome/Edge, with headphones).</p>
         </button>
         <button className="card practice-choice__card" onClick={() => onPick('chat')} type="button">
-          <span className="practice-choice__glyph" aria-hidden="true">💬</span>
+          <span className="practice-choice__glyph" aria-hidden="true">ðŸ’¬</span>
           <h2 className="practice-choice__title">Text chat</h2>
           <p className="practice-choice__desc">Type your responses turn by turn. Works on any browser, no mic needed.</p>
-        </button>
-        <button className="card practice-choice__card practice-choice__card--test" onClick={() => onPick('test')} type="button">
-          <span className="practice-choice__glyph" aria-hidden="true">🎯</span>
-          <h2 className="practice-choice__title">Call QA Test</h2>
-          <p className="practice-choice__desc">
-            A graded voice call scored hard against the full quality scorecard — pass or fail,
-            with auto-fail rules. Needs a mic.
-          </p>
         </button>
       </div>
     </section>
@@ -808,3 +759,4 @@ function Shell({ role, view, setView, onSignOut, activeDeptName, onChangeDept, c
     </div>
   );
 }
+
