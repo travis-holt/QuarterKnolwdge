@@ -78,6 +78,7 @@ const updateDoc  = async (...a) => { await authReady; return fbUpdateDoc(...a); 
 const deleteDoc  = async (...a) => { await authReady; return fbDeleteDoc(...a); };
 
 const mapDocs = (snap) => snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+const deptOf = (x) => x?.department ?? 'pediatrics';
 
 /**
  * Start a live onSnapshot only AFTER auth is ready, returning an unsubscribe
@@ -242,7 +243,8 @@ export async function getResult(navigatorId, department = 'pediatrics', assessme
  * @param {'mcq'|'spot'|'qa'} [assessmentType='mcq']
  */
 export async function saveResult(navigatorId, name, scores, competencyScores = {}, department = 'pediatrics', answers = {}, assessmentType = 'mcq') {
-  await setDoc(doc(db, RESULTS, resultDocId(navigatorId, department, assessmentType)), {
+  const batch = writeBatch(db);
+  batch.set(doc(db, RESULTS, resultDocId(navigatorId, department, assessmentType)), {
     name,
     navigatorId,
     department,
@@ -253,7 +255,7 @@ export async function saveResult(navigatorId, name, scores, competencyScores = {
     submittedAt: serverTimestamp(),
   });
   // Append an immutable history snapshot for longitudinal trends.
-  await addDoc(collection(db, RESULT_HISTORY), {
+  batch.set(doc(collection(db, RESULT_HISTORY)), {
     navigatorId,
     name,
     department,
@@ -263,6 +265,8 @@ export async function saveResult(navigatorId, name, scores, competencyScores = {
     takenAt: serverTimestamp(),
     simulated: false,
   });
+  await authReady;
+  await batch.commit();
 }
 
 /**
@@ -292,13 +296,25 @@ export function subscribeResults(cb, onError) {
  * the leak surface, not a complete elimination.
  * @returns {Promise<{name:string, scores:Record<string,number>}[]>}
  */
-export async function getFloorScores() {
+export async function getFloorScores(department = 'pediatrics') {
   await authReady;
   const snap = await getDocs(collection(db, RESULTS));
-  return snap.docs.map((d) => {
+  const latest = {};
+  for (const d of snap.docs) {
     const data = d.data();
-    return { name: data.name, scores: data.scores ?? {} };
-  });
+    if (deptOf(data) !== department || !data.navigatorId) continue;
+    const prev = latest[data.navigatorId];
+    if (!prev || (data.submittedAt?.seconds ?? 0) >= (prev.submittedAt?.seconds ?? 0)) {
+      latest[data.navigatorId] = {
+        navigatorId: data.navigatorId,
+        name: data.name,
+        scores: data.scores ?? {},
+        assessmentType: data.assessmentType ?? 'mcq',
+        submittedAt: data.submittedAt,
+      };
+    }
+  }
+  return Object.values(latest);
 }
 
 // ── Result History (longitudinal trends) ─────────────────────────────────────
@@ -413,11 +429,12 @@ export function subscribeInterviews(cb, onError) {
  * @param {string} [kind='practice']
  * @returns {Promise<string>} the new completion doc id
  */
-export async function saveCompletion(navigatorId, name, domainId, kind = 'practice') {
+export async function saveCompletion(navigatorId, name, domainId, kind = 'practice', department = 'pediatrics') {
   const ref = doc(collection(db, COMPLETIONS));
   await setDoc(ref, {
     navigatorId,
     name,
+    department,
     domainId,
     kind,
     completedAt: serverTimestamp(),
@@ -430,11 +447,13 @@ export async function saveCompletion(navigatorId, name, domainId, kind = 'practi
  * @param {string} navigatorId
  * @returns {Promise<{id:string, domainId:string, kind:string, completedAt:*}[]>}
  */
-export async function getCompletions(navigatorId) {
+export async function getCompletions(navigatorId, department = 'pediatrics') {
   const snap = await getDocs(
     query(collection(db, COMPLETIONS), where('navigatorId', '==', navigatorId))
   );
-  return snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+  return snap.docs
+    .map((d) => ({ id: d.id, ...d.data() }))
+    .filter((c) => deptOf(c) === department);
 }
 
 /**
@@ -497,9 +516,11 @@ export async function getActiveQuestions(department = 'pediatrics') {
  */
 export async function seedQuestionsIfEmpty(seed) {
   const snap = await getDocs(collection(db, QUESTIONS_COL));
-  if (!snap.empty) return false;
+  const existingIds = new Set(snap.docs.map((d) => d.id));
+  const missing = seed.filter((q) => !existingIds.has(q.id));
+  if (missing.length === 0) return false;
   const batch = writeBatch(db);
-  for (const q of seed) {
+  for (const q of missing) {
     batch.set(doc(db, QUESTIONS_COL, q.id), {
       ...QUESTION_FIELDS(q),
       department: q.department ?? 'pediatrics',
@@ -651,6 +672,7 @@ export async function savePairing(pairing) {
   const ref = doc(collection(db, PAIRINGS));
   await setDoc(ref, {
     ...pairing,
+    department: pairing.department ?? 'pediatrics',
     status: 'active',
     createdAt: serverTimestamp(),
   });

@@ -6,13 +6,10 @@ import './load-env.js'; // must be first — populates process.env from .env.loc
 import express from 'express';
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
+import { rateLimit } from './api/_rate-limit.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const app = express();
-
-// 20mb limit (Express default is 100kb): the SOP manager posts pasted SOP
-// documents and base64-encoded PDF uploads (~10 MB binary) to /api/refine-sop.
-app.use(express.json({ limit: '20mb' }));
 
 // --- API routes (import the same handlers used on Vercel) ---
 import generateScenarios from './api/generate-scenarios.js';
@@ -27,15 +24,17 @@ import refineSop from './api/refine-sop.js';
 import health from './api/health.js';
 import { attachLiveRelay } from './api/live-relay.js';
 
-app.post('/api/generate-scenarios', generateScenarios);
-app.post('/api/generate-coaching', generateCoaching);
-app.post('/api/interview-turn', interviewTurn);
-app.post('/api/grade-interview', gradeInterview);
-app.post('/api/grade-call-qa', gradeCallQa);
-app.post('/api/generate-audit', generateAudit);
-app.post('/api/coach-audit', coachAudit);
-app.post('/api/sequence-path', sequencePath);
-app.post('/api/refine-sop', refineSop);
+app.post('/api/refine-sop', rateLimit({ label: 'refine-sop', max: 6 }), express.json({ limit: '20mb' }), refineSop);
+app.use(express.json({ limit: '100kb' }));
+
+app.post('/api/generate-scenarios', rateLimit({ label: 'generate-scenarios', max: 12 }), generateScenarios);
+app.post('/api/generate-coaching', rateLimit({ label: 'generate-coaching', max: 20 }), generateCoaching);
+app.post('/api/interview-turn', rateLimit({ label: 'interview-turn', max: 30 }), interviewTurn);
+app.post('/api/grade-interview', rateLimit({ label: 'grade-interview', max: 20 }), gradeInterview);
+app.post('/api/grade-call-qa', rateLimit({ label: 'grade-call-qa', max: 12 }), gradeCallQa);
+app.post('/api/generate-audit', rateLimit({ label: 'generate-audit', max: 12 }), generateAudit);
+app.post('/api/coach-audit', rateLimit({ label: 'coach-audit', max: 20 }), coachAudit);
+app.post('/api/sequence-path', rateLimit({ label: 'sequence-path', max: 12 }), sequencePath);
 app.get('/api/health', health);
 
 // --- Static SPA ---

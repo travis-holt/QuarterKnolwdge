@@ -9,7 +9,7 @@
 // interview Firestore doc; it never affects the capability matrix or domain scores.
 // ─────────────────────────────────────────────────────────────────────────────
 
-import { sopContextFor } from './_sop-context.js';
+import { sopContextFor, sopContextForFresh } from './_sop-context.js';
 import { DOMAINS } from '../src/data/questions.js';
 import { getApiKeys, geminiWithRotation, rotationFailure } from './_gemini-client.js';
 import { validateSecret } from './_auth.js';
@@ -31,7 +31,7 @@ const RESPONSE_SCHEMA = {
   required: ['score', 'summary', 'strengths', 'improvements'],
 };
 
-function buildMessages(domainId, scenario, transcript, name, department) {
+function buildMessages(domainId, scenario, transcript, name, department, sopContext = sopContextFor(department)) {
   const domainName = DOMAINS.find((d) => d.id === domainId)?.name ?? domainId;
 
   const callText = transcript
@@ -60,7 +60,7 @@ Rules:
 - Summary: 2–3 sentences overall assessment addressed to the navigator ("you").
 
 SOP CONTEXT:
-${sopContextFor(department)}`;
+${sopContext}`;
 
   const userMessage =
 `Navigator: ${name}
@@ -112,7 +112,7 @@ export default async function handler(req, res) {
     return res.status(400).json({ error: 'Missing required fields.' });
   }
 
-  const { systemInstruction, userMessage } = buildMessages(domain, scenario, transcript, name, department);
+  const { systemInstruction, userMessage } = buildMessages(domain, scenario, transcript, name, department, await sopContextForFresh(department));
   const body = buildBody(systemInstruction, userMessage);
 
   const result = await geminiWithRotation(keys, body, { label: 'grade-interview' });

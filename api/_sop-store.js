@@ -86,6 +86,11 @@ async function refresh(department) {
   }
 }
 
+export async function getLiveSop(department) {
+  await refresh(department);
+  return cache.get(department)?.body ?? null;
+}
+
 /**
  * Synchronous cached read of a department's ACTIVE live SOP body.
  * Returns null when none exists / not yet fetched / Firestore unavailable —

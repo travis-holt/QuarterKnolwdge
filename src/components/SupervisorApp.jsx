@@ -150,7 +150,9 @@ export default function SupervisorApp({ onSignOut }) {
 
   // Build a lookup: navigatorId → Set<domainId> for "Spot the Error" completions.
   const completionMap = {};
-  for (const c of completions) {
+  const deptCompletions = completions.filter((c) => (c.department ?? 'pediatrics') === selectedDept);
+  const deptPairings = pairings.filter((p) => (p.department ?? 'pediatrics') === selectedDept);
+  for (const c of deptCompletions) {
     if (c.kind && c.kind !== 'practice') continue;
     if (!completionMap[c.navigatorId]) completionMap[c.navigatorId] = new Set();
     completionMap[c.navigatorId].add(c.domainId);
@@ -217,7 +219,7 @@ export default function SupervisorApp({ onSignOut }) {
   const handleDeactivateNavigator = (id) => setRosterStatus(id, 'inactive');
   const handleReactivateNavigator = (id) => setRosterStatus(id, 'active');
   const handleResetResult = (id) => clearResult(id, selectedDept);
-  const handleSavePairing = (pairing) => savePairing(pairing);
+  const handleSavePairing = (pairing) => savePairing({ ...pairing, department: selectedDept });
   const handleUpdatePairing = (id, status) => updatePairingStatus(id, status);
   const handleSaveFeedback = (item) => saveSupervisorFeedback(item);
   const handleSaveLearningProposal = (proposal) => saveLearningProposal(proposal);
@@ -365,7 +367,7 @@ export default function SupervisorApp({ onSignOut }) {
                 onPreviewModule={(d) => openModule(d, 'navigator')}
                 navigatorId={selectedNavigatorId}
                 completedDomains={selectedNavigatorId ? (completionMap[selectedNavigatorId] ?? new Set()) : new Set()}
-                completions={completions.filter((c) => (
+                completions={deptCompletions.filter((c) => (
                   selectedNavigatorId ? c.navigatorId === selectedNavigatorId : c.name === selected
                 ))}
                 answers={selectedResult?.answers}
@@ -388,7 +390,7 @@ export default function SupervisorApp({ onSignOut }) {
                 rows={rows}
                 history={deptHistory}
                 interviews={allInterviews.filter((iv) => (iv.department ?? 'pediatrics') === selectedDept)}
-                completions={completions}
+                completions={deptCompletions}
                 onOpenNavigator={openNavigator}
               />
             )}
@@ -396,7 +398,7 @@ export default function SupervisorApp({ onSignOut }) {
             {view === 'mentorship' && (
               <Mentorship
                 rows={rows}
-                savedPairings={pairings}
+                savedPairings={deptPairings}
                 onSavePairing={handleSavePairing}
                 onUpdatePairing={handleUpdatePairing}
                 onOpenNavigator={openNavigator}
@@ -408,7 +410,7 @@ export default function SupervisorApp({ onSignOut }) {
                 rows={rows}
                 results={deptResults}
                 questions={questions.filter((q) => (q.department ?? 'pediatrics') === selectedDept)}
-                completions={completions}
+                completions={deptCompletions}
                 interviews={allInterviews.filter((iv) => (iv.department ?? 'pediatrics') === selectedDept)}
                 history={deptHistory}
                 feedback={feedback}

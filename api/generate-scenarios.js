@@ -16,7 +16,7 @@
 
 import { DOMAINS } from '../src/data/questions.js';
 import { COMPETENCIES } from '../src/data/competencies.js';
-import { sopContextFor } from './_sop-context.js';
+import { sopContextFor, sopContextForFresh } from './_sop-context.js';
 import { getApiKeys, geminiWithRotation, rotationFailure } from './_gemini-client.js';
 import { validateSecret } from './_auth.js';
 
@@ -49,14 +49,14 @@ const RESPONSE_SCHEMA = {
   },
 };
 
-function buildPrompt(domain, count, department) {
+function buildPrompt(domain, count, department, sopContext = sopContextFor(department)) {
   const compList = COMPETENCIES.map((c) => `${c.id} (${c.name})`).join(', ');
   return `You are an instructional designer writing a competency assessment for patient
 navigators (contact-centre agents) based ONLY on the SOP reference below. Do not invent
 facts that are not supported by it.
 
 SOP REFERENCE:
-${sopContextFor(department)}
+${sopContext}
 
 TASK: Write ${count} scenario-based multiple-choice question(s) for the domain "${domain.name}"
 (${domain.blurb}). Mix NORMAL, EDGE-CASE, and FAILURE-STATE situations. Each question must:
@@ -138,7 +138,7 @@ export default async function handler(req, res) {
   const n = Math.max(1, Math.min(8, Number(count) || 1));
 
   const requestBody = {
-    contents: [{ parts: [{ text: buildPrompt(domain, n, department) }] }],
+    contents: [{ parts: [{ text: buildPrompt(domain, n, department, await sopContextForFresh(department)) }] }],
     generationConfig: {
       responseMimeType: 'application/json',
       responseSchema: RESPONSE_SCHEMA,

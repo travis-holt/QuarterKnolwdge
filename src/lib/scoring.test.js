@@ -768,6 +768,14 @@ describe('adaptiveTrainingRecommendations', () => {
     expect(recs.find((r) => r.domainId === D0).kind).toBe('interview');
   });
 
+  it('keeps recommending interview after a weak graded interview', () => {
+    const recs = adaptiveTrainingRecommendations(row, {
+      completions: [{ domainId: D0, kind: 'practice', completedAt: { seconds: 10 } }],
+      interviews: [{ domainId: D0, grade: { score: 50 }, endedAt: { seconds: 20 } }],
+    });
+    expect(recs.find((r) => r.domainId === D0).kind).toBe('interview');
+  });
+
   it('recommends mini-check after a strong graded interview', () => {
     const recs = adaptiveTrainingRecommendations(row, {
       completions: [{ domainId: D0, kind: 'practice', completedAt: { seconds: 10 } }],

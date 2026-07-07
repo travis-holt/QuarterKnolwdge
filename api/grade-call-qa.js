@@ -16,7 +16,7 @@
 // Scored output → NO lite-model fallback (same quality gate as grade-interview).
 // ─────────────────────────────────────────────────────────────────────────────
 
-import { sopContextFor } from './_sop-context.js';
+import { sopContextFor, sopContextForFresh } from './_sop-context.js';
 import { correctTranscriptWithStats, glossaryPromptBlock } from './_qa-glossary.js';
 import { getApiKeys, geminiWithRotation, rotationFailure } from './_gemini-client.js';
 import { validateSecret } from './_auth.js';
@@ -61,7 +61,7 @@ const RESPONSE_SCHEMA = {
   required: ['criteria', 'autoFails'],
 };
 
-export function buildMessages(scenario, transcript, department) {
+export function buildMessages(scenario, transcript, department, sopContext = sopContextFor(department)) {
   const callText = transcript
     .slice(0, MAX_TURNS)
     .map((t) => `${t.role === 'patient' ? 'Caller' : 'Navigator'}: ${String(t.text ?? '').slice(0, MAX_TURN_CHARS)}`)
@@ -141,7 +141,7 @@ ${autoFailText}
 ${glossaryPromptBlock(department)}
 
 SOP CONTEXT:
-${sopContextFor(department)}`;
+${sopContext}`;
 
   const userMessage =
 `Scenario the caller was given:
@@ -187,7 +187,7 @@ export default async function handler(req, res) {
   // The correction count doubles as a transcript-quality signal for the review layer.
   const { transcript, correctedTurns } = correctTranscriptWithStats(rawTranscript, department);
 
-  const { systemInstruction, userMessage } = buildMessages(scenario, transcript, department);
+  const { systemInstruction, userMessage } = buildMessages(scenario, transcript, department, await sopContextForFresh(department));
   const body = buildBody(systemInstruction, userMessage);
 
   // One retry on malformed output: temp-0 structured JSON is almost always

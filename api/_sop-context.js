@@ -1,6 +1,6 @@
 // SOP contexts used to ground scenario generation. The leading underscore keeps
 // Express from turning this file into an HTTP route — it is a helper module.
-import { getLiveSopSync } from './_sop-store.js';
+import { getLiveSop, getLiveSopSync } from './_sop-store.js';
 //
 // SOP_CONTEXTS is a map keyed by department id. Use sopContextFor(deptId) in
 // API handlers — it defaults to the Pediatrics context for unknown departments.
@@ -570,6 +570,12 @@ export const SOP_CONTEXTS = {
  *  code change. */
 export function sopContextFor(deptId) {
   const live = getLiveSopSync(deptId);
+  const dept = live ?? SOP_CONTEXTS[deptId] ?? SOP_CONTEXTS.pediatrics;
+  return `${NAVIGATOR_ROLE_CONTEXT}\n\n${dept}`;
+}
+
+export async function sopContextForFresh(deptId) {
+  const live = await getLiveSop(deptId);
   const dept = live ?? SOP_CONTEXTS[deptId] ?? SOP_CONTEXTS.pediatrics;
   return `${NAVIGATOR_ROLE_CONTEXT}\n\n${dept}`;
 }

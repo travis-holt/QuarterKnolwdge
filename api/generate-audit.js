@@ -11,7 +11,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { DOMAINS } from '../src/data/questions.js';
-import { sopContextFor } from './_sop-context.js';
+import { sopContextFor, sopContextForFresh } from './_sop-context.js';
 import { getApiKeys, geminiWithRotation, rotationFailure } from './_gemini-client.js';
 import { validateSecret } from './_auth.js';
 
@@ -36,7 +36,7 @@ const AUDIT_SCHEMA = {
   required: ['transcript', 'errorIndex', 'hint', 'modelExplanation'],
 };
 
-function buildPrompt(domain, department) {
+function buildPrompt(domain, department, sopContext = sopContextFor(department)) {
   return `You are creating a QA training exercise for contact-centre patient navigators.
 
 Generate a realistic 10-message chat transcript between a patient (or caregiver) and a contact-centre agent. The agent makes exactly ONE critical policy mistake that violates the SOP for the domain below.
@@ -74,7 +74,7 @@ FOR hint: write one sentence that steers the navigator toward the error without 
 FOR modelExplanation: write 2–3 sentences explaining exactly what the agent did wrong and what they should have said instead. Reference the specific SOP rule violated using facts from the SOP reference below.
 
 SOP REFERENCE:
-${sopContextFor(department)}`;
+${sopContext}`;
 }
 
 /**
@@ -126,7 +126,7 @@ export default async function handler(req, res) {
   if (!domain) return res.status(400).json({ error: 'Unknown domain.' });
 
   const body = {
-    contents: [{ role: 'user', parts: [{ text: buildPrompt(domain, department) }] }],
+    contents: [{ role: 'user', parts: [{ text: buildPrompt(domain, department, await sopContextForFresh(department)) }] }],
     generationConfig: {
       responseMimeType: 'application/json',
       responseSchema: AUDIT_SCHEMA,

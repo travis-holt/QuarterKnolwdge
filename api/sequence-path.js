@@ -5,7 +5,7 @@
 
 import { validateSecret } from './_auth.js';
 import { geminiWithRotation, getApiKeys, rotationFailure } from './_gemini-client.js';
-import { sopContextFor } from './_sop-context.js';
+import { sopContextForFresh } from './_sop-context.js';
 
 const VALID_KINDS = ['coaching', 'practice', 'interview', 'module', 'minicheck'];
 
@@ -34,7 +34,7 @@ export default async function handler(req, res) {
   const keys = getApiKeys();
   if (!keys.length) return res.status(500).json({ error: 'AI sequencing is not configured on the server.' });
 
-  const sopContext = sopContextFor(department);
+  const sopContext = await sopContextForFresh(department);
 
   const domainList = weakDomains
     .map((d) => `• domainId="${d.domainId}", level=${d.level}, score=${d.currentScore}%`)

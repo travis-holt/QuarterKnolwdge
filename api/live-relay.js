@@ -23,7 +23,7 @@
 // gracefully; it never touches a score directly (grading is a separate REST call).
 // ─────────────────────────────────────────────────────────────────────────────
 
-import { WebSocketServer } from 'ws';
+import { WebSocketServer, WebSocket } from 'ws';
 import { getApiKeys, redactKeys } from './_gemini-client.js';
 import { isValidSecret } from './_auth.js';
 import { buildSystemInstruction } from './interview-turn.js';
@@ -34,19 +34,36 @@ import { buildSystemInstruction } from './interview-turn.js';
 const LIVE_MODEL = 'gemini-3.1-flash-live-preview';
 const GEMINI_WS = (key) =>
   `wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent?key=${key}`;
+const MAX_SESSIONS_PER_IP = 2;
+const MAX_CALL_MS = 10 * 60 * 1000;
+const activeByIp = new Map();
 
 function send(sock, obj) {
   if (sock.readyState === 1) sock.send(JSON.stringify(obj));
 }
 
 // Bridge one browser socket to a fresh Gemini Live session.
-function bridge(client) {
+function bridge(client, req) {
+  const ip = req.socket?.remoteAddress || 'unknown';
+  const active = activeByIp.get(ip) ?? 0;
+  if (active >= MAX_SESSIONS_PER_IP) {
+    send(client, { type: 'error', message: 'Too many active voice sessions. Please try again shortly.' });
+    client.close();
+    return;
+  }
+  activeByIp.set(ip, active + 1);
   let upstream = null;
   let closed = false;
+  const callTimer = setTimeout(() => {
+    send(client, { type: 'error', message: 'Voice call time limit reached.' });
+    shutdown();
+  }, MAX_CALL_MS);
 
   const shutdown = () => {
     if (closed) return;
     closed = true;
+    clearTimeout(callTimer);
+    activeByIp.set(ip, Math.max(0, (activeByIp.get(ip) ?? 1) - 1));
     try { upstream?.close(); } catch {}
     try { client.close(); } catch {}
   };

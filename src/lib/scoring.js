@@ -764,7 +764,7 @@ export function adaptiveTrainingRecommendations(row, {
       kind = 'practice';
       label = 'Complete a Spot the Error practice scenario';
       reasons.push('No completed practice scenario is recorded for this domain.');
-    } else if (!latestInterview || latestInterview.grade.score < INTERVIEW_SCORE_BANDS.good) {
+    } else if (!latestInterview || latestInterview.grade.score < INTERVIEW_SCORE_BANDS.strong) {
       kind = 'interview';
       label = 'Complete a practice call';
       reasons.push(latestInterview ? `Latest practice call was ${latestInterview.grade.score}/100.` : 'No graded practice call is recorded.');

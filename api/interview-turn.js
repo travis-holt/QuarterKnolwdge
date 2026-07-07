@@ -22,7 +22,7 @@
 
 import { DOMAINS } from '../src/data/questions.js';
 import { departmentName } from '../src/data/departments.js';
-import { sopContextFor } from './_sop-context.js';
+import { sopContextFor, sopContextForFresh } from './_sop-context.js';
 import { getApiKeys, geminiWithRotation, rotationFailure, MODEL, LITE_MODEL } from './_gemini-client.js';
 
 // Roleplay is conversational, not scored — a lighter model beats a 429 for the
@@ -45,7 +45,7 @@ const INIT_SCHEMA = {
 
 // ── Prompts ───────────────────────────────────────────────────────────────────
 
-function buildInitPrompt(domain, department) {
+function buildInitPrompt(domain, department, sopContext = sopContextFor(department)) {
   return `You are creating a realistic patient caller scenario for a contact-centre roleplay training exercise.
 
 Domain: "${domain.name}" — ${domain.blurb}
@@ -62,7 +62,7 @@ Vary the difficulty. Mix normal situations, edge cases, insurance nuances, and r
 drawn from the SOP. Write everything in English.
 
 SOP REFERENCE:
-${sopContextFor(department)}`;
+${sopContext}`;
 }
 
 export function buildSystemInstruction(callerName, scenario, options = {}) {
@@ -137,7 +137,7 @@ export default async function handler(req, res) {
   // ── INIT: generate scenario + opening line ─────────────────────────────────
   if (!scenario) {
     const body = {
-      contents: [{ role: 'user', parts: [{ text: buildInitPrompt(domain, department) }] }],
+      contents: [{ role: 'user', parts: [{ text: buildInitPrompt(domain, department, await sopContextForFresh(department)) }] }],
       generationConfig: {
         responseMimeType: 'application/json',
         responseSchema: INIT_SCHEMA,

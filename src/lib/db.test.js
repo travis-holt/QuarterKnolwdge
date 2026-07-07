@@ -67,9 +67,14 @@ import {
   updateRosterEntry,
   setRosterStatus,
   saveResult,
+  getFloorScores,
   clearResult,
   getRoster,
   subscribeRoster,
+  seedQuestionsIfEmpty,
+  saveCompletion,
+  getCompletions,
+  savePairing,
   saveSupervisorFeedback,
   subscribeSupervisorFeedback,
   saveLearningProposal,
@@ -144,34 +149,54 @@ describe('setRosterStatus', () => {
 // ── saveResult ────────────────────────────────────────────────────────────────
 
 describe('saveResult', () => {
+  beforeEach(() => {
+    mocks.writeBatch.mockReturnValue({ set: vi.fn(), commit: vi.fn().mockResolvedValue() });
+  });
+
   it('uses a composite key ${navigatorId}__${department}', async () => {
-    mocks.setDoc.mockResolvedValue();
     await saveResult('nav-id', 'Ada', { s1: 80 }, {}, 'obgyn');
     expect(mocks.doc).toHaveBeenCalledWith(mocks.db, 'results', 'nav-id__obgyn');
   });
 
   it('defaults department to pediatrics', async () => {
-    mocks.setDoc.mockResolvedValue();
     await saveResult('nav-id', 'Ada', {});
     expect(mocks.doc).toHaveBeenCalledWith(mocks.db, 'results', 'nav-id__pediatrics');
   });
 
   it('stores Call QA separately from MCQ and Spot results', async () => {
-    mocks.setDoc.mockResolvedValue();
     await saveResult('nav-id', 'Ada', { d1: 88 }, {}, 'obgyn', {}, 'qa');
     expect(mocks.doc).toHaveBeenCalledWith(mocks.db, 'results', 'nav-id__obgyn__qa');
   });
 
-  it('stores navigatorId, name, department, scores, competencyScores, and answers', async () => {
-    mocks.setDoc.mockResolvedValue();
+  it('stores result and history in one batch', async () => {
+    const batch = { set: vi.fn(), commit: vi.fn().mockResolvedValue() };
+    mocks.writeBatch.mockReturnValue(batch);
     const scores   = { d1: 70 };
     const cScores  = { c1: 90 };
     const answers  = { q1: 'a' };
     await saveResult('nav-id', 'Ada', scores, cScores, 'pediatrics', answers);
-    const [, data] = mocks.setDoc.mock.calls[0];
+    expect(batch.set).toHaveBeenCalledTimes(2);
+    const [, data] = batch.set.mock.calls[0];
     expect(data).toMatchObject({ navigatorId: 'nav-id', name: 'Ada', department: 'pediatrics',
       scores, competencyScores: cScores, answers });
     expect(data.submittedAt).toBe('__ts__');
+    expect(batch.set.mock.calls[1][1]).toMatchObject({ navigatorId: 'nav-id', department: 'pediatrics', scores });
+    expect(batch.commit).toHaveBeenCalledOnce();
+  });
+});
+
+describe('getFloorScores', () => {
+  it('returns latest projected result per navigator for one department', async () => {
+    mocks.getDocs.mockResolvedValue({
+      docs: [
+        { id: 'old', data: () => ({ navigatorId: 'n1', name: 'Ada', department: 'obgyn', scores: { d: 40 }, submittedAt: { seconds: 1 } }) },
+        { id: 'new', data: () => ({ navigatorId: 'n1', name: 'Ada', department: 'obgyn', scores: { d: 80 }, assessmentType: 'spot', submittedAt: { seconds: 2 } }) },
+        { id: 'peds', data: () => ({ navigatorId: 'n2', name: 'Bea', department: 'pediatrics', scores: { d: 99 }, submittedAt: { seconds: 3 } }) },
+      ],
+    });
+    await expect(getFloorScores('obgyn')).resolves.toEqual([
+      { navigatorId: 'n1', name: 'Ada', scores: { d: 80 }, assessmentType: 'spot', submittedAt: { seconds: 2 } },
+    ]);
   });
 });
 
@@ -221,6 +246,45 @@ describe('getRoster', () => {
 });
 
 // ── subscribeRoster ───────────────────────────────────────────────────────────
+
+describe('department-scoped helpers', () => {
+  it('saveCompletion writes department and getCompletions filters legacy docs as pediatrics', async () => {
+    mocks.setDoc.mockResolvedValue();
+    await saveCompletion('nav-id', 'Ada', 'routing', 'practice', 'obgyn');
+    expect(mocks.setDoc.mock.calls[0][1]).toMatchObject({ department: 'obgyn', domainId: 'routing' });
+
+    mocks.getDocs.mockResolvedValue({
+      docs: [
+        { id: 'c1', data: () => ({ navigatorId: 'nav-id', domainId: 'routing', department: 'obgyn' }) },
+        { id: 'c2', data: () => ({ navigatorId: 'nav-id', domainId: 'intake' }) },
+      ],
+    });
+    await expect(getCompletions('nav-id', 'pediatrics')).resolves.toEqual([
+      { id: 'c2', navigatorId: 'nav-id', domainId: 'intake' },
+    ]);
+  });
+
+  it('savePairing defaults department to pediatrics', async () => {
+    mocks.setDoc.mockResolvedValue();
+    await savePairing({ domainId: 'routing', mentorName: 'Ada', menteeName: 'Bea' });
+    expect(mocks.setDoc.mock.calls[0][1]).toMatchObject({ department: 'pediatrics', status: 'active' });
+  });
+
+  it('seedQuestionsIfEmpty adds only missing seed ids', async () => {
+    const batch = { set: vi.fn(), commit: vi.fn().mockResolvedValue() };
+    mocks.writeBatch.mockReturnValue(batch);
+    mocks.getDocs.mockResolvedValue({
+      docs: [{ id: 'q1', data: () => ({}) }],
+    });
+    const seeded = await seedQuestionsIfEmpty([
+      { id: 'q1', domainId: 'intake', scenario: 'old', options: [], correctOptionId: 'a' },
+      { id: 'q2', domainId: 'routing', scenario: 'new', options: [], correctOptionId: 'a', department: 'obgyn' },
+    ]);
+    expect(seeded).toBe(true);
+    expect(batch.set).toHaveBeenCalledOnce();
+    expect(batch.set.mock.calls[0][1]).toMatchObject({ department: 'obgyn', status: 'active' });
+  });
+});
 
 describe('subscribeRoster', () => {
   it('invokes the callback with mapped roster data from the snapshot', async () => {
