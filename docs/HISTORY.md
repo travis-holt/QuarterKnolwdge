@@ -5,6 +5,15 @@
 > feature, decision, or fix. New entries are added HERE (newest first, same format),
 > not in CLAUDE.md.
 
+### 2026-07-07 — Fix mojibake in NavigatorApp.jsx (Practice chooser emoji + punctuation)
+- **Context:** The F26 commit saved `NavigatorApp.jsx` with UTF-8 content mis-decoded as
+  Windows-1252 and re-encoded (double-encoded UTF-8 + a stray BOM). The Practice chooser
+  rendered garbage glyphs instead of the mic/chat emoji, and 15 other spots (em-dashes,
+  ellipses, the ⚠ unsaved-result banner) were garbled.
+- **Fix:** Byte-level re-decode of the whole file (cp1252 reverse map → UTF-8), BOM stripped.
+  Only `NavigatorApp.jsx` was affected in `src/` and `api/`.
+- **Verification:** `npm test` → 381 passing; `npm run build` → clean.
+
 ### 2026-07-07 — 3-phase assessment flow (F26)
 - **Context:** Owner request to stop treating Multiple choice / Spot the Error / Call QA Test as three sibling choices and instead make them one sequenced department assessment.
 - **Decisions:** No data-model change; each phase keeps writing what it already wrote. Completion stays **derived, never stored**: MCQ from `resultsByType.mcq`, Spot from `resultsByType.spot`, QA from the latest department-scoped interview doc that has a `qa` field. The old chooser became `PhaseHub`; department select now lands on the hub until all 3 phases are done; coaching and full-profile Spot return to the hub while phases remain; completed phases can be retaken without re-locking later phases; the Practice tab drops the graded QA card so Phase 3 cannot be completed out of order; legacy `__qa` result docs remain fetchable for history but do not count toward phase completion.
