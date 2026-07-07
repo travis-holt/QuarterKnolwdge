@@ -35,6 +35,9 @@ const validResponse = () => ({
   errorIndex:       4, // Agent turn at index 4
   hint:             'Pay attention to how the agent handled the insurance step.',
   modelExplanation: 'The agent should have verified Medicaid eligibility first.',
+  workflowType:     'caller_authorization',
+  errorKind:        'privacy_breach',
+  difficulty:       'medium',
 });
 
 // ── validateAuditResponse ────────────────────────────────────────────────────
@@ -45,6 +48,9 @@ describe('validateAuditResponse', () => {
     expect(result.error).toBeUndefined();
     expect(result.data.errorIndex).toBe(4);
     expect(result.data.hint).toBe('Pay attention to how the agent handled the insurance step.');
+    expect(result.data.workflowType).toBe('caller_authorization');
+    expect(result.data.errorKind).toBe('privacy_breach');
+    expect(result.data.difficulty).toBe('medium');
     expect(result.data.transcript).toHaveLength(10);
   });
 
@@ -125,9 +131,16 @@ describe('validateAuditResponse', () => {
     const input = validResponse();
     input.hint = '  some hint  ';
     input.modelExplanation = '  explanation  ';
+    input.errorKind = '  wrong_queue  ';
     const result = validateAuditResponse(input);
     expect(result.data.hint).toBe('some hint');
     expect(result.data.modelExplanation).toBe('explanation');
+    expect(result.data.errorKind).toBe('wrong_queue');
+  });
+
+  it('uses the requested workflow type when provided', () => {
+    const result = validateAuditResponse(validResponse(), 'standard_refill_queue');
+    expect(result.data.workflowType).toBe('standard_refill_queue');
   });
 
   it('handles a null / undefined input gracefully', () => {

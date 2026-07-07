@@ -43,6 +43,8 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { db, authReady } from './firebase.js';
+import { ALL_SEED_QUESTIONS } from '../data/questions.js';
+import { validateQuestionContent, validateAuditContent } from './contentGuards.js';
 import {
   collection,
   doc,
@@ -589,8 +591,8 @@ export async function deleteQuestion(id) {
 // curated out before a navigator ever sees them.
 //
 // Doc shape: { department, domainId, transcript:[{speaker,message}], errorIndex,
-//              hint, modelExplanation, status: draft|active|archived, source,
-//              createdAt }
+//              hint, modelExplanation, workflowType, errorKind, difficulty,
+//              status: draft|active|archived, source, createdAt }
 
 /**
  * Supervisor: live subscription to the whole audit bank (all statuses).
@@ -635,6 +637,9 @@ export async function saveDraftAudits(drafts, source = 'gemini', department = 'p
       errorIndex: a.errorIndex,
       hint: a.hint ?? '',
       modelExplanation: a.modelExplanation,
+      workflowType: a.workflowType ?? 'general_workflow',
+      errorKind: a.errorKind ?? 'workflow_error',
+      difficulty: a.difficulty ?? 'medium',
       department: a.department ?? department,
       status: 'draft',
       source,
@@ -659,6 +664,58 @@ export async function archiveAudit(id) {
 /** Supervisor: permanently delete an audit item. */
 export async function deleteAudit(id) {
   await deleteDoc(doc(db, AUDITS_COL, id));
+}
+
+// —— 2026-07 content-quality reliability fix ———————————————————————————————
+
+const CONTENT_FIX_REASON = 'content-quality-fix-2026-07';
+const CONTENT_FIX_SEEDS = new Map(
+  ALL_SEED_QUESTIONS
+    .filter((q) => q.id === 'q-int-1' || q.id === 'q-obgyn-int-1')
+    .map((q) => [q.id, q])
+);
+
+/**
+ * Idempotent cleanup for known unfair / stale assessment content:
+ * - patches the two lookup-order seed questions in Firestore if they exist
+ * - archives any live question/audit that fails the shared content guards
+ * Existing docs are preserved with archivedReason/archivedAt metadata.
+ */
+export async function runContentQualityFixesMigration() {
+  await authReady;
+
+  for (const [id, seed] of CONTENT_FIX_SEEDS) {
+    const snap = await getDoc(doc(db, QUESTIONS_COL, id));
+    if (!snap.exists()) continue;
+    await updateDoc(doc(db, QUESTIONS_COL, id), {
+      ...QUESTION_FIELDS(seed),
+      department: seed.department ?? 'pediatrics',
+    });
+  }
+
+  const questionSnap = await getDocs(collection(db, QUESTIONS_COL));
+  for (const row of questionSnap.docs.map((d) => ({ id: d.id, ...d.data() }))) {
+    if ((row.status ?? 'active') === 'archived') continue;
+    const flags = validateQuestionContent(row);
+    if (!flags.length) continue;
+    await updateDoc(doc(db, QUESTIONS_COL, row.id), {
+      status: 'archived',
+      archivedReason: CONTENT_FIX_REASON,
+      archivedAt: serverTimestamp(),
+    });
+  }
+
+  const auditSnap = await getDocs(collection(db, AUDITS_COL));
+  for (const row of auditSnap.docs.map((d) => ({ id: d.id, ...d.data() }))) {
+    if ((row.status ?? 'active') === 'archived') continue;
+    const flags = validateAuditContent(row);
+    if (!flags.length) continue;
+    await updateDoc(doc(db, AUDITS_COL, row.id), {
+      status: 'archived',
+      archivedReason: CONTENT_FIX_REASON,
+      archivedAt: serverTimestamp(),
+    });
+  }
 }
 
 // ── Pairings (mentor-mentee assignments) ──────────────────────────────────────

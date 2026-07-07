@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import { DOMAINS, domainName } from '../data/questions.js';
+import { pickDiverseAudits } from '../data/auditWorkflows.js';
 import { LEVELS, SPOT_ASSESSMENT_SIZE } from '../data/config.js';
 import { scoreSpotTheError, scoreSpotTheErrorByDomain, scoreToLevel } from '../lib/scoring.js';
 import { apiFetch, runPooled, fetchErrorMessage } from '../lib/apiFetch.js';
@@ -43,6 +44,41 @@ function shuffled(arr) {
     [a[i], a[j]] = [a[j], a[i]];
   }
   return a;
+}
+
+export function selectAuditItems(plan, bankByDomain) {
+  const fromBank = [];
+  const toGenerate = [];
+
+  if (plan.length && plan.every((domainId) => domainId === plan[0])) {
+    const domainId = plan[0];
+    const pool = bankByDomain[domainId] ?? [];
+    const chosen = pickDiverseAudits(pool, plan.length);
+    fromBank.push(...chosen.map((a) => ({
+      domainId,
+      transcript: a.transcript,
+      errorIndex: a.errorIndex,
+      modelExplanation: a.modelExplanation,
+    })));
+    for (let i = chosen.length; i < plan.length; i++) toGenerate.push(domainId);
+    return { fromBank, toGenerate };
+  }
+
+  for (const domainId of plan) {
+    const pool = bankByDomain[domainId];
+    if (pool?.length) {
+      const a = pool.shift();
+      fromBank.push({
+        domainId,
+        transcript: a.transcript,
+        errorIndex: a.errorIndex,
+        modelExplanation: a.modelExplanation,
+      });
+    } else {
+      toGenerate.push(domainId);
+    }
+  }
+  return { fromBank, toGenerate };
 }
 
 export default function SpotTheError({
@@ -97,22 +133,7 @@ export default function SpotTheError({
         }
       }
 
-      const fromBank = [];
-      const toGenerate = [];
-      for (const domainId of plan) {
-        const pool = byDomain[domainId];
-        if (pool?.length) {
-          const a = pool.shift(); // each bank item used at most once per assessment
-          fromBank.push({
-            domainId,
-            transcript: a.transcript,
-            errorIndex: a.errorIndex,
-            modelExplanation: a.modelExplanation,
-          });
-        } else {
-          toGenerate.push(domainId);
-        }
-      }
+      const { fromBank, toGenerate } = selectAuditItems(plan, byDomain);
 
       // 2) Live-generate only the slots the bank couldn't fill, with BOUNDED
       //    concurrency (H3); keep whatever succeeds so a single rate-limited

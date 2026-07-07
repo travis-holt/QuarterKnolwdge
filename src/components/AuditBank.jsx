@@ -1,7 +1,8 @@
 import { useState } from 'react';
 import { DOMAINS, domainName } from '../data/questions.js';
+import { workflowOptionsFor } from '../data/auditWorkflows.js';
+import { detectOverusedWorkflow, hasBlockingFlags, validateAuditContent } from '../lib/contentGuards.js';
 
-// ─────────────────────────────────────────────────────────────────────────────
 // Audit Bank — the supervisor review gate for pre-generated "Spot the Error"
 // transcripts. Mirrors the Question Bank model: Gemini output lands as `draft`,
 // the supervisor reads the full transcript (planted error highlighted) and only
@@ -9,10 +10,11 @@ import { DOMAINS, domainName } from '../data/questions.js';
 // from `active` items instantly instead of waiting 40–70s on live generation.
 //
 // Rendered inside the supervisor "Questions" tab, below the Question Bank.
-// ─────────────────────────────────────────────────────────────────────────────
 
 export default function AuditBank({ audits, selectedDept = 'pediatrics', onGenerate, onActivate, onArchive, onDelete }) {
   const [genDomain, setGenDomain] = useState(DOMAINS[0].id);
+  const [genMode, setGenMode] = useState('balanced');
+  const [genWorkflow, setGenWorkflow] = useState(workflowOptionsFor(DOMAINS[0].id)[0] ?? 'general_workflow');
   const [genCount, setGenCount] = useState(3);
   const [generating, setGenerating] = useState(false);
   const [expandedId, setExpandedId] = useState(null);
@@ -23,19 +25,28 @@ export default function AuditBank({ audits, selectedDept = 'pediatrics', onGener
   const drafts = byStatus('draft');
   const active = byStatus('active');
   const archived = byStatus('archived');
+  const workflowOptions = workflowOptionsFor(genDomain);
 
-  // How many active items each domain has — the coverage read-off tells the
-  // supervisor which domains still fall back to slow live generation.
   const coverage = DOMAINS.map((d) => ({
     ...d,
     count: active.filter((a) => a.domainId === d.id).length,
   }));
 
+  const workflowCoverage = workflowOptions.map((workflowType) => ({
+    workflowType,
+    count: active.filter((a) => a.domainId === genDomain && a.workflowType === workflowType).length,
+  }));
+  const overuseWarnings = detectOverusedWorkflow(active.filter((a) => a.domainId === genDomain));
+
   const runGenerate = async () => {
     setGenerating(true);
     setMessage(null);
     try {
-      const n = await onGenerate({ domainId: genDomain, count: Number(genCount) || 1 });
+      const n = await onGenerate({
+        domainId: genDomain,
+        count: Number(genCount) || 1,
+        workflowType: genMode === 'specific' ? genWorkflow : null,
+      });
       setMessage({ kind: 'ok', text: `${n} draft transcript${n === 1 ? '' : 's'} added below for review.` });
     } catch (err) {
       setMessage({ kind: 'err', text: err?.message || 'Generation failed. Check the server logs.' });
@@ -47,13 +58,23 @@ export default function AuditBank({ audits, selectedDept = 'pediatrics', onGener
   const renderAudit = (a, actions) => {
     const expanded = expandedId === a.id;
     const patientOpener = a.transcript?.find((t) => t.speaker === 'Patient')?.message ?? '';
+    const flags = validateAuditContent(a);
+    const blocked = hasBlockingFlags(flags);
     return (
       <li key={a.id} className="qbank__item">
         <div className="qbank__item-head">
           <span className="tag tag--accent">{domainName(a.domainId)}</span>
+          <span className="tag">{a.workflowType ?? 'general_workflow'}</span>
+          <span className="tag">{a.errorKind ?? 'workflow_error'}</span>
+          <span className="tag">{a.difficulty ?? 'medium'}</span>
           <span className="tag">{(a.transcript ?? []).length} turns</span>
         </div>
         <p className="qbank__scenario">“{patientOpener}”</p>
+        {flags.map((flag) => (
+          <div key={flag.code} className="qhealth__alert">
+            <strong>Blocked:</strong> {flag.message}
+          </div>
+        ))}
         {expanded && (
           <>
             <div className="auditbank__transcript">
@@ -74,7 +95,7 @@ export default function AuditBank({ audits, selectedDept = 'pediatrics', onGener
           <button className="btn btn--ghost btn--sm" onClick={() => setExpandedId(expanded ? null : a.id)}>
             {expanded ? 'Hide transcript' : 'Read transcript'}
           </button>
-          {actions}
+          {actions(blocked)}
         </div>
       </li>
     );
@@ -91,7 +112,6 @@ export default function AuditBank({ audits, selectedDept = 'pediatrics', onGener
         </p>
       </header>
 
-      {/* ── Coverage read-off ─────────────────────────────────────────── */}
       <div className="card overview__panel">
         <h2 className="overview__panel-title">Active coverage by domain</h2>
         <p className="readoff__sub">
@@ -108,21 +128,46 @@ export default function AuditBank({ audits, selectedDept = 'pediatrics', onGener
         </ul>
       </div>
 
-      {/* ── Generate ──────────────────────────────────────────────────── */}
       <div className="card qbank__gen">
         <h2 className="overview__panel-title">Generate audit transcripts</h2>
         <p className="readoff__sub">
-          Drafts are created for your review — nothing is served until you activate it.
+          Drafts are created for your review — nothing is served until you activate it. Balanced
+          mode fills the least-covered workflow types first.
         </p>
         <div className="qbank__gen-row">
           <label className="qedit__field">
             <span className="qedit__label">Domain</span>
-            <select className="qedit__select" value={genDomain} onChange={(e) => setGenDomain(e.target.value)}>
+            <select
+              className="qedit__select"
+              value={genDomain}
+              onChange={(e) => {
+                const next = e.target.value;
+                setGenDomain(next);
+                setGenWorkflow(workflowOptionsFor(next)[0] ?? 'general_workflow');
+              }}
+            >
               {DOMAINS.map((d) => (
                 <option key={d.id} value={d.id}>{d.name}</option>
               ))}
             </select>
           </label>
+          <label className="qedit__field">
+            <span className="qedit__label">Mode</span>
+            <select className="qedit__select" value={genMode} onChange={(e) => setGenMode(e.target.value)}>
+              <option value="balanced">Balanced for this domain</option>
+              <option value="specific">Specific workflow type</option>
+            </select>
+          </label>
+          {genMode === 'specific' && (
+            <label className="qedit__field">
+              <span className="qedit__label">Workflow</span>
+              <select className="qedit__select" value={genWorkflow} onChange={(e) => setGenWorkflow(e.target.value)}>
+                {workflowOptions.map((workflowType) => (
+                  <option key={workflowType} value={workflowType}>{workflowType}</option>
+                ))}
+              </select>
+            </label>
+          )}
           <label className="qedit__field">
             <span className="qedit__label">How many</span>
             <input className="qedit__select" type="number" min={1} max={8} value={genCount} onChange={(e) => setGenCount(e.target.value)} />
@@ -136,7 +181,26 @@ export default function AuditBank({ audits, selectedDept = 'pediatrics', onGener
         )}
       </div>
 
-      {/* ── Review queue (drafts) ─────────────────────────────────────── */}
+      <div className="card overview__panel">
+        <h2 className="overview__panel-title">Workflow coverage for {domainName(genDomain)}</h2>
+        <p className="readoff__sub">
+          Balanced generation picks from the least-covered workflows first.
+        </p>
+        <ul className="auditbank__coverage">
+          {workflowCoverage.map((row) => (
+            <li key={row.workflowType} className={`auditbank__coverage-item${row.count === 0 ? ' is-empty' : ''}`}>
+              <span className="auditbank__coverage-name">{row.workflowType}</span>
+              <span className="auditbank__coverage-count">{row.count}</span>
+            </li>
+          ))}
+        </ul>
+        {overuseWarnings.map((flag) => (
+          <div key={flag.workflowType} className="qhealth__alert">
+            <strong>Coverage warning:</strong> {flag.message}
+          </div>
+        ))}
+      </div>
+
       <div className="card overview__panel">
         <h2 className="overview__panel-title">Review queue · {drafts.length}</h2>
         {drafts.length === 0 ? (
@@ -144,19 +208,17 @@ export default function AuditBank({ audits, selectedDept = 'pediatrics', onGener
         ) : (
           <ul className="qbank__list">
             {drafts.map((a) =>
-              renderAudit(
-                a,
+              renderAudit(a, (blocked) => (
                 <>
-                  <button className="btn btn--primary btn--sm" onClick={() => onActivate(a.id)}>Activate</button>
+                  <button className="btn btn--primary btn--sm" onClick={() => onActivate(a.id)} disabled={blocked}>Activate</button>
                   <button className="btn btn--ghost btn--sm" onClick={() => onDelete(a.id)}>Discard</button>
                 </>
-              )
+              ))
             )}
           </ul>
         )}
       </div>
 
-      {/* ── Active ────────────────────────────────────────────────────── */}
       <div className="card overview__panel">
         <h2 className="overview__panel-title">Active in the assessment · {active.length}</h2>
         {active.length === 0 ? (
@@ -164,28 +226,25 @@ export default function AuditBank({ audits, selectedDept = 'pediatrics', onGener
         ) : (
           <ul className="qbank__list">
             {active.map((a) =>
-              renderAudit(
-                a,
+              renderAudit(a, () => (
                 <button className="btn btn--ghost btn--sm" onClick={() => onArchive(a.id)}>Archive</button>
-              )
+              ))
             )}
           </ul>
         )}
       </div>
 
-      {/* ── Archived ──────────────────────────────────────────────────── */}
       {archived.length > 0 && (
         <div className="card overview__panel">
           <h2 className="overview__panel-title">Archived · {archived.length}</h2>
           <ul className="qbank__list">
             {archived.map((a) =>
-              renderAudit(
-                a,
+              renderAudit(a, (blocked) => (
                 <>
-                  <button className="btn btn--ghost btn--sm" onClick={() => onActivate(a.id)}>Restore</button>
+                  <button className="btn btn--ghost btn--sm" onClick={() => onActivate(a.id)} disabled={blocked}>Restore</button>
                   <button className="btn btn--ghost btn--sm" onClick={() => onDelete(a.id)}>Delete</button>
                 </>
-              )
+              ))
             )}
           </ul>
         </div>

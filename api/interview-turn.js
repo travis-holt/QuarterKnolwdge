@@ -61,6 +61,14 @@ Using ONLY facts grounded in the SOP reference below, generate:
 Vary the difficulty. Mix normal situations, edge cases, insurance nuances, and routing exceptions
 drawn from the SOP. Write everything in English.
 
+CONTENT SAFETY RULES:
+- Do not build a scenario whose only right/wrong issue is whether the navigator asked for phone
+  number before DOB, or DOB before phone number.
+- If the scenario involves patient lookup, the real issue must be chart accuracy, authorization,
+  privacy, sibling safety, or duplicate-chart prevention.
+- For standard refill scenarios, do not make PE verification the key issue and do not imply the
+  refill cannot be processed because PE is not current. Use real refill workflow issues instead.
+
 SOP REFERENCE:
 ${sopContext}`;
 }

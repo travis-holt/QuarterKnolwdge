@@ -83,6 +83,7 @@ import {
   saveDraftAudits,
   getActiveAudits,
   activateAudit,
+  runContentQualityFixesMigration,
 } from './db.js';
 
 beforeEach(() => vi.clearAllMocks());
@@ -345,6 +346,9 @@ describe('audit bank db helpers', () => {
     expect(data).toMatchObject({
       domainId: 'routing',
       errorIndex: 0,
+      workflowType: 'general_workflow',
+      errorKind: 'workflow_error',
+      difficulty: 'medium',
       status: 'draft',
       source: 'gemini',
       department: 'obgyn',
@@ -372,6 +376,47 @@ describe('audit bank db helpers', () => {
     expect(mocks.doc).toHaveBeenCalledWith(mocks.db, 'audits', 'audit-1');
     const [, data] = mocks.updateDoc.mock.calls[0];
     expect(data).toEqual({ status: 'active' });
+  });
+
+  it('runContentQualityFixesMigration patches lookup-order seeds and archives blocked content', async () => {
+    mocks.getDoc.mockResolvedValue({ exists: () => true });
+    mocks.getDocs
+      .mockResolvedValueOnce({
+        docs: [
+          { id: 'q-int-1', data: () => ({ status: 'active' }) },
+          { id: 'q-bad', data: () => ({
+            status: 'active',
+            scenario: 'What do you ask first, phone number or DOB?',
+            options: [{ text: 'Phone first', rationale: 'Phone must be first.' }],
+          }) },
+        ],
+      })
+      .mockResolvedValueOnce({
+        docs: [
+          { id: 'a-bad', data: () => ({
+            status: 'active',
+            transcript: [{ speaker: 'Agent', message: 'I cannot refill this because the PE is not current.' }],
+            hint: 'Look at the refill handling.',
+            modelExplanation: 'The agent should have checked PE before processing the refill.',
+          }) },
+        ],
+      });
+    mocks.updateDoc.mockResolvedValue();
+
+    await runContentQualityFixesMigration();
+
+    expect(mocks.updateDoc).toHaveBeenCalledWith(
+      { id: 'q-int-1', col: 'questions' },
+      expect.objectContaining({ scenario: expect.stringContaining('family account') })
+    );
+    expect(mocks.updateDoc).toHaveBeenCalledWith(
+      { id: 'q-bad', col: 'questions' },
+      expect.objectContaining({ status: 'archived', archivedReason: 'content-quality-fix-2026-07' })
+    );
+    expect(mocks.updateDoc).toHaveBeenCalledWith(
+      { id: 'a-bad', col: 'audits' },
+      expect.objectContaining({ status: 'archived', archivedReason: 'content-quality-fix-2026-07' })
+    );
   });
 });
 

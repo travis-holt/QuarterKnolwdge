@@ -58,6 +58,12 @@ Rules:
 - Strengths: 2–4 bullet points on what the navigator did well.
 - Improvements: 2–4 specific, actionable bullet points on what to do differently next time.
 - Summary: 2–3 sentences overall assessment addressed to the navigator ("you").
+- Do not grade lookup order itself as right or wrong; judge whether the navigator confirmed the
+  correct patient, caller authorization, and chart before acting.
+- For standard refill calls, focus on medication name, preferred pharmacy, out-of-med priority,
+  correct routing, no clinical advice, and no promised approval. Do NOT require PE verification
+  or say the refill cannot be processed because PE is not current unless the scenario explicitly
+  makes PE status the governing rule.
 
 SOP CONTEXT:
 ${sopContext}`;

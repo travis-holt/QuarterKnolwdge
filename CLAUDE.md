@@ -1,4 +1,4 @@
-﻿# CLAUDE.md Ã¢â‚¬â€ Knowledge Check (Project Knowledge Base)
+# CLAUDE.md Ã¢â‚¬â€ Knowledge Check (Project Knowledge Base)
 
 > **Purpose of this file.** This is the single source of truth for the project: product
 > spec, architecture reference, development journal, decision log, and onboarding doc in one.
@@ -11,7 +11,7 @@
 > [Ã‚Â§8 Current System State](#8-current-system-state) and [Ã‚Â§15 Current Priorities](#15-current-priorities)
 > accurate at all times.
 >
-> **Last updated:** 2026-07-07 (development history moved to docs/HISTORY.md to cut per-session context cost) Ã‚Â·
+> **Last updated:** 2026-07-07 (content-quality reliability fix: lookup-order neutrality, balanced audit workflows, refill/PE grading correction) Ã‚Â·
 > **Doc maintainer:** Claude (AI agent) + repo owner. Assumptions are explicitly marked **[ASSUMPTION]**.
 
 ---
@@ -41,7 +41,7 @@
 - **Product description:** A self-contained web app that runs a quarterly "knowledge check" for
   **patient navigators** (contact-centre agents who handle patient calls) and renders the
   **capability map** it produces. The check asks scenario questions ("a patient calls wanting X,
-  situation is Y Ã¢â‚¬â€ what do you do?"), each tagged to a knowledge **domain**, and scores
+  situation is Y Ã¢â‚¬â€ what do you do"), each tagged to a knowledge **domain**, and scores
   **per domain per person** Ã¢â‚¬â€ never a single overall grade.
 - **Core mission:** Turn a team's operational knowledge into a clear, actionable capability map
   that supports readiness decisions, coaching, and training by domain.
@@ -320,9 +320,11 @@ training assignments.
     merges just that domain score into the existing result.
 - **Technical implementation:**
   - `api/generate-audit.js` Ã¢â‚¬â€ Gemini generates a ~10-turn Patient/Agent transcript with exactly
-    one planted SOP violation, plus `errorIndex`, `hint`, and `modelExplanation` (structured JSON
-    schema output, temp 0.8). Validation ensures `errorIndex` always lands on an Agent turn.
-    (`hint` is now unused by the assessment UI but still returned.)
+    one planted SOP violation, plus `errorIndex`, `hint`, `modelExplanation`, `workflowType`,
+    `errorKind`, and `difficulty` (structured JSON schema output, temp 0.8). Validation ensures
+    `errorIndex` always lands on an Agent turn and shared content guards reject lookup-order
+    preference grading plus the stale "refill blocked by PE" rule. (`hint` is now unused by the
+    assessment UI but still returned.)
   - Pure scoring in `scoring.js`: `scoreSpotTheError(picks)` Ã¢â€ â€™ overall share correct (0Ã¢â‚¬â€œ100);
     `scoreSpotTheErrorByDomain(graded)` Ã¢â€ â€™ `{ domainId: percent }` from `[{domainId, correct}]`.
     Click-accuracy only. Same 0Ã¢â‚¬â€œ100 scale as the main check, so results feed domain scores directly.
@@ -337,7 +339,7 @@ training assignments.
     merge just that domain), appends a `resultHistory` trend point, and records a `kind:'practice'`
     completion per assessed domain. Local state updates immediately so the dashboard/matrix reflect
     the new ratings without a round-trip.
-  - **Entry:** `PhaseHub` in `NavigatorApp` (view `phases`, shown after `deptselect`) →
+  - **Entry:** `PhaseHub` in `NavigatorApp` (view `phases`, shown after `deptselect`)
     full-profile Spot the Error is now **Phase 2** of the sequenced department assessment.
     Per-domain launch is still the "Spot the Error" step on each assigned training domain in
     `MyTraining.jsx` (view `audit`).
@@ -353,14 +355,15 @@ training assignments.
 - **Notes:** Full mode scores each domain from a single item (0 or 100), so the profile is coarse by
   design (owner's choice: 1 item/domain for speed). `api/coach-audit.js` + `POST /api/coach-audit`
   remain in the repo but are **no longer wired**. One error per transcript (multi-error = v2).
-- **Audit bank (2026-07-03, pilot-feedback fix):** transcripts are now pre-generated into a
+  - **Audit bank (2026-07-03, pilot-feedback fix):** transcripts are now pre-generated into a
   Firestore `audits` collection with the question-bank review-gate model (draft Ã¢â€ â€™ active Ã¢â€ â€™
   archived). Supervisor UI `AuditBank.jsx` (Questions tab, below the Question Bank): per-domain
-  coverage read-off, pooled generation, transcript review with the planted error highlighted.
-  `SpotTheError.jsx` draws shuffled `active` bank items first (instant start, no repeats within
-  one assessment) and only live-generates domains the bank can't cover. Fixes the 40-70 s
-  loading wait and lets unrealistic transcripts be curated out. db helpers: `subscribeAudits`,
-  `getActiveAudits`, `saveDraftAudits`, `activateAudit`, `archiveAudit`, `deleteAudit`.
+  coverage read-off, per-workflow coverage for the selected domain, balanced-vs-specific
+  generation modes, transcript review with the planted error highlighted, and activation blocks
+  for guard-flagged content. `SpotTheError.jsx` draws shuffled `active` bank items first and now
+  round-robins workflow types in single-domain mode so a navigator does not get five refill-style
+  items when other workflow types are available. db helpers: `subscribeAudits`, `getActiveAudits`,
+  `saveDraftAudits`, `activateAudit`, `archiveAudit`, `deleteAudit`, `runContentQualityFixesMigration`.
 
 ### F17 Ã¢â‚¬â€ Longitudinal Capability Trends & Training Impact
 - **Purpose:** Quarter-over-quarter trend views for domain/competency scores and training impact.
@@ -661,9 +664,9 @@ training assignments.
   edited `server.js`, `src/lib/{db,scoring,scoring.test}.js`,
   `src/components/{VoiceCall,NavigatorApp,NavigatorDetail,Interview}.jsx`, `src/styles.css`.
 
-### F26 — 3-Phase Assessment Flow
+### F26 ï¿½ 3-Phase Assessment Flow
 - **Purpose:** Sequence each live department assessment into one fixed path: **Phase 1**
-  Multiple choice → **Phase 2** Spot the Error → **Phase 3** Call QA Test.
+  Multiple choice  **Phase 2** Spot the Error  **Phase 3** Call QA Test.
 - **User benefit:** Navigators always know what comes next, later phases stay locked until earlier
   ones are finished, and completed phases stay available for retake without re-locking progress.
 - **Technical implementation:** [src/lib/phases.js](src/lib/phases.js) holds the pure sequencing
@@ -673,8 +676,8 @@ training assignments.
   (`view === 'phases'`) after department select unless all three phases are complete, returns MCQ
   coaching / Spot the Error back to the hub while phases remain, and derives completion from
   stored data rather than flags.
-- **Derived completion rule:** `mcq` complete ⇔ `resultsByType.mcq`; `spot` complete ⇔
-  `resultsByType.spot`; `qa` complete ⇔ the latest department-scoped interview doc has a `qa`
+- **Derived completion rule:** `mcq` complete  `resultsByType.mcq`; `spot` complete
+  `resultsByType.spot`; `qa` complete  the latest department-scoped interview doc has a `qa`
   field. Saved-but-ungraded QA calls do not count; FAIL and NEEDS REVIEW do count.
 - **Flow rules:** Completed phases can be retaken at any time. The dashboard QA card still
   deep-links to `qatest` because it only renders after a QA result exists. The Practice tab keeps
@@ -1024,18 +1027,21 @@ of this file on 2026-07-07 to cut per-session context cost (it was ~55% of the f
 ## 8. Current System State
 
 - **Working end to end (logic + UI):** supervisor adds navigators / generates+curates questions
-  (per department) → navigators sign in → **pick department** (Pediatrics or OB/GYN) → enter the
-  **3-phase assessment sequence** (MCQ scenario check → coaching → full-profile Spot the Error →
-  Call QA Test) with hub-based unlocking / retakes between phases → per-domain (+ per-competency
+  (per department)  navigators sign in  **pick department** (Pediatrics or OB/GYN)  enter the
+  **3-phase assessment sequence** (MCQ scenario check  coaching  full-profile Spot the Error
+  Call QA Test) with hub-based unlocking / retakes between phases  per-domain (+ per-competency
   for MCQ) results persist to Firestore (composite key `${navigatorId}__${department}`) **and** to
-  the append-only `resultHistory` collection (powers trend views) → supervisor matrix/overview
-  update live per dept → navigator/training dashboards → **switch departments** → practice
-  interview → per-domain "Spot the Error" assessment → path stepper + mini re-check per weak
-  domain → supervisor Action Center + Mentorship tabs → Practice tab offers **voice (real-time)**
-  or **text chat** while the graded Call QA Test lives only in Phase 3 → navigator "My history"
-  tab (attempt history + answer review). Build clean, tests green (`npm test` → **381 passing**,
-  15 test files).
-- **Existing functionality:** features F1–F26 (see [§4](#4-feature-inventory)) are **Complete** in
+  the append-only `resultHistory` collection (powers trend views)  supervisor matrix/overview
+  update live per dept  navigator/training dashboards  **switch departments**  practice
+  interview  per-domain "Spot the Error" assessment  path stepper + mini re-check per weak
+  domain  supervisor Action Center + Mentorship tabs  Practice tab offers **voice (real-time)**
+  or **text chat** while the graded Call QA Test lives only in Phase 3  navigator "My history"
+  tab (attempt history + answer review). Shared content guards now block unfair lookup-order
+  grading and stale refill/PE rules in generated questions/audits, while a supervisor-load
+  Firestore migration archives previously active bad content with reason
+  `content-quality-fix-2026-07`. Build clean, tests green (`npm test`  **393 passing**,
+  18 test files).
+- **Existing functionality:** features F1ï¿½F26 (see [ï¿½4](#4-feature-inventory)) are **Complete** in
   code. F17 adds longitudinal trends + Sparkline. F18 adds dossier evidence per competency. F19
   adds the supervisor Action Center. F20 adds AI-sequenced dev paths + mini re-check. F21 adds
   the mentor matching engine with persisted pairings + outcome tracking. F22 adds a real-time
@@ -1043,11 +1049,13 @@ of this file on 2026-07-07 to cut per-session context cost (it was ~55% of the f
   F23 adds the controlled adaptive learning loop: supervisor feedback, learning proposals,
   question-improvement signals, and explainable next-best training recommendations. F25 adds the
   hard rubric-graded Call QA Test (pass/fail voice test against the owner's call quality guide).
-  F26 sequences the live navigator assessment into MCQ → Spot the Error → Call QA with derived
+  F26 sequences the live navigator assessment into MCQ  Spot the Error  Call QA with derived
   completion and hub-based progression.
 - **SOP grounding:** Pediatrics AI features ground against `Pediatrics_SOP_Updated.pdf`; OB/GYN AI
   features ground against the sanitized `SOP_CONTEXT_OBGYN` in `api/_sop-context.js` (faithful to
   OB/GYN workflow but with generic role labels Ã¢â‚¬â€ no PII; repo is public). `SOP Guide.pdf` superseded.
+  The hardcoded fallback context now treats lookup order as a workflow preference rather than a
+  graded right/wrong and no longer says standard refills are blocked when PE is not current.
 - **Interview caller consistency:** `api/interview-turn.js` turn temperature reduced to 0.5 and a
   `CRITICAL` consistency rule added to the system instruction Ã¢â‚¬â€ callers no longer hallucinate
   contradictory facts mid-call. The shared caller system prompt is department-aware; the voice-call
@@ -1061,7 +1069,7 @@ of this file on 2026-07-07 to cut per-session context cost (it was ~55% of the f
 - **Experimental / mockup:**
   - Training **content** is mockup (flagged in UI). Logic is real.
   - **Adult Medicine and Behavioural Health** are not assessed; **Pediatrics and OB/GYN** are live.
-- **Test coverage:** **381 tests** across **15 test files**: `scoring.test.js` (all exports incl. `optionPoints`,
+- **Test coverage:** **393 tests** across **18 test files**: `scoring.test.js` (all exports incl. `optionPoints`,
   including F17Ã¢â‚¬â€œF21 functions: buildTrend, trainingImpact, teamTrend, buildDossier, buildActionCenter,
   buildDevPath, buildMentorMatches, pairingOutcomes, buildLearningSignals,
   buildQuestionImprovementSuggestions, adaptiveTrainingRecommendations, feedbackInsights +
@@ -1071,7 +1079,8 @@ of this file on 2026-07-07 to cut per-session context cost (it was ~55% of the f
   `api/refine-sop.test.js`, `api/grade-call-qa.test.js` (25 tests for the QA-test rubric pipeline),
   `api/_qa-glossary.test.js` (16 tests for the transcript-correction glossary),
   `src/components/components.test.jsx`, `src/lib/phases.test.js`, `src/lib/apiFetch.test.js` (apiFetch/`fetchErrorMessage`/`runPooled`),
-  `api/_auth.test.js` (secret gate), `api/grade-interview.test.js` (`coerceGrade`).
+  `api/_auth.test.js` (secret gate), `api/grade-interview.test.js` (`coerceGrade`),
+  `src/lib/contentGuards.test.js`, `src/data/auditWorkflows.test.js`, `src/components/spotTheError.test.js`.
   The F22 voice call (relay + Web Audio) is verified by live
   end-to-end probe rather than unit tests Ã¢â‚¬â€ audio I/O isn't unit-testable headlessly. Role-app
   integration tests remain the only other untested area.
@@ -1125,8 +1134,8 @@ of this file on 2026-07-07 to cut per-session context cost (it was ~55% of the f
 
 ### Important modules
 - **[src/lib/scoring.js](src/lib/scoring.js)** Ã¢â‚¬â€ all pure logic. Exports:
-  - `scorePerDomain(answers, questions?)` Ã¢â€ â€™ `{ [domainId]: percent }` (points-based; defaults to seed)
-  - `scorePerCompetency(answers, questions?)` Ã¢â€ â€™ `{ [competencyId]: percent|null }` (null = untagged)
+  - `scorePerDomain(answers, questions)` Ã¢â€ â€™ `{ [domainId]: percent }` (points-based; defaults to seed)
+  - `scorePerCompetency(answers, questions)` Ã¢â€ â€™ `{ [competencyId]: percent|null }` (null = untagged)
   - `scoreToLevel(pct)` Ã¢â€ â€™ `'learning'|'solid'|'canTeach'`; `levelFor(pct)` Ã¢â€ â€™ full descriptor
   - `buildMatrixRows(samples, liveResult)` Ã¢â€ â€™ rows `{ name, isLive, scores, levels,
     competencyScores, competencyLevels }`
@@ -1193,17 +1202,17 @@ of this file on 2026-07-07 to cut per-session context cost (it was ~55% of the f
     reviewedAt }`. Proposals are review-only; approving a question proposal creates a draft, not an
     active question.
   - `sops/{uuid}` Ã¢â€ â€™ `{ department, title, body, version, status: 'draft'|'active'|'archived',
-    source: 'manual'|'ai-build'|'ai-refine', createdAt, activatedAt? }`. At most one active doc per
+    source: 'manual'|'ai-build'|'ai-refine', createdAt, activatedAt }`. At most one active doc per
     department; the active body grounds the server's AI features (read via `api/_sop-store.js`).
 - **Serverless endpoints:**
   - `POST /api/generate-scenarios` `{ domainId, count, secret }` Ã¢â€ â€™ `{ questions }` (validated drafts).
-  - `POST /api/generate-coaching` `{ answers, questions, competencyScores, name, completions?,
-    interviews?, priorResults?, feedbackSummary?, secret }` Ã¢â€ â€™ `{ coaching: { [compId]: string } }`
+  - `POST /api/generate-coaching` `{ answers, questions, competencyScores, name, completions,
+    interviews, priorResults, feedbackSummary, secret }` Ã¢â€ â€™ `{ coaching: { [compId]: string } }`
     (personalised AI notes per weak competency; optional stored learning evidence makes notes more
     specific over time; advisory only).
   - `POST /api/interview-turn` `{ domain, secret }` (init, no scenario) Ã¢â€ â€™ `{ scenario, callerName, reply }`. `{ domain, scenario, callerName, history, navigatorMessage, secret }` (turn) Ã¢â€ â€™ `{ reply }`.
   - `POST /api/grade-interview` `{ domain, scenario, transcript, name, secret }` Ã¢â€ â€™ `{ grade: { score:number(0Ã¢â‚¬â€œ100), summary:string, strengths:string[], improvements:string[] } }`. Gemini reviews the full transcript against the SOP; temp 0.3 for consistency. Advisory only.
-  - `POST /api/generate-audit` `{ domain, secret }` Ã¢â€ â€™ `{ transcript, errorIndex, hint, modelExplanation }` (~10-turn flawed transcript for the "Spot the Error" exercise).
+  - `POST /api/generate-audit` `{ domain, department, workflowType, avoidWorkflowTypes, secret }` Ã¢â€ â€™ `{ transcript, errorIndex, hint, modelExplanation, workflowType, errorKind, difficulty }` (~10-turn flawed transcript for the "Spot the Error" exercise).
   - `POST /api/coach-audit` `{ domain, modelExplanation, navigatorAnswer, name, secret }` Ã¢â€ â€™ `{ reply }` (warm 2Ã¢â‚¬â€œ3 sentence mentor coaching note; advisory only).
   - `POST /api/refine-sop` Ã¢â‚¬â€ `{ mode:'build', rawText, department, secret }` Ã¢â€ â€™ `{ sop: { title, body, notes[] } }` (structures a raw document into the 6-domain SOP layout); `{ mode:'refine', rawText, currentSop, department, secret }` Ã¢â€ â€™ `{ sop: { title, body, changes:[{type, summary}] } }` (merges new material into the active SOP, flagging contradictions/outdated rules/additions/clarifications). Output is always saved client-side as a draft Ã¢â‚¬â€ the endpoint never writes Firestore.
   - `GET /api/health` Ã¢â€ â€™ `{ ok }`.
@@ -1220,19 +1229,19 @@ of this file on 2026-07-07 to cut per-session context cost (it was ~55% of the f
   `SUPERVISOR_PASSCODE` when not set. **VITE_FIREBASE_* must be in Railway Variables before the
   first build** Ã¢â‚¬â€ they're baked into the JS bundle at build time.
 - **db.js API** (the only Firestore surface): roster Ã¢â‚¬â€ `addToRoster`, `getRoster`,
-  `subscribeRoster(cb,onError?)`, `updateRosterEntry(id,patch)`, `setRosterStatus(id,status)`;
-  results Ã¢â‚¬â€ `getResult(navigatorId, department?, assessmentType?)`,
-  `saveResult(navigatorId, name, scores, competencyScores?, department?, answers?, assessmentType?)`
+  `subscribeRoster(cb,onError)`, `updateRosterEntry(id,patch)`, `setRosterStatus(id,status)`;
+  results Ã¢â‚¬â€ `getResult(navigatorId, department, assessmentType)`,
+  `saveResult(navigatorId, name, scores, competencyScores, department, answers, assessmentType)`
   (batched with its `resultHistory` append),
-  `clearResult(navigatorId, department?)` (deletes MCQ + Spot + QA docs),
-  `subscribeResults(cb,onError?)`, `getFloorScores(department?)`; questions Ã¢â‚¬â€ `subscribeQuestions(cb,onError?)`,
-  `getActiveQuestions()`, `seedQuestionsIfEmpty(seed)` (adds missing seed IDs), `saveDraftQuestions(drafts, source?)`,
+  `clearResult(navigatorId, department)` (deletes MCQ + Spot + QA docs),
+  `subscribeResults(cb,onError)`, `getFloorScores(department)`; questions Ã¢â‚¬â€ `subscribeQuestions(cb,onError)`,
+  `getActiveQuestions()`, `seedQuestionsIfEmpty(seed)` (adds missing seed IDs), `saveDraftQuestions(drafts, source)`,
   `updateQuestion(id,patch)`, `activateQuestion(id)`, `archiveQuestion(id)`, `deleteQuestion(id)`;
   interviews Ã¢â‚¬â€ `saveInterview(navigatorId, name, domainId, scenario, callerName, transcript)`,
   `getInterviews(navigatorId)`, `updateInterviewGrade(id, grade)`;
-  completions Ã¢â‚¬â€ `saveCompletion(navigatorId, name, domainId, kind?, department?)`,
-  `getCompletions(navigatorId, department?)`,
-  `subscribeCompletions(cb, onError?)`; learning loop Ã¢â‚¬â€ `saveSupervisorFeedback`,
+  completions Ã¢â‚¬â€ `saveCompletion(navigatorId, name, domainId, kind, department)`,
+  `getCompletions(navigatorId, department)`,
+  `subscribeCompletions(cb, onError)`; learning loop Ã¢â‚¬â€ `saveSupervisorFeedback`,
   `subscribeSupervisorFeedback`, `saveLearningProposal`, `updateLearningProposalStatus`,
   `subscribeLearningProposals`; SOPs Ã¢â‚¬â€ `subscribeSops`, `saveSopDraft`, `updateSop`,
   `activateSop(id, department)` (batch-archives the previous active version), `archiveSop`,
@@ -1313,7 +1322,7 @@ npm run test:e2e     # run the Playwright browser tests (auto-builds + starts th
 - Heatmap intensity toggle (show % inside matrix cells).
 
 ### Technical Debt
-- **381 tests** across 15 test files as of 2026-07-07. **Role-app integration tests** (`SupervisorApp`,
+- **393 tests** across 18 test files as of 2026-07-07. **Role-app integration tests** (`SupervisorApp`,
   `NavigatorApp`, `App`) remain the only untested area Ã¢â‚¬â€ adding those is the next coverage priority.
 - **Vite 5.4.21 carries known moderate advisories** (`server.fs.deny` bypass on Windows, optimized-deps
   `.map` path traversal, esbuild dev-server request exposure). The fix is a semver-major upgrade to
@@ -1470,10 +1479,10 @@ npm run test:e2e     # run the Playwright browser tests (auto-builds + starts th
 3. **Supervisor grade override** Ã¢â‚¬â€ allow supervisors to adjust the AI-given score on a saved practice session.
 
 **Active work items:**
-- **Pilot-feedback follow-ups (2026-07-03):** generate + activate audit transcripts per domain in
-  the new Audit Bank (Questions tab) so
-  Spot the Error starts instantly; get the specifics of the colour-scheme feedback (item was
-  recorded without detail).
+- **Pilot-feedback follow-ups (2026-07-03):** after the 2026-07-07 content-quality fix, supervisors
+  should regenerate and activate fresh audit transcripts so the balanced workflow taxonomy fully
+  replaces older refill-heavy bank content; get the specifics of the colour-scheme feedback (item
+  was recorded without detail).
 - **Gemini capacity (2026-07-03 diagnosis):** free tier is **5 RPM per key per model** (probed
   live; the 4 keys are confirmed independent projects Ã¢â€ â€™ ~20 RPM pool). Real fix = enable billing
   on one Google project and put that key first in `GEMINI_API_KEYS` (~$1-2/day at pilot volume;
@@ -1524,4 +1533,3 @@ npm run test:e2e     # run the Playwright browser tests (auto-builds + starts th
 
 *End of CLAUDE.md Ã¢â‚¬â€ keep it current. If you changed the project and didn't update this file, the
 change isn't done.*
-

@@ -258,16 +258,18 @@ TELEPHONE ENCOUNTER (TE) GUIDE — STEP-BY-STEP SCENARIOS:
 
 9. Medication Refill Request → PEDS Encounters queue (HIGH PRIORITY if out of medication)
    Steps:
-   1. Check the logs on the patient hub.
-   2. Check the ePrescription logs.
-   3. Copy the medication name.
-   4. Copy the name of the provider who prescribed the medication.
+   1. Ask for or confirm the medication / prescription name.
+   2. Confirm the preferred pharmacy and best call-back number.
+   3. Check the logs on the patient hub / ePrescription history when needed.
+   4. Copy the medication name and prescribing provider details from the chart when available.
    5. Send a TE to the PEDS Encounters queue.
    6. If the patient is completely out of the medication, tag the TE as HIGH PRIORITY.
-   7. Patient will not get a refill if the PE is not up to date.
-   Include in TE: best call-back number · medication name (copied from logs) · name of the
-   prescribing provider (copied from logs) · whether patient is completely out of medication
-   (high priority if yes) · PE status (must be up to date).
+   7. Do NOT promise approval or tell the caller the refill will be sent today.
+   8. Do NOT deny the refill yourself based only on PE status; if the chart raises an eligibility
+      concern, document the context and route it for the appropriate team or provider decision.
+   Include in TE: best call-back number · medication name · preferred pharmacy · name of the
+   prescribing provider (if available from the chart/logs) · whether patient is completely out of
+   medication (high priority if yes) · any relevant chart details needed for follow-up.
 
 ════════════════════════════════════════════════════════
 DOMAIN 5: INSURANCE & ELIGIBILITY
@@ -467,8 +469,8 @@ DOMAIN 6: REGISTRATION & RECORDS
 ════════════════════════════════════════════════════════
 
 ACCOUNT SEARCH:
-- Search by phone number first to identify all linked family accounts and prevent duplicate records.
-- Then confirm by name and date of birth before creating or modifying any account.
+- Use enough identifiers to reach the correct patient record before creating or modifying anything.
+- If the first search path is ambiguous, confirm with another identifier before opening or changing the chart.
 
 LATE ARRIVAL POLICY:
 - Grace period: 10–15 minutes for a standard 30-minute OB/GYN visit.
@@ -515,11 +517,13 @@ eCW/ECW (charts, scheduling, e-prescription logs, Telephone Encounters), Microso
 (department group chats — checked at shift start for workflow changes, approvals, provider
 and schedule updates).
 
-CALL OPENING — lookup adapts to the department:
-- Pediatrics: ask for the PARENT'S phone number first (pulls up the family; parents often
-  call for two or three children).
-- Adult departments (OB/GYN, Behavioral Health, Internal Medicine): the patient usually
-  calls for themselves — ask date of birth first, then confirm first and last name.
+CALL OPENING — lookup adapts to the department, but the scored issue is chart safety:
+- Pediatrics often starts with the parent or family account because one caller may be handling
+  several children.
+- Adult departments often start with the patient’s own identifiers because the patient usually
+  calls for themselves.
+- Different navigators may reach the correct chart in different sequences; what matters is
+  confirming the correct patient, the caller’s authorization, and the right chart before acting.
 
 CLASSIFICATION — the navigator's first decision on every call: is this scheduling, a
 clinical question, a refill, a lab result, a form/record request, a referral, a complaint,
@@ -535,9 +539,11 @@ TELEPHONE ENCOUNTER ROUTING (current floor rules):
   TE directly to the provider.
 
 REFILLS: ask for the prescription name and preferred pharmacy. Pediatrics: check the
-e-prescription log, copy the medication and prescribing provider, TE to the PEDS Encounters
-queue — HIGH PRIORITY if the patient is completely out. Behavioral Health additionally
-checks appointment continuity (last appointment, follow-up status) before processing.
+e-prescription log when needed, copy the medication and prescribing provider, TE to the PEDS
+Encounters queue, and mark it HIGH PRIORITY if the patient is completely out. Do not promise
+approval, give medication advice, or deny the refill yourself based only on PE status.
+Behavioral Health additionally checks appointment continuity (last appointment, follow-up
+status) before processing.
 
 HARD BOUNDARIES — navigators never: interpret lab results, give medical advice, approve
 exceptions, independently judge clinical urgency beyond the routing rules, or promise that

@@ -41,7 +41,7 @@ export const DOMAINS = [
     id: 'intake',
     name: 'Call Opening & Identification',
     blurb:
-      'Department-adaptive patient lookup and verification — parent phone-first for Pediatrics, DOB-first for adult departments, family accounts, and confirming the right chart.',
+      'Accurate patient identification and chart selection — using enough identifiers, handling family accounts safely, and confirming the correct patient before acting.',
   },
   {
     id: 'classification',
@@ -84,18 +84,18 @@ export const SEED_QUESTIONS = [
     domainId: 'intake',
     competencies: ['sopApplication', 'sopKnowledge'],
     scenario:
-      'A parent calls the Pediatrics line to book visits for their children. What do you ask for first to pull up the chart?',
+      'A parent calls the Pediatrics line needing appointments for two children. You have reached the family account. What must you do before booking or documenting anything?',
     options: [
-      { id: 'a', text: 'The child\'s last name, to avoid duplicates.', points: 25,
-        rationale: 'Name search is weaker — it misses linked family accounts and shared/changed names.' },
-      { id: 'b', text: 'The parent\'s phone number — it pulls up the whole family, and parents often call for more than one child.', points: 100,
-        rationale: 'Correct: in Pediatrics the parent\'s phone number is asked first because it surfaces the linked family account; parents frequently call for two or three children.' },
-      { id: 'c', text: 'The child\'s date of birth first, then the name.', points: 30,
-        rationale: 'DOB-first is the adult-department flow (patients calling for themselves); in Pediatrics phone-first surfaces the family linkage.' },
-      { id: 'd', text: 'Create a fresh account and merge later if a duplicate turns up.', points: 5,
-        rationale: 'Creates avoidable duplicate records and rework.' },
+      { id: 'a', text: 'Confirm which request belongs to which child, open the correct chart for each child, and book or document each request in that child’s chart.', points: 100,
+        rationale: 'Correct: the safety issue is chart accuracy. Multi-child calls are fine as long as each request is handled in the matching child’s chart.' },
+      { id: 'b', text: 'Keep the family account open and document both requests under whichever child was opened first.', points: 0,
+        rationale: 'This mixes siblings’ care into one chart — a documentation and patient-safety error.' },
+      { id: 'c', text: 'Discuss the appointment details first, then verify which child each request is for after you finish booking.', points: 10,
+        rationale: 'Sharing or acting before you have confirmed the correct child risks wrong-chart work and privacy mistakes.' },
+      { id: 'd', text: 'Create a new chart for the second child if anything feels unclear, then sort it out later.', points: 5,
+        rationale: 'Creating duplicate charts is not a safe workaround; the right move is to verify the correct child before acting.' },
     ],
-    correctOptionId: 'b',
+    correctOptionId: 'a',
   },
   {
     id: 'q-int-2',

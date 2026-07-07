@@ -2,9 +2,10 @@
 // OB/GYN SEED QUESTIONS
 //
 // Derived from the Aizer Health OB/GYN Department SOP plus the current Patient
-// Navigator role description (2026-07 floor rules: DOB-first lookup for adult
-// departments; TE routing — pregnant/pregnancy-related → OB Portal, non-pregnant
-// GYN visit issue → PSS OB, established MFM patient → the MFM coordinator).
+// Navigator role description (2026-07 floor rules: adult callers usually verify
+// themselves directly; TE routing — pregnant/pregnancy-related → OB Portal,
+// non-pregnant GYN visit issue → PSS OB, established MFM patient → the MFM
+// coordinator).
 //
 // All scenarios are SANITIZED: faithful to the workflow but using generic role
 // labels only ("the MFM nurse", "the MFM coordinator", "the sonography/MFM
@@ -27,18 +28,18 @@ export const SEED_QUESTIONS_OBGYN = [
     domainId: 'intake',
     competencies: ['sopApplication', 'sopKnowledge'],
     scenario:
-      'A woman calls the OB/GYN line about her own care. What do you ask for first to pull up her chart?',
+      'A woman calls the OB/GYN line about her own care, and the first search result does not clearly match her. What is the safest next step before you discuss or change anything in the chart?',
     options: [
-      { id: 'a', text: 'Her phone number first, to pull up linked family accounts.', points: 30,
-        rationale: 'Phone-first is the Pediatrics flow (parents calling for children). Adult patients call for themselves — DOB-first is the standard.' },
-      { id: 'b', text: 'Her date of birth first, then confirm her first and last name.', points: 100,
-        rationale: 'Correct: in adult departments the patient is usually the caller, so DOB-first plus name confirmation is the standard verification flow.' },
-      { id: 'c', text: 'Her last name only.', points: 15,
-        rationale: 'Name-only search risks pulling the wrong patient — common and changed names collide.' },
-      { id: 'd', text: 'Her insurance member ID.', points: 10,
-        rationale: 'Insurance ID is not the chart lookup key and delays identification.' },
+      { id: 'a', text: 'Confirm enough identifiers to match the correct patient before opening or discussing the chart, and use another identifier if the first search was ambiguous.', points: 100,
+        rationale: 'Correct: the key issue is preventing wrong-chart access. If the first search is unclear, keep verifying until the exact patient is confirmed.' },
+      { id: 'b', text: 'Open the closest-looking chart so the call keeps moving, then correct it later if needed.', points: 0,
+        rationale: 'Moving ahead in a maybe-right chart is a privacy and records error.' },
+      { id: 'c', text: 'Read details from the possible charts so the caller can tell you which one is hers.', points: 0,
+        rationale: 'Reading chart details before identity is confirmed creates the privacy breach you are trying to avoid.' },
+      { id: 'd', text: 'Create a new chart immediately if the first search was not obvious.', points: 10,
+        rationale: 'A duplicate chart is not safer than verifying the existing patient correctly.' },
     ],
-    correctOptionId: 'b',
+    correctOptionId: 'a',
   },
 
   {
