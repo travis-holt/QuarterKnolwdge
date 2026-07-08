@@ -5,6 +5,30 @@
 > feature, decision, or fix. New entries are added HERE (newest first, same format),
 > not in CLAUDE.md.
 
+### 2026-07-08 — Role-app tab behavior tests (test-only)
+- **Context:** Role-app coverage stopped at `roleApps.smoke.test.jsx` (shell mount + gate/session
+  routing). The next coverage milestone was per-tab behavioural coverage of `SupervisorApp` and
+  `NavigatorApp` — real tab transitions and per-view empty states, not just "renders without crashing".
+- **Changes (test-only — no production behavior touched):**
+  - New `src/components/roleApps.behavior.test.jsx` (16 tests). Firebase reports configured; `db.js`
+    subscriptions yield empty arrays and getters/writers resolve empty by default, with per-test
+    `getResult`/`getInterviews` overrides to simulate stored data; `apiFetch` is inert (never
+    resolves); `session.js` is mocked. jsdom gaps (`matchMedia`, `ResizeObserver`,
+    `IntersectionObserver`, `AudioContext`, `navigator.mediaDevices.getUserMedia`) are stubbed so the
+    indirectly-imported `VoiceCall` cannot throw and no microphone is ever requested.
+  - **SupervisorApp flows covered:** default Overview shell + wired subscriptions; switching to
+    Matrix / Navigators / Training / Questions / SOPs tabs; every tab renders on empty Firestore data
+    without crashing; clicking "View dashboard" on a seeded roster row opens NavigatorDetail.
+  - **NavigatorApp flows covered:** department picker with no restored dept; selecting Pediatrics with
+    no prior result lands on the phase hub; all-three-phases-complete lands on the dashboard (PASS QA
+    card); dashboard renders mocked domain scores; My Training renders a plan from a stored result;
+    Practice tab shows the voice/chat chooser without starting audio; My History renders on empty
+    history; the dept-switch pill returns to the department picker.
+  - Assertions target visible headings/roles and stable structural text (no snapshots, no exact-copy
+    coupling).
+- **Verification:** `npm test` green (444 tests, 21 files), `npm run build` clean, `git diff --check`
+  clean. No production component, `firestore.rules`, `server.js`, API handler, or `package.json` change.
+
 ### 2026-07-08 — Server-side supervisor session (pilot auth hardening)
 - **Context:** `SUPERVISOR_PASSCODE` shipped in the public frontend bundle (`src/data/config.js`)
   and `apiFetch` echoed it back as `body.secret`; `api/_auth.js` validated against
