@@ -2,8 +2,47 @@ import { ASSESSED_DEPTS } from './departments.js';
 
 // Curated Call QA Test scenarios. These are assessment prompts, so keep them
 // stable, department-tagged, and free of real names, phone numbers, or PII.
+const SHARED_SCORING_NOTES = [
+  'Accept natural, caller-friendly wording when the workflow classification and routing are correct.',
+  'Do not require a scripted phrase; grade the decision quality, documentation, and boundaries.',
+];
+
+function scenario({
+  id,
+  department,
+  title,
+  workflowType,
+  difficulty,
+  primaryDomainId,
+  domainIds,
+  competencyIds,
+  callerName,
+  openingLine,
+  scenario: prompt,
+  expectedActions,
+  criticalMisses,
+  scoringNotes = SHARED_SCORING_NOTES,
+}) {
+  return {
+    id,
+    department,
+    title,
+    workflowType,
+    difficulty,
+    primaryDomainId,
+    domainIds,
+    competencyIds,
+    callerName,
+    openingLine,
+    scenario: prompt.trim(),
+    expectedActions,
+    criticalMisses,
+    scoringNotes,
+  };
+}
+
 export const CALL_QA_SCENARIOS = [
-  {
+  scenario({
     id: 'qa-peds-scheduling-001',
     department: 'pediatrics',
     title: 'Parent scheduling a new pediatric visit',
@@ -14,30 +53,21 @@ export const CALL_QA_SCENARIOS = [
     competencyIds: ['sopApplication', 'communication', 'customerHandling', 'problemResolution'],
     callerName: 'Maria',
     openingLine: 'Hi, I need to make an appointment for my son. He has not been seen there before.',
-    scenario: `
-A parent is calling to schedule a new pediatric appointment. The navigator must identify the child,
-clarify whether this is a new patient or return visit, choose the right scheduling path, avoid
-overpromising availability, and document the booking details cleanly.
-    `.trim(),
+    scenario: `A parent is calling to schedule a new pediatric appointment. The navigator must identify the child, clarify whether this is a new patient or returning patient request, choose the correct scheduling path, avoid overpromising availability, and document the reason for visit.`,
     expectedActions: [
       'Identify the correct child and caller relationship before acting.',
-      'Clarify whether the child is new to the department or returning.',
-      'Use the department-appropriate new-appointment scheduling flow.',
-      'Set realistic expectations without promising provider approval or special exceptions.',
-      'Document the appointment reason and callback details clearly.',
+      'Clarify new versus returning patient status and appointment reason.',
+      'Use the department-appropriate scheduling path.',
+      'Set realistic expectations without promising special exceptions.',
+      'Document appointment reason and callback details clearly.',
     ],
     criticalMisses: [
       'Books before confirming the correct patient.',
-      'Uses a wrong appointment type after the caller explains the need.',
+      'Uses the wrong appointment type after the caller explains the need.',
       'Promises a specific approval or exception outside navigator scope.',
-      'Leaves the scheduling reason undocumented.',
     ],
-    scoringNotes: [
-      'Accept natural phrasing if the navigator verifies identity, classifies the request, and schedules/routs correctly.',
-      'Do not require a scripted greeting.',
-    ],
-  },
-  {
+  }),
+  scenario({
     id: 'qa-peds-siblings-001',
     department: 'pediatrics',
     title: 'Parent calling for two siblings',
@@ -48,11 +78,7 @@ overpromising availability, and document the booking details cleanly.
     competencyIds: ['sopApplication', 'criticalThinking', 'riskManagement', 'problemResolution'],
     callerName: 'Nadia',
     openingLine: 'I need help with both of my kids. One needs a sick visit and the other needs a refill.',
-    scenario: `
-A parent is calling about two children in the same family. One child needs a sick visit and the other
-needs a standard medication refill. The navigator must keep each request in the correct child chart,
-classify both workflows, and avoid mixing documentation.
-    `.trim(),
+    scenario: `A parent is calling about two children in the same family. One child needs a sick visit and the other needs a standard medication refill. The navigator must keep each request in the correct child chart, classify both workflows, and avoid mixing documentation.`,
     expectedActions: [
       'Confirm which request belongs to which child.',
       'Work in each child chart separately.',
@@ -64,11 +90,8 @@ classify both workflows, and avoid mixing documentation.
       'Handles only one child and drops the second request.',
       'Books or routes before clarifying which child is which.',
     ],
-    scoringNotes: [
-      'Credit efficient handling of both requests in one call if chart separation is maintained.',
-    ],
-  },
-  {
+  }),
+  scenario({
     id: 'qa-peds-referral-001',
     department: 'pediatrics',
     title: 'Parent calling about referral status',
@@ -79,30 +102,22 @@ classify both workflows, and avoid mixing documentation.
     competencyIds: ['sopApplication', 'criticalThinking', 'communication', 'escalation', 'problemResolution'],
     callerName: 'Elena',
     openingLine: 'Hi, I am calling about my child\'s referral. I was told someone would call me back but I have not heard anything.',
-    scenario: `
-A parent is calling about a pediatric referral status. The navigator must identify the patient,
-understand whether this is a status update or new referral request, avoid promising approval,
-route/document correctly, and set realistic expectations.
-    `.trim(),
+    scenario: `A parent is calling about a pediatric referral status. The navigator must identify the patient, understand whether this is a status update or new referral request, avoid promising approval, route or document correctly, and set realistic expectations.`,
     expectedActions: [
-      'Identify the correct patient using department-appropriate lookup flow.',
+      'Identify the correct patient using the department-appropriate lookup flow.',
       'Clarify whether this is referral status, a new referral request, or records issue.',
       'Avoid promising referral approval or medical outcome.',
-      'Create/document the correct telephone encounter with concise details.',
-      'Route to the Pediatrics referral coordinator according to department SOP.',
+      'Route to the Pediatrics referral coordinator or correct referral destination.',
+      'Document concise details and callback information.',
     ],
     criticalMisses: [
       'Promises the referral will be approved.',
       'Routes to the wrong destination after the caller clearly describes a referral issue.',
       'Skips patient identification.',
-      'Gives medical advice instead of routing/documenting.',
+      'Gives medical advice instead of routing or documenting.',
     ],
-    scoringNotes: [
-      'Accept natural wording if the navigator correctly classifies and routes the request.',
-      'Fail routing only when the final destination or follow-through is clearly wrong.',
-    ],
-  },
-  {
+  }),
+  scenario({
     id: 'qa-peds-refill-001',
     department: 'pediatrics',
     title: 'Standard prescription refill request',
@@ -113,17 +128,13 @@ route/document correctly, and set realistic expectations.
     competencyIds: ['sopApplication', 'communication', 'riskManagement', 'problemResolution'],
     callerName: 'Samira',
     openingLine: 'My daughter is out of her allergy medicine and we need a refill sent to the pharmacy.',
-    scenario: `
-A parent is calling for a standard pediatric medication refill. The navigator must gather medication,
-pharmacy, callback, and out-of-medication details, route to the correct clinical queue, and avoid
-promising approval or giving dosing advice.
-    `.trim(),
+    scenario: `A parent is calling for a standard pediatric medication refill. The navigator must gather medication name, preferred pharmacy, callback details, and whether the patient is out, route the request correctly, and avoid promising approval or giving dosing advice.`,
     expectedActions: [
       'Clarify medication name and whether the patient is out.',
       'Confirm preferred pharmacy and callback details.',
-      'Route the refill request to the correct Pediatrics clinical queue.',
+      'Route the refill request to the correct Pediatrics clinical destination.',
       'Flag urgency appropriately if the patient is out.',
-      'Avoid promising the refill will be approved or sent by a specific time.',
+      'Avoid promising approval, timing, or medication guidance.',
     ],
     criticalMisses: [
       'Promises refill approval.',
@@ -133,9 +144,10 @@ promising approval or giving dosing advice.
     ],
     scoringNotes: [
       'Do not require PE-status verification unless the caller makes that the governing issue.',
+      ...SHARED_SCORING_NOTES,
     ],
-  },
-  {
+  }),
+  scenario({
     id: 'qa-peds-records-001',
     department: 'pediatrics',
     title: 'School form and immunization record request',
@@ -146,28 +158,21 @@ promising approval or giving dosing advice.
     competencyIds: ['sopKnowledge', 'sopApplication', 'communication', 'problemResolution'],
     callerName: 'Tanya',
     openingLine: 'The school needs my child\'s immunization record and a form filled out. Can you send that today?',
-    scenario: `
-A parent needs pediatric records and a school form. The navigator must identify the child, clarify
-which documents are needed, avoid guaranteeing same-day completion, route the form/records request
-properly, and document the request.
-    `.trim(),
+    scenario: `A parent needs pediatric records and a school form. The navigator must identify the child, clarify which documents are needed, avoid guaranteeing same-day completion, route the form or records request properly, and document the request.`,
     expectedActions: [
       'Verify the correct child and authorized caller.',
       'Clarify whether the request is records, a form, or both.',
-      'Route to the generic records/forms destination for Pediatrics.',
+      'Route to the appropriate records/forms destination.',
       'Set realistic turnaround expectations.',
-      'Document requested items and delivery/callback details.',
+      'Document requested items and delivery or callback details.',
     ],
     criticalMisses: [
       'Releases information without verifying authorization.',
       'Promises same-day completion without basis.',
       'Treats a form request as clinical advice.',
     ],
-    scoringNotes: [
-      'Generic destination wording is acceptable if ownership and documentation are clear.',
-    ],
-  },
-  {
+  }),
+  scenario({
     id: 'qa-peds-urgent-boundary-001',
     department: 'pediatrics',
     title: 'Parent asking whether symptoms are urgent',
@@ -178,16 +183,12 @@ properly, and document the request.
     competencyIds: ['criticalThinking', 'riskManagement', 'escalation', 'communication'],
     callerName: 'Rebecca',
     openingLine: 'My child has a fever and is breathing funny. Do you think I should wait for an appointment?',
-    scenario: `
-A parent describes potentially urgent symptoms and asks the navigator to judge what to do medically.
-The navigator must stay inside scope, recognize the safety concern, avoid clinical advice, escalate
-or route according to urgent symptom policy, and document what was reported.
-    `.trim(),
+    scenario: `A parent describes potentially urgent symptoms and asks the navigator to judge what to do medically. The navigator must stay inside scope, recognize the safety concern, avoid clinical advice, escalate or route according to urgent symptom policy, and document what was reported.`,
     expectedActions: [
       'Recognize the caller is asking for clinical judgment.',
       'Avoid advising whether symptoms are serious or safe to wait.',
-      'Use the urgent escalation path or direct emergency guidance permitted by SOP.',
-      'Document reported symptoms and routing/escalation taken.',
+      'Use the urgent escalation path or permitted emergency guidance.',
+      'Document reported symptoms and the escalation taken.',
     ],
     criticalMisses: [
       'Tells the caller the child can wait.',
@@ -197,9 +198,10 @@ or route according to urgent symptom policy, and document what was reported.
     ],
     scoringNotes: [
       'Score for boundary management and escalation, not for medical diagnosis.',
+      ...SHARED_SCORING_NOTES,
     ],
-  },
-  {
+  }),
+  scenario({
     id: 'qa-peds-insurance-001',
     department: 'pediatrics',
     title: 'Eligibility confusion during scheduling',
@@ -210,27 +212,20 @@ or route according to urgent symptom policy, and document what was reported.
     competencyIds: ['sopKnowledge', 'sopApplication', 'criticalThinking', 'communication'],
     callerName: 'Alyssa',
     openingLine: 'I am trying to book my child\'s physical, but I was told there is some insurance problem.',
-    scenario: `
-A parent wants to schedule a pediatric physical but reports insurance or PCP eligibility confusion.
-The navigator must clarify the eligibility issue, avoid inventing coverage answers, follow the
-department scheduling/eligibility workflow, and communicate next steps plainly.
-    `.trim(),
+    scenario: `A parent wants to schedule a pediatric physical but reports insurance or PCP eligibility confusion. The navigator must clarify the issue, avoid inventing coverage answers, follow the scheduling or eligibility workflow, and communicate next steps plainly.`,
     expectedActions: [
-      'Verify the correct child and clarify what eligibility issue was seen.',
+      'Verify the correct child and clarify the eligibility issue.',
       'Explain next steps without guaranteeing coverage or payment.',
-      'Apply scheduling rules that depend on eligibility/insurance status.',
+      'Apply scheduling rules tied to eligibility status.',
       'Route or document unresolved eligibility questions appropriately.',
     ],
     criticalMisses: [
       'Guarantees the visit will be covered.',
-      'Ignores the eligibility issue and books as usual when policy requires follow-up.',
+      'Ignores the eligibility issue when policy requires follow-up.',
       'Gives insurance advice outside navigator scope.',
     ],
-    scoringNotes: [
-      'Accept caller-friendly wording if coverage is not promised.',
-    ],
-  },
-  {
+  }),
+  scenario({
     id: 'qa-peds-unclear-001',
     department: 'pediatrics',
     title: 'Unclear request that may belong elsewhere',
@@ -241,15 +236,11 @@ department scheduling/eligibility workflow, and communicate next steps plainly.
     competencyIds: ['criticalThinking', 'problemResolution', 'communication', 'escalation'],
     callerName: 'Jasmine',
     openingLine: 'I am not sure who I need. I have a question about my child, but it might be for another department.',
-    scenario: `
-A caller has an unclear request that may belong to Pediatrics or another department. The navigator
-must gather enough detail to classify the request, avoid dumping the caller, route to the right
-destination, and document any follow-through.
-    `.trim(),
+    scenario: `A caller has an unclear request that may belong to Pediatrics or another department. The navigator must gather enough detail to classify the request, avoid dumping the caller, route to the right destination, and document any follow-through.`,
     expectedActions: [
-      'Verify patient/caller enough to proceed safely.',
-      'Ask clarifying questions to identify the department and workflow.',
-      'Route to the correct destination or department supervisor when unclear.',
+      'Verify patient and caller enough to proceed safely.',
+      'Ask clarifying questions to identify department and workflow.',
+      'Route to the correct destination or supervisor when unclear.',
       'Document the reason and handoff if a message is created.',
     ],
     criticalMisses: [
@@ -257,11 +248,8 @@ destination, and document any follow-through.
       'Books into Pediatrics when the request clearly belongs elsewhere.',
       'Ends the call without a path forward.',
     ],
-    scoringNotes: [
-      'Credit escalation to a department supervisor when classification remains unclear after reasonable questions.',
-    ],
-  },
-  {
+  }),
+  scenario({
     id: 'qa-obgyn-new-gyn-001',
     department: 'obgyn',
     title: 'New GYN visit, not pregnant',
@@ -272,11 +260,7 @@ destination, and document any follow-through.
     competencyIds: ['sopApplication', 'communication', 'customerHandling', 'problemResolution'],
     callerName: 'Leah',
     openingLine: 'Hi, I need to schedule a new GYN appointment. I am not pregnant.',
-    scenario: `
-A caller wants a new GYN appointment and clearly states she is not pregnant. The navigator must
-classify it as a non-pregnancy GYN scheduling request, use the correct destination, and document
-the reason without drifting into pregnancy workflow.
-    `.trim(),
+    scenario: `A caller wants a new GYN appointment and clearly states she is not pregnant. The navigator must classify it as a non-pregnancy GYN scheduling request, use the correct destination, and document the reason without drifting into pregnancy workflow.`,
     expectedActions: [
       'Confirm caller identity and basic scheduling need.',
       'Classify as a new GYN visit, not pregnancy care.',
@@ -288,11 +272,8 @@ the reason without drifting into pregnancy workflow.
       'Gives clinical advice about symptoms or contraception.',
       'Books before confirming required identity details.',
     ],
-    scoringNotes: [
-      'Natural scheduling language is fine if the workflow classification is correct.',
-    ],
-  },
-  {
+  }),
+  scenario({
     id: 'qa-obgyn-pregnancy-001',
     department: 'obgyn',
     title: 'Pregnancy-related first visit request',
@@ -303,11 +284,7 @@ the reason without drifting into pregnancy workflow.
     competencyIds: ['sopApplication', 'criticalThinking', 'communication', 'riskManagement'],
     callerName: 'Maya',
     openingLine: 'I just found out I am pregnant and need to make my first appointment.',
-    scenario: `
-A caller reports a positive pregnancy test and wants her first OB appointment. The navigator must
-classify the pregnancy-related visit, collect the scheduling details required by workflow, avoid
-medical advice, and document the request accurately.
-    `.trim(),
+    scenario: `A caller reports a positive pregnancy test and wants her first OB appointment. The navigator must classify the pregnancy-related visit, collect scheduling details required by workflow, avoid medical advice, and document the request accurately.`,
     expectedActions: [
       'Classify as pregnancy-related OB scheduling.',
       'Collect required scheduling context without probing beyond role.',
@@ -318,13 +295,10 @@ medical advice, and document the request accurately.
     criticalMisses: [
       'Treats the call as routine GYN after pregnancy is stated.',
       'Gives medical advice about pregnancy symptoms.',
-      'Fails to document pregnancy-related context needed for scheduling.',
+      'Fails to document pregnancy-related scheduling context.',
     ],
-    scoringNotes: [
-      'Do not require exact scripted intake questions, only the workflow-critical ones.',
-    ],
-  },
-  {
+  }),
+  scenario({
     id: 'qa-obgyn-mfm-001',
     department: 'obgyn',
     title: 'MFM-related scheduling request',
@@ -335,28 +309,21 @@ medical advice, and document the request accurately.
     competencyIds: ['sopKnowledge', 'sopApplication', 'escalation', 'criticalThinking'],
     callerName: 'Arielle',
     openingLine: 'My OB told me I need an MFM appointment, but I am not sure who schedules that.',
-    scenario: `
-A caller asks about an MFM-related request. The navigator must recognize that this is not ordinary
-GYN scheduling, clarify the request, route to the MFM coordinator or correct OB destination, and
-document the handoff without promising appointment approval.
-    `.trim(),
+    scenario: `A caller asks about an MFM-related request. The navigator must recognize this is not ordinary GYN scheduling, clarify whether this is scheduling, referral status, or records, route to the MFM coordinator or correct OB destination, and document the handoff without promising appointment approval.`,
     expectedActions: [
       'Recognize the request is MFM-related.',
       'Clarify whether this is scheduling, referral status, or records needed for MFM.',
       'Route to the MFM coordinator or correct OB destination.',
       'Avoid promising approval, timing, or clinical outcome.',
-      'Document the handoff details.',
+      'Document handoff details.',
     ],
     criticalMisses: [
       'Books as a routine GYN visit after MFM is clearly stated.',
       'Promises the MFM appointment will be approved.',
       'Routes to an unrelated department.',
     ],
-    scoringNotes: [
-      'Generic MFM coordinator wording is acceptable.',
-    ],
-  },
-  {
+  }),
+  scenario({
     id: 'qa-obgyn-refill-001',
     department: 'obgyn',
     title: 'OB/GYN prescription refill request',
@@ -367,11 +334,7 @@ document the handoff without promising appointment approval.
     competencyIds: ['sopApplication', 'communication', 'riskManagement', 'problemResolution'],
     callerName: 'Dina',
     openingLine: 'I need a refill on my medication from the OB/GYN office. My pharmacy says they have not heard back.',
-    scenario: `
-A caller asks for an OB/GYN medication refill. The navigator must gather the medication, pharmacy,
-callback, and urgency details, route through the OB/GYN refill path, avoid medication advice, and
-document the request.
-    `.trim(),
+    scenario: `A caller asks for an OB/GYN medication refill. The navigator must gather medication, pharmacy, callback, and urgency details, route through the OB/GYN refill path, avoid medication advice, and document the request.`,
     expectedActions: [
       'Clarify medication name, pharmacy, callback number, and urgency.',
       'Route refill details to the correct OB/GYN destination.',
@@ -385,11 +348,8 @@ document the request.
       'Routes to Pediatrics or another unrelated queue.',
       'Leaves out pharmacy or medication details.',
     ],
-    scoringNotes: [
-      'Accept OB Portal or PSS OB routing if consistent with active SOP wording.',
-    ],
-  },
-  {
+  }),
+  scenario({
     id: 'qa-obgyn-results-boundary-001',
     department: 'obgyn',
     title: 'Test result and medical advice boundary',
@@ -400,14 +360,10 @@ document the request.
     competencyIds: ['compliance', 'riskManagement', 'communication', 'escalation'],
     callerName: 'Priya',
     openingLine: 'I saw a lab result in the portal and I need you to tell me if it is normal.',
-    scenario: `
-A caller asks the navigator to interpret an OB/GYN test result. The navigator must protect scope,
-avoid reading or interpreting results, route to the clinical team for follow-up, and document the
-request clearly.
-    `.trim(),
+    scenario: `A caller asks the navigator to interpret an OB/GYN test result. The navigator must protect scope, avoid reading or interpreting results, route to the clinical team or OB Portal for follow-up, and document the request clearly.`,
     expectedActions: [
       'Recognize the request is medical interpretation.',
-      'Explain that results/medical advice must come from clinical staff.',
+      'Explain that results and medical advice must come from clinical staff.',
       'Route to the clinical team or OB Portal workflow.',
       'Document caller concern and callback details.',
     ],
@@ -417,10 +373,11 @@ request clearly.
       'Dismisses the concern without routing.',
     ],
     scoringNotes: [
-      'Score for boundary and routing; do not require the navigator to know the clinical meaning.',
+      'Score for boundary and routing; do not require the navigator to know clinical meaning.',
+      ...SHARED_SCORING_NOTES,
     ],
-  },
-  {
+  }),
+  scenario({
     id: 'qa-obgyn-schedule-change-001',
     department: 'obgyn',
     title: 'Scheduling change request',
@@ -431,11 +388,7 @@ request clearly.
     competencyIds: ['sopApplication', 'communication', 'customerHandling', 'problemResolution'],
     callerName: 'Kara',
     openingLine: 'I need to move my OB/GYN appointment. I cannot come on the day I was given.',
-    scenario: `
-A caller needs to reschedule an existing OB/GYN appointment. The navigator must identify the
-appointment, classify the request as a scheduling change, follow the correct rescheduling path,
-and document the outcome.
-    `.trim(),
+    scenario: `A caller needs to reschedule an existing OB/GYN appointment. The navigator must identify the appointment, classify the request as a scheduling change, follow the correct rescheduling path, and document the outcome.`,
     expectedActions: [
       'Verify caller and appointment details.',
       'Classify as a scheduling change.',
@@ -447,11 +400,8 @@ and document the outcome.
       'Treats the change as a new-patient request without checking existing appointment.',
       'Fails to document the change.',
     ],
-    scoringNotes: [
-      'Straightforward call; focus on accurate verification and clean close.',
-    ],
-  },
-  {
+  }),
+  scenario({
     id: 'qa-obgyn-records-001',
     department: 'obgyn',
     title: 'OB/GYN records or forms request',
@@ -462,28 +412,21 @@ and document the outcome.
     competencyIds: ['sopApplication', 'compliance', 'communication', 'problemResolution'],
     callerName: 'Selena',
     openingLine: 'I need my OB/GYN records sent to another office, and there is a form they asked me to complete.',
-    scenario: `
-A caller requests OB/GYN records and mentions a form. The navigator must verify authorization,
-clarify records versus forms, route to the correct records/forms destination, avoid sharing
-protected information inappropriately, and document the request.
-    `.trim(),
+    scenario: `A caller requests OB/GYN records and mentions a form. The navigator must verify authorization, clarify records versus forms, route to the correct records/forms destination, avoid sharing protected information inappropriately, and document the request.`,
     expectedActions: [
       'Verify identity and authorization before discussing records.',
       'Clarify which records and which form are needed.',
       'Route to the OB/GYN records/forms destination.',
       'Set realistic expectations for turnaround.',
-      'Document requested items and delivery/callback details.',
+      'Document requested items and delivery or callback details.',
     ],
     criticalMisses: [
       'Releases records without authorization process.',
       'Promises immediate completion.',
-      'Routes forms to an unrelated clinical/scheduling workflow.',
+      'Routes forms to an unrelated clinical or scheduling workflow.',
     ],
-    scoringNotes: [
-      'Generic records/forms destination wording is acceptable.',
-    ],
-  },
-  {
+  }),
+  scenario({
     id: 'qa-obgyn-unclear-001',
     department: 'obgyn',
     title: 'Wrong department or unclear OB/GYN request',
@@ -494,11 +437,7 @@ protected information inappropriately, and document the request.
     competencyIds: ['criticalThinking', 'problemResolution', 'communication', 'escalation'],
     callerName: 'Monica',
     openingLine: 'I am not sure if I need OB/GYN or another office. I just need someone to point me in the right direction.',
-    scenario: `
-A caller has an unclear request that may or may not belong to OB/GYN. The navigator must ask enough
-questions to classify the workflow, route or escalate appropriately, avoid abandoning the caller,
-and document any message or handoff.
-    `.trim(),
+    scenario: `A caller has an unclear request that may or may not belong to OB/GYN. The navigator must ask enough questions to classify the workflow, route or escalate appropriately, avoid abandoning the caller, and document any message or handoff.`,
     expectedActions: [
       'Clarify what the caller is trying to accomplish.',
       'Determine whether OB/GYN owns the request.',
@@ -510,10 +449,7 @@ and document any message or handoff.
       'Books into OB/GYN after the caller clearly describes another department need.',
       'Ends the call without a next step.',
     ],
-    scoringNotes: [
-      'Credit supervisor escalation when the request remains ambiguous after reasonable questions.',
-    ],
-  },
+  }),
 ];
 
 export function getCallQaScenarios(department) {
@@ -524,32 +460,31 @@ export function getCallQaScenarioById(id) {
   return CALL_QA_SCENARIOS.find((scenario) => scenario.id === id) ?? null;
 }
 
-export function selectCallQaScenario({ department, priorAttempts = [], now = Date.now() } = {}) {
-  void now;
+export function selectCallQaScenario({ department, priorAttempts = [] } = {}) {
   const scenarios = getCallQaScenarios(department);
   if (!scenarios.length) return null;
-  const activePriorAttempts = priorAttempts.filter((iv) =>
-    iv?.department === department &&
-    iv?.qa &&
-    !iv?.qaArchived
-  );
-  const usedIds = new Set(activePriorAttempts.map((iv) => iv.qaScenarioId).filter(Boolean));
-  if (scenarios.every((scenario) => usedIds.has(scenario.id))) return scenarios[0];
+
   const recentIds = new Set(
-    activePriorAttempts
+    priorAttempts
+      .filter((iv) =>
+        (iv.department ?? 'pediatrics') === department &&
+        iv?.qa &&
+        !iv?.qaArchived
+      )
       .sort((a, b) => (b.endedAt?.seconds ?? 0) - (a.endedAt?.seconds ?? 0))
       .slice(0, 3)
       .map((iv) => iv.qaScenarioId)
       .filter(Boolean)
   );
+
   return scenarios.find((scenario) => !recentIds.has(scenario.id)) ?? scenarios[0];
 }
 
 export function callQaScenarioCoverage(department) {
   const scenarios = getCallQaScenarios(department);
   const workflowCounts = {};
-  for (const scenario of scenarios) {
-    workflowCounts[scenario.workflowType] = (workflowCounts[scenario.workflowType] ?? 0) + 1;
+  for (const item of scenarios) {
+    workflowCounts[item.workflowType] = (workflowCounts[item.workflowType] ?? 0) + 1;
   }
   return {
     department,
