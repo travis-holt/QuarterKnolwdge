@@ -5,6 +5,36 @@
 > feature, decision, or fix. New entries are added HERE (newest first, same format),
 > not in CLAUDE.md.
 
+### 2026-07-08 — Supervisor grade override for practice sessions (F15)
+- **Context:** The AI practice-call grade (`grade-interview`) was the final word on a saved
+  roleplay session's score. Supervisors had no way to correct a grade they judged wrong. This was
+  the last open item under §15 Current Priorities.
+- **Change — db:** New `updateInterviewGradeOverride(interviewId, {score, reason})` in
+  `src/lib/db.js`. Coerces/validates score (finite → clamped 0–100 → rounded), requires a non-empty
+  reason, and writes **only** a `gradeOverride` field
+  `{ score, reason, overriddenAt: serverTimestamp(), overriddenBy: 'supervisor' }`. The original
+  `grade` is never touched (audit trail preserved). `overriddenBy` is a pilot-grade placeholder
+  until real per-user auth.
+- **Change — UI:** In `NavigatorDetail.jsx`'s supervisor-only Practice sessions panel, each graded
+  session gains an "Override score" (or "Adjust override") inline form: a 0–100 number input, a
+  required reason textarea, Save/Cancel, and inline validation for out-of-range score / missing
+  reason. On save the override is reflected in local state immediately (no re-fetch). Overridden
+  sessions show the effective (override) score in the header badge and grade panel, a "Supervisor
+  override" tag, "Original AI score: X", and the reason. Sessions without an override render exactly
+  as before.
+- **Styles:** minimal `grade-override__*` rules added to `src/styles.css` (badge, form, fields,
+  error, actions); the Practice panel layout is otherwise unchanged.
+- **Scope guarantees:** override scores are **advisory only** — they do NOT feed the capability
+  matrix, `resultHistory`, MCQ/Spot scores, the deterministic Call QA rubric engine, or any
+  navigator-facing assessment score. `firestore.rules` untouched (the `interviews` collection was
+  already writable by signed-in pilot clients).
+- **Tests:** new `src/components/navigatorDetail.override.test.jsx` (6 tests, `db.js` mocked, no
+  Firebase): AI-only score display; override + original-AI-score display; form open; out-of-range
+  score rejected; missing reason rejected; valid override calls the db helper with the expected
+  `{score, reason}` payload and reflects immediately.
+- **Verification:** `npm test` green (450 tests, 22 files), `npm run build` clean, `git diff --check`
+  clean. DRAFT PR, no merge, no deploy.
+
 ### 2026-07-08 — Call QA save/reset reliability
 - **Context:** Call QA Phase 3 completion was derived from interview docs, but the voice-test flow
   could continue after a failed `saveInterview()` and supervisor reset cleared result docs without

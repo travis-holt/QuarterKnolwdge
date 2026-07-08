@@ -4,7 +4,7 @@ import { COMPETENCIES, competencyName } from '../data/competencies.js';
 import { DEPARTMENTS, isAssessed } from '../data/departments.js';
 import { LEVELS, interviewScoreColor } from '../data/config.js';
 import { findRow, mentorSuggestions, trainingForRow, buildTrend, trainingImpact, buildDossier } from '../lib/scoring.js';
-import { getInterviews, getResultHistory } from '../lib/db.js';
+import { getInterviews, getResultHistory, updateInterviewGradeOverride } from '../lib/db.js';
 import Sparkline from './Sparkline.jsx';
 import FeedbackControls from './FeedbackControls.jsx';
 
@@ -33,6 +33,12 @@ export default function NavigatorDetail({ rows, name, deptName, dept, deptMatrix
   const [history, setHistory] = useState(null); // null = not loaded yet
   // Per-competency dossier expanded state
   const [expandedComp, setExpandedComp] = useState(null);
+  // Supervisor grade-override inline form state (keyed by interview id)
+  const [overrideId, setOverrideId] = useState(null);
+  const [overrideScore, setOverrideScore] = useState('');
+  const [overrideReason, setOverrideReason] = useState('');
+  const [overrideError, setOverrideError] = useState('');
+  const [overrideSaving, setOverrideSaving] = useState(false);
 
   useEffect(() => {
     if (!navigatorId) return;
@@ -64,6 +70,49 @@ export default function NavigatorDetail({ rows, name, deptName, dept, deptMatrix
 
   const toggleExpand = (id) => setExpandedId((prev) => (prev === id ? null : id));
   const toggleComp = (id) => setExpandedComp((prev) => (prev === id ? null : id));
+
+  const openOverride = (session) => {
+    setOverrideId(session.id);
+    setOverrideScore(String(session.gradeOverride?.score ?? session.grade?.score ?? ''));
+    setOverrideReason(session.gradeOverride?.reason ?? '');
+    setOverrideError('');
+  };
+  const cancelOverride = () => {
+    setOverrideId(null);
+    setOverrideError('');
+    setOverrideSaving(false);
+  };
+  const saveOverride = async (session) => {
+    const reason = overrideReason.trim();
+    const score = Number(overrideScore);
+    if (!Number.isFinite(score) || score < 0 || score > 100) {
+      setOverrideError('Enter a score between 0 and 100.');
+      return;
+    }
+    if (!reason) {
+      setOverrideError('A short reason is required.');
+      return;
+    }
+    const rounded = Math.round(score);
+    setOverrideSaving(true);
+    setOverrideError('');
+    try {
+      await updateInterviewGradeOverride(session.id, { score: rounded, reason });
+      // Reflect the override locally so it shows immediately (no re-fetch).
+      setInterviews((prev) =>
+        (prev ?? []).map((s) =>
+          s.id === session.id
+            ? { ...s, gradeOverride: { score: rounded, reason, overriddenBy: 'supervisor', overriddenAt: { seconds: Math.floor(Date.now() / 1000) } } }
+            : s
+        )
+      );
+      cancelOverride();
+    } catch (err) {
+      console.error('updateInterviewGradeOverride:', err);
+      setOverrideError('Could not save the override. Try again.');
+      setOverrideSaving(false);
+    }
+  };
 
   if (!row) {
     return (
@@ -429,7 +478,10 @@ export default function NavigatorDetail({ rows, name, deptName, dept, deptMatrix
                 const isOpen = expandedId === session.id;
                 const navTurns = session.transcript.filter((t) => t.role === 'navigator').length;
                 const g = session.grade ?? null;
-                const scoreColor = g ? interviewScoreColor(g.score) : undefined;
+                const override = session.gradeOverride ?? null;
+                const effectiveScore = override ? override.score : g?.score;
+                const scoreColor = g ? interviewScoreColor(effectiveScore) : undefined;
+                const isEditing = overrideId === session.id;
                 return (
                   <li key={session.id} className={`interview-log__item ${isOpen ? 'is-open' : ''}`}>
                     <button
@@ -456,9 +508,9 @@ export default function NavigatorDetail({ rows, name, deptName, dept, deptMatrix
                         <span
                           className="interview-log__score-badge"
                           style={{ color: scoreColor }}
-                          title={`Score: ${g.score}/100`}
+                          title={override ? `Supervisor override: ${override.score}/100 (original AI ${g.score}/100)` : `Score: ${g.score}/100`}
                         >
-                          {g.score}/100
+                          {effectiveScore}/100{override && <span className="interview-log__override-flag"> ✎</span>}
                         </span>
                       )}
                       <span className="interview-log__toggle" aria-hidden="true">
@@ -474,8 +526,56 @@ export default function NavigatorDetail({ rows, name, deptName, dept, deptMatrix
                         {g && (
                           <div className="interview-log__grade">
                             <p className="interview-log__grade-score" style={{ color: scoreColor }}>
-                              Score: <strong>{g.score}/100</strong>
+                              Score: <strong>{effectiveScore}/100</strong>
                             </p>
+                            {override && (
+                              <div className="grade-override__badge">
+                                <span className="grade-override__tag">Supervisor override</span>
+                                <span className="grade-override__original">Original AI score: {g.score}/100</span>
+                                <span className="grade-override__reason">Reason: {override.reason}</span>
+                              </div>
+                            )}
+                            {isEditing ? (
+                              <div className="grade-override__form">
+                                <label className="grade-override__field">
+                                  <span>Override score (0–100)</span>
+                                  <input
+                                    type="number"
+                                    min="0"
+                                    max="100"
+                                    value={overrideScore}
+                                    onChange={(e) => setOverrideScore(e.target.value)}
+                                    aria-label="Override score"
+                                  />
+                                </label>
+                                <label className="grade-override__field">
+                                  <span>Reason (required)</span>
+                                  <textarea
+                                    rows="2"
+                                    value={overrideReason}
+                                    onChange={(e) => setOverrideReason(e.target.value)}
+                                    aria-label="Override reason"
+                                  />
+                                </label>
+                                {overrideError && <p className="grade-override__error">{overrideError}</p>}
+                                <div className="grade-override__actions">
+                                  <button
+                                    className="btn btn--sm"
+                                    onClick={() => saveOverride(session)}
+                                    disabled={overrideSaving}
+                                  >
+                                    {overrideSaving ? 'Saving…' : 'Save'}
+                                  </button>
+                                  <button className="linkbtn" onClick={cancelOverride} disabled={overrideSaving}>
+                                    Cancel
+                                  </button>
+                                </div>
+                              </div>
+                            ) : (
+                              <button className="linkbtn grade-override__open" onClick={() => openOverride(session)}>
+                                {override ? 'Adjust override' : 'Override score'}
+                              </button>
+                            )}
                             {g.summary && (
                               <p className="interview-log__grade-summary">{g.summary}</p>
                             )}
