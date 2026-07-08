@@ -82,6 +82,10 @@ service cloud.firestore {
     match /sops/{docId} {
       allow read, write: if signedIn();
     }
+    // One-time supervisor-load migration markers.
+    match /contentMigrations/{docId} {
+      allow read, write: if signedIn();
+    }
 
     // Everything else is denied.
     match /{document=**} {

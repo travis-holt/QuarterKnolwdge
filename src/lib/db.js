@@ -5,7 +5,8 @@
 // calls these helpers — never the Firestore SDK directly. This keeps the data
 // layer swappable and the rest of the app ignorant of Firestore.
 //
-// Seven collections, all UUID-keyed (never name-keyed → no typo/collision risk):
+// Twelve collections; app data docs are UUID/composite-keyed (never name-keyed
+// → no typo/collision risk):
 //   roster        — navigator list { name, pin, createdAt }; blank pin means
 //                   the navigator creates it on first sign-in
 //   results       — assessment submissions { name, navigatorId, department,
@@ -35,6 +36,8 @@
 //   sops          — versioned department SOPs { department, title, body, version,
 //                   status: draft|active|archived, source, createdAt }. At most
 //                   one active doc per department; grounds the server's AI features.
+//   contentMigrations — one-time migration markers. firestore.rules must allow
+//                   signed-in access or supervisor-load migrations cannot complete.
 //
 // Levels (learning/solid/canTeach) are NEVER stored — always derived client-side
 // by scoreToLevel(), so thresholds stay tunable without a data migration. Older
@@ -43,6 +46,8 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { db, authReady } from './firebase.js';
+import { ALL_SEED_QUESTIONS } from '../data/questions.js';
+import { validateQuestionContent, validateAuditContent } from './contentGuards.js';
 import {
   collection,
   doc,
@@ -589,8 +594,8 @@ export async function deleteQuestion(id) {
 // curated out before a navigator ever sees them.
 //
 // Doc shape: { department, domainId, transcript:[{speaker,message}], errorIndex,
-//              hint, modelExplanation, status: draft|active|archived, source,
-//              createdAt }
+//              hint, modelExplanation, workflowType, errorKind, difficulty,
+//              status: draft|active|archived, source, createdAt }
 
 /**
  * Supervisor: live subscription to the whole audit bank (all statuses).
@@ -635,6 +640,9 @@ export async function saveDraftAudits(drafts, source = 'gemini', department = 'p
       errorIndex: a.errorIndex,
       hint: a.hint ?? '',
       modelExplanation: a.modelExplanation,
+      workflowType: a.workflowType ?? 'general_workflow',
+      errorKind: a.errorKind ?? 'workflow_error',
+      difficulty: a.difficulty ?? 'medium',
       department: a.department ?? department,
       status: 'draft',
       source,
@@ -659,6 +667,83 @@ export async function archiveAudit(id) {
 /** Supervisor: permanently delete an audit item. */
 export async function deleteAudit(id) {
   await deleteDoc(doc(db, AUDITS_COL, id));
+}
+
+// —— 2026-07 content-quality reliability fix ———————————————————————————————
+
+const CONTENT_FIX_REASON = 'content-quality-fix-2026-07';
+const CONTENT_FIX_MIGRATIONS_COL = 'contentMigrations';
+const CONTENT_FIX_VERSION = '2026-07-content-quality-fixes-v2';
+const CONTENT_FIX_SEEDS = new Map(
+  ALL_SEED_QUESTIONS
+    .filter((q) => q.id === 'q-int-1' || q.id === 'q-obgyn-int-1')
+    .map((q) => [q.id, q])
+);
+
+/**
+ * Idempotent cleanup for known unfair / stale assessment content:
+ * - patches the two lookup-order seed questions only if they still fail guards
+ * - archives any live question/audit that fails the shared content guards
+ * - records a migration marker so supervisor loads do not rescan forever
+ * Existing docs are preserved with archivedReason/archivedAt metadata.
+ */
+export async function runContentQualityFixesMigration() {
+  await authReady;
+
+  const markerRef = doc(db, CONTENT_FIX_MIGRATIONS_COL, CONTENT_FIX_VERSION);
+  const markerSnap = await getDoc(markerRef);
+  if (markerSnap.exists()) return false;
+
+  let patchedSeeds = 0;
+  let archivedQuestions = 0;
+  let archivedAudits = 0;
+
+  for (const [id, seed] of CONTENT_FIX_SEEDS) {
+    const snap = await getDoc(doc(db, QUESTIONS_COL, id));
+    if (!snap.exists()) continue;
+    const current = { id: snap.id ?? id, ...snap.data() };
+    if (!validateQuestionContent(current).length) continue;
+    await updateDoc(doc(db, QUESTIONS_COL, id), {
+      ...QUESTION_FIELDS(seed),
+      department: seed.department ?? 'pediatrics',
+    });
+    patchedSeeds += 1;
+  }
+
+  const questionSnap = await getDocs(collection(db, QUESTIONS_COL));
+  for (const row of questionSnap.docs.map((d) => ({ id: d.id, ...d.data() }))) {
+    if ((row.status ?? 'active') === 'archived') continue;
+    const flags = validateQuestionContent(row);
+    if (!flags.length) continue;
+    await updateDoc(doc(db, QUESTIONS_COL, row.id), {
+      status: 'archived',
+      archivedReason: CONTENT_FIX_REASON,
+      archivedAt: serverTimestamp(),
+    });
+    archivedQuestions += 1;
+  }
+
+  const auditSnap = await getDocs(collection(db, AUDITS_COL));
+  for (const row of auditSnap.docs.map((d) => ({ id: d.id, ...d.data() }))) {
+    if ((row.status ?? 'active') === 'archived') continue;
+    const flags = validateAuditContent(row);
+    if (!flags.length) continue;
+    await updateDoc(doc(db, AUDITS_COL, row.id), {
+      status: 'archived',
+      archivedReason: CONTENT_FIX_REASON,
+      archivedAt: serverTimestamp(),
+    });
+    archivedAudits += 1;
+  }
+
+  await setDoc(markerRef, {
+    version: CONTENT_FIX_VERSION,
+    completedAt: serverTimestamp(),
+    patchedSeeds,
+    archivedQuestions,
+    archivedAudits,
+  });
+  return true;
 }
 
 // ── Pairings (mentor-mentee assignments) ──────────────────────────────────────

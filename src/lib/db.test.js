@@ -83,6 +83,7 @@ import {
   saveDraftAudits,
   getActiveAudits,
   activateAudit,
+  runContentQualityFixesMigration,
 } from './db.js';
 
 beforeEach(() => vi.clearAllMocks());
@@ -345,6 +346,9 @@ describe('audit bank db helpers', () => {
     expect(data).toMatchObject({
       domainId: 'routing',
       errorIndex: 0,
+      workflowType: 'general_workflow',
+      errorKind: 'workflow_error',
+      difficulty: 'medium',
       status: 'draft',
       source: 'gemini',
       department: 'obgyn',
@@ -372,6 +376,97 @@ describe('audit bank db helpers', () => {
     expect(mocks.doc).toHaveBeenCalledWith(mocks.db, 'audits', 'audit-1');
     const [, data] = mocks.updateDoc.mock.calls[0];
     expect(data).toEqual({ status: 'active' });
+  });
+
+  it('runContentQualityFixesMigration patches only failing seeds, archives blocked content, and records a marker', async () => {
+    mocks.getDoc.mockImplementation((ref) => {
+      if (ref.col === 'contentMigrations') {
+        return Promise.resolve({ exists: () => false });
+      }
+      if (ref.id === 'q-int-1') {
+        return Promise.resolve({
+          id: 'q-int-1',
+          exists: () => true,
+          data: () => ({
+            status: 'active',
+            scenario: 'What do you ask first, phone number or DOB?',
+            options: [{ text: 'Phone first', rationale: 'Phone must be first.' }],
+          }),
+        });
+      }
+      if (ref.id === 'q-obgyn-int-1') {
+        return Promise.resolve({
+          id: 'q-obgyn-int-1',
+          exists: () => true,
+          data: () => ({
+            status: 'active',
+            scenario: 'A caller asks about a sibling. What keeps you in the correct chart?',
+            options: [{ text: 'Confirm the patient and authorized caller before opening the chart.' }],
+          }),
+        });
+      }
+      return Promise.resolve({ exists: () => false });
+    });
+    mocks.getDocs
+      .mockResolvedValueOnce({
+        docs: [
+          { id: 'q-bad', data: () => ({
+            status: 'active',
+            scenario: 'What do you ask first, phone number or DOB?',
+            options: [{ text: 'Phone first', rationale: 'Phone must be first.' }],
+          }) },
+        ],
+      })
+      .mockResolvedValueOnce({
+        docs: [
+          { id: 'a-bad', data: () => ({
+            status: 'active',
+            transcript: [{ speaker: 'Agent', message: 'I cannot refill this because the PE is not current.' }],
+            hint: 'Look at the refill handling.',
+            modelExplanation: 'The agent should have checked PE before processing the refill.',
+          }) },
+        ],
+      });
+    mocks.updateDoc.mockResolvedValue();
+
+    await runContentQualityFixesMigration();
+
+    expect(mocks.updateDoc).toHaveBeenCalledWith(
+      { id: 'q-int-1', col: 'questions' },
+      expect.objectContaining({ scenario: expect.stringContaining('family account') })
+    );
+    expect(mocks.updateDoc).not.toHaveBeenCalledWith(
+      { id: 'q-obgyn-int-1', col: 'questions' },
+      expect.anything()
+    );
+    expect(mocks.updateDoc).toHaveBeenCalledWith(
+      { id: 'q-bad', col: 'questions' },
+      expect.objectContaining({ status: 'archived', archivedReason: 'content-quality-fix-2026-07' })
+    );
+    expect(mocks.updateDoc).toHaveBeenCalledWith(
+      { id: 'a-bad', col: 'audits' },
+      expect.objectContaining({ status: 'archived', archivedReason: 'content-quality-fix-2026-07' })
+    );
+    expect(mocks.setDoc).toHaveBeenCalledWith(
+      { id: '2026-07-content-quality-fixes-v2', col: 'contentMigrations' },
+      expect.objectContaining({
+        version: '2026-07-content-quality-fixes-v2',
+        completedAt: '__ts__',
+        patchedSeeds: 1,
+        archivedQuestions: 1,
+        archivedAudits: 1,
+      })
+    );
+  });
+
+  it('runContentQualityFixesMigration skips scanning when its marker already exists', async () => {
+    mocks.getDoc.mockResolvedValue({ exists: () => true });
+
+    await expect(runContentQualityFixesMigration()).resolves.toBe(false);
+
+    expect(mocks.getDocs).not.toHaveBeenCalled();
+    expect(mocks.updateDoc).not.toHaveBeenCalled();
+    expect(mocks.setDoc).not.toHaveBeenCalled();
   });
 });
 

@@ -105,8 +105,10 @@ correct in one context and a violation in another:
 - Routing depends on patient state (e.g., in OB/GYN, a pregnancy-related call routes differently \
 from a non-pregnant GYN issue or an established MFM patient — apply the department's routing \
 table from the SOP CONTEXT, not a generic rule).
-- A refill request is complete only when the required details are gathered per the SOP \
-(medication, and whether the patient is out — which changes priority).
+- A standard refill request is complete when the navigator gathers the medication or prescription \
+name, preferred pharmacy, and whether the patient is completely out, routes or logs the TE \
+correctly, and avoids promising approval. Do NOT require PE verification or deny the refill \
+because PE is not current unless the scenario's active SOP explicitly makes PE status the issue.
 - A lab-result call is handled correctly ONLY by routing per the SOP; any interpretation, \
 reading, or reassurance about the result content is a violation regardless of phrasing.
 - Escalation judgment: if the scenario contains an urgent, emergent, or escalation-matrix \

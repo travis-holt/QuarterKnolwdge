@@ -15,6 +15,7 @@ import Mentorship from './Mentorship.jsx';
 import LearningLoop from './LearningLoop.jsx';
 import EmptyState from './EmptyState.jsx';
 import Footer from './Footer.jsx';
+import { chooseBalancedWorkflowTypes } from '../data/auditWorkflows.js';
 import { buildMatrixRows, departmentMatrix } from '../lib/scoring.js';
 import {
   subscribeResults,
@@ -35,6 +36,7 @@ import {
   activateAudit,
   archiveAudit,
   deleteAudit,
+  runContentQualityFixesMigration,
   subscribeCompletions,
   subscribeResultHistory,
   subscribeInterviews,
@@ -131,6 +133,9 @@ export default function SupervisorApp({ onSignOut }) {
   // Question bank — seed once from the static seed, then live-subscribe.
   useEffect(() => {
     if (!isFirebaseConfigured) return undefined;
+    runContentQualityFixesMigration().catch((err) => {
+      console.error('runContentQualityFixesMigration:', err);
+    });
     seedQuestionsIfEmpty(ALL_SEED_QUESTIONS).catch((err) => console.error('seedQuestions:', err));
     const unsub = subscribeQuestions(setQuestions, (err) => {
       console.error('subscribeQuestions:', err);
@@ -241,10 +246,22 @@ export default function SupervisorApp({ onSignOut }) {
   // /api/generate-audit produces one transcript per call, so fan out with
   // bounded concurrency and keep whatever succeeds. Drafts only — the
   // supervisor reviews and activates before anything is served.
-  const handleGenerateAudits = async ({ domainId, count }) => {
-    const plan = Array.from({ length: count }, () => domainId);
+  const handleGenerateAudits = async ({ domainId, count, workflowType }) => {
+    const domainAudits = audits.filter((a) => (
+      (a.status ?? 'active') !== 'archived'
+      && (a.department ?? 'pediatrics') === selectedDept
+      && a.domainId === domainId
+    ));
+    const plan = workflowType
+      ? Array.from({ length: count }, () => workflowType)
+      : chooseBalancedWorkflowTypes(domainAudits, domainId, count);
     const results = await runPooled(plan, 2, (d) =>
-      apiFetch('/api/generate-audit', { domain: d, department: selectedDept }, 30_000)
+      apiFetch('/api/generate-audit', {
+        domain: domainId,
+        department: selectedDept,
+        workflowType: d,
+        avoidWorkflowTypes: workflowType ? [] : plan.filter((x) => x !== d),
+      }, 30_000)
     );
     const drafts = results
       .filter((r) => r.status === 'fulfilled' && Array.isArray(r.value?.transcript))

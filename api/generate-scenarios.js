@@ -16,6 +16,7 @@
 
 import { DOMAINS } from '../src/data/questions.js';
 import { COMPETENCIES } from '../src/data/competencies.js';
+import { validateQuestionContent } from '../src/lib/contentGuards.js';
 import { sopContextFor, sopContextForFresh } from './_sop-context.js';
 import { getApiKeys, geminiWithRotation, rotationFailure } from './_gemini-client.js';
 import { validateSecret } from './_auth.js';
@@ -82,6 +83,16 @@ best answer is guessable without knowing the SOP:
   wrong per the SOP (e.g. escalating something the SOP says to handle directly).
 - A navigator who has NOT read the SOP should find at least two options equally tempting.
 
+CONTENT SAFETY RULES:
+- Do not create questions where the only tested behavior is whether the navigator asked for
+  phone number before date of birth, or date of birth before phone number.
+- If a scenario mentions lookup fields, the graded issue must be objective safety: correct
+  patient, correct chart, caller authorization, sibling/family-account safety, or no duplicate chart.
+- For standard refill scenarios, do NOT require PE verification or say the refill cannot be
+  processed because PE is not current. Test the real refill workflow instead: medication name,
+  preferred pharmacy, out-of-med priority, correct TE routing, no clinical advice, and no
+  promised approval.
+
 Option ids must be "a","b","c","d". Do not include a domain field. Return ONLY the JSON array.`;
 }
 
@@ -109,14 +120,14 @@ export function sanitize(raw, domainId) {
     .map((c) => String(c).trim())
     .filter((c) => COMPETENCY_IDS.has(c));
   if (competencies.length === 0) return null;
-
-  return {
+  const question = {
     domainId,
     competencies: [...new Set(competencies)].slice(0, 3),
     scenario: raw.scenario.trim(),
     options,
     correctOptionId: options[bestIdx].id,
   };
+  return validateQuestionContent(question).length ? null : question;
 }
 
 export default async function handler(req, res) {

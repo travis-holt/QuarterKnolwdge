@@ -390,4 +390,10 @@ describe('grade-call-qa buildMessages', () => {
     expect(systemInstruction).toMatch(/pregnancy-related call routes differently/);
     expect(systemInstruction).toMatch(/lab-result call/i);
   });
+
+  it('does not require PE verification for standard refill calls', () => {
+    const { systemInstruction } = buildMessages('scenario', TRANSCRIPT, 'pediatrics');
+    expect(systemInstruction).toMatch(/Do NOT require PE verification or deny the refill/);
+    expect(systemInstruction).toMatch(/preferred pharmacy/);
+  });
 });

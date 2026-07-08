@@ -11,6 +11,8 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { DOMAINS } from '../src/data/questions.js';
+import { workflowOptionsFor } from '../src/data/auditWorkflows.js';
+import { validateAuditContent } from '../src/lib/contentGuards.js';
 import { sopContextFor, sopContextForFresh } from './_sop-context.js';
 import { getApiKeys, geminiWithRotation, rotationFailure } from './_gemini-client.js';
 import { validateSecret } from './_auth.js';
@@ -32,16 +34,23 @@ const AUDIT_SCHEMA = {
     errorIndex:       { type: 'INTEGER' },
     hint:             { type: 'STRING' },
     modelExplanation: { type: 'STRING' },
+    workflowType:     { type: 'STRING' },
+    errorKind:        { type: 'STRING' },
+    difficulty:       { type: 'STRING' },
   },
-  required: ['transcript', 'errorIndex', 'hint', 'modelExplanation'],
+  required: ['transcript', 'errorIndex', 'hint', 'modelExplanation', 'workflowType', 'errorKind', 'difficulty'],
 };
 
-function buildPrompt(domain, department, sopContext = sopContextFor(department)) {
+function buildPrompt(domain, department, workflowType, avoidWorkflowTypes = [], sopContext = sopContextFor(department)) {
+  const allowedWorkflows = workflowOptionsFor(domain.id);
   return `You are creating a QA training exercise for contact-centre patient navigators.
 
 Generate a realistic 10-message chat transcript between a patient (or caregiver) and a contact-centre agent. The agent makes exactly ONE critical policy mistake that violates the SOP for the domain below.
 
 Domain: "${domain.name}" — ${domain.blurb}
+Required workflow type: "${workflowType}"
+Allowed workflow types for this domain: ${allowedWorkflows.join(', ') || workflowType}
+Avoid these overused workflow types in this response: ${avoidWorkflowTypes.join(', ') || 'none'}
 
 TRANSCRIPT RULES:
 - Use exactly "Agent" and "Patient" as the speaker labels (exact casing, nothing else)
@@ -67,11 +76,29 @@ REALISM RULES (the transcript must read like a real recorded call, not a trainin
   moments that a careless reader might wrongly suspect.
 - Never include markdown, stage directions, or bracketed narration — spoken words only.
 
+VARIETY RULES:
+- The transcript MUST match the required workflow type.
+- Do not default to medication refills.
+- Do not generate another refill scenario unless the required workflow type is explicitly refill-related.
+- Do not make lookup order itself the planted error. If phone number or DOB appears, the real
+  issue must be correct chart, correct patient, caller authorization, privacy, or sibling safety.
+
+REFILL RULE:
+- For standard refill scenarios, the planted error must NOT be "the agent failed to verify PE status."
+- Do not say refills cannot be processed when PE is not current.
+- Valid refill errors include wrong queue, missing medication name, missing preferred pharmacy,
+  not marking high priority when the patient is completely out, promising provider approval,
+  or giving clinical / medication advice.
+
 FOR errorIndex: return the 0-based index of the message array where the Agent's error appears (always an even-indexed turn: 0, 2, 4, 6, or 8).
 
 FOR hint: write one sentence that steers the navigator toward the error without giving it away (e.g. "Pay close attention to how the agent handled the insurance verification step.").
 
 FOR modelExplanation: write 2–3 sentences explaining exactly what the agent did wrong and what they should have said instead. Reference the specific SOP rule violated using facts from the SOP reference below.
+
+FOR workflowType: return exactly "${workflowType}".
+FOR errorKind: return a short snake_case label for the policy miss (examples: wrong_queue, privacy_breach, promise_approval, wrong_child_chart).
+FOR difficulty: return one of easy, medium, hard.
 
 SOP REFERENCE:
 ${sopContext}`;
@@ -82,8 +109,8 @@ ${sopContext}`;
  * Pure — no I/O. Returns { data } on success, { error } on failure.
  * @param {any} parsed  The result of JSON.parse(gemini response text)
  */
-export function validateAuditResponse(parsed) {
-  const { transcript, errorIndex, hint, modelExplanation } = parsed ?? {};
+export function validateAuditResponse(parsed, requestedWorkflowType = null) {
+  const { transcript, errorIndex, hint, modelExplanation, workflowType, errorKind, difficulty } = parsed ?? {};
   if (!Array.isArray(transcript) || transcript.length < 4)
     return { error: 'Gemini returned an incomplete transcript.' };
   if (typeof errorIndex !== 'number' || errorIndex < 0 || errorIndex >= transcript.length)
@@ -108,6 +135,11 @@ export function validateAuditResponse(parsed) {
       errorIndex:       resolvedIndex,
       hint:             String(hint).trim(),
       modelExplanation: String(modelExplanation).trim(),
+      workflowType:     String(requestedWorkflowType ?? workflowType ?? '').trim(),
+      errorKind:        String(errorKind ?? '').trim() || 'workflow_error',
+      difficulty:       ['easy', 'medium', 'hard'].includes(String(difficulty ?? '').trim().toLowerCase())
+        ? String(difficulty).trim().toLowerCase()
+        : 'medium',
     },
   };
 }
@@ -120,13 +152,14 @@ export default async function handler(req, res) {
   const keys = getApiKeys();
   if (!keys.length) return res.status(500).json({ error: 'Gemini not configured on the server.' });
 
-  const { domain: domainId, department = 'pediatrics' } = req.body ?? {};
+  const { domain: domainId, department = 'pediatrics', workflowType, avoidWorkflowTypes = [] } = req.body ?? {};
 
   const domain = DOMAINS.find((d) => d.id === domainId);
   if (!domain) return res.status(400).json({ error: 'Unknown domain.' });
+  const requestedWorkflowType = workflowType || workflowOptionsFor(domainId)[0] || 'general_workflow';
 
   const body = {
-    contents: [{ role: 'user', parts: [{ text: buildPrompt(domain, department, await sopContextForFresh(department)) }] }],
+    contents: [{ role: 'user', parts: [{ text: buildPrompt(domain, department, requestedWorkflowType, avoidWorkflowTypes, await sopContextForFresh(department)) }] }],
     generationConfig: {
       responseMimeType: 'application/json',
       responseSchema: AUDIT_SCHEMA,
@@ -147,8 +180,10 @@ export default async function handler(req, res) {
     return res.status(502).json({ error: 'Gemini returned invalid JSON.' });
   }
 
-  const validation = validateAuditResponse(parsed);
+  const validation = validateAuditResponse(parsed, requestedWorkflowType);
   if (validation.error) return res.status(502).json({ error: validation.error });
+  const flags = validateAuditContent(validation.data);
+  if (flags.length) return res.status(422).json({ error: flags[0].message });
 
   return res.status(200).json(validation.data);
 }

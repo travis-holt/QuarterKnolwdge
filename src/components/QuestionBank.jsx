@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { DOMAINS, domainName } from '../data/questions.js';
 import { COMPETENCIES, competencyName } from '../data/competencies.js';
 import { computeQuestionHealth, optionPoints } from '../lib/scoring.js';
+import { hasBlockingFlags, validateQuestionContent } from '../lib/contentGuards.js';
 import QuestionEditor from './QuestionEditor.jsx';
 import FeedbackControls from './FeedbackControls.jsx';
 
@@ -96,6 +97,8 @@ export default function QuestionBank({ questions, results = [], selectedDept = '
     const best = q.options?.find((o) => o.id === q.correctOptionId);
     const h = showHealth ? health[q.id] : null;
     const pct = h ? Math.round(h.correctRate * 100) : null;
+    const flags = validateQuestionContent(q);
+    const blocked = hasBlockingFlags(flags);
 
     return (
       <li key={q.id} className={`qbank__item${h?.status === 'review' ? ' is-flagged' : ''}`}>
@@ -142,6 +145,11 @@ export default function QuestionBank({ questions, results = [], selectedDept = '
             />
           </div>
         )}
+        {flags.map((flag) => (
+          <div key={flag.code} className="qhealth__alert">
+            <strong>Blocked:</strong> {flag.message}
+          </div>
+        ))}
 
         <p className="qbank__scenario">{q.scenario}</p>
         <ul className="qbank__options">
@@ -155,7 +163,7 @@ export default function QuestionBank({ questions, results = [], selectedDept = '
         {best?.rationale && <p className="qbank__why">Best answer: {best.rationale}</p>}
         <div className="qbank__actions">
           <button className="btn btn--ghost btn--sm" onClick={() => setEditingId(q.id)}>Edit</button>
-          {actions}
+          {actions(blocked)}
         </div>
       </li>
     );
@@ -209,10 +217,12 @@ export default function QuestionBank({ questions, results = [], selectedDept = '
             {drafts.map((q) =>
               renderQuestion(
                 q,
-                <>
-                  <button className="btn btn--primary btn--sm" onClick={() => onActivate(q.id)}>Activate</button>
-                  <button className="btn btn--ghost btn--sm" onClick={() => onDelete(q.id)}>Discard</button>
-                </>
+                (blocked) => (
+                  <>
+                    <button className="btn btn--primary btn--sm" onClick={() => onActivate(q.id)} disabled={blocked}>Activate</button>
+                    <button className="btn btn--ghost btn--sm" onClick={() => onDelete(q.id)}>Discard</button>
+                  </>
+                )
               )
             )}
           </ul>
@@ -229,7 +239,7 @@ export default function QuestionBank({ questions, results = [], selectedDept = '
             {active.map((q) =>
               renderQuestion(
                 q,
-                <button className="btn btn--ghost btn--sm" onClick={() => onArchive(q.id)}>Archive</button>,
+                () => <button className="btn btn--ghost btn--sm" onClick={() => onArchive(q.id)}>Archive</button>,
                 true
               )
             )}
@@ -245,10 +255,12 @@ export default function QuestionBank({ questions, results = [], selectedDept = '
             {archived.map((q) =>
               renderQuestion(
                 q,
-                <>
-                  <button className="btn btn--ghost btn--sm" onClick={() => onActivate(q.id)}>Restore</button>
-                  <button className="btn btn--ghost btn--sm" onClick={() => onDelete(q.id)}>Delete</button>
-                </>
+                (blocked) => (
+                  <>
+                    <button className="btn btn--ghost btn--sm" onClick={() => onActivate(q.id)} disabled={blocked}>Restore</button>
+                    <button className="btn btn--ghost btn--sm" onClick={() => onDelete(q.id)}>Delete</button>
+                  </>
+                )
               )
             )}
           </ul>
