@@ -1056,7 +1056,7 @@ of this file on 2026-07-07 to cut per-session context cost (it was ~55% of the f
   Firestore migration archives previously active bad content with reason
   `content-quality-fix-2026-07`, skips manually repaired seed questions that already pass guards,
   and records `contentMigrations/2026-07-content-quality-fixes-v2` after success so supervisor
-  loads do not rescan repeatedly. Build clean, tests green (`npm test`  **421 passing**,
+  loads do not rescan repeatedly. Build clean, tests green (`npm test`  **424 passing**,
   20 test files). GitHub Actions CI now mirrors the normal local gate on `main` pushes and PRs:
   `npm ci` → `npm test` → `npm run build` (no deploy step).
 - **Existing functionality:** features F1–F26 (see [§4](#4-feature-inventory)) are **Complete** in
@@ -1087,7 +1087,7 @@ of this file on 2026-07-07 to cut per-session context cost (it was ~55% of the f
 - **Experimental / mockup:**
   - Training **content** is mockup (flagged in UI). Logic is real.
   - **Adult Medicine and Behavioural Health** are not assessed; **Pediatrics and OB/GYN** are live.
-- **Test coverage:** **421 tests** across **20 test files**: `scoring.test.js` (all exports incl. `optionPoints`,
+- **Test coverage:** **424 tests** across **20 test files**: `scoring.test.js` (all exports incl. `optionPoints`,
   including F17–F21 functions: buildTrend, trainingImpact, teamTrend, buildDossier, buildActionCenter,
   buildDevPath, buildMentorMatches, pairingOutcomes, buildLearningSignals,
   buildQuestionImprovementSuggestions, adaptiveTrainingRecommendations, feedbackInsights +
@@ -1105,8 +1105,11 @@ of this file on 2026-07-07 to cut per-session context cost (it was ~55% of the f
   end-to-end probe rather than unit tests — audio I/O isn't unit-testable headlessly. Deeper
   per-tab role-app behaviour remains untested (the smoke tests cover shell mount + routing only).
 - **Client fetch layer:** `src/lib/apiFetch.js` — shared helper for all `/api` calls (AbortController
-  timeout, SUPERVISOR_PASSCODE injection, Content-Type, error-body parsing). Used by Interview.jsx,
-  SpotTheError.jsx, Coaching.jsx, and SupervisorApp.jsx.
+  timeout, `credentials: 'same-origin'` so the supervisor session cookie rides along, Content-Type,
+  error-body parsing). It **no longer injects `body.secret`** (the old public-passcode gate);
+  supervisor-only endpoints authorize via the HttpOnly session cookie, while navigator/shared
+  endpoints remain pilot-open (rate-limited). Used by Interview.jsx, SpotTheError.jsx, Coaching.jsx,
+  and SupervisorApp.jsx.
 - **Server authorization:** `api/_auth.js` — signed-session layer (HMAC-SHA256 via Node `crypto`):
   `createSessionToken`/`verifySessionToken`, cookie helpers, `checkSupervisorPasscode`, and two
   gates: `validateSession` (supervisor-only endpoints) and `validateSecret` (navigator/shared,
@@ -1133,8 +1136,12 @@ of this file on 2026-07-07 to cut per-session context cost (it was ~55% of the f
   (`GEMINI_API_KEYS` set in Railway Variables; all 7 REST AI endpoints live + the `/api/live`
   WebSocket relay for the real-time voice call).
 - **Deployment status:** **Railway** (Git-connected to `main`). Railway auto-deploys on push.
-  `VITE_FIREBASE_*` and `GEMINI_API_KEYS` confirmed set in Railway Variables. No `GENERATION_SECRET`
-  needed — server falls back to `SUPERVISOR_PASSCODE`.
+  `VITE_FIREBASE_*` and `GEMINI_API_KEYS` confirmed set in Railway Variables. **Supervisor auth
+  (2026-07-08):** Railway should set `SUPERVISOR_PASSCODE_SERVER` (login passcode, not the bundled
+  config value) and `SESSION_SIGNING_SECRET` (HMAC key for session tokens). If these are unset the
+  app uses a pilot fallback (passcode-derived signing key + bundled config passcode) and **must not
+  be considered production-hardened**. `GENERATION_SECRET` is **legacy only** — accepted just as the
+  `body.secret` value, and only when `ALLOW_LEGACY_API_SECRET=true` (off by default).
 - **Question health:** active questions in the Question Bank now show a colored health dot once
   they hit 10+ responses. Sub-20% correct rate triggers a "Review Required" flag with a "Can-Teach
   signal" if expert-level navigators are also failing — the Reverse QA feature. Raw `answers` are
@@ -1142,7 +1149,7 @@ of this file on 2026-07-07 to cut per-session context cost (it was ~55% of the f
 - **Counts (today):** 6 domains (job-aligned 2026-07-02: intake · classification · routing ·
   scheduling · boundaries · documentation) · 9 competencies · 21 Pediatrics + 16
   OB/GYN = **37** seed questions (bank grows in Firestore per dept) · 4 departments (**Pediatrics
-  + OB/GYN live**, 2 mockup) · **421** unit tests (20 test files) · **12** Firestore collections
+  + OB/GYN live**, 2 mockup) · **424** unit tests (20 test files) · **12** Firestore collections
   (`roster`, `results`, `resultHistory`, `questions`, `audits`, `interviews`, `completions`,
   `pairings`, `supervisorFeedback`, `learningProposals`, `sops`, `contentMigrations`) ·
   **12** REST serverless functions (`generate-scenarios`, `generate-coaching`, `interview-turn`,
@@ -1355,7 +1362,7 @@ npm run test:e2e     # run the Playwright browser tests (auto-builds + starts th
 - Heatmap intensity toggle (show % inside matrix cells).
 
 ### Technical Debt
-- **421 tests** across 20 test files as of 2026-07-08. **Role-app smoke coverage** (`App`, `Start`,
+- **424 tests** across 20 test files as of 2026-07-08. **Role-app smoke coverage** (`App`, `Start`,
   `SupervisorApp`, `NavigatorApp`) now exists (shell mount + gate/session routing); deeper per-tab
   role-app behaviour is the remaining coverage frontier.
 - **Vite 5.4.21 carries known moderate advisories** (`server.fs.deny` bypass on Windows, optimized-deps
@@ -1507,9 +1514,12 @@ npm run test:e2e     # run the Playwright browser tests (auto-builds + starts th
      run the same verification gate; if you're shipping directly, push to `main` (Railway auto-deploys).
   - When you touch `lib/scoring.js` (or the data it reads), update/extend `scoring.test.js` too.
 - **Important assumptions:** Firebase pilot is live. Gemini generation is code-complete; `GEMINI_API_KEYS`
-  is set in Railway Variables — generation should be live after the next deploy. `GENERATION_SECRET`
-  is not required (server falls back to `SUPERVISOR_PASSCODE`). No real patient data or company
-  branding. Auth is PIN/passcode (pilot-grade); must move to real auth before production.
+  is set in Railway Variables — generation should be live after the next deploy. Supervisor
+  authoring endpoints require the server-issued session cookie; production should set
+  `SUPERVISOR_PASSCODE_SERVER` + `SESSION_SIGNING_SECRET` (a pilot fallback runs otherwise).
+  `GENERATION_SECRET` is legacy-only (`ALLOW_LEGACY_API_SECRET=true`). No real patient data or
+  company branding. Auth is PIN/passcode + supervisor session cookie (pilot-grade); must move to
+  real auth before production.
 - **To re-key the check to a different SOP:** edit `DOMAINS` in `questions.js`, refresh
   `api/_sop-context.js`, and either edit `SEED_QUESTIONS` or generate a new bank in the Question Bank
   UI; competencies + everything else follow automatically.

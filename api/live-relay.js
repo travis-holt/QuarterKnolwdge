@@ -8,8 +8,14 @@
 // We also build the patient-caller persona server-side (where the SOP context
 // lives), so the client only sends mic audio + the scenario it was given.
 //
+// AUTH: voice practice is a NAVIGATOR flow, so the relay is pilot-grade OPEN
+// (rate-limited: 2 concurrent sessions/IP + a call timer). Navigators have no
+// server credential, so the browser no longer sends a `secret` in the start
+// message. `isValidSecret` allows the start unless REQUIRE_SUPERVISOR_SESSION=true
+// (pilot toggle; legacy secret still accepted when ALLOW_LEGACY_API_SECRET=true).
+//
 // Protocol (all JSON over the browser socket):
-//   client → relay   { type:'start', secret, callerName, scenario,
+//   client → relay   { type:'start', callerName, scenario,
 //                      department, openingLine }                      (first msg)
 //                    { type:'audio', data }   base64 PCM16 mono @16kHz mic frames
 //   relay  → client  { type:'ready' }                                 (call can begin)

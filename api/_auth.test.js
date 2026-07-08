@@ -2,7 +2,7 @@
 // /api handlers run through. Covers the signed-session pipeline (create/verify/
 // tamper/expire), cookie helpers, the supervisor-only gate (validateSession),
 // and the pilot-open navigator gate (validateSecret).
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import {
   createSessionToken,
   verifySessionToken,
@@ -155,5 +155,34 @@ describe('isValidSecret (WS relay — pilot-open)', () => {
   it('is open by default regardless of the value sent', () => {
     expect(isValidSecret(undefined)).toBe(true);
     expect(isValidSecret('anything')).toBe(true);
+  });
+});
+
+describe('REQUIRE_SUPERVISOR_SESSION toggle', () => {
+  const prev = process.env.REQUIRE_SUPERVISOR_SESSION;
+  beforeEach(() => {
+    process.env.REQUIRE_SUPERVISOR_SESSION = 'true';
+  });
+  afterEach(() => {
+    if (prev === undefined) delete process.env.REQUIRE_SUPERVISOR_SESSION;
+    else process.env.REQUIRE_SUPERVISOR_SESSION = prev;
+  });
+
+  it('validateSecret rejects a missing session (401) when the toggle is on', () => {
+    const res = mockRes();
+    expect(validateSecret({ headers: {}, body: {} }, res)).toBe(true);
+    expect(res.status).toHaveBeenCalledWith(401);
+    expect(res.json).toHaveBeenCalledWith({ error: 'Not authorised.' });
+  });
+
+  it('validateSecret allows a valid supervisor session when the toggle is on', () => {
+    const res = mockRes();
+    expect(validateSecret(reqWithSession(createSessionToken()), res)).toBe(false);
+    expect(res.status).not.toHaveBeenCalled();
+  });
+
+  it('isValidSecret returns false when the toggle is on and no legacy secret is allowed', () => {
+    expect(isValidSecret(undefined)).toBe(false);
+    expect(isValidSecret('anything')).toBe(false);
   });
 });
