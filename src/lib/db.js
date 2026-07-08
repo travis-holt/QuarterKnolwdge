@@ -5,7 +5,8 @@
 // calls these helpers — never the Firestore SDK directly. This keeps the data
 // layer swappable and the rest of the app ignorant of Firestore.
 //
-// Seven collections, all UUID-keyed (never name-keyed → no typo/collision risk):
+// Twelve collections; app data docs are UUID/composite-keyed (never name-keyed
+// → no typo/collision risk):
 //   roster        — navigator list { name, pin, createdAt }; blank pin means
 //                   the navigator creates it on first sign-in
 //   results       — assessment submissions { name, navigatorId, department,
@@ -35,6 +36,8 @@
 //   sops          — versioned department SOPs { department, title, body, version,
 //                   status: draft|active|archived, source, createdAt }. At most
 //                   one active doc per department; grounds the server's AI features.
+//   contentMigrations — one-time migration markers. firestore.rules must allow
+//                   signed-in access or supervisor-load migrations cannot complete.
 //
 // Levels (learning/solid/canTeach) are NEVER stored — always derived client-side
 // by scoreToLevel(), so thresholds stay tunable without a data migration. Older

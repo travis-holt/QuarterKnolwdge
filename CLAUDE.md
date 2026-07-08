@@ -11,7 +11,7 @@
 > [§8 Current System State](#8-current-system-state) and [§15 Current Priorities](#15-current-priorities)
 > accurate at all times.
 >
-> **Last updated:** 2026-07-07 (PR #5 follow-up: doc encoding repair, migration marker, archived-audit balancing guard) ·
+> **Last updated:** 2026-07-07 (PR #5 follow-up: contentMigrations rules, migration marker, doc separators) ·
 > **Doc maintainer:** Claude (AI agent) + repo owner. Assumptions are explicitly marked **[ASSUMPTION]**.
 
 ---
@@ -668,7 +668,7 @@ training assignments.
 
 ### F26 — 3-Phase Assessment Flow
 - **Purpose:** Sequence each live department assessment into one fixed path: **Phase 1**
-  Multiple choice  **Phase 2** Spot the Error  **Phase 3** Call QA Test.
+  Multiple choice → **Phase 2** Spot the Error → **Phase 3** Call QA Test.
 - **User benefit:** Navigators always know what comes next, later phases stay locked until earlier
   ones are finished, and completed phases stay available for retake without re-locking progress.
 - **Technical implementation:** [src/lib/phases.js](src/lib/phases.js) holds the pure sequencing
@@ -678,8 +678,8 @@ training assignments.
   (`view === 'phases'`) after department select unless all three phases are complete, returns MCQ
   coaching / Spot the Error back to the hub while phases remain, and derives completion from
   stored data rather than flags.
-- **Derived completion rule:** `mcq` complete  `resultsByType.mcq`; `spot` complete
-  `resultsByType.spot`; `qa` complete  the latest department-scoped interview doc has a `qa`
+- **Derived completion rule:** `mcq` complete ⇔ `resultsByType.mcq`; `spot` complete ⇔
+  `resultsByType.spot`; `qa` complete ⇔ the latest department-scoped interview doc has a `qa`
   field. Saved-but-ungraded QA calls do not count; FAIL and NEEDS REVIEW do count.
 - **Flow rules:** Completed phases can be retaken at any time. The dashboard QA card still
   deep-links to `qatest` because it only renders after a QA result exists. The Practice tab keeps
@@ -1029,15 +1029,15 @@ of this file on 2026-07-07 to cut per-session context cost (it was ~55% of the f
 ## 8. Current System State
 
 - **Working end to end (logic + UI):** supervisor adds navigators / generates+curates questions
-  (per department)  navigators sign in  **pick department** (Pediatrics or OB/GYN)  enter the
-  **3-phase assessment sequence** (MCQ scenario check  coaching  full-profile Spot the Error
-  Call QA Test) with hub-based unlocking / retakes between phases  per-domain (+ per-competency
+  (per department) → navigators sign in → **pick department** (Pediatrics or OB/GYN) → enter the
+  **3-phase assessment sequence** (MCQ scenario check → coaching → full-profile Spot the Error →
+  Call QA Test) with hub-based unlocking / retakes between phases → per-domain (+ per-competency
   for MCQ) results persist to Firestore (composite key `${navigatorId}__${department}`) **and** to
-  the append-only `resultHistory` collection (powers trend views)  supervisor matrix/overview
-  update live per dept  navigator/training dashboards  **switch departments**  practice
-  interview  per-domain "Spot the Error" assessment  path stepper + mini re-check per weak
-  domain  supervisor Action Center + Mentorship tabs  Practice tab offers **voice (real-time)**
-  or **text chat** while the graded Call QA Test lives only in Phase 3  navigator "My history"
+  the append-only `resultHistory` collection (powers trend views) → supervisor matrix/overview
+  update live per dept → navigator/training dashboards → **switch departments** → practice
+  interview → per-domain "Spot the Error" assessment → path stepper + mini re-check per weak
+  domain → supervisor Action Center + Mentorship tabs → Practice tab offers **voice (real-time)**
+  or **text chat** while the graded Call QA Test lives only in Phase 3 → navigator "My history"
   tab (attempt history + answer review). Shared content guards now block unfair lookup-order
   grading and stale refill/PE rules in generated questions/audits, while a supervisor-load
   Firestore migration archives previously active bad content with reason
@@ -1053,7 +1053,7 @@ of this file on 2026-07-07 to cut per-session context cost (it was ~55% of the f
   F23 adds the controlled adaptive learning loop: supervisor feedback, learning proposals,
   question-improvement signals, and explainable next-best training recommendations. F25 adds the
   hard rubric-graded Call QA Test (pass/fail voice test against the owner's call quality guide).
-  F26 sequences the live navigator assessment into MCQ  Spot the Error  Call QA with derived
+  F26 sequences the live navigator assessment into MCQ → Spot the Error → Call QA with derived
   completion and hub-based progression.
 - **SOP grounding:** Pediatrics AI features ground against `Pediatrics_SOP_Updated.pdf`; OB/GYN AI
   features ground against the sanitized `SOP_CONTEXT_OBGYN` in `api/_sop-context.js` (faithful to
@@ -1210,7 +1210,7 @@ of this file on 2026-07-07 to cut per-session context cost (it was ~55% of the f
     department; the active body grounds the server's AI features (read via `api/_sop-store.js`).
   - `contentMigrations/{version}` → one-time cleanup markers such as
     `2026-07-content-quality-fixes-v2`; used so supervisor-load migrations do not rescan after a
-    successful run.
+    successful run. `firestore.rules` must allow signed-in pilot access to this collection.
 - **Serverless endpoints:**
   - `POST /api/generate-scenarios` `{ domainId, count, secret }` → `{ questions }` (validated drafts).
   - `POST /api/generate-coaching` `{ answers, questions, competencyScores, name, completions,
