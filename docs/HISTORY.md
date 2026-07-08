@@ -5,6 +5,22 @@
 > feature, decision, or fix. New entries are added HERE (newest first, same format),
 > not in CLAUDE.md.
 
+### 2026-07-08 — Role-app smoke tests (App / Start / SupervisorApp / NavigatorApp)
+- **Context:** Role-app integration coverage was the long-standing test gap (the four top-level
+  shells were the only untested area). Added lightweight smoke coverage — "renders without
+  crashing" + basic gate/routing — without deep-testing individual tabs.
+- **Change:** New `src/components/roleApps.smoke.test.jsx` (8 tests). Mocks `src/lib/firebase.js`
+  (configured), `src/lib/db.js` (all subscriptions are no-ops that yield empty data; all
+  getters/mutators resolve empty — zero network), and `src/lib/session.js` (so App can restore a
+  chosen session on mount). Covers: Start renders the role picker; the supervisor passcode path
+  accepts the correct code and rejects a wrong one; SupervisorApp mounts its shell + wires live
+  subscriptions against empty data; NavigatorApp routes to the department-select entry; and App
+  restores supervisor/navigator sessions into the correct lazy-loaded shell (and shows Start with
+  no session). No production code changed; jsdom's missing IntersectionObserver is tolerated by
+  `useInView` so no polyfill was needed.
+- **Verification:** `npm test` → **403 passing across 19 files** (was 395/18); `npm run build` →
+  passed with the existing Firebase chunk warning; `git diff --check` → clean.
+
 ### 2026-07-08 — Add GitHub Actions CI test/build gate
 - **Context:** Owner explicitly approved adding a minimal GitHub Actions workflow so every pull
   request and `main` push runs the normal verification commands, but nothing deploys from GitHub.

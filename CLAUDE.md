@@ -11,7 +11,7 @@
 > [§8 Current System State](#8-current-system-state) and [§15 Current Priorities](#15-current-priorities)
 > accurate at all times.
 >
-> **Last updated:** 2026-07-08 (GitHub Actions CI updated to Node 24 for npm ci compatibility) ·
+> **Last updated:** 2026-07-08 (role-app smoke tests added — App/Start/SupervisorApp/NavigatorApp) ·
 > **Doc maintainer:** Claude (AI agent) + repo owner. Assumptions are explicitly marked **[ASSUMPTION]**.
 
 ---
@@ -1047,8 +1047,8 @@ of this file on 2026-07-07 to cut per-session context cost (it was ~55% of the f
   Firestore migration archives previously active bad content with reason
   `content-quality-fix-2026-07`, skips manually repaired seed questions that already pass guards,
   and records `contentMigrations/2026-07-content-quality-fixes-v2` after success so supervisor
-  loads do not rescan repeatedly. Build clean, tests green (`npm test`  **395 passing**,
-  18 test files). GitHub Actions CI now mirrors the normal local gate on `main` pushes and PRs:
+  loads do not rescan repeatedly. Build clean, tests green (`npm test`  **403 passing**,
+  19 test files). GitHub Actions CI now mirrors the normal local gate on `main` pushes and PRs:
   `npm ci` → `npm test` → `npm run build` (no deploy step).
 - **Existing functionality:** features F1–F26 (see [§4](#4-feature-inventory)) are **Complete** in
   code. F17 adds longitudinal trends + Sparkline. F18 adds dossier evidence per competency. F19
@@ -1078,7 +1078,7 @@ of this file on 2026-07-07 to cut per-session context cost (it was ~55% of the f
 - **Experimental / mockup:**
   - Training **content** is mockup (flagged in UI). Logic is real.
   - **Adult Medicine and Behavioural Health** are not assessed; **Pediatrics and OB/GYN** are live.
-- **Test coverage:** **395 tests** across **18 test files**: `scoring.test.js` (all exports incl. `optionPoints`,
+- **Test coverage:** **403 tests** across **19 test files**: `scoring.test.js` (all exports incl. `optionPoints`,
   including F17–F21 functions: buildTrend, trainingImpact, teamTrend, buildDossier, buildActionCenter,
   buildDevPath, buildMentorMatches, pairingOutcomes, buildLearningSignals,
   buildQuestionImprovementSuggestions, adaptiveTrainingRecommendations, feedbackInsights +
@@ -1089,10 +1089,12 @@ of this file on 2026-07-07 to cut per-session context cost (it was ~55% of the f
   `api/_qa-glossary.test.js` (16 tests for the transcript-correction glossary),
   `src/components/components.test.jsx`, `src/lib/phases.test.js`, `src/lib/apiFetch.test.js` (apiFetch/`fetchErrorMessage`/`runPooled`),
   `api/_auth.test.js` (secret gate), `api/grade-interview.test.js` (`coerceGrade`),
-  `src/lib/contentGuards.test.js`, `src/data/auditWorkflows.test.js`, `src/components/spotTheError.test.js`.
+  `src/lib/contentGuards.test.js`, `src/data/auditWorkflows.test.js`, `src/components/spotTheError.test.js`,
+  `src/components/roleApps.smoke.test.jsx` (8 smoke tests for App / Start / SupervisorApp /
+  NavigatorApp — renders-without-crashing + gate/session routing, with Firebase/db/session mocked).
   The F22 voice call (relay + Web Audio) is verified by live
-  end-to-end probe rather than unit tests — audio I/O isn't unit-testable headlessly. Role-app
-  integration tests remain the only other untested area.
+  end-to-end probe rather than unit tests — audio I/O isn't unit-testable headlessly. Deeper
+  per-tab role-app behaviour remains untested (the smoke tests cover shell mount + routing only).
 - **Client fetch layer:** `src/lib/apiFetch.js` — shared helper for all `/api` calls (AbortController
   timeout, SUPERVISOR_PASSCODE injection, Content-Type, error-body parsing). Used by Interview.jsx,
   SpotTheError.jsx, Coaching.jsx, and SupervisorApp.jsx.
@@ -1127,7 +1129,7 @@ of this file on 2026-07-07 to cut per-session context cost (it was ~55% of the f
 - **Counts (today):** 6 domains (job-aligned 2026-07-02: intake · classification · routing ·
   scheduling · boundaries · documentation) · 9 competencies · 21 Pediatrics + 16
   OB/GYN = **37** seed questions (bank grows in Firestore per dept) · 4 departments (**Pediatrics
-  + OB/GYN live**, 2 mockup) · **381** unit tests (15 test files) · **12** Firestore collections
+  + OB/GYN live**, 2 mockup) · **403** unit tests (19 test files) · **12** Firestore collections
   (`roster`, `results`, `resultHistory`, `questions`, `audits`, `interviews`, `completions`,
   `pairings`, `supervisorFeedback`, `learningProposals`, `sops`, `contentMigrations`) ·
   **10** REST serverless functions (`generate-scenarios`, `generate-coaching`, `interview-turn`,
@@ -1334,8 +1336,9 @@ npm run test:e2e     # run the Playwright browser tests (auto-builds + starts th
 - Heatmap intensity toggle (show % inside matrix cells).
 
 ### Technical Debt
-- **395 tests** across 18 test files as of 2026-07-07. **Role-app integration tests** (`SupervisorApp`,
-  `NavigatorApp`, `App`) remain the only untested area — adding those is the next coverage priority.
+- **403 tests** across 19 test files as of 2026-07-08. **Role-app smoke coverage** (`App`, `Start`,
+  `SupervisorApp`, `NavigatorApp`) now exists (shell mount + gate/session routing); deeper per-tab
+  role-app behaviour is the remaining coverage frontier.
 - **Vite 5.4.21 carries known moderate advisories** (`server.fs.deny` bypass on Windows, optimized-deps
   `.map` path traversal, esbuild dev-server request exposure). The fix is a semver-major upgrade to
   Vite 8 (+ plugin-react major) — deliberately deferred from the 2026-07-06 stability pass; these are
@@ -1492,8 +1495,9 @@ npm run test:e2e     # run the Playwright browser tests (auto-builds + starts th
 ## 15. Current Priorities
 
 1. **Maintain this CLAUDE.md** on every change (highest standing priority).
-2. **Role-app integration tests** — the only remaining coverage gap. `SupervisorApp`, `NavigatorApp`,
-   and `App` are the untested area; adding those is the next coverage milestone.
+2. **Deeper role-app tests** — smoke coverage for `App`, `Start`, `SupervisorApp`, and `NavigatorApp`
+   now exists (shell mount + gate/session routing, 2026-07-08). Per-tab behavioural coverage of the
+   role apps is the next coverage milestone.
 3. **Supervisor grade override** — allow supervisors to adjust the AI-given score on a saved practice session.
 
 **Active work items:**
@@ -1544,7 +1548,9 @@ npm run test:e2e     # run the Playwright browser tests (auto-builds + starts th
   2026-06-29 (206 tests, 8 test files, new `sequence-path` endpoint, `resultHistory` + `pairings` collections).
 - ✅ Contract-fix pass: sequence auth, dev-path interview wiring, action-center fields, mini-check
   evidence preservation, README/current-doc cleanup — done 2026-06-30 (208 tests, 8 test files).
-- Role-app integration tests (`SupervisorApp`, `NavigatorApp`, `App`) — next coverage priority.
+- ✅ Role-app smoke tests (`App`, `Start`, `SupervisorApp`, `NavigatorApp`) — done 2026-07-08
+  (403 tests, 19 test files; `roleApps.smoke.test.jsx`, Firebase/db/session mocked).
+- Deeper per-tab role-app behavioural tests — next coverage priority.
 - Supervisor grade override for practice sessions — next interview feature.
 
 ---
