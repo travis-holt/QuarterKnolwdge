@@ -40,6 +40,22 @@ export const PHASE_META = {
   },
 };
 
+function qaTs(interview) {
+  return interview?.endedAt?.seconds ?? 0;
+}
+
+export function isActiveQaInterview(interview, department = 'pediatrics') {
+  return Boolean(interview?.qa) &&
+    !interview?.qaArchived &&
+    (interview.department ?? 'pediatrics') === department;
+}
+
+export function latestQaForDept(interviews = [], department = 'pediatrics') {
+  return [...interviews]
+    .filter((interview) => isActiveQaInterview(interview, department))
+    .sort((a, b) => qaTs(b) - qaTs(a))[0] ?? null;
+}
+
 /**
  * Build the per-phase display state from a completion map.
  * @param {{mcq?:boolean, spot?:boolean, qa?:boolean}} done

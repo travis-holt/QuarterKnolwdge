@@ -24,6 +24,90 @@ const QA_GRADE_TIMEOUT_MS = 60_000; // rubric grading is a bigger prompt + serve
 const TARGET_IN_RATE = 16000;
 const OUT_RATE = 24000;
 
+class VoiceCallPersistenceError extends Error {
+  constructor(stage, message, extra = {}) {
+    super(message);
+    this.name = 'VoiceCallPersistenceError';
+    this.stage = stage;
+    Object.assign(this, extra);
+  }
+}
+
+async function gradeQaRequest({ scenario, transcript, department }) {
+  return apiFetch('/api/grade-call-qa', { scenario, transcript, department }, QA_GRADE_TIMEOUT_MS);
+}
+
+export async function saveCallAttempt(payload, saveInterviewFn = saveInterview) {
+  let docId;
+  try {
+    docId = await saveInterviewFn(
+      payload.navigatorId,
+      payload.name,
+      payload.domainId,
+      payload.scenario,
+      payload.callerName,
+      payload.transcript,
+      payload.department
+    );
+  } catch (cause) {
+    throw new VoiceCallPersistenceError(
+      'save',
+      'We could not save this Call QA attempt.',
+      { cause }
+    );
+  }
+  if (!docId) {
+    throw new VoiceCallPersistenceError('save', 'We could not save this Call QA attempt.');
+  }
+  return docId;
+}
+
+export async function saveGradeToAttempt(docId, grade, qa, saveGradeFn = updateInterviewGrade) {
+  try {
+    await saveGradeFn(docId, grade, qa);
+  } catch (cause) {
+    throw new VoiceCallPersistenceError(
+      'gradeSave',
+      'The call was graded, but the grade could not be saved.',
+      { cause, docId, grade, qa }
+    );
+  }
+}
+
+export async function gradeSavedAttempt(
+  { docId, scenario, transcript, department },
+  { gradeQaFn = gradeQaRequest, saveGradeFn = updateInterviewGrade } = {}
+) {
+  let data;
+  try {
+    data = await gradeQaFn({ scenario, transcript, department });
+  } catch (cause) {
+    throw new VoiceCallPersistenceError(
+      'grade',
+      'The call was saved, but grading failed.',
+      { cause, docId }
+    );
+  }
+  if (!data?.grade || !data?.qa) {
+    throw new VoiceCallPersistenceError('grade', 'The call was saved, but grading failed.', { docId });
+  }
+  await saveGradeToAttempt(docId, data.grade, data.qa, saveGradeFn);
+  return { docId, grade: data.grade, qa: data.qa };
+}
+
+export async function runQaPersistenceSequence(payload, deps = {}) {
+  const docId = await saveCallAttempt(payload, deps.saveInterviewFn);
+  return gradeSavedAttempt(
+    {
+      docId,
+      scenario: payload.scenario,
+      transcript: payload.transcript,
+      department: payload.department,
+    },
+    deps
+  );
+}
+
 // ── Audio helpers (module-level, pure) ───────────────────────────────────────
 
 function downsample(f32, inRate) {
@@ -73,7 +157,8 @@ function appendTranscriptFragment(existing, fragment) {
 // test graded criterion-by-criterion against the call quality guide).
 export default function VoiceCall({ navigatorId, name, department = 'pediatrics', onExit, onDone, onQaResult, mode = 'practice' }) {
   const isTest = mode === 'test';
-  // phases: setup | connecting | active | grading | reviewed | discarded | error
+  // phases: setup | connecting | active | grading | reviewed | discarded |
+  //         saveError | gradeError | gradeSaveError
   const [phase, setPhase]         = useState('setup');
   const [callerName, setCallerName] = useState('');
   const [scenario, setScenario]   = useState('');
@@ -84,6 +169,12 @@ export default function VoiceCall({ navigatorId, name, department = 'pediatrics'
   const [qa, setQa]               = useState(null);  // full QA scorecard (test mode)
   const [gradeBusy, setGradeBusy] = useState(false);  // retrying a failed grade from the reviewed screen
   const [captions, setCaptions]   = useState([]);     // [{role, text}] shown live during the call
+  const [persistedInterviewId, setPersistedInterviewId] = useState(null);
+  const [pendingTranscript, setPendingTranscript] = useState(null);
+  const [pendingGradePayload, setPendingGradePayload] = useState(null);
+  const [saveError, setSaveError] = useState('');
+  const [gradeError, setGradeError] = useState('');
+  const [gradeSaveError, setGradeSaveError] = useState('');
 
   const wsRef        = useRef(null);
   const streamRef    = useRef(null);
@@ -95,6 +186,23 @@ export default function VoiceCall({ navigatorId, name, department = 'pediatrics'
   const segmentsRef  = useRef([]);          // [{role, text}] transcript, coalesced by role
   const finalRef     = useRef(null);        // { transcript, docId } kept after teardown for grade retries
   const domain = DOMAINS.find((d) => d.id === domainId);
+
+  function clearPersistenceState() {
+    setPersistedInterviewId(null);
+    setPendingTranscript(null);
+    setPendingGradePayload(null);
+    setSaveError('');
+    setGradeError('');
+    setGradeSaveError('');
+  }
+
+  function exitTestFlow() {
+    clearPersistenceState();
+    setQa(null);
+    setGrade(null);
+    if (onExit) onExit();
+    else setPhase('setup');
+  }
 
   useEffect(() => () => teardown(), []);    // stop everything on unmount
 
@@ -157,6 +265,7 @@ export default function VoiceCall({ navigatorId, name, department = 'pediatrics'
     setQa(null);
     setGradeBusy(false);
     setCaptions([]);
+    clearPersistenceState();
 
     // 1) Generate the scenario + caller name (reuses the existing chat init path).
     const pick = DOMAINS[Math.floor(Math.random() * DOMAINS.length)].id;
@@ -268,6 +377,45 @@ export default function VoiceCall({ navigatorId, name, department = 'pediatrics'
       return setPhase('discarded');
     }
 
+    if (isTest) {
+      setPhase('grading');
+      setPendingTranscript(transcript);
+      try {
+        const result = await runQaPersistenceSequence({
+          navigatorId,
+          name,
+          domainId,
+          scenario,
+          callerName,
+          transcript,
+          department,
+        });
+        setPersistedInterviewId(result.docId);
+        setPendingGradePayload({ docId: result.docId, grade: result.grade, qa: result.qa });
+        setQa(result.qa);
+        setGrade(result.grade);
+        await onQaResult?.(result.qa);
+        setPhase('reviewed');
+      } catch (err) {
+        if (err?.stage === 'save') {
+          setSaveError('We could not save this Call QA attempt. Your supervisor will not see this attempt until it is saved.');
+          setPhase('saveError');
+        } else if (err?.stage === 'gradeSave') {
+          setPersistedInterviewId(err.docId ?? null);
+          setPendingGradePayload({ docId: err.docId, grade: err.grade, qa: err.qa });
+          setQa(err.qa ?? null);
+          setGrade(err.grade ?? null);
+          setGradeSaveError('The call was graded, but the grade could not be saved. Retry saving the grade.');
+          setPhase('gradeSaveError');
+        } else {
+          setPersistedInterviewId(err?.docId ?? null);
+          setGradeError('The call was saved, but grading failed. You can retry grading this saved attempt.');
+          setPhase('gradeError');
+        }
+      }
+      return;
+    }
+
     setPhase('grading');
     let docId = null;
     try {
@@ -317,11 +465,99 @@ export default function VoiceCall({ navigatorId, name, department = 'pediatrics'
 
   const retryGrading = async () => {
     setGradeBusy(true);
-    await runGrading();
+    if (isTest) {
+      try {
+        const result = await gradeSavedAttempt({
+          docId: persistedInterviewId,
+          scenario,
+          transcript: pendingTranscript ?? [],
+          department,
+        });
+        setPendingGradePayload({ docId: result.docId, grade: result.grade, qa: result.qa });
+        setQa(result.qa);
+        setGrade(result.grade);
+        setGradeError('');
+        setGradeSaveError('');
+        await onQaResult?.(result.qa);
+        setPhase('reviewed');
+      } catch (err) {
+        if (err?.stage === 'gradeSave') {
+          setPendingGradePayload({ docId: err.docId, grade: err.grade, qa: err.qa });
+          setQa(err.qa ?? null);
+          setGrade(err.grade ?? null);
+          setGradeSaveError('The call was graded, but the grade could not be saved. Retry saving the grade.');
+          setPhase('gradeSaveError');
+        } else {
+          setGradeError('The call was saved, but grading failed. You can retry grading this saved attempt.');
+          setPhase('gradeError');
+        }
+      }
+    } else {
+      await runGrading();
+    }
     setGradeBusy(false);
   };
 
-  const discard = () => { teardown(); setPhase('discarded'); };
+  const retrySaving = async () => {
+    if (!pendingTranscript) return;
+    setGradeBusy(true);
+    try {
+      const result = await runQaPersistenceSequence({
+        navigatorId,
+        name,
+        domainId,
+        scenario,
+        callerName,
+        transcript: pendingTranscript,
+        department,
+      });
+      setPersistedInterviewId(result.docId);
+      setPendingGradePayload({ docId: result.docId, grade: result.grade, qa: result.qa });
+      setQa(result.qa);
+      setGrade(result.grade);
+      setSaveError('');
+      await onQaResult?.(result.qa);
+      setPhase('reviewed');
+    } catch (err) {
+      if (err?.stage === 'save') {
+        setSaveError('We could not save this Call QA attempt. Your supervisor will not see this attempt until it is saved.');
+        setPhase('saveError');
+      } else if (err?.stage === 'gradeSave') {
+        setPersistedInterviewId(err.docId ?? null);
+        setPendingGradePayload({ docId: err.docId, grade: err.grade, qa: err.qa });
+        setQa(err.qa ?? null);
+        setGrade(err.grade ?? null);
+        setGradeSaveError('The call was graded, but the grade could not be saved. Retry saving the grade.');
+        setPhase('gradeSaveError');
+      } else {
+        setPersistedInterviewId(err?.docId ?? null);
+        setGradeError('The call was saved, but grading failed. You can retry grading this saved attempt.');
+        setPhase('gradeError');
+      }
+    }
+    setGradeBusy(false);
+  };
+
+  const retrySavingGrade = async () => {
+    if (!pendingGradePayload?.docId || !pendingGradePayload?.grade || !pendingGradePayload?.qa) return;
+    setGradeBusy(true);
+    try {
+      await saveGradeToAttempt(
+        pendingGradePayload.docId,
+        pendingGradePayload.grade,
+        pendingGradePayload.qa
+      );
+      setGradeSaveError('');
+      await onQaResult?.(pendingGradePayload.qa);
+      setPhase('reviewed');
+    } catch {
+      setGradeSaveError('The call was graded, but the grade could not be saved. Retry saving the grade.');
+      setPhase('gradeSaveError');
+    }
+    setGradeBusy(false);
+  };
+
+  const discard = () => { teardown(); clearPersistenceState(); setPhase('discarded'); };
 
   // ─────────────────────────────────────────────────────────────────────────────
   // Render
@@ -352,6 +588,57 @@ export default function VoiceCall({ navigatorId, name, department = 'pediatrics'
               ? 'Auditing the call against every criterion on the quality scorecard.'
               : 'Scoring your performance against the SOP. A few seconds.'}
           </p>
+        </div>
+      </section>
+    );
+  }
+
+  if (phase === 'saveError') {
+    return (
+      <section className="interview view-enter">
+        <div className="card interview__done">
+          <h2 className="overview__panel-title">Call QA not saved</h2>
+          <p className="readoff__sub">{saveError}</p>
+          <div className="interview__end-actions" style={{ justifyContent: 'center' }}>
+            <button className="btn btn--primary btn--sm" disabled={gradeBusy} onClick={retrySaving} type="button">
+              {gradeBusy ? 'Retrying…' : 'Retry saving'}
+            </button>
+            <button className="btn btn--ghost btn--sm" onClick={discard} type="button">Discard attempt</button>
+          </div>
+        </div>
+      </section>
+    );
+  }
+
+  if (phase === 'gradeError') {
+    return (
+      <section className="interview view-enter">
+        <div className="card interview__done">
+          <h2 className="overview__panel-title">Call saved, grading failed</h2>
+          <p className="readoff__sub">{gradeError}</p>
+          <div className="interview__end-actions" style={{ justifyContent: 'center' }}>
+            <button className="btn btn--primary btn--sm" disabled={gradeBusy} onClick={retryGrading} type="button">
+              {gradeBusy ? 'Grading…' : 'Retry grading'}
+            </button>
+            <button className="btn btn--ghost btn--sm" onClick={exitTestFlow} type="button">Exit</button>
+          </div>
+        </div>
+      </section>
+    );
+  }
+
+  if (phase === 'gradeSaveError') {
+    return (
+      <section className="interview view-enter">
+        <div className="card interview__done">
+          <h2 className="overview__panel-title">Grade not saved</h2>
+          <p className="readoff__sub">{gradeSaveError}</p>
+          <div className="interview__end-actions" style={{ justifyContent: 'center' }}>
+            <button className="btn btn--primary btn--sm" disabled={gradeBusy} onClick={retrySavingGrade} type="button">
+              {gradeBusy ? 'Saving…' : 'Retry saving grade'}
+            </button>
+            <button className="btn btn--ghost btn--sm" onClick={exitTestFlow} type="button">Exit</button>
+          </div>
         </div>
       </section>
     );

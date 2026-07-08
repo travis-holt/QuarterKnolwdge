@@ -183,6 +183,42 @@ export async function clearResult(navigatorId, department = 'pediatrics') {
 }
 
 /**
+ * Supervisor: archive active QA attempts for one navigator + department so
+ * reset keeps the transcript history but no longer counts it as the current QA.
+ * @param {string} navigatorId
+ * @param {string} [department='pediatrics']
+ * @param {string} [reason='Supervisor reset']
+ * @returns {Promise<number>} number of attempts archived
+ */
+export async function archiveQaAttempts(navigatorId, department = 'pediatrics', reason = 'Supervisor reset') {
+  const snap = await getDocs(
+    query(collection(db, INTERVIEWS), where('navigatorId', '==', navigatorId))
+  );
+  const matches = snap.docs
+    .map((d) => ({ id: d.id, ...d.data() }))
+    .filter((iv) => (
+      iv.navigatorId === navigatorId &&
+      iv?.qa &&
+      !iv?.qaArchived &&
+      deptOf(iv) === department
+    ));
+  if (!matches.length) return 0;
+
+  const batch = writeBatch(db);
+  for (const iv of matches) {
+    batch.update(doc(db, INTERVIEWS, iv.id), {
+      qaArchived: true,
+      qaArchivedAt: serverTimestamp(),
+      qaArchivedReason: reason,
+      qaArchivedBy: 'supervisor',
+    });
+  }
+  await authReady;
+  await batch.commit();
+  return matches.length;
+}
+
+/**
  * One-time fetch of the full roster (for the navigator dropdown on the gate).
  * @returns {Promise<{id:string,name:string,pin:string}[]>}
  */

@@ -5,6 +5,29 @@
 > feature, decision, or fix. New entries are added HERE (newest first, same format),
 > not in CLAUDE.md.
 
+### 2026-07-08 — Call QA save/reset reliability
+- **Context:** Call QA Phase 3 completion was derived from interview docs, but the voice-test flow
+  could continue after a failed `saveInterview()` and supervisor reset cleared result docs without
+  touching existing QA interview attempts. That could leave navigators locally "graded" without a
+  durable Firestore record, or leave Phase 3 looking complete after reset because the old QA
+  interview still counted as the latest active attempt.
+- **Changes:**
+  - `VoiceCall.jsx` now uses an explicit persisted chain for `mode='test'`: save interview →
+    grade saved transcript → save `grade` + `qa` back to that interview doc → then call
+    `onQaResult()`. Save failure, grading failure, and grade-save failure each get their own retry
+    UI state and do not complete Phase 3.
+  - New pure helpers in `src/lib/phases.js` (`isActiveQaInterview`, `latestQaForDept`) centralize
+    the "active QA" rule: must have `qa`, match department, and not be `qaArchived`.
+  - New Firestore helper `archiveQaAttempts(navigatorId, department, reason)` marks active QA
+    interviews as archived (`qaArchived`, `qaArchivedAt`, `qaArchivedReason`, `qaArchivedBy`)
+    instead of deleting them, and supervisor department reset now calls it after `clearResult()`.
+  - Navigator/supervisor QA history now keeps archived QA attempts visible for audit, but they no
+    longer drive Phase 3 completion or the "latest Call QA Test" card.
+  - Added tests for archived-QA filtering, QA-archive scoping, and the no-grade/no-save path when
+    interview save fails.
+- **Verification:** `npm test` → **444 passing / 21 files**; `npm run build` passed (existing
+  Firebase chunk-size warning only); `git diff --check` clean.
+
 ### 2026-07-08 — Role-app tab behavior tests (test-only)
 - **Context:** Role-app coverage stopped at `roleApps.smoke.test.jsx` (shell mount + gate/session
   routing). The next coverage milestone was per-tab behavioural coverage of `SupervisorApp` and

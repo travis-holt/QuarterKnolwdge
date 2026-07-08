@@ -443,6 +443,9 @@ export default function NavigatorDetail({ rows, name, deptName, dept, deptMatrix
                           QA TEST · {session.qa.review?.recommendation === 'needs_review' ? 'NEEDS REVIEW' : session.qa.pass ? 'PASS' : 'FAIL'}
                         </span>
                       )}
+                      {session.qaArchived && (
+                        <span className="tag">Archived / reset</span>
+                      )}
                       <span className="interview-log__caller">
                         Caller: <strong>{session.callerName}</strong>
                       </span>
