@@ -2985,6 +2985,83 @@ textarea:focus-visible {
   line-height: 1.5;
 }
 
+/* ── Supervisor grade override ─────────────────────────────────────────────── */
+.interview-log__override-flag {
+  font-size: 0.7rem;
+  opacity: 0.8;
+}
+.grade-override__badge {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.8rem;
+  color: var(--ink-soft);
+}
+.grade-override__tag {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 0.72rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: #8a5a12;
+  background: rgba(224, 177, 60, 0.18);
+  border: 1px solid rgba(224, 177, 60, 0.5);
+}
+.grade-override__original {
+  font-weight: 600;
+}
+.grade-override__reason {
+  flex-basis: 100%;
+  line-height: 1.5;
+}
+.grade-override__open {
+  align-self: flex-start;
+  font-size: 0.8rem;
+}
+.grade-override__form {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface-3, var(--surface-2));
+}
+.grade-override__field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--ink-soft);
+}
+.grade-override__field input,
+.grade-override__field textarea {
+  font: inherit;
+  font-weight: 400;
+  padding: 6px 8px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--surface);
+  color: var(--ink);
+}
+.grade-override__field input {
+  max-width: 120px;
+}
+.grade-override__error {
+  color: var(--level-learning, #c0392b);
+  font-size: 0.8rem;
+  margin: 0;
+}
+.grade-override__actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
 /* ── My training (navigator) ───────────────────────────────────────────────── */
 .mytraining__list {
   display: grid;

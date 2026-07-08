@@ -434,6 +434,32 @@ export async function updateInterviewGrade(id, grade, qa = null) {
 }
 
 /**
+ * Supervisor: adjust the AI-given practice score, leaving a short reason. The
+ * original AI grade is preserved untouched — this only writes the `gradeOverride`
+ * field so the effective (displayed) score can be shown alongside the original.
+ * Pilot-grade: `overriddenBy` is a placeholder until real per-user auth lands.
+ * Advisory only — override scores do NOT feed the capability matrix, resultHistory,
+ * or any navigator-facing assessment score.
+ * @param {string} id      interview doc id
+ * @param {{ score:number, reason:string }} override
+ */
+export async function updateInterviewGradeOverride(id, override) {
+  const reason = String(override?.reason ?? '').trim();
+  if (!reason) throw new Error('Override reason is required.');
+  let score = Number(override?.score);
+  if (!Number.isFinite(score)) throw new Error('Override score must be a number.');
+  score = Math.max(0, Math.min(100, Math.round(score)));
+  await updateDoc(doc(db, INTERVIEWS, id), {
+    gradeOverride: {
+      score,
+      reason,
+      overriddenAt: serverTimestamp(),
+      overriddenBy: 'supervisor',
+    },
+  });
+}
+
+/**
  * One-time fetch of all interviews for a navigator (for their history view).
  * @param {string} navigatorId
  * @returns {Promise<object[]>}

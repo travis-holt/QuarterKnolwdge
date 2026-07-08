@@ -297,7 +297,7 @@ training assignments.
     Grade is written back to the Firestore interview doc via `updateInterviewGrade` so supervisors
     can see it too.
   - `updateInterviewGrade(id, grade)` added to [src/lib/db.js](src/lib/db.js).
-- **Status:** Complete (Phase 1 roleplay + Phase 2 grading). Supervisor override is **Planned**.
+- **Status:** Complete (Phase 1 roleplay + Phase 2 grading + supervisor grade override — 2026-07-08).
 - **Notes:** Scores are advisory — they do not feed `scorePerDomain` or the capability matrix.
   The navigator no longer picks a domain at setup (removed 2026-06-29 to cut choice friction);
   `startInterview` picks a random domain just to anchor the AI scenario, then goes straight to the call.
@@ -305,6 +305,16 @@ training assignments.
   sessions" panel shows each saved session; the header row now includes the score badge (color-coded).
   Expanding a session shows the grade breakdown (summary, what went well, areas to develop) above the
   full transcript. The panel is hidden in the navigator's own dashboard.
+- **Supervisor grade override (2026-07-08):** in the supervisor-only Practice sessions panel, an
+  "Override score" inline form lets a supervisor adjust the AI practice score (0–100) with a required
+  short reason. `updateInterviewGradeOverride(id, {score, reason})` (`db.js`) writes a `gradeOverride`
+  field `{ score, reason, overriddenAt, overriddenBy:'supervisor' }` — the original `grade` is
+  **never overwritten**. The effective (override) score is displayed with "Original AI score: X" and
+  the reason shown alongside; sessions without an override render exactly as before. Override scores
+  are **advisory only** — they do NOT feed the capability matrix, `resultHistory`, MCQ/Spot scores,
+  the deterministic Call QA rubric, or any navigator-facing assessment score. `overriddenBy` is a
+  pilot-grade placeholder until real per-user auth. Real production auth remains the gate for
+  attributing overrides to a specific supervisor.
 
 ### F16 — "Spot the Error" QA Audit Assessment
 - **Purpose:** A **scored** QA-audit assessment — navigators act as a QA auditor over AI-generated
@@ -1066,7 +1076,7 @@ of this file on 2026-07-07 to cut per-session context cost (it was ~55% of the f
   loads do not rescan repeatedly. Call QA Phase 3 completion now requires both a persisted
   interview doc and a successfully saved QA grade; archived/reset QA attempts are ignored by the
   "latest active QA" lookup that drives the phase hub and dashboard card. Build clean, tests green
-  (`npm test`  **444 passing**, 21 test files). GitHub Actions CI now mirrors the normal local gate on `main` pushes and PRs:
+  (`npm test`  **450 passing**, 22 test files). GitHub Actions CI now mirrors the normal local gate on `main` pushes and PRs:
   `npm ci` → `npm test` → `npm run build` (no deploy step).
 - **Existing functionality:** features F1–F26 (see [§4](#4-feature-inventory)) are **Complete** in
   code. F17 adds longitudinal trends + Sparkline. F18 adds dossier evidence per competency. F19
@@ -1096,7 +1106,7 @@ of this file on 2026-07-07 to cut per-session context cost (it was ~55% of the f
 - **Experimental / mockup:**
   - Training **content** is mockup (flagged in UI). Logic is real.
   - **Adult Medicine and Behavioural Health** are not assessed; **Pediatrics and OB/GYN** are live.
-- **Test coverage:** **444 tests** across **21 test files**: `scoring.test.js` (all exports incl. `optionPoints`,
+- **Test coverage:** **450 tests** across **22 test files**: `scoring.test.js` (all exports incl. `optionPoints`,
   including F17–F21 functions: buildTrend, trainingImpact, teamTrend, buildDossier, buildActionCenter,
   buildDevPath, buildMentorMatches, pairingOutcomes, buildLearningSignals,
   buildQuestionImprovementSuggestions, adaptiveTrainingRecommendations, feedbackInsights +
@@ -1113,7 +1123,10 @@ of this file on 2026-07-07 to cut per-session context cost (it was ~55% of the f
   `src/components/roleApps.behavior.test.jsx` (16 per-tab behavioural tests: SupervisorApp tab
   transitions + empty states + navigator-detail open; NavigatorApp dept-select → phase hub /
   dashboard / My Training / Practice chooser / My History / dept switch — Firebase/db/session/apiFetch
-  mocked, browser APIs stubbed, no audio started).
+  mocked, browser APIs stubbed, no audio started),
+  `src/components/navigatorDetail.override.test.jsx` (6 tests for the supervisor grade-override
+  panel: AI-score display, override-score + original-AI-score display, form open, score/reason
+  validation, and db-helper payload — `db.js` mocked, no Firebase).
   The F22 voice call (relay + Web Audio) is verified by live
   end-to-end probe rather than unit tests — audio I/O isn't unit-testable headlessly. Deeper
   per-tab role-app behaviour remains untested (the smoke tests cover shell mount + routing only).
@@ -1162,7 +1175,7 @@ of this file on 2026-07-07 to cut per-session context cost (it was ~55% of the f
 - **Counts (today):** 6 domains (job-aligned 2026-07-02: intake · classification · routing ·
   scheduling · boundaries · documentation) · 9 competencies · 21 Pediatrics + 16
   OB/GYN = **37** seed questions (bank grows in Firestore per dept) · 4 departments (**Pediatrics
-  + OB/GYN live**, 2 mockup) · **444** unit tests (21 test files) · **12** Firestore collections
+  + OB/GYN live**, 2 mockup) · **450** unit tests (22 test files) · **12** Firestore collections
   (`roster`, `results`, `resultHistory`, `questions`, `audits`, `interviews`, `completions`,
   `pairings`, `supervisorFeedback`, `learningProposals`, `sops`, `contentMigrations`) ·
   **12** REST serverless functions (`generate-scenarios`, `generate-coaching`, `interview-turn`,
@@ -1289,7 +1302,9 @@ of this file on 2026-07-07 to cut per-session context cost (it was ~55% of the f
   `getActiveQuestions()`, `seedQuestionsIfEmpty(seed)` (adds missing seed IDs), `saveDraftQuestions(drafts, source)`,
   `updateQuestion(id,patch)`, `activateQuestion(id)`, `archiveQuestion(id)`, `deleteQuestion(id)`;
   interviews — `saveInterview(navigatorId, name, domainId, scenario, callerName, transcript)`,
-  `getInterviews(navigatorId)`, `updateInterviewGrade(id, grade)`;
+  `getInterviews(navigatorId)`, `updateInterviewGrade(id, grade)`,
+  `updateInterviewGradeOverride(id, {score, reason})` (supervisor override — writes only the
+  `gradeOverride` field, preserves the original `grade`; advisory, never fed to matrix/history);
   completions — `saveCompletion(navigatorId, name, domainId, kind, department)`,
   `getCompletions(navigatorId, department)`,
   `subscribeCompletions(cb, onError)`; learning loop — `saveSupervisorFeedback`,
@@ -1375,7 +1390,7 @@ npm run test:e2e     # run the Playwright browser tests (auto-builds + starts th
 - Heatmap intensity toggle (show % inside matrix cells).
 
 ### Technical Debt
-- **444 tests** across 21 test files as of 2026-07-08. **Role-app coverage** (`App`, `Start`,
+- **450 tests** across 22 test files as of 2026-07-08. **Role-app coverage** (`App`, `Start`,
   `SupervisorApp`, `NavigatorApp`) now includes both shell smoke tests (mount + gate/session routing)
   and per-tab behavioural tests (`roleApps.behavior.test.jsx`: tab transitions, empty states,
   dept-select → phase/dashboard flows, navigator-detail open). Deeper per-child-widget interaction
@@ -1554,7 +1569,10 @@ npm run test:e2e     # run the Playwright browser tests (auto-builds + starts th
    `App`, `Start`, `SupervisorApp`, and `NavigatorApp` now both exist (2026-07-08). Per-child-widget
    interaction coverage (editing questions, generating SOPs, submitting a full check end-to-end) is
    the next coverage milestone.
-3. **Supervisor grade override** — allow supervisors to adjust the AI-given score on a saved practice session.
+3. ✅ **Supervisor grade override** — done 2026-07-08. Supervisors adjust the AI practice score with a
+   required reason in the Practice sessions panel; original AI grade preserved (`gradeOverride` field),
+   advisory only (no matrix/history/assessment feed). Next: attribute overrides to a specific supervisor
+   once real per-user auth lands.
 
 **Active work items:**
 - **Pilot-feedback follow-ups (2026-07-03):** after the 2026-07-07 content-quality fix, supervisors
@@ -1608,7 +1626,8 @@ npm run test:e2e     # run the Playwright browser tests (auto-builds + starts th
   (403 tests, 19 test files; `roleApps.smoke.test.jsx`, Firebase/db/session mocked).
 - ✅ Deeper per-tab role-app behavioural tests — done 2026-07-08 (444 tests, 21 test files;
   `roleApps.behavior.test.jsx`, Firebase/db/session/apiFetch mocked, browser APIs stubbed).
-- Supervisor grade override for practice sessions — next interview feature.
+- ✅ Supervisor grade override for practice sessions — done 2026-07-08 (450 tests, 22 test files;
+  `navigatorDetail.override.test.jsx`, `gradeOverride` field, db.js mocked).
 
 ---
 
