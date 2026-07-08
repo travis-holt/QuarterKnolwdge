@@ -38,9 +38,10 @@
   "GENERATION_SECRET not needed — falls back to SUPERVISOR_PASSCODE"), and the stale header comments
   in `generate-scenarios.js` / `refine-sop.js` / `live-relay.js`. Added `REQUIRE_SUPERVISOR_SESSION`
   toggle tests (`validateSecret` + `isValidSecret`, env restored after each).
-- **Verification:** `npm ci` ✓; `npm test` → **424 passing / 20 files** (was 421); `npm run build`
-  passed (existing Firebase chunk-size warning only); `git diff --check` clean; **GitHub Actions CI:
-  green** on PR #8.
+- **Verification (local):** `npm ci` ✓; `npm test` → **424 passing / 20 files** (was 421);
+  `npm run build` passed (existing Firebase chunk-size warning only); `git diff --check` clean.
+  PR #8 CI was green before this doc/comment follow-up; the follow-up push re-triggers GitHub
+  Actions — confirm that run is green before review sign-off.
 
 ### 2026-07-08 — Role-app smoke tests (App / Start / SupervisorApp / NavigatorApp)
 - **Context:** Role-app integration coverage was the long-standing test gap (the four top-level
