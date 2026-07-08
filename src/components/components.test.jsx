@@ -12,6 +12,7 @@ import Footer     from './Footer.jsx';
 import Nav        from './Nav.jsx';
 import PhaseHub   from './PhaseHub.jsx';
 import Start      from './Start.jsx';
+import { runQaPersistenceSequence } from './VoiceCall.jsx';
 
 const startMocks = vi.hoisted(() => ({
   getRoster: vi.fn(),
@@ -232,5 +233,30 @@ describe('PhaseHub', () => {
     expect(screen.getByText(/FAIL · 62\/100/)).toBeTruthy();
     const cards = screen.getAllByRole('button').filter((b) => b.className.includes('phase-card'));
     expect(cards.every((c) => !c.disabled)).toBe(true);
+  });
+});
+
+describe('runQaPersistenceSequence', () => {
+  it('does not grade or save a grade when interview save fails', async () => {
+    const saveInterviewFn = vi.fn().mockRejectedValue(new Error('save failed'));
+    const gradeQaFn = vi.fn();
+    const saveGradeFn = vi.fn();
+
+    await expect(runQaPersistenceSequence({
+      navigatorId: 'nav-1',
+      name: 'Ada',
+      domainId: 'routing',
+      scenario: 'Scenario',
+      callerName: 'Caller',
+      transcript: [{ role: 'patient', text: 'Help' }],
+      department: 'pediatrics',
+    }, {
+      saveInterviewFn,
+      gradeQaFn,
+      saveGradeFn,
+    })).rejects.toMatchObject({ stage: 'save' });
+
+    expect(gradeQaFn).not.toHaveBeenCalled();
+    expect(saveGradeFn).not.toHaveBeenCalled();
   });
 });

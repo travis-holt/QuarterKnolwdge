@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { PHASE_ORDER, buildPhases, phasesComplete, nextPhase, completedCount } from './phases.js';
+import { PHASE_ORDER, buildPhases, phasesComplete, nextPhase, completedCount, latestQaForDept, isActiveQaInterview } from './phases.js';
 
 const states = (done) => buildPhases(done).map((p) => p.state);
 
@@ -63,5 +63,33 @@ describe('completedCount', () => {
     expect(completedCount({})).toBe(0);
     expect(completedCount({ mcq: true, qa: true })).toBe(2);
     expect(completedCount({ mcq: true, spot: true, qa: true })).toBe(3);
+  });
+});
+
+describe('active QA helpers', () => {
+  it('does not count archived QA interviews as active', () => {
+    expect(isActiveQaInterview({
+      department: 'pediatrics',
+      qa: { score: 92, pass: true },
+      qaArchived: true,
+    }, 'pediatrics')).toBe(false);
+  });
+
+  it('latestQaForDept ignores archived attempts', () => {
+    const interviews = [
+      {
+        department: 'pediatrics',
+        qa: { score: 95, pass: true },
+        qaArchived: true,
+        endedAt: { seconds: 200 },
+      },
+      {
+        department: 'pediatrics',
+        qa: { score: 82, pass: true },
+        endedAt: { seconds: 100 },
+      },
+    ];
+
+    expect(latestQaForDept(interviews, 'pediatrics')?.qa?.score).toBe(82);
   });
 });

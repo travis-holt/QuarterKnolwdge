@@ -11,7 +11,7 @@
 > [§8 Current System State](#8-current-system-state) and [§15 Current Priorities](#15-current-priorities)
 > accurate at all times.
 >
-> **Last updated:** 2026-07-08 (role-app tab behavior tests) ·
+> **Last updated:** 2026-07-08 (Call QA save/reset reliability) ·
 > **Doc maintainer:** Claude (AI agent) + repo owner. Assumptions are explicitly marked **[ASSUMPTION]**.
 
 ---
@@ -647,6 +647,13 @@ training assignments.
   ("graded hard, no partial credit"), grading via `/api/grade-call-qa` (60s timeout), and a
   results screen: PASS/FAIL banner, score, auto-fail cards with the quoted offending line,
   per-category bars, and a "Points you lost" list.
+- **Persistence reliability (2026-07-08):** Call QA completion now requires a full persisted chain:
+  interview transcript saved to Firestore → rubric grading succeeds → `updateInterviewGrade`
+  writes both `grade` and `qa` back to that saved interview doc. Failed interview save, failed
+  grading, or failed grade-save states do **not** call `onQaResult`, do **not** count Phase 3 as
+  complete, and show explicit retry/exit paths in `VoiceCall.jsx`. Supervisor reset now archives
+  matching QA interview attempts (`qaArchived`, `qaArchivedAt`, `qaArchivedReason`, `qaArchivedBy`)
+  so they remain visible for history/audit but no longer count as the latest active QA attempt.
 - **Navigator assessment entry (2026-07-03, rewired 2026-07-07):** The Call QA Test now serves as
   **Phase 3** (final) of the sequenced department assessment via `PhaseHub` in `NavigatorApp`.
   That route reuses `VoiceCall mode='test'`, returns to the dashboard from the review screen, and
@@ -1056,8 +1063,10 @@ of this file on 2026-07-07 to cut per-session context cost (it was ~55% of the f
   Firestore migration archives previously active bad content with reason
   `content-quality-fix-2026-07`, skips manually repaired seed questions that already pass guards,
   and records `contentMigrations/2026-07-content-quality-fixes-v2` after success so supervisor
-  loads do not rescan repeatedly. Build clean, tests green (`npm test`  **440 passing**,
-  21 test files). GitHub Actions CI now mirrors the normal local gate on `main` pushes and PRs:
+  loads do not rescan repeatedly. Call QA Phase 3 completion now requires both a persisted
+  interview doc and a successfully saved QA grade; archived/reset QA attempts are ignored by the
+  "latest active QA" lookup that drives the phase hub and dashboard card. Build clean, tests green
+  (`npm test`  **444 passing**, 21 test files). GitHub Actions CI now mirrors the normal local gate on `main` pushes and PRs:
   `npm ci` → `npm test` → `npm run build` (no deploy step).
 - **Existing functionality:** features F1–F26 (see [§4](#4-feature-inventory)) are **Complete** in
   code. F17 adds longitudinal trends + Sparkline. F18 adds dossier evidence per competency. F19
@@ -1087,7 +1096,7 @@ of this file on 2026-07-07 to cut per-session context cost (it was ~55% of the f
 - **Experimental / mockup:**
   - Training **content** is mockup (flagged in UI). Logic is real.
   - **Adult Medicine and Behavioural Health** are not assessed; **Pediatrics and OB/GYN** are live.
-- **Test coverage:** **440 tests** across **21 test files**: `scoring.test.js` (all exports incl. `optionPoints`,
+- **Test coverage:** **444 tests** across **21 test files**: `scoring.test.js` (all exports incl. `optionPoints`,
   including F17–F21 functions: buildTrend, trainingImpact, teamTrend, buildDossier, buildActionCenter,
   buildDevPath, buildMentorMatches, pairingOutcomes, buildLearningSignals,
   buildQuestionImprovementSuggestions, adaptiveTrainingRecommendations, feedbackInsights +
@@ -1153,7 +1162,7 @@ of this file on 2026-07-07 to cut per-session context cost (it was ~55% of the f
 - **Counts (today):** 6 domains (job-aligned 2026-07-02: intake · classification · routing ·
   scheduling · boundaries · documentation) · 9 competencies · 21 Pediatrics + 16
   OB/GYN = **37** seed questions (bank grows in Firestore per dept) · 4 departments (**Pediatrics
-  + OB/GYN live**, 2 mockup) · **440** unit tests (21 test files) · **12** Firestore collections
+  + OB/GYN live**, 2 mockup) · **444** unit tests (21 test files) · **12** Firestore collections
   (`roster`, `results`, `resultHistory`, `questions`, `audits`, `interviews`, `completions`,
   `pairings`, `supervisorFeedback`, `learningProposals`, `sops`, `contentMigrations`) ·
   **12** REST serverless functions (`generate-scenarios`, `generate-coaching`, `interview-turn`,
@@ -1366,7 +1375,7 @@ npm run test:e2e     # run the Playwright browser tests (auto-builds + starts th
 - Heatmap intensity toggle (show % inside matrix cells).
 
 ### Technical Debt
-- **440 tests** across 21 test files as of 2026-07-08. **Role-app coverage** (`App`, `Start`,
+- **444 tests** across 21 test files as of 2026-07-08. **Role-app coverage** (`App`, `Start`,
   `SupervisorApp`, `NavigatorApp`) now includes both shell smoke tests (mount + gate/session routing)
   and per-tab behavioural tests (`roleApps.behavior.test.jsx`: tab transitions, empty states,
   dept-select → phase/dashboard flows, navigator-detail open). Deeper per-child-widget interaction
@@ -1428,7 +1437,12 @@ npm run test:e2e     # run the Playwright browser tests (auto-builds + starts th
   selected department's latest projected result per navigator.
 - **~~Adaptive training typo~~ (resolved 2026-07-07):** `adaptiveTrainingRecommendations` now checks
   `INTERVIEW_SCORE_BANDS.strong` instead of the nonexistent `.good`.
-- **No known functional bugs** in scoring/read-offs after the 2026-07-07 audit follow-up pass.
+- **~~Call QA Phase 3 could appear complete without a durable saved result~~ (resolved 2026-07-08):**
+  `VoiceCall.jsx` now blocks completion unless interview save, grading, and grade-save all succeed;
+  supervisor reset archives active QA attempts for that navigator + department so archived QA no
+  longer counts as current completion.
+- **No known functional bugs** in scoring/read-offs or active QA completion after the 2026-07-08
+  reliability pass.
 
 ---
 
@@ -1592,7 +1606,7 @@ npm run test:e2e     # run the Playwright browser tests (auto-builds + starts th
   evidence preservation, README/current-doc cleanup — done 2026-06-30 (208 tests, 8 test files).
 - ✅ Role-app smoke tests (`App`, `Start`, `SupervisorApp`, `NavigatorApp`) — done 2026-07-08
   (403 tests, 19 test files; `roleApps.smoke.test.jsx`, Firebase/db/session mocked).
-- ✅ Deeper per-tab role-app behavioural tests — done 2026-07-08 (440 tests, 21 test files;
+- ✅ Deeper per-tab role-app behavioural tests — done 2026-07-08 (444 tests, 21 test files;
   `roleApps.behavior.test.jsx`, Firebase/db/session/apiFetch mocked, browser APIs stubbed).
 - Supervisor grade override for practice sessions — next interview feature.
 

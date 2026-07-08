@@ -170,7 +170,7 @@ export default function Navigators({
                     startConfirm(
                       member.id,
                       'reset',
-                      `Clear ${member.name}'s result? They can retake the check. This cannot be undone.`
+                      `Reset this department assessment, including Call QA attempts, for ${member.name}? Archived QA stays in history but will no longer count as current completion.`
                     )
                   }
                 >

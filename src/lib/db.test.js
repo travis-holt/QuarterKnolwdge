@@ -69,6 +69,7 @@ import {
   saveResult,
   getFloorScores,
   clearResult,
+  archiveQaAttempts,
   getRoster,
   subscribeRoster,
   seedQuestionsIfEmpty,
@@ -225,6 +226,36 @@ describe('clearResult', () => {
     expect(ids).toContain('nav-id__pediatrics__qa');   // Call QA Test
     expect(ids).toContain('nav-id');                   // legacy plain-id
     expect(mocks.deleteDoc).not.toHaveBeenCalled();    // none existed → nothing deleted
+  });
+});
+
+describe('archiveQaAttempts', () => {
+  it('archives only matching active QA attempts', async () => {
+    const batch = { update: vi.fn(), commit: vi.fn().mockResolvedValue() };
+    mocks.writeBatch.mockReturnValue(batch);
+    mocks.getDocs.mockResolvedValue({
+      docs: [
+        { id: 'keep-practice', data: () => ({ navigatorId: 'nav-id', department: 'obgyn', transcript: [] }) },
+        { id: 'keep-archived', data: () => ({ navigatorId: 'nav-id', department: 'obgyn', qa: { score: 91 }, qaArchived: true }) },
+        { id: 'keep-other-dept', data: () => ({ navigatorId: 'nav-id', department: 'pediatrics', qa: { score: 88 } }) },
+        { id: 'keep-other-nav', data: () => ({ navigatorId: 'other-nav', department: 'obgyn', qa: { score: 87 } }) },
+        { id: 'archive-me', data: () => ({ navigatorId: 'nav-id', department: 'obgyn', qa: { score: 83 } }) },
+      ],
+    });
+
+    await expect(archiveQaAttempts('nav-id', 'obgyn')).resolves.toBe(1);
+
+    expect(batch.update).toHaveBeenCalledOnce();
+    expect(batch.update).toHaveBeenCalledWith(
+      { id: 'archive-me', col: 'interviews' },
+      expect.objectContaining({
+        qaArchived: true,
+        qaArchivedAt: '__ts__',
+        qaArchivedReason: 'Supervisor reset',
+        qaArchivedBy: 'supervisor',
+      })
+    );
+    expect(batch.commit).toHaveBeenCalledOnce();
   });
 });
 

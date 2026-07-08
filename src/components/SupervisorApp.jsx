@@ -24,6 +24,7 @@ import {
   updateRosterEntry,
   setRosterStatus,
   clearResult,
+  archiveQaAttempts,
   subscribeQuestions,
   seedQuestionsIfEmpty,
   saveDraftQuestions,
@@ -223,7 +224,10 @@ export default function SupervisorApp({ onSignOut }) {
   const handleUpdateNavigator = (id, patch) => updateRosterEntry(id, patch);
   const handleDeactivateNavigator = (id) => setRosterStatus(id, 'inactive');
   const handleReactivateNavigator = (id) => setRosterStatus(id, 'active');
-  const handleResetResult = (id) => clearResult(id, selectedDept);
+  const handleResetResult = async (id) => {
+    await clearResult(id, selectedDept);
+    await archiveQaAttempts(id, selectedDept, 'Supervisor reset');
+  };
   const handleSavePairing = (pairing) => savePairing({ ...pairing, department: selectedDept });
   const handleUpdatePairing = (id, status) => updatePairingStatus(id, status);
   const handleSaveFeedback = (item) => saveSupervisorFeedback(item);

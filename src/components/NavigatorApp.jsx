@@ -21,7 +21,7 @@ import {
 } from '../lib/scoring.js';
 import { getResult, saveResult, getFloorScores, getActiveQuestions, getCompletions, getInterviews, saveCompletion } from '../lib/db.js';
 import { MINICHECK_SIZE, MINICHECK_PASS } from '../data/config.js';
-import { phasesComplete, completedCount } from '../lib/phases.js';
+import { phasesComplete, completedCount, latestQaForDept } from '../lib/phases.js';
 import { isFirebaseConfigured } from '../lib/firebase.js';
 import { SEED_QUESTIONS, SEED_QUESTIONS_OBGYN, DOMAINS } from '../data/questions.js';
 import { ASSESSED_DEPTS, departmentName } from '../data/departments.js';
@@ -648,17 +648,6 @@ export default function NavigatorApp({ navigatorId, name, onSignOut }) {
 // navigator switch between saved assessment results, and launches another one.
 const TYPE_LABEL = { mcq: 'Multiple choice', spot: 'Spot the Error', qa: 'Call QA Test' };
 
-function latestBy(items, score) {
-  return items.reduce((best, item) => (!best || score(item) > score(best) ? item : best), null);
-}
-
-function latestQaForDept(interviews, dept) {
-  return latestBy(
-    interviews.filter((iv) => iv?.qa && (iv.department ?? 'pediatrics') === dept),
-    (iv) => iv.endedAt?.seconds ?? 0
-  );
-}
-
 function formatQaDate(ts) {
   if (!ts?.seconds) return 'Date pending';
   return new Date(ts.seconds * 1000).toLocaleDateString(undefined, {
@@ -759,4 +748,3 @@ function Shell({ role, view, setView, onSignOut, activeDeptName, onChangeDept, c
     </div>
   );
 }
-
