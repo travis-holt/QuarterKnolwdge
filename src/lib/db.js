@@ -403,9 +403,10 @@ export function subscribeResultHistory(cb, onError) {
  * @param {string} callerName
  * @param {{role:'patient'|'navigator', text:string}[]} transcript
  * @param {string} [department='pediatrics']
+ * @param {object} [metadata] optional compact scenario metadata for QA tests
  * @returns {Promise<string>} the new interview doc id
  */
-export async function saveInterview(navigatorId, name, domainId, scenario, callerName, transcript, department = 'pediatrics') {
+export async function saveInterview(navigatorId, name, domainId, scenario, callerName, transcript, department = 'pediatrics', metadata = {}) {
   const ref = doc(collection(db, INTERVIEWS));
   await setDoc(ref, {
     navigatorId,
@@ -418,6 +419,15 @@ export async function saveInterview(navigatorId, name, domainId, scenario, calle
     endedAt: serverTimestamp(),
     criteriaGrades: null,
     supervisorOverrides: null,
+    scenarioSource: metadata.scenarioSource ?? 'generated',
+    qaScenarioId: metadata.qaScenarioId ?? null,
+    qaScenarioTitle: metadata.qaScenarioTitle ?? null,
+    workflowType: metadata.workflowType ?? null,
+    difficulty: metadata.difficulty ?? null,
+    domainIds: metadata.domainIds ?? [domainId],
+    competencyIds: metadata.competencyIds ?? [],
+    expectedActions: metadata.expectedActions ?? [],
+    criticalMisses: metadata.criticalMisses ?? [],
   });
   return ref.id;
 }

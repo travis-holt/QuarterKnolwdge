@@ -1,5 +1,18 @@
 # Development History - Knowledge Check
 
+### 2026-07-08 - Curated Call QA scenario bank
+- **Context:** Call QA persistence was reliable, but test scenarios were still generated live at
+  call start, which made difficulty and coverage less controlled for management-grade assessment.
+- **Changes:**
+  - Added `src/data/callQaScenarios.js` with curated Pediatrics and OB/GYN Call QA scenarios.
+  - Added scenario validation and selector tests.
+  - Updated `VoiceCall mode="test"` to use curated scenarios while keeping practice voice calls
+    generated.
+  - Stored scenario metadata on QA interview docs.
+  - Showed QA workflow/difficulty/scenario metadata in supervisor history.
+- **Verification:** `npm test` -> **453 passing / 22 files**; `npm run build` passed (existing
+  Firebase chunk-size warning only); `git diff --check` clean (Windows line-ending warnings only).
+
 > Full dated development journal, moved out of CLAUDE.md on 2026-07-07 to cut per-session
 > context cost. This file is NOT auto-loaded; read it when you need the history of a
 > feature, decision, or fix. New entries are added HERE (newest first, same format),

@@ -314,10 +314,10 @@ export default function NavigatorApp({ navigatorId, name, onSignOut }) {
     await persistResult([navigatorId, name, allScores, competencyScores, dept, answers, targetType]);
   };
 
-  const handleQaComplete = async (qa) => {
+  const handleQaComplete = async (qa, metadata = {}) => {
     setInterviews((prev) => [
       ...prev,
-      { name, navigatorId, department: dept, endedAt: { seconds: Math.floor(Date.now() / 1000) }, qa },
+      { name, navigatorId, department: dept, endedAt: { seconds: Math.floor(Date.now() / 1000) }, qa, ...metadata },
     ]);
   };
 
@@ -461,6 +461,11 @@ export default function NavigatorApp({ navigatorId, name, onSignOut }) {
           name={name}
           department={dept}
           mode="test"
+          priorQaAttempts={interviews.filter((iv) =>
+            iv?.qa &&
+            !iv?.qaArchived &&
+            (iv.department ?? 'pediatrics') === dept
+          )}
           onQaResult={handleQaComplete}
           onExit={() => setView('phases')}
           onDone={() => setView('dashboard')}
