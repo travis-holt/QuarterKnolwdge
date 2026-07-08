@@ -11,7 +11,7 @@
 > [§8 Current System State](#8-current-system-state) and [§15 Current Priorities](#15-current-priorities)
 > accurate at all times.
 >
-> **Last updated:** 2026-07-08 (role-app smoke tests added — App/Start/SupervisorApp/NavigatorApp) ·
+> **Last updated:** 2026-07-08 (server-side supervisor session / API auth hardening) ·
 > **Doc maintainer:** Claude (AI agent) + repo owner. Assumptions are explicitly marked **[ASSUMPTION]**.
 
 ---
