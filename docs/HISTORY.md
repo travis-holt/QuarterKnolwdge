@@ -5,6 +5,18 @@
 > feature, decision, or fix. New entries are added HERE (newest first, same format),
 > not in CLAUDE.md.
 
+### 2026-07-08 — Add GitHub Actions CI test/build gate
+- **Context:** Owner explicitly approved adding a minimal GitHub Actions workflow so every pull
+  request and `main` push runs the normal verification commands, but nothing deploys from GitHub.
+- **Change:** Added `.github/workflows/ci.yml` with a single `verify` job on `ubuntu-latest`.
+  It triggers on `pull_request` to `main` and `push` to `main`, uses Node 20, runs `npm ci`,
+  `npm test`, and `npm run build`, and stops there. No Firebase secrets, no Railway steps, no
+  deploy automation.
+- **Docs:** Updated `CLAUDE.md` current-state / workflow notes to reflect that CI now exists as a
+  simple PR/main verification gate while Railway remains the separate deploy path.
+- **Verification:** Pending local run in this session: `npm test`, `npm run build`, and
+  `git diff --check` before opening the draft PR.
+
 ### 2026-07-07 — PR #5 follow-up: encoding cleanup and migration safety
 - **Context:** Draft PR review found `CLAUDE.md` / `docs/HISTORY.md` mojibake, a supervisor-load migration that would keep scanning after success, and balanced audit generation that could still count archived refill-heavy items.
 - **Fix:** Repaired both docs to clean UTF-8 without BOM and verified zero hits for the reviewer-specified mojibake markers (U+00C3, U+00C2, U+00E2, and replacement-character variants). `runContentQualityFixesMigration()` now checks a version marker before scanning, records completion counts, and skips overwriting `q-int-1` / `q-obgyn-int-1` when the live docs already pass content guards. Balanced audit coverage now ignores archived audits in both the helper and supervisor generation path. `firestore.rules` now allows signed-in pilot access to `contentMigrations/{docId}` so the marker write can succeed.
