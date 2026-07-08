@@ -11,7 +11,7 @@
 > [§8 Current System State](#8-current-system-state) and [§15 Current Priorities](#15-current-priorities)
 > accurate at all times.
 >
-> **Last updated:** 2026-07-07 (PR #5 follow-up: contentMigrations rules, migration marker, doc separators) ·
+> **Last updated:** 2026-07-08 (GitHub Actions CI updated to Node 24 for npm ci compatibility) ·
 > **Doc maintainer:** Claude (AI agent) + repo owner. Assumptions are explicitly marked **[ASSUMPTION]**.
 
 ---
@@ -805,7 +805,11 @@ QuarterKnolwdge/
   Env vars in Railway service Variables: `VITE_FIREBASE_*` (client, build-time — must be set
   BEFORE first build), `GEMINI_API_KEYS` + `GENERATION_SECRET` (server-only, never bundled).
   **Historical:** GitHub Pages (retired — no server) → Vercel (owner chose Railway instead).
-- **CI/CD:** None beyond Railway's build. **[ASSUMPTION]** No GitHub Actions.
+- **CI/CD:** GitHub Actions CI now runs `npm test` and `npm run build` on `pull_request` to `main`
+  and `push` to `main` via `.github/workflows/ci.yml` (Node 24, `npm ci`, no deploy steps). The app
+  still declares `engines.node >=20.0.0` in `package.json`; CI uses Node 24 because the current
+  lockfile includes transitive packages that require newer supported minors. Railway still handles
+  deployment separately from Git pushes to `main`.
 - **Monitoring:** None (Railway console shows logs + metrics).
 - **Security:** `GEMINI_API_KEYS`/`GENERATION_SECRET` are server-only Railway env vars and never
   in the bundle. No PII; sample/illustrative data only. Site is public to anyone with the URL.
@@ -1044,7 +1048,8 @@ of this file on 2026-07-07 to cut per-session context cost (it was ~55% of the f
   `content-quality-fix-2026-07`, skips manually repaired seed questions that already pass guards,
   and records `contentMigrations/2026-07-content-quality-fixes-v2` after success so supervisor
   loads do not rescan repeatedly. Build clean, tests green (`npm test`  **395 passing**,
-  18 test files).
+  18 test files). GitHub Actions CI now mirrors the normal local gate on `main` pushes and PRs:
+  `npm ci` → `npm test` → `npm run build` (no deploy step).
 - **Existing functionality:** features F1–F26 (see [§4](#4-feature-inventory)) are **Complete** in
   code. F17 adds longitudinal trends + Sparkline. F18 adds dossier evidence per competency. F19
   adds the supervisor Action Center. F20 adds AI-sequenced dev paths + mini re-check. F21 adds
@@ -1343,8 +1348,8 @@ npm run test:e2e     # run the Playwright browser tests (auto-builds + starts th
 - ~~**Redundant condition** in `SpotTheError.jsx:157`~~ — simplified 2026-06-26.
 - ~~`SUPERVISOR_PASSCODE` secret validation duplicated 6×~~ — **extracted to `api/_auth.js` 2026-06-26**.
 - ~~AbortController/fetch pattern duplicated 4×~~ — **extracted to `src/lib/apiFetch.js` 2026-06-26**.
-- No CI/CD (manual deploys via Railway push). A GitHub Actions step running `npm test` on PR
-  would catch regressions.
+- GitHub Actions CI covers the basic PR/main verification gate only (`npm test` + `npm run build`).
+  There is still no automated deploy workflow in-repo; Railway deploys separately from GitHub Actions.
 - Single large `styles.css` — fine for now; revisit if it keeps growing.
 - Repo name typo `QuarterKnolwdge` is in the Railway/GitHub remote URL — don't rename without
   updating Railway's Git integration.
@@ -1413,6 +1418,10 @@ npm run test:e2e     # run the Playwright browser tests (auto-builds + starts th
   the lockfile reflects all transitive deps cleanly. Partial runs leave gaps.
 - **Express 5 requires named wildcards.** A bare `*` in `app.get('*', …)` crashes at startup
   with `PathError: Missing parameter name`. Use `/*splat` (or any `/*name` form) instead.
+- **Keep CI intentionally boring.** This repo only needs a fast test/build gate in GitHub Actions;
+  deployment, Firebase secrets, and Railway steps stay out of `.github/workflows/ci.yml`. If the
+  lockfile's transitive deps outgrow a generic `node-version: 20`, prefer pinning CI to a supported
+  current Node (now 24) over weakening `npm ci`.
 
 ---
 
@@ -1432,8 +1441,9 @@ npm run test:e2e     # run the Playwright browser tests (auto-builds + starts th
   [.claude/README.md](.claude/README.md). It's workflow scaffolding for AI sessions, not app code.
   Key touch-points: the `fe-developer`/`qas`/`tech-writer`/`system-architect`/`rte` agents and the
   auto-loaded `safe-workflow`/`pattern-discovery`/`testing-patterns`/`git-advanced` skills.
-  **Branch ceremony removed 2026-06-30** — this is a solo, auto-deploy, no-CI project, so work is
-  committed straight to `main` (Railway deploys on push). The branch/PR slash commands
+  **Branch ceremony was removed 2026-06-30** for solo work, but the repo now has a simple GitHub
+  Actions verification gate for `main` pushes and pull requests. Railway still deploys from pushes
+  to `main`; GitHub Actions does not deploy. The branch/PR slash commands
   (`/start-work`, `/pre-pr`, `/end-work`) still exist but are optional; the only remaining
   `.claude/settings.json` hooks are a commit-format reminder and a block on pushing with
   uncommitted changes. All gates are `npm test` + `npm run build`.
@@ -1465,8 +1475,9 @@ npm run test:e2e     # run the Playwright browser tests (auto-builds + starts th
     Adult Medicine and Behavioural Health are mockups.
 - **Required workflows:**
   1. Make the change. 2. `npm test` (green) **and** `npm run build` (clean); `node --check` any
-     edited `api/*`. 3. Update **this CLAUDE.md** (relevant section + a §7 history entry). 4. Commit
-     (Co-Authored-By: Claude). 5. Push to `main` (Railway auto-deploys).
+  edited `api/*`. 3. Update **this CLAUDE.md** (relevant section + a §7 history entry). 4. Commit
+     (Co-Authored-By: Claude). 5. If you're using a PR flow, push the branch and let GitHub Actions
+     run the same verification gate; if you're shipping directly, push to `main` (Railway auto-deploys).
   - When you touch `lib/scoring.js` (or the data it reads), update/extend `scoring.test.js` too.
 - **Important assumptions:** Firebase pilot is live. Gemini generation is code-complete; `GEMINI_API_KEYS`
   is set in Railway Variables — generation should be live after the next deploy. `GENERATION_SECRET`
