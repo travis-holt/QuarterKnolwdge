@@ -88,7 +88,7 @@ describe('selectCallQaScenario', () => {
     expect(selected.id).toBe(scenarios[3].id);
   });
 
-  it('falls back gracefully when all scenarios are recent', () => {
+  it('does not repeat a very recent scenario just because all scenarios were used historically', () => {
     const scenarios = CALL_QA_SCENARIOS.filter((scenario) => scenario.department === 'obgyn');
     const selected = selectCallQaScenario({
       department: 'obgyn',
@@ -99,6 +99,6 @@ describe('selectCallQaScenario', () => {
         qaScenarioId: scenario.id,
       })),
     });
-    expect(selected.id).toBe(scenarios[0].id);
+    expect(selected.id).toBe(scenarios[3].id);
   });
 });
