@@ -8,6 +8,14 @@ import { getInterviews, getResultHistory, updateInterviewGradeOverride } from '.
 import Sparkline from './Sparkline.jsx';
 import FeedbackControls from './FeedbackControls.jsx';
 
+function formatWorkflow(type) {
+  return String(type ?? '')
+    .split('_')
+    .filter(Boolean)
+    .map((word) => word[0]?.toUpperCase() + word.slice(1))
+    .join(' ');
+}
+
 function formatDate(ts) {
   if (!ts) return '—';
   const date = typeof ts.toDate === 'function' ? ts.toDate() : new Date((ts.seconds ?? 0) * 1000);
@@ -498,6 +506,9 @@ export default function NavigatorDetail({ rows, name, deptName, dept, deptMatrix
                       {session.qaArchived && (
                         <span className="tag">Archived / reset</span>
                       )}
+                      {session.workflowType && <span className="tag">{formatWorkflow(session.workflowType)}</span>}
+                      {session.difficulty && <span className="tag">{session.difficulty}</span>}
+                      {session.qaScenarioId && <span className="tag">{session.qaScenarioId}</span>}
                       <span className="interview-log__caller">
                         Caller: <strong>{session.callerName}</strong>
                       </span>

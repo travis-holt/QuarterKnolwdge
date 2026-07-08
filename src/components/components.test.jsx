@@ -12,17 +12,22 @@ import Footer     from './Footer.jsx';
 import Nav        from './Nav.jsx';
 import PhaseHub   from './PhaseHub.jsx';
 import Start      from './Start.jsx';
-import { runQaPersistenceSequence } from './VoiceCall.jsx';
+import { callQaScenarioMetadata, runQaPersistenceSequence } from './VoiceCall.jsx';
+import { CALL_QA_SCENARIOS } from '../data/callQaScenarios.js';
 
 const startMocks = vi.hoisted(() => ({
   getRoster: vi.fn(),
   updateRosterEntry: vi.fn(),
+  saveInterview: vi.fn(),
+  updateInterviewGrade: vi.fn(),
 }));
 
 vi.mock('../lib/firebase.js', () => ({ isFirebaseConfigured: true }));
 vi.mock('../lib/db.js', () => ({
   getRoster: startMocks.getRoster,
   updateRosterEntry: startMocks.updateRosterEntry,
+  saveInterview: startMocks.saveInterview,
+  updateInterviewGrade: startMocks.updateInterviewGrade,
 }));
 
 beforeEach(() => vi.clearAllMocks());
@@ -258,5 +263,41 @@ describe('runQaPersistenceSequence', () => {
 
     expect(gradeQaFn).not.toHaveBeenCalled();
     expect(saveGradeFn).not.toHaveBeenCalled();
+  });
+
+  it('passes curated scenario metadata to the interview save helper', async () => {
+    const saveInterviewFn = vi.fn().mockResolvedValue('iv-1');
+    const gradeQaFn = vi.fn().mockResolvedValue({
+      grade: { score: 90 },
+      qa: { score: 90, pass: true },
+    });
+    const saveGradeFn = vi.fn().mockResolvedValue();
+    const metadata = callQaScenarioMetadata(CALL_QA_SCENARIOS[0]);
+
+    await runQaPersistenceSequence({
+      navigatorId: 'nav-1',
+      name: 'Ada',
+      domainId: 'routing',
+      scenario: 'Scenario',
+      callerName: 'Caller',
+      transcript: [{ role: 'patient', text: 'Help' }],
+      department: 'pediatrics',
+      metadata,
+    }, {
+      saveInterviewFn,
+      gradeQaFn,
+      saveGradeFn,
+    });
+
+    expect(saveInterviewFn).toHaveBeenCalledWith(
+      'nav-1',
+      'Ada',
+      'routing',
+      'Scenario',
+      'Caller',
+      [{ role: 'patient', text: 'Help' }],
+      'pediatrics',
+      metadata
+    );
   });
 });

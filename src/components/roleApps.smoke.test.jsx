@@ -59,7 +59,7 @@ const dbMocks = vi.hoisted(() => {
     'archiveAudit', 'deleteAudit', 'savePairing', 'updatePairingStatus', 'saveSupervisorFeedback',
     'saveLearningProposal', 'updateLearningProposalStatus', 'saveSopDraft', 'updateSop',
     'activateSop', 'archiveSop', 'deleteSop', 'saveResult', 'saveCompletion',
-    'archiveQaAttempts',
+    'archiveQaAttempts', 'saveInterview', 'updateInterviewGrade',
   ];
   const m = {};
   for (const n of subNames) m[n] = vi.fn(emptySub);

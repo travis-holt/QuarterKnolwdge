@@ -70,6 +70,7 @@ import {
   getFloorScores,
   clearResult,
   archiveQaAttempts,
+  saveInterview,
   getRoster,
   subscribeRoster,
   seedQuestionsIfEmpty,
@@ -260,6 +261,47 @@ describe('archiveQaAttempts', () => {
 });
 
 // ── getRoster ─────────────────────────────────────────────────────────────────
+
+describe('saveInterview', () => {
+  it('stores generated defaults when no metadata is provided', async () => {
+    mocks.setDoc.mockResolvedValue();
+    await saveInterview('nav-id', 'Ada', 'routing', 'Scenario', 'Caller', [], 'pediatrics');
+
+    const [, data] = mocks.setDoc.mock.calls[0];
+    expect(data).toMatchObject({
+      navigatorId: 'nav-id',
+      name: 'Ada',
+      department: 'pediatrics',
+      domainId: 'routing',
+      scenarioSource: 'generated',
+      qaScenarioId: null,
+      domainIds: ['routing'],
+      competencyIds: [],
+      expectedActions: [],
+      criticalMisses: [],
+    });
+    expect(data.endedAt).toBe('__ts__');
+  });
+
+  it('stores compact curated QA scenario metadata', async () => {
+    mocks.setDoc.mockResolvedValue();
+    const metadata = {
+      scenarioSource: 'curated',
+      qaScenarioId: 'qa-peds-referral-001',
+      qaScenarioTitle: 'Parent calling about referral status',
+      workflowType: 'referral',
+      difficulty: 'medium',
+      domainIds: ['intake', 'routing'],
+      competencyIds: ['sopApplication', 'communication'],
+      expectedActions: ['Identify the patient.'],
+      criticalMisses: ['Promises approval.'],
+    };
+
+    await saveInterview('nav-id', 'Ada', 'routing', 'Scenario', 'Caller', [], 'pediatrics', metadata);
+
+    expect(mocks.setDoc.mock.calls[0][1]).toMatchObject(metadata);
+  });
+});
 
 describe('getRoster', () => {
   it('returns roster docs with id merged from the doc snapshot', async () => {

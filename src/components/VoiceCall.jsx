@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect } from 'react';
 import { DOMAINS } from '../data/questions.js';
 import { interviewScoreColor } from '../data/config.js';
+import { selectCallQaScenario } from '../data/callQaScenarios.js';
 import { saveInterview, updateInterviewGrade } from '../lib/db.js';
 import { apiFetch } from '../lib/apiFetch.js';
 
@@ -37,6 +38,21 @@ async function gradeQaRequest({ scenario, transcript, department }) {
   return apiFetch('/api/grade-call-qa', { scenario, transcript, department }, QA_GRADE_TIMEOUT_MS);
 }
 
+export function callQaScenarioMetadata(selectedScenario) {
+  if (!selectedScenario) return {};
+  return {
+    scenarioSource: 'curated',
+    qaScenarioId: selectedScenario.id,
+    qaScenarioTitle: selectedScenario.title,
+    workflowType: selectedScenario.workflowType,
+    difficulty: selectedScenario.difficulty,
+    domainIds: selectedScenario.domainIds,
+    competencyIds: selectedScenario.competencyIds,
+    expectedActions: selectedScenario.expectedActions,
+    criticalMisses: selectedScenario.criticalMisses,
+  };
+}
+
 export async function saveCallAttempt(payload, saveInterviewFn = saveInterview) {
   let docId;
   try {
@@ -47,7 +63,8 @@ export async function saveCallAttempt(payload, saveInterviewFn = saveInterview) 
       payload.scenario,
       payload.callerName,
       payload.transcript,
-      payload.department
+      payload.department,
+      payload.metadata
     );
   } catch (cause) {
     throw new VoiceCallPersistenceError(
@@ -155,7 +172,7 @@ function appendTranscriptFragment(existing, fragment) {
 
 // mode: 'practice' (advisory holistic review) | 'test' (hard rubric-based QA
 // test graded criterion-by-criterion against the call quality guide).
-export default function VoiceCall({ navigatorId, name, department = 'pediatrics', onExit, onDone, onQaResult, mode = 'practice' }) {
+export default function VoiceCall({ navigatorId, name, department = 'pediatrics', onExit, onDone, onQaResult, mode = 'practice', priorQaAttempts = [] }) {
   const isTest = mode === 'test';
   // phases: setup | connecting | active | grading | reviewed | discarded |
   //         saveError | gradeError | gradeSaveError
@@ -185,6 +202,7 @@ export default function VoiceCall({ navigatorId, name, department = 'pediatrics'
   const sourcesRef   = useRef([]);          // scheduled playback sources (for barge-in flush)
   const segmentsRef  = useRef([]);          // [{role, text}] transcript, coalesced by role
   const finalRef     = useRef(null);        // { transcript, docId } kept after teardown for grade retries
+  const qaScenarioMetadataRef = useRef({});
   const domain = DOMAINS.find((d) => d.id === domainId);
 
   function clearPersistenceState() {
@@ -266,19 +284,37 @@ export default function VoiceCall({ navigatorId, name, department = 'pediatrics'
     setGradeBusy(false);
     setCaptions([]);
     clearPersistenceState();
+    qaScenarioMetadataRef.current = {};
 
-    // 1) Generate the scenario + caller name (reuses the existing chat init path).
+    // 1) Set up the scenario + caller. Test mode uses the curated bank; practice stays generated.
     const pick = DOMAINS[Math.floor(Math.random() * DOMAINS.length)].id;
     setDomainId(pick);
     let scen, caller, opener = '';
-    try {
-      const data = await apiFetch('/api/interview-turn', { domain: pick, department }, 20_000);
-      scen = data.scenario; caller = data.callerName;
-      opener = data.reply || '';
-      setScenario(scen); setCallerName(caller);
-    } catch {
-      setError('Could not set up the call scenario. Try again.');
-      return setPhase('setup');
+    if (isTest) {
+      const selectedScenario = selectCallQaScenario({ department, priorAttempts: priorQaAttempts });
+      if (!selectedScenario) {
+        setError('No Call QA test scenario is available for this department yet.');
+        return setPhase('setup');
+      }
+      const primaryDomainId = selectedScenario.primaryDomainId ?? selectedScenario.domainIds[0];
+      setDomainId(primaryDomainId);
+      qaScenarioMetadataRef.current = callQaScenarioMetadata(selectedScenario);
+      scen = selectedScenario.scenario;
+      caller = selectedScenario.callerName;
+      opener = selectedScenario.openingLine;
+      setScenario(scen);
+      setCallerName(caller);
+    } else {
+      setDomainId(pick);
+      try {
+        const data = await apiFetch('/api/interview-turn', { domain: pick, department }, 20_000);
+        scen = data.scenario; caller = data.callerName;
+        opener = data.reply || '';
+        setScenario(scen); setCallerName(caller);
+      } catch {
+        setError('Could not set up the call scenario. Try again.');
+        return setPhase('setup');
+      }
     }
 
     // 2) Mic access.
@@ -389,12 +425,13 @@ export default function VoiceCall({ navigatorId, name, department = 'pediatrics'
           callerName,
           transcript,
           department,
+          metadata: qaScenarioMetadataRef.current,
         });
         setPersistedInterviewId(result.docId);
         setPendingGradePayload({ docId: result.docId, grade: result.grade, qa: result.qa });
         setQa(result.qa);
         setGrade(result.grade);
-        await onQaResult?.(result.qa);
+        await onQaResult?.(result.qa, qaScenarioMetadataRef.current);
         setPhase('reviewed');
       } catch (err) {
         if (err?.stage === 'save') {
@@ -445,7 +482,7 @@ export default function VoiceCall({ navigatorId, name, department = 'pediatrics'
             try { await updateInterviewGrade(docId, data.grade, data.qa); }
             catch (e) { console.error('grade save failed:', e); }
           }
-          await onQaResult?.(data.qa);
+          await onQaResult?.(data.qa, qaScenarioMetadataRef.current);
         }
       } else {
         const data = await apiFetch(
@@ -478,7 +515,7 @@ export default function VoiceCall({ navigatorId, name, department = 'pediatrics'
         setGrade(result.grade);
         setGradeError('');
         setGradeSaveError('');
-        await onQaResult?.(result.qa);
+        await onQaResult?.(result.qa, qaScenarioMetadataRef.current);
         setPhase('reviewed');
       } catch (err) {
         if (err?.stage === 'gradeSave') {
@@ -510,13 +547,14 @@ export default function VoiceCall({ navigatorId, name, department = 'pediatrics'
         callerName,
         transcript: pendingTranscript,
         department,
+        metadata: qaScenarioMetadataRef.current,
       });
       setPersistedInterviewId(result.docId);
       setPendingGradePayload({ docId: result.docId, grade: result.grade, qa: result.qa });
       setQa(result.qa);
       setGrade(result.grade);
       setSaveError('');
-      await onQaResult?.(result.qa);
+      await onQaResult?.(result.qa, qaScenarioMetadataRef.current);
       setPhase('reviewed');
     } catch (err) {
       if (err?.stage === 'save') {
@@ -548,7 +586,7 @@ export default function VoiceCall({ navigatorId, name, department = 'pediatrics'
         pendingGradePayload.qa
       );
       setGradeSaveError('');
-      await onQaResult?.(pendingGradePayload.qa);
+      await onQaResult?.(pendingGradePayload.qa, qaScenarioMetadataRef.current);
       setPhase('reviewed');
     } catch {
       setGradeSaveError('The call was graded, but the grade could not be saved. Retry saving the grade.');

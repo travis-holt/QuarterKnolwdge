@@ -11,7 +11,7 @@
 > [§8 Current System State](#8-current-system-state) and [§15 Current Priorities](#15-current-priorities)
 > accurate at all times.
 >
-> **Last updated:** 2026-07-08 (supervisor grade override merged) ·
+> **Last updated:** 2026-07-08 (curated Call QA scenario bank; supervisor grade override merged) ·
 > **Doc maintainer:** Claude (AI agent) + repo owner. Assumptions are explicitly marked **[ASSUMPTION]**.
 
 ---
@@ -664,6 +664,11 @@ training assignments.
   complete, and show explicit retry/exit paths in `VoiceCall.jsx`. Supervisor reset now archives
   matching QA interview attempts (`qaArchived`, `qaArchivedAt`, `qaArchivedReason`, `qaArchivedBy`)
   so they remain visible for history/audit but no longer count as the latest active QA attempt.
+- **Curated scenario bank (2026-07-08):** Call QA Test mode now uses a curated per-department
+  scenario bank instead of live-generated assessment scenarios. Practice voice calls still use
+  generated roleplay scenarios. QA interview docs store compact scenario metadata including
+  `qaScenarioId`, `workflowType`, `difficulty`, `domainIds`, and `competencyIds` so supervisors can
+  review coverage and future dashboards can group attempts by workflow.
 - **Navigator assessment entry (2026-07-03, rewired 2026-07-07):** The Call QA Test now serves as
   **Phase 3** (final) of the sequenced department assessment via `PhaseHub` in `NavigatorApp`.
   That route reuses `VoiceCall mode='test'`, returns to the dashboard from the review screen, and
@@ -1075,8 +1080,9 @@ of this file on 2026-07-07 to cut per-session context cost (it was ~55% of the f
   and records `contentMigrations/2026-07-content-quality-fixes-v2` after success so supervisor
   loads do not rescan repeatedly. Call QA Phase 3 completion now requires both a persisted
   interview doc and a successfully saved QA grade; archived/reset QA attempts are ignored by the
-  "latest active QA" lookup that drives the phase hub and dashboard card. Build clean, tests green
-  (`npm test`  **450 passing**, 22 test files). GitHub Actions CI now mirrors the normal local gate on `main` pushes and PRs:
+  "latest active QA" lookup that drives the phase hub and dashboard card. Call QA Test mode uses
+  a curated Pediatrics/OB-GYN scenario bank with scenario metadata stored on interview docs.
+  Build clean, tests green (`npm test`  **459 passing**, 23 test files). GitHub Actions CI now mirrors the normal local gate on `main` pushes and PRs:
   `npm ci` → `npm test` → `npm run build` (no deploy step).
 - **Existing functionality:** features F1–F26 (see [§4](#4-feature-inventory)) are **Complete** in
   code. F17 adds longitudinal trends + Sparkline. F18 adds dossier evidence per competency. F19
@@ -1106,7 +1112,7 @@ of this file on 2026-07-07 to cut per-session context cost (it was ~55% of the f
 - **Experimental / mockup:**
   - Training **content** is mockup (flagged in UI). Logic is real.
   - **Adult Medicine and Behavioural Health** are not assessed; **Pediatrics and OB/GYN** are live.
-- **Test coverage:** **450 tests** across **22 test files**: `scoring.test.js` (all exports incl. `optionPoints`,
+- **Test coverage:** **459 tests** across **23 test files**: `scoring.test.js` (all exports incl. `optionPoints`,
   including F17–F21 functions: buildTrend, trainingImpact, teamTrend, buildDossier, buildActionCenter,
   buildDevPath, buildMentorMatches, pairingOutcomes, buildLearningSignals,
   buildQuestionImprovementSuggestions, adaptiveTrainingRecommendations, feedbackInsights +
@@ -1117,7 +1123,8 @@ of this file on 2026-07-07 to cut per-session context cost (it was ~55% of the f
   `api/_qa-glossary.test.js` (16 tests for the transcript-correction glossary),
   `src/components/components.test.jsx`, `src/lib/phases.test.js`, `src/lib/apiFetch.test.js` (apiFetch/`fetchErrorMessage`/`runPooled`),
   `api/_auth.test.js` (secret gate), `api/grade-interview.test.js` (`coerceGrade`),
-  `src/lib/contentGuards.test.js`, `src/data/auditWorkflows.test.js`, `src/components/spotTheError.test.js`,
+  `src/lib/contentGuards.test.js`, `src/data/auditWorkflows.test.js`, `src/data/callQaScenarios.test.js`,
+  `src/components/spotTheError.test.js`,
   `src/components/roleApps.smoke.test.jsx` (8 smoke tests for App / Start / SupervisorApp /
   NavigatorApp — renders-without-crashing + gate/session routing, with Firebase/db/session mocked),
   `src/components/roleApps.behavior.test.jsx` (16 per-tab behavioural tests: SupervisorApp tab
@@ -1175,7 +1182,7 @@ of this file on 2026-07-07 to cut per-session context cost (it was ~55% of the f
 - **Counts (today):** 6 domains (job-aligned 2026-07-02: intake · classification · routing ·
   scheduling · boundaries · documentation) · 9 competencies · 21 Pediatrics + 16
   OB/GYN = **37** seed questions (bank grows in Firestore per dept) · 4 departments (**Pediatrics
-  + OB/GYN live**, 2 mockup) · **450** unit tests (22 test files) · **12** Firestore collections
+  + OB/GYN live**, 2 mockup) · **459** unit tests (23 test files) · **12** Firestore collections
   (`roster`, `results`, `resultHistory`, `questions`, `audits`, `interviews`, `completions`,
   `pairings`, `supervisorFeedback`, `learningProposals`, `sops`, `contentMigrations`) ·
   **12** REST serverless functions (`generate-scenarios`, `generate-coaching`, `interview-turn`,
@@ -1301,7 +1308,7 @@ of this file on 2026-07-07 to cut per-session context cost (it was ~55% of the f
   `subscribeResults(cb,onError)`, `getFloorScores(department)`; questions — `subscribeQuestions(cb,onError)`,
   `getActiveQuestions()`, `seedQuestionsIfEmpty(seed)` (adds missing seed IDs), `saveDraftQuestions(drafts, source)`,
   `updateQuestion(id,patch)`, `activateQuestion(id)`, `archiveQuestion(id)`, `deleteQuestion(id)`;
-  interviews — `saveInterview(navigatorId, name, domainId, scenario, callerName, transcript)`,
+  interviews — `saveInterview(navigatorId, name, domainId, scenario, callerName, transcript, department, metadata)`,
   `getInterviews(navigatorId)`, `updateInterviewGrade(id, grade)`,
   `updateInterviewGradeOverride(id, {score, reason})` (supervisor override — writes only the
   `gradeOverride` field, preserves the original `grade`; advisory, never fed to matrix/history);
@@ -1390,7 +1397,7 @@ npm run test:e2e     # run the Playwright browser tests (auto-builds + starts th
 - Heatmap intensity toggle (show % inside matrix cells).
 
 ### Technical Debt
-- **450 tests** across 22 test files as of 2026-07-08. **Role-app coverage** (`App`, `Start`,
+- **459 tests** across 23 test files as of 2026-07-08. **Role-app coverage** (`App`, `Start`,
   `SupervisorApp`, `NavigatorApp`) now includes both shell smoke tests (mount + gate/session routing)
   and per-tab behavioural tests (`roleApps.behavior.test.jsx`: tab transitions, empty states,
   dept-select → phase/dashboard flows, navigator-detail open). Deeper per-child-widget interaction
