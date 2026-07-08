@@ -11,7 +11,7 @@
 > [§8 Current System State](#8-current-system-state) and [§15 Current Priorities](#15-current-priorities)
 > accurate at all times.
 >
-> **Last updated:** 2026-07-08 (GitHub Actions CI added for PR/push verification) ·
+> **Last updated:** 2026-07-08 (GitHub Actions CI updated to Node 24 for npm ci compatibility) ·
 > **Doc maintainer:** Claude (AI agent) + repo owner. Assumptions are explicitly marked **[ASSUMPTION]**.
 
 ---
@@ -806,8 +806,10 @@ QuarterKnolwdge/
   BEFORE first build), `GEMINI_API_KEYS` + `GENERATION_SECRET` (server-only, never bundled).
   **Historical:** GitHub Pages (retired — no server) → Vercel (owner chose Railway instead).
 - **CI/CD:** GitHub Actions CI now runs `npm test` and `npm run build` on `pull_request` to `main`
-  and `push` to `main` via `.github/workflows/ci.yml` (Node 20, `npm ci`, no deploy steps). Railway
-  still handles deployment separately from Git pushes to `main`.
+  and `push` to `main` via `.github/workflows/ci.yml` (Node 24, `npm ci`, no deploy steps). The app
+  still declares `engines.node >=20.0.0` in `package.json`; CI uses Node 24 because the current
+  lockfile includes transitive packages that require newer supported minors. Railway still handles
+  deployment separately from Git pushes to `main`.
 - **Monitoring:** None (Railway console shows logs + metrics).
 - **Security:** `GEMINI_API_KEYS`/`GENERATION_SECRET` are server-only Railway env vars and never
   in the bundle. No PII; sample/illustrative data only. Site is public to anyone with the URL.
@@ -1417,7 +1419,9 @@ npm run test:e2e     # run the Playwright browser tests (auto-builds + starts th
 - **Express 5 requires named wildcards.** A bare `*` in `app.get('*', …)` crashes at startup
   with `PathError: Missing parameter name`. Use `/*splat` (or any `/*name` form) instead.
 - **Keep CI intentionally boring.** This repo only needs a fast test/build gate in GitHub Actions;
-  deployment, Firebase secrets, and Railway steps stay out of `.github/workflows/ci.yml`.
+  deployment, Firebase secrets, and Railway steps stay out of `.github/workflows/ci.yml`. If the
+  lockfile's transitive deps outgrow a generic `node-version: 20`, prefer pinning CI to a supported
+  current Node (now 24) over weakening `npm ci`.
 
 ---
 

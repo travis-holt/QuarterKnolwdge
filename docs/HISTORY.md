@@ -9,13 +9,15 @@
 - **Context:** Owner explicitly approved adding a minimal GitHub Actions workflow so every pull
   request and `main` push runs the normal verification commands, but nothing deploys from GitHub.
 - **Change:** Added `.github/workflows/ci.yml` with a single `verify` job on `ubuntu-latest`.
-  It triggers on `pull_request` to `main` and `push` to `main`, uses Node 20, runs `npm ci`,
-  `npm test`, and `npm run build`, and stops there. No Firebase secrets, no Railway steps, no
-  deploy automation.
+  It triggers on `pull_request` to `main` and `push` to `main`, runs `npm ci`, `npm test`, and
+  `npm run build`, and stops there. No Firebase secrets, no Railway steps, no deploy automation.
+- **CI follow-up:** PR #6's first Actions run failed in `npm ci` before tests/build because the
+  current lockfile pulls transitive packages whose engines require `^20.19.0 || ^22.12.0 || >=24.0.0`.
+  The workflow now uses Node 24 explicitly while `package.json` still declares `>=20.0.0`.
 - **Docs:** Updated `CLAUDE.md` current-state / workflow notes to reflect that CI now exists as a
   simple PR/main verification gate while Railway remains the separate deploy path.
-- **Verification:** Pending local run in this session: `npm test`, `npm run build`, and
-  `git diff --check` before opening the draft PR.
+- **Verification:** `npm test` → **395 passing across 18 files**; `npm run build` → passed with the
+  existing Firebase chunk warning; `git diff --check` → passed with line-ending warnings only.
 
 ### 2026-07-07 — PR #5 follow-up: encoding cleanup and migration safety
 - **Context:** Draft PR review found `CLAUDE.md` / `docs/HISTORY.md` mojibake, a supervisor-load migration that would keep scanning after success, and balanced audit generation that could still count archived refill-heavy items.
