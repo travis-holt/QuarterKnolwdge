@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect } from 'react';
 import { DOMAINS } from '../data/questions.js';
-import { SUPERVISOR_PASSCODE, interviewScoreColor } from '../data/config.js';
+import { interviewScoreColor } from '../data/config.js';
 import { saveInterview, updateInterviewGrade } from '../lib/db.js';
 import { apiFetch } from '../lib/apiFetch.js';
 
@@ -219,8 +219,9 @@ export default function VoiceCall({ navigatorId, name, department = 'pediatrics'
 
     ws.onopen = () => {
       ws.send(JSON.stringify({
+        // Voice practice is a navigator flow — the relay is pilot-grade open
+        // (rate-limited), so no supervisor secret is sent from the client.
         type: 'start',
-        secret: SUPERVISOR_PASSCODE,
         callerName: caller,
         scenario: scen,
         department,

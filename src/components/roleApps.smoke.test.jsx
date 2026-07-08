@@ -16,8 +16,8 @@
 // "immediately visible", so no polyfill is needed here.
 // ─────────────────────────────────────────────────────────────────────────────
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, fireEvent } from '@testing-library/react';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 
 import { SUPERVISOR_PASSCODE } from '../data/config.js';
 
@@ -89,7 +89,13 @@ describe('Start (gate)', () => {
     expect(screen.getByRole('button', { name: /I.m a supervisor/i })).toBeInTheDocument();
   });
 
-  it('accepts the supervisor passcode and calls onSupervisorEntry', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it('calls the login endpoint on a correct passcode and enters supervisor mode', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true, json: async () => ({ ok: true }) });
+    vi.stubGlobal('fetch', fetchMock);
     const onSupervisorEntry = vi.fn();
     render(<Start onNavigatorEntry={vi.fn()} onSupervisorEntry={onSupervisorEntry} />);
 
@@ -97,10 +103,12 @@ describe('Start (gate)', () => {
     fireEvent.change(screen.getByLabelText('Passcode'), { target: { value: SUPERVISOR_PASSCODE } });
     fireEvent.click(screen.getByRole('button', { name: 'Continue' }));
 
-    expect(onSupervisorEntry).toHaveBeenCalledTimes(1);
+    await waitFor(() => expect(onSupervisorEntry).toHaveBeenCalledTimes(1));
+    expect(fetchMock).toHaveBeenCalledWith('/api/supervisor-login', expect.objectContaining({ method: 'POST' }));
   });
 
-  it('rejects a wrong supervisor passcode', () => {
+  it('shows an error and does not enter when the login endpoint rejects the passcode', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: false, status: 401, json: async () => ({ error: 'Incorrect passcode.' }) }));
     const onSupervisorEntry = vi.fn();
     render(<Start onNavigatorEntry={vi.fn()} onSupervisorEntry={onSupervisorEntry} />);
 
@@ -108,8 +116,20 @@ describe('Start (gate)', () => {
     fireEvent.change(screen.getByLabelText('Passcode'), { target: { value: 'nope' } });
     fireEvent.click(screen.getByRole('button', { name: 'Continue' }));
 
+    expect(await screen.findByText('Incorrect passcode.')).toBeInTheDocument();
     expect(onSupervisorEntry).not.toHaveBeenCalled();
-    expect(screen.getByText('Incorrect passcode.')).toBeInTheDocument();
+  });
+
+  it('falls back to the bundled passcode when /api is unreachable (dev mode)', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('Failed to fetch')));
+    const onSupervisorEntry = vi.fn();
+    render(<Start onNavigatorEntry={vi.fn()} onSupervisorEntry={onSupervisorEntry} />);
+
+    fireEvent.click(screen.getByRole('button', { name: /I.m a supervisor/i }));
+    fireEvent.change(screen.getByLabelText('Passcode'), { target: { value: SUPERVISOR_PASSCODE } });
+    fireEvent.click(screen.getByRole('button', { name: 'Continue' }));
+
+    await waitFor(() => expect(onSupervisorEntry).toHaveBeenCalledTimes(1));
   });
 });
 

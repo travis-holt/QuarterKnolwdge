@@ -5,8 +5,10 @@
 // ONLY in this server-side function and never reach the browser. Multiple keys may
 // be supplied (env GEMINI_API_KEYS, comma-separated; or a single GEMINI_API_KEY);
 // the function rotates to the next key whenever one is rate-limited / quota-
-// exhausted, maximising the free-tier budget. The endpoint is gated by a shared
-// secret (env GENERATION_SECRET) to deter anonymous abuse — pilot-grade.
+// exhausted, maximising the free-tier budget. This is a SUPERVISOR-ONLY authoring
+// endpoint: it is gated by `validateSession` (a valid server-issued HttpOnly
+// session cookie from /api/supervisor-login), NOT the old public passcode. The
+// legacy `body.secret` value is accepted only when ALLOW_LEGACY_API_SECRET=true.
 //
 // Returns validated drafts: { questions: [...] }. It does NOT touch Firestore —
 // the client persists the drafts via db.saveDraftQuestions, keeping db.js the
@@ -19,7 +21,7 @@ import { COMPETENCIES } from '../src/data/competencies.js';
 import { validateQuestionContent } from '../src/lib/contentGuards.js';
 import { sopContextFor, sopContextForFresh } from './_sop-context.js';
 import { getApiKeys, geminiWithRotation, rotationFailure } from './_gemini-client.js';
-import { validateSecret } from './_auth.js';
+import { validateSession } from './_auth.js';
 
 const COMPETENCY_IDS = new Set(COMPETENCIES.map((c) => c.id));
 const LETTERS = ['a', 'b', 'c', 'd', 'e'];
@@ -135,7 +137,7 @@ export default async function handler(req, res) {
     return res.status(405).json({ error: 'Method not allowed' });
   }
 
-  if (validateSecret(req, res)) return;
+  if (validateSession(req, res)) return; // supervisor-only authoring endpoint
 
   const keys = getApiKeys();
   if (!keys.length) {

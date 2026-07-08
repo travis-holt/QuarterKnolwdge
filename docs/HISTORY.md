@@ -5,6 +5,43 @@
 > feature, decision, or fix. New entries are added HERE (newest first, same format),
 > not in CLAUDE.md.
 
+### 2026-07-08 — Server-side supervisor session (pilot auth hardening)
+- **Context:** `SUPERVISOR_PASSCODE` shipped in the public frontend bundle (`src/data/config.js`)
+  and `apiFetch` echoed it back as `body.secret`; `api/_auth.js` validated against
+  `GENERATION_SECRET || SUPERVISOR_PASSCODE`. Once bundled, that value protected nothing. This is
+  a **pilot hardening step, not full production auth** — there is still no per-navigator server
+  identity (that needs real Firebase Auth).
+- **Change — server:** New signed-session layer in `api/_auth.js` using Node `crypto` HMAC-SHA256:
+  `createSessionToken`/`verifySessionToken` (tamper + expiry checked), cookie helpers
+  (`serializeSessionCookie`/`clearSessionCookie`/`parseCookies`/`readSession`, HttpOnly · SameSite=Lax
+  · Path=/ · Max-Age 10h · Secure behind HTTPS via `isSecureRequest`), `checkSupervisorPasscode`
+  (constant-time). New endpoints `POST /api/supervisor-login` (passcode → Set-Cookie) and
+  `POST /api/logout` (clear cookie), mounted in `server.js` (login rate-limited). Two gates:
+  `validateSession` (supervisor-only: `generate-scenarios`, `refine-sop` — requires the cookie) and
+  `validateSecret` (navigator/shared endpoints — **pilot-grade OPEN**, rate-limited; a valid
+  supervisor session also passes). `isValidSecret` (WS voice relay) is likewise open pilot.
+- **Change — client:** `apiFetch` no longer injects `SUPERVISOR_PASSCODE`; it sends
+  `credentials: 'same-origin'` so the session cookie rides along. `VoiceCall` WS start no longer
+  sends the passcode. `Start`'s `SupervisorGate` calls `/api/supervisor-login` (falls back to the
+  bundled passcode when `/api` is unreachable, e.g. `npm run dev`). `App.signOut` calls
+  `/api/logout` (best-effort) before clearing the local session.
+- **Endpoint policy:** supervisor-only = session required; navigator/practice = open + rate-limited
+  (documented pilot-grade — requiring a session there would break practice/coaching/Call-QA flows).
+  Env flags: `SUPERVISOR_PASSCODE_SERVER`, `SESSION_SIGNING_SECRET`, `ALLOW_LEGACY_API_SECRET`,
+  `REQUIRE_SUPERVISOR_SESSION` (see `.env.local.example`).
+- **Tests:** rewrote `api/_auth.test.js` (session pipeline, cookies, both gates); new
+  `api/supervisor-login.test.js` (login/logout); updated `src/lib/apiFetch.test.js` (no secret +
+  credentials) and `src/components/roleApps.smoke.test.jsx` (login endpoint + dev fallback paths).
+- **Constraints honored:** no merge, no deploy (DRAFT PR); `firestore.rules` untouched; no new deps.
+- **Follow-up (2026-07-08, same branch):** synced stale security docs/comments to the new model —
+  CLAUDE.md apiFetch/deployment/security notes (no more "apiFetch injects the passcode" or
+  "GENERATION_SECRET not needed — falls back to SUPERVISOR_PASSCODE"), and the stale header comments
+  in `generate-scenarios.js` / `refine-sop.js` / `live-relay.js`. Added `REQUIRE_SUPERVISOR_SESSION`
+  toggle tests (`validateSecret` + `isValidSecret`, env restored after each).
+- **Verification (local):** `npm ci` ✓; `npm test` → **424 passing / 20 files** (was 421);
+  `npm run build` passed (existing Firebase chunk-size warning only); `git diff --check` clean.
+  **GitHub Actions CI: success on PR #8 latest head commit.**
+
 ### 2026-07-08 — Role-app smoke tests (App / Start / SupervisorApp / NavigatorApp)
 - **Context:** Role-app integration coverage was the long-standing test gap (the four top-level
   shells were the only untested area). Added lightweight smoke coverage — "renders without

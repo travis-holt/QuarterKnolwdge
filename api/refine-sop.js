@@ -1,11 +1,11 @@
 // POST /api/refine-sop — AI assistance for the F24 SOP manager. Two modes:
 //
-//   build  — { mode:'build', rawText | file, department, secret }
+//   build  — { mode:'build', rawText | file, department }
 //            Structures a raw operational document into a clean SOP organised
 //            around the 6 navigator domains.
 //            → { sop: { title, body, notes: string[], audit } }
 //
-//   refine — { mode:'refine', rawText | file, currentSop, department, secret }
+//   refine — { mode:'refine', rawText | file, currentSop, department }
 //            Compares new material (updated guide, Teams announcement, floor
 //            rule change) against the CURRENT active SOP and proposes a merged
 //            draft, flagging every difference.
@@ -23,8 +23,13 @@
 //
 // ADVISORY ONLY: output is always saved as a DRAFT the supervisor reviews and
 // activates — this endpoint never touches Firestore itself.
+//
+// AUTH: SUPERVISOR-ONLY. Gated by `validateSession` (server-issued HttpOnly
+// session cookie from /api/supervisor-login), not the old public passcode. No
+// `secret` is read from the request body (legacy `body.secret` is accepted only
+// when ALLOW_LEGACY_API_SECRET=true).
 
-import { validateSecret } from './_auth.js';
+import { validateSession } from './_auth.js';
 import { geminiWithRotation, getApiKeys, rotationFailure } from './_gemini-client.js';
 
 const MAX_INPUT_CHARS = 48_000; // bounds the token budget + prompt-injection surface
@@ -112,7 +117,7 @@ async function geminiJson(keys, parts, { label, temperature }) {
 
 export default async function handler(req, res) {
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
-  if (validateSecret(req, res)) return;
+  if (validateSession(req, res)) return; // supervisor-only authoring endpoint
 
   const { mode, rawText = '', currentSop = '', department = 'pediatrics', file = null } = req.body ?? {};
   if (mode !== 'build' && mode !== 'refine') {

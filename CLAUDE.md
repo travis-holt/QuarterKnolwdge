@@ -11,7 +11,7 @@
 > [§8 Current System State](#8-current-system-state) and [§15 Current Priorities](#15-current-priorities)
 > accurate at all times.
 >
-> **Last updated:** 2026-07-08 (role-app smoke tests added — App/Start/SupervisorApp/NavigatorApp) ·
+> **Last updated:** 2026-07-08 (server-side supervisor session / API auth hardening) ·
 > **Doc maintainer:** Claude (AI agent) + repo owner. Assumptions are explicitly marked **[ASSUMPTION]**.
 
 ---
@@ -783,13 +783,22 @@ QuarterKnolwdge/
   the same `(req, res)` Node.js signature they had as Vercel functions — no changes needed.
   `api/_gemini-client.js` keeps `GEMINI_API_KEYS` **server-side only** (never bundled), calls
   Gemini with structured-JSON/text outputs, and rotates keys on 429/403/503/500. Helper modules are
-  `_`-prefixed (`api/_sop-context.js`, `api/_auth.js`). REST endpoints are gated by
-  `GENERATION_SECRET` — pilot-grade.
-- **No auth system** (by design for the pilot): navigators pick their name from the roster and
+  `_`-prefixed (`api/_sop-context.js`, `api/_auth.js`). **Supervisor-only authoring endpoints**
+  (`generate-scenarios`, `refine-sop`) are gated by a **server-issued signed session cookie**
+  (`validateSession`); **navigator/practice + shared endpoints** are pilot-grade open (rate-limited)
+  since navigators have no server credential (`validateSecret`). See the 2026-07-08 auth-hardening
+  history entry.
+- **Auth (pilot-grade, hardened 2026-07-08):** navigators pick their name from the roster and
   create a 4-digit PIN on first sign-in when the roster row has none; returning navigators enter
-  that PIN. Supervisors enter `SUPERVISOR_PASSCODE`. Session persistence is localStorage only,
-  isolated in [src/lib/session.js](src/lib/session.js). Security rules in `firestore.rules` are
-  pilot-grade (open per-collection) — replace with real auth before production.
+  that PIN (validated client-side against Firestore). Supervisors enter a passcode that is now
+  **validated server-side** via `POST /api/supervisor-login`, which issues an HMAC-signed HttpOnly
+  session cookie (`kc_supervisor_session`, SameSite=Lax, 10h, Secure behind HTTPS); `POST /api/logout`
+  clears it. The bundled `SUPERVISOR_PASSCODE` is now only a **dev/localhost fallback** (used when
+  `/api` is unreachable and as the server passcode default when `SUPERVISOR_PASSCODE_SERVER` is
+  unset). Session persistence is localStorage only, isolated in
+  [src/lib/session.js](src/lib/session.js). This is **not full production auth** — there is still no
+  per-navigator server identity (needs real Firebase Auth), and Firestore rules stay pilot-grade
+  (open per-collection) — replace with real auth before production.
 - **Pre-pilot state (historical):** the original prototype was fully in-memory; then a static
   GitHub-Pages + Firestore pilot with no server; then Vercel serverless; now Railway + Express.
 
@@ -1047,8 +1056,8 @@ of this file on 2026-07-07 to cut per-session context cost (it was ~55% of the f
   Firestore migration archives previously active bad content with reason
   `content-quality-fix-2026-07`, skips manually repaired seed questions that already pass guards,
   and records `contentMigrations/2026-07-content-quality-fixes-v2` after success so supervisor
-  loads do not rescan repeatedly. Build clean, tests green (`npm test`  **403 passing**,
-  19 test files). GitHub Actions CI now mirrors the normal local gate on `main` pushes and PRs:
+  loads do not rescan repeatedly. Build clean, tests green (`npm test`  **424 passing**,
+  20 test files). GitHub Actions CI now mirrors the normal local gate on `main` pushes and PRs:
   `npm ci` → `npm test` → `npm run build` (no deploy step).
 - **Existing functionality:** features F1–F26 (see [§4](#4-feature-inventory)) are **Complete** in
   code. F17 adds longitudinal trends + Sparkline. F18 adds dossier evidence per competency. F19
@@ -1078,7 +1087,7 @@ of this file on 2026-07-07 to cut per-session context cost (it was ~55% of the f
 - **Experimental / mockup:**
   - Training **content** is mockup (flagged in UI). Logic is real.
   - **Adult Medicine and Behavioural Health** are not assessed; **Pediatrics and OB/GYN** are live.
-- **Test coverage:** **403 tests** across **19 test files**: `scoring.test.js` (all exports incl. `optionPoints`,
+- **Test coverage:** **424 tests** across **20 test files**: `scoring.test.js` (all exports incl. `optionPoints`,
   including F17–F21 functions: buildTrend, trainingImpact, teamTrend, buildDossier, buildActionCenter,
   buildDevPath, buildMentorMatches, pairingOutcomes, buildLearningSignals,
   buildQuestionImprovementSuggestions, adaptiveTrainingRecommendations, feedbackInsights +
@@ -1096,10 +1105,17 @@ of this file on 2026-07-07 to cut per-session context cost (it was ~55% of the f
   end-to-end probe rather than unit tests — audio I/O isn't unit-testable headlessly. Deeper
   per-tab role-app behaviour remains untested (the smoke tests cover shell mount + routing only).
 - **Client fetch layer:** `src/lib/apiFetch.js` — shared helper for all `/api` calls (AbortController
-  timeout, SUPERVISOR_PASSCODE injection, Content-Type, error-body parsing). Used by Interview.jsx,
-  SpotTheError.jsx, Coaching.jsx, and SupervisorApp.jsx.
-- **Server secret validation:** `api/_auth.js` — shared `validateSecret(req, res)` helper used by
-  the REST Gemini handlers; centralises the `GENERATION_SECRET || SUPERVISOR_PASSCODE` fallback logic.
+  timeout, `credentials: 'same-origin'` so the supervisor session cookie rides along, Content-Type,
+  error-body parsing). It **no longer injects `body.secret`** (the old public-passcode gate);
+  supervisor-only endpoints authorize via the HttpOnly session cookie, while navigator/shared
+  endpoints remain pilot-open (rate-limited). Used by Interview.jsx, SpotTheError.jsx, Coaching.jsx,
+  and SupervisorApp.jsx.
+- **Server authorization:** `api/_auth.js` — signed-session layer (HMAC-SHA256 via Node `crypto`):
+  `createSessionToken`/`verifySessionToken`, cookie helpers, `checkSupervisorPasscode`, and two
+  gates: `validateSession` (supervisor-only endpoints) and `validateSecret` (navigator/shared,
+  pilot-open). `POST /api/supervisor-login` issues the cookie; `POST /api/logout` clears it. Env:
+  `SUPERVISOR_PASSCODE_SERVER`, `SESSION_SIGNING_SECRET`, `ALLOW_LEGACY_API_SECRET`,
+  `REQUIRE_SUPERVISOR_SESSION`.
 - **Branding:** product name is **Knowledge Check** everywhere in the UI. `public/favicon.png`
   is active (linked in `index.html`). `public/logo.png` exists in the repo but is no longer
   referenced. `styles.css` has orphaned `.start__logo`/`.nav__logo`/`logo-float` rules from
@@ -1120,8 +1136,12 @@ of this file on 2026-07-07 to cut per-session context cost (it was ~55% of the f
   (`GEMINI_API_KEYS` set in Railway Variables; all 7 REST AI endpoints live + the `/api/live`
   WebSocket relay for the real-time voice call).
 - **Deployment status:** **Railway** (Git-connected to `main`). Railway auto-deploys on push.
-  `VITE_FIREBASE_*` and `GEMINI_API_KEYS` confirmed set in Railway Variables. No `GENERATION_SECRET`
-  needed — server falls back to `SUPERVISOR_PASSCODE`.
+  `VITE_FIREBASE_*` and `GEMINI_API_KEYS` confirmed set in Railway Variables. **Supervisor auth
+  (2026-07-08):** Railway should set `SUPERVISOR_PASSCODE_SERVER` (login passcode, not the bundled
+  config value) and `SESSION_SIGNING_SECRET` (HMAC key for session tokens). If these are unset the
+  app uses a pilot fallback (passcode-derived signing key + bundled config passcode) and **must not
+  be considered production-hardened**. `GENERATION_SECRET` is **legacy only** — accepted just as the
+  `body.secret` value, and only when `ALLOW_LEGACY_API_SECRET=true` (off by default).
 - **Question health:** active questions in the Question Bank now show a colored health dot once
   they hit 10+ responses. Sub-20% correct rate triggers a "Review Required" flag with a "Can-Teach
   signal" if expert-level navigators are also failing — the Reverse QA feature. Raw `answers` are
@@ -1129,12 +1149,12 @@ of this file on 2026-07-07 to cut per-session context cost (it was ~55% of the f
 - **Counts (today):** 6 domains (job-aligned 2026-07-02: intake · classification · routing ·
   scheduling · boundaries · documentation) · 9 competencies · 21 Pediatrics + 16
   OB/GYN = **37** seed questions (bank grows in Firestore per dept) · 4 departments (**Pediatrics
-  + OB/GYN live**, 2 mockup) · **403** unit tests (19 test files) · **12** Firestore collections
+  + OB/GYN live**, 2 mockup) · **424** unit tests (20 test files) · **12** Firestore collections
   (`roster`, `results`, `resultHistory`, `questions`, `audits`, `interviews`, `completions`,
   `pairings`, `supervisorFeedback`, `learningProposals`, `sops`, `contentMigrations`) ·
-  **10** REST serverless functions (`generate-scenarios`, `generate-coaching`, `interview-turn`,
+  **12** REST serverless functions (`generate-scenarios`, `generate-coaching`, `interview-turn`,
   `grade-interview`, `grade-call-qa`, `generate-audit`, `coach-audit`, `sequence-path`,
-  `refine-sop`, `health`) +
+  `refine-sop`, `supervisor-login`, `logout`, `health`) +
   **1** WebSocket relay (`live-relay.js` → `/api/live`) · **5** shared API helpers
   (`api/_gemini-client.js`, `api/_auth.js`, `api/_sop-store.js`, `api/_qa-rubric.js`,
   `api/_qa-glossary.js`) · **1** shared client fetch helper (`src/lib/apiFetch.js`).
@@ -1229,6 +1249,10 @@ of this file on 2026-07-07 to cut per-session context cost (it was ~55% of the f
   - `POST /api/generate-audit` `{ domain, department, workflowType, avoidWorkflowTypes, secret }` → `{ transcript, errorIndex, hint, modelExplanation, workflowType, errorKind, difficulty }` (~10-turn flawed transcript for the "Spot the Error" exercise).
   - `POST /api/coach-audit` `{ domain, modelExplanation, navigatorAnswer, name, secret }` → `{ reply }` (warm 2–3 sentence mentor coaching note; advisory only).
   - `POST /api/refine-sop` — `{ mode:'build', rawText, department, secret }` → `{ sop: { title, body, notes[] } }` (structures a raw document into the 6-domain SOP layout); `{ mode:'refine', rawText, currentSop, department, secret }` → `{ sop: { title, body, changes:[{type, summary}] } }` (merges new material into the active SOP, flagging contradictions/outdated rules/additions/clarifications). Output is always saved client-side as a draft — the endpoint never writes Firestore.
+  - `POST /api/supervisor-login` `{ passcode }` → `200 { ok }` + `Set-Cookie: kc_supervisor_session`
+    (signed HttpOnly session) on match; `401 { error: 'Incorrect passcode.' }` otherwise. No secret
+    in the body; token never returned in the body.
+  - `POST /api/logout` → `200 { ok }`, clears the session cookie (idempotent).
   - `GET /api/health` → `{ ok }`.
 - **WebSocket endpoint:**
   - `WS /api/live` — real-time voice practice call relay (F22). Client sends `{type:'start',
@@ -1260,7 +1284,9 @@ of this file on 2026-07-07 to cut per-session context cost (it was ~55% of the f
   `subscribeLearningProposals`; SOPs — `subscribeSops`, `saveSopDraft`, `updateSop`,
   `activateSop(id, department)` (batch-archives the previous active version), `archiveSop`,
   `deleteSop`.
-- **Secrets:** `SUPERVISOR_PASSCODE` is in the repo (pilot-acceptable); `GEMINI_API_KEYS` is a
+- **Secrets:** `SUPERVISOR_PASSCODE` is in the repo (pilot-acceptable) but is now only a
+  dev/localhost fallback — production should set `SUPERVISOR_PASSCODE_SERVER` +
+  `SESSION_SIGNING_SECRET` as server-only Railway Variables. `GEMINI_API_KEYS` is a
   server-only Railway Variable, never committed or bundled.
 
 ### Build & run
@@ -1336,7 +1362,7 @@ npm run test:e2e     # run the Playwright browser tests (auto-builds + starts th
 - Heatmap intensity toggle (show % inside matrix cells).
 
 ### Technical Debt
-- **403 tests** across 19 test files as of 2026-07-08. **Role-app smoke coverage** (`App`, `Start`,
+- **424 tests** across 20 test files as of 2026-07-08. **Role-app smoke coverage** (`App`, `Start`,
   `SupervisorApp`, `NavigatorApp`) now exists (shell mount + gate/session routing); deeper per-tab
   role-app behaviour is the remaining coverage frontier.
 - **Vite 5.4.21 carries known moderate advisories** (`server.fs.deny` bypass on Windows, optimized-deps
@@ -1368,9 +1394,14 @@ npm run test:e2e     # run the Playwright browser tests (auto-builds + starts th
 - **~~Duplicate navigator names~~ (resolved 2026-06-24):** `AddNavigatorForm` performs a
   case-insensitive check against the live roster before writing; blocks duplicates with an inline
   error message.
-- **Passcode/PIN are client-side (pilot):** `SUPERVISOR_PASSCODE` is in the public repo and PINs are
-  readable/writable in Firestore by signed-in pilot clients; a determined user could bypass the gate. *Severity: low for a trusted pilot.*
-  *Mitigation:* documented; must move to real auth before production.
+- **Auth is pilot-grade (partially hardened 2026-07-08):** supervisor authorization is now
+  server-side (signed HttpOnly session cookie from `/api/supervisor-login`), so the two authoring
+  endpoints no longer trust the public passcode. Still pilot-grade: navigator PINs are
+  readable/writable in Firestore by signed-in pilot clients; navigator/practice API endpoints are
+  open (rate-limited) because navigators have no server credential; the bundled `SUPERVISOR_PASSCODE`
+  remains as a dev fallback. *Severity: low for a trusted pilot.* *Mitigation:* set
+  `SUPERVISOR_PASSCODE_SERVER`/`SESSION_SIGNING_SECRET` in production; move to real Firebase Auth
+  (per-navigator identity + tightened Firestore rules) before production.
 - **Visible PINs in Navigators tab:** supervisor can see set navigator PINs in plain text and blank
   rows show "Not set yet." *Severity: low.* A "Show PIN" toggle could be added before any broader
   rollout.
@@ -1483,9 +1514,12 @@ npm run test:e2e     # run the Playwright browser tests (auto-builds + starts th
      run the same verification gate; if you're shipping directly, push to `main` (Railway auto-deploys).
   - When you touch `lib/scoring.js` (or the data it reads), update/extend `scoring.test.js` too.
 - **Important assumptions:** Firebase pilot is live. Gemini generation is code-complete; `GEMINI_API_KEYS`
-  is set in Railway Variables — generation should be live after the next deploy. `GENERATION_SECRET`
-  is not required (server falls back to `SUPERVISOR_PASSCODE`). No real patient data or company
-  branding. Auth is PIN/passcode (pilot-grade); must move to real auth before production.
+  is set in Railway Variables — generation should be live after the next deploy. Supervisor
+  authoring endpoints require the server-issued session cookie; production should set
+  `SUPERVISOR_PASSCODE_SERVER` + `SESSION_SIGNING_SECRET` (a pilot fallback runs otherwise).
+  `GENERATION_SECRET` is legacy-only (`ALLOW_LEGACY_API_SECRET=true`). No real patient data or
+  company branding. Auth is PIN/passcode + supervisor session cookie (pilot-grade); must move to
+  real auth before production.
 - **To re-key the check to a different SOP:** edit `DOMAINS` in `questions.js`, refresh
   `api/_sop-context.js`, and either edit `SEED_QUESTIONS` or generate a new bank in the Question Bank
   UI; competencies + everything else follow automatically.
