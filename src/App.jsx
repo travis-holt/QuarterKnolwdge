@@ -45,6 +45,9 @@ export default function App() {
   };
 
   const signOut = () => {
+    // Clear the server-issued supervisor session cookie (best-effort; failure
+    // must not block signing out), then clear the local session as before.
+    fetch('/api/logout', { method: 'POST', credentials: 'same-origin' }).catch(() => {});
     clearSession();
     setSessionState(null);
   };

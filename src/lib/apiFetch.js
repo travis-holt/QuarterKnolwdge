@@ -1,22 +1,27 @@
 // ─────────────────────────────────────────────────────────────────────────────
 // apiFetch — shared client helper for calls to the /api/* endpoints.
 //
-// Handles: AbortController timeout, Content-Type header, SUPERVISOR_PASSCODE
-// injection, error-body parsing, and timeout error shaping — all of which were
+// Handles: AbortController timeout, Content-Type header, same-origin cookie
+// credentials, error-body parsing, and timeout error shaping — all of which were
 // previously duplicated across Interview.jsx, SpotTheError.jsx, Coaching.jsx,
 // and SupervisorApp.jsx.
+//
+// SECURITY (2026-07-08): this no longer injects the public SUPERVISOR_PASSCODE as
+// `body.secret`. Supervisor-only endpoints now authorize via the server-issued
+// HttpOnly session cookie (set by /api/supervisor-login), sent automatically with
+// `credentials: 'same-origin'`. Navigator/practice endpoints are pilot-grade open
+// (rate-limited server-side). See api/_auth.js.
 //
 // Usage:
 //   const data = await apiFetch('/api/generate-audit', { domain, department }, 25_000);
 //   // throws on non-2xx or timeout; returns parsed JSON on success
 // ─────────────────────────────────────────────────────────────────────────────
 
-import { SUPERVISOR_PASSCODE } from '../data/config.js';
-
 /**
- * POST to an /api endpoint with a timeout and automatic secret injection.
+ * POST to an /api endpoint with a timeout. Sends the supervisor session cookie
+ * (same-origin) when present; no secret is injected into the body.
  * @param {string} endpoint  - e.g. '/api/generate-audit'
- * @param {object} body      - request payload (secret is added automatically)
+ * @param {object} body      - request payload
  * @param {number} timeoutMs - AbortController timeout in ms
  * @returns {Promise<object>} parsed JSON response
  * @throws {Error} on non-2xx, timeout, or network failure; AbortError name is
@@ -29,8 +34,9 @@ export async function apiFetch(endpoint, body, timeoutMs = 30_000) {
     const res = await fetch(endpoint, {
       method: 'POST',
       signal: controller.signal,
+      credentials: 'same-origin',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ ...body, secret: SUPERVISOR_PASSCODE }),
+      body: JSON.stringify(body ?? {}),
     });
     if (!res.ok) {
       const err = await res.json().catch(() => ({}));

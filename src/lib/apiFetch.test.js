@@ -3,7 +3,6 @@
 // for SpotTheError + the audit bank).
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { apiFetch, fetchErrorMessage, runPooled } from './apiFetch.js';
-import { SUPERVISOR_PASSCODE } from '../data/config.js';
 
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -31,7 +30,7 @@ describe('fetchErrorMessage', () => {
 });
 
 describe('apiFetch', () => {
-  it('POSTs JSON with the secret injected and returns parsed JSON', async () => {
+  it('POSTs JSON with same-origin credentials and NO secret injected', async () => {
     const fetchMock = vi.fn().mockResolvedValue({ ok: true, json: async () => ({ hello: 1 }) });
     vi.stubGlobal('fetch', fetchMock);
     const data = await apiFetch('/api/x', { a: 1 });
@@ -39,7 +38,11 @@ describe('apiFetch', () => {
     const [url, opts] = fetchMock.mock.calls[0];
     expect(url).toBe('/api/x');
     expect(opts.method).toBe('POST');
-    expect(JSON.parse(opts.body)).toEqual({ a: 1, secret: SUPERVISOR_PASSCODE });
+    expect(opts.credentials).toBe('same-origin');
+    // Body is exactly the payload — the public passcode is no longer attached.
+    const sent = JSON.parse(opts.body);
+    expect(sent).toEqual({ a: 1 });
+    expect(sent).not.toHaveProperty('secret');
   });
 
   it('throws the server error message on non-2xx', async () => {

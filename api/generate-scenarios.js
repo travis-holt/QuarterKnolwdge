@@ -19,7 +19,7 @@ import { COMPETENCIES } from '../src/data/competencies.js';
 import { validateQuestionContent } from '../src/lib/contentGuards.js';
 import { sopContextFor, sopContextForFresh } from './_sop-context.js';
 import { getApiKeys, geminiWithRotation, rotationFailure } from './_gemini-client.js';
-import { validateSecret } from './_auth.js';
+import { validateSession } from './_auth.js';
 
 const COMPETENCY_IDS = new Set(COMPETENCIES.map((c) => c.id));
 const LETTERS = ['a', 'b', 'c', 'd', 'e'];
@@ -135,7 +135,7 @@ export default async function handler(req, res) {
     return res.status(405).json({ error: 'Method not allowed' });
   }
 
-  if (validateSecret(req, res)) return;
+  if (validateSession(req, res)) return; // supervisor-only authoring endpoint
 
   const keys = getApiKeys();
   if (!keys.length) {

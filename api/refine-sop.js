@@ -24,7 +24,7 @@
 // ADVISORY ONLY: output is always saved as a DRAFT the supervisor reviews and
 // activates — this endpoint never touches Firestore itself.
 
-import { validateSecret } from './_auth.js';
+import { validateSession } from './_auth.js';
 import { geminiWithRotation, getApiKeys, rotationFailure } from './_gemini-client.js';
 
 const MAX_INPUT_CHARS = 48_000; // bounds the token budget + prompt-injection surface
@@ -112,7 +112,7 @@ async function geminiJson(keys, parts, { label, temperature }) {
 
 export default async function handler(req, res) {
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
-  if (validateSecret(req, res)) return;
+  if (validateSession(req, res)) return; // supervisor-only authoring endpoint
 
   const { mode, rawText = '', currentSop = '', department = 'pediatrics', file = null } = req.body ?? {};
   if (mode !== 'build' && mode !== 'refine') {

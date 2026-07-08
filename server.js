@@ -21,11 +21,18 @@ import generateAudit from './api/generate-audit.js';
 import coachAudit from './api/coach-audit.js';
 import sequencePath from './api/sequence-path.js';
 import refineSop from './api/refine-sop.js';
+import supervisorLogin from './api/supervisor-login.js';
+import logout from './api/logout.js';
 import health from './api/health.js';
 import { attachLiveRelay } from './api/live-relay.js';
 
 app.post('/api/refine-sop', rateLimit({ label: 'refine-sop', max: 6 }), express.json({ limit: '20mb' }), refineSop);
 app.use(express.json({ limit: '100kb' }));
+
+// Supervisor session (server-side authorization). Login rate-limited to blunt
+// passcode brute-forcing; logout is a plain cookie-clear.
+app.post('/api/supervisor-login', rateLimit({ label: 'supervisor-login', max: 10 }), supervisorLogin);
+app.post('/api/logout', logout);
 
 app.post('/api/generate-scenarios', rateLimit({ label: 'generate-scenarios', max: 12 }), generateScenarios);
 app.post('/api/generate-coaching', rateLimit({ label: 'generate-coaching', max: 20 }), generateCoaching);

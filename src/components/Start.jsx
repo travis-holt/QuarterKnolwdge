@@ -262,17 +262,43 @@ function NavigatorGate({ onBack, onEnter }) {
 }
 
 // ── Supervisor gate: passcode ──────────────────────────────────────────────────
+// The passcode is now validated server-side: POST /api/supervisor-login exchanges
+// it for an HttpOnly session cookie (see api/_auth.js). If that endpoint is not
+// reachable — e.g. `npm run dev` (Vite only, no /api) — we fall back to the
+// bundled pilot passcode check so local development keeps working.
 function SupervisorGate({ onBack, onEnter }) {
   const [passcode, setPasscode] = useState('');
   const [error, setError] = useState('');
+  const [busy, setBusy] = useState(false);
 
-  const submit = (e) => {
+  const submit = async (e) => {
     e.preventDefault();
-    if (passcode.trim() !== SUPERVISOR_PASSCODE) {
+    setError('');
+    setBusy(true);
+    const value = passcode.trim();
+    try {
+      const res = await fetch('/api/supervisor-login', {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ passcode: value }),
+      });
+      if (res.ok) {
+        onEnter();
+        return;
+      }
+      // 401 (and other JSON errors) → treat as an incorrect passcode.
       setError('Incorrect passcode.');
-      return;
+    } catch {
+      // Endpoint unreachable (no /api in Vite dev): pilot-grade client fallback.
+      if (value === SUPERVISOR_PASSCODE) {
+        onEnter();
+        return;
+      }
+      setError('Incorrect passcode.');
+    } finally {
+      setBusy(false);
     }
-    onEnter();
   };
 
   return (
@@ -299,8 +325,8 @@ function SupervisorGate({ onBack, onEnter }) {
           />
         </label>
         {error && <p className="gate__error">{error}</p>}
-        <button className="btn btn--primary btn--lg" type="submit">
-          Continue
+        <button className="btn btn--primary btn--lg" type="submit" disabled={busy}>
+          {busy ? 'Checking…' : 'Continue'}
         </button>
       </form>
     </div>
