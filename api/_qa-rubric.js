@@ -139,8 +139,39 @@ export function findBestNavigatorLine(transcript, regexes) {
   return navigatorLines(transcript).find((line) => lineMatchesAny(line, regexes))?.text ?? null;
 }
 
-const REFILL_ROUTING = [/send (the|this|that|your)? ?(request|message|note)/i, /send .* (over|to)/i, /route .* (to|over)/i, /put .* (note|message)/i, /forward .* (request|message)/i, /pass .* (along|to)/i, /clinical team/i, /refill team/i, /nurse/i, /provider/i, /peds encounters/i, /pediatrics encounters/i, /team .* follow up/i];
+const ROUTING_ACTION = /\b(?:send|route|forward|message|pass along|put in|let)\b/i;
+const ROUTING_DESTINATION = /\b(?:nurse|provider|doctor|team|refill team|clinical team|peds encounters|pediatrics encounters)\b/i;
+const ROUTING_OWNERSHIP = [
+  /\b(?:i|we)\s*(?:will|'ll|am going to|can)\s+(?:send|route|forward|message|pass|put)\b.*\b(?:request|message|note|this|that|it)\b/i,
+  /\b(?:send|route|forward|message|pass along|put in)\b.*\b(?:request|message|note|this|that|it)\b/i,
+  /\b(?:i|we)\s*(?:will|'ll|am going to|can)\s+(?:send|route|forward|message|pass|put)\b.*\b(?:nurse|provider|doctor|team|refill team|clinical team|peds encounters|pediatrics encounters)\b/i,
+  /\b(?:i|we)\s*(?:will|'ll|am going to|can)\s+let\s+(?:the\s+)?(?:nurse|provider|doctor|team)\s+know\b/i,
+  /\b(?:the\s+)?team\s+(?:will|'ll)\s+(?:follow up|call back|get back to you|review)\b/i,
+  /\b(?:i|we)\s*(?:will|'ll)\s+have\s+(?:the\s+)?(?:team|nurse|provider|doctor)\s+(?:follow up|call back|get back to you|review)\b/i,
+];
 const OTHER_WORKFLOW_FAILURE = /wrong (queue|destination)|promis|missing (medication|pharmacy)|failed to.*(medication|pharmacy)|did not.*(medication|pharmacy)|no (medication|pharmacy|routing)|clinical advice/i;
+
+export function hasRoutingAction(line) {
+  return ROUTING_ACTION.test(String(line?.text ?? line ?? ''));
+}
+
+export function hasRoutingDestination(line) {
+  return ROUTING_DESTINATION.test(String(line?.text ?? line ?? ''));
+}
+
+export function hasRoutingOwnership(line) {
+  const text = String(line?.text ?? line ?? '');
+  return ROUTING_OWNERSHIP.some((pattern) => pattern.test(text))
+    && (hasRoutingAction(text) || hasRoutingDestination(text));
+}
+
+export function findNaturalRoutingActionLine(transcript) {
+  return navigatorLines(transcript).find(hasRoutingOwnership)?.text ?? null;
+}
+
+function isSafeNonPromise(line) {
+  return /can(?:not|'t) promise|not able to guarantee|no guarantee/i.test(String(line?.text ?? line ?? ''));
+}
 
 export function isStandardPediatricRefill({ scenario = '', department = 'pediatrics', metadata = {} } = {}) {
   const text = normalizeQaText(scenario);
@@ -156,8 +187,8 @@ export function getRefillWorkflowSignals(transcript) {
     pharmacy: matches([/preferred pharmacy/i, /which pharmacy/i, /what pharmacy/i, /pharmacy.*send/i, /send.*pharmacy/i]),
     callback: matches([/callback/i, /call back/i, /best number/i, /phone number/i, /reach you/i]),
     outOrUrgency: matches([/completely out/i, /out of (the )?medication/i, /out of (her|his|their) medicine/i, /any left/i, /how many.*left/i, /mark.*urgent/i, /high priority/i, /priority/i]),
-    naturalRoutingLine: findBestNavigatorLine(transcript, REFILL_ROUTING),
-    overPromise: matches([/will be approved/i, /guarantee/i, /definitely/i, /will be sent today/i, /doctor will send/i, /provider will approve/i, /i.?ll make sure.*approved/i]),
+    naturalRoutingLine: findNaturalRoutingActionLine(transcript),
+    overPromise: lines.some((line) => !isSafeNonPromise(line) && lineMatchesAny(line, [/will be approved/i, /guarantee.*(approved|sent|today)/i, /definitely/i, /make sure.*approv/i, /make sure.*sent today/i, /doctor.*approv/i, /provider.*approv/i, /gets approved today/i, /approved today/i, /sent today/i])),
     clinicalAdvice: matches([/give (her|him|them).*dose/i, /take .* twice/i, /increase/i, /decrease/i, /stop taking/i, /safe to/i, /not serious/i, /you should take/i, /medical advice/i]),
     wrongDestination: matches([/referral coordinator/i, /school\/?forms team/i, /records team/i, /scheduling only/i, /front desk only/i, /specialist referral/i, /ob portal/i, /pss ob/i]),
   };

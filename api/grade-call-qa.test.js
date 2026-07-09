@@ -4,7 +4,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   QA_RUBRIC, QA_AUTO_FAILS, QA_PASS_THRESHOLD, QA_REVIEW_MARGIN, rubricCriteria,
-  verifyEvidence, validateQaResponse, repairQaVerdictsForScenario, scoreQa, assessQa, buildGradeProjection,
+  verifyEvidence, validateQaResponse, getRefillWorkflowSignals, repairQaVerdictsForScenario, scoreQa, assessQa, buildGradeProjection,
 } from './_qa-rubric.js';
 import { buildMessages, finalizeQaResult } from './grade-call-qa.js';
 import { COMPETENCY_IDS } from '../src/data/competencies.js';
@@ -452,6 +452,57 @@ describe('repairQaVerdictsForScenario', () => {
       { scenario: 'A pediatric referral where physical exam status is the governing issue.', department: 'pediatrics', metadata: { workflowType: 'referral' } },
     );
     expect(repaired.criteria.find((c) => c.id === 'know-rule').verdict).toBe('NOT_MET');
+  });
+
+  it('does not treat a provider mention as a routing action', () => {
+    const transcript = [
+      { role: 'navigator', text: 'What is the medication name?' },
+      { role: 'navigator', text: 'Which pharmacy do you prefer?' },
+      { role: 'navigator', text: 'Which provider prescribed it?' },
+    ];
+    const repaired = repairQaVerdictsForScenario(
+      { criteria: repairedVerdicts(), autoFails: [] }, transcript,
+      { scenario: 'A standard pediatric medication refill.', department: 'pediatrics', metadata: { workflowType: 'prescription_refill' } },
+    );
+    expect(repaired.criteria.find((c) => c.id === 'doc-te').verdict).toBe('NOT_MET');
+    expect(repaired.repairs.some((repair) => repair.criterionId === 'doc-te')).toBe(false);
+  });
+
+  it('accepts an action plus destination as natural routing evidence', () => {
+    const transcript = [
+      { role: 'navigator', text: 'What is the medication name?' },
+      { role: 'navigator', text: 'Which pharmacy do you prefer?' },
+      { role: 'navigator', text: 'I will send this request to the refill team and mark it urgent because she is out.' },
+    ];
+    const repaired = repairQaVerdictsForScenario(
+      { criteria: repairedVerdicts(), autoFails: [] }, transcript,
+      { scenario: 'A standard pediatric medication refill.', department: 'pediatrics', metadata: { workflowType: 'prescription_refill' } },
+    );
+    expect(repaired.criteria.find((c) => c.id === 'doc-te')).toMatchObject({ verdict: 'MET', evidence: expect.stringContaining('send this request') });
+    expect(repaired.repairs.some((repair) => repair.rule === 'natural-message-routing-wording')).toBe(true);
+  });
+
+  it('does not treat standalone nurse or provider wording as routing evidence', () => {
+    expect(getRefillWorkflowSignals([
+      { role: 'navigator', text: 'Was it the nurse who called you?' },
+      { role: 'navigator', text: 'Who is the provider on the bottle?' },
+    ]).naturalRoutingLine).toBeNull();
+  });
+
+  it('distinguishes safe expectations from a real approval promise', () => {
+    expect(getRefillWorkflowSignals([
+      { role: 'navigator', text: 'The team will review it and follow up, but I cannot promise approval or exact timing.' },
+    ]).overPromise).toBe(false);
+    const transcript = [
+      { role: 'navigator', text: 'What is the medication name?' },
+      { role: 'navigator', text: 'Which pharmacy do you prefer?' },
+      { role: 'navigator', text: 'I will make sure the doctor approves it and sends it today.' },
+    ];
+    expect(getRefillWorkflowSignals(transcript).overPromise).toBe(true);
+    expect(repairQaVerdictsForScenario(
+      { criteria: repairedVerdicts(), autoFails: [] }, transcript,
+      { scenario: 'A standard pediatric medication refill.', department: 'pediatrics', metadata: { workflowType: 'prescription_refill' } },
+    ).repairs).toHaveLength(0);
   });
 });
 
