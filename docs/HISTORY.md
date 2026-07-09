@@ -1,5 +1,30 @@
 # Development History - Knowledge Check
 
+### 2026-07-09 - Fix legacy Playwright navigator flow for PhaseHub (deep suite green again)
+- **Context:** After PR #16, a full `npx playwright test` (18 specs) had **3 failures**, all in the
+  legacy `e2e/navigator.spec.js`. Those tests waited for the pre-F26 "Choose your assessment"
+  chooser, which production replaced with the 3-phase PhaseHub ("Your assessment — 3 phases"). The
+  Playwright commands were therefore not truthful/green.
+- **Change — rewrote `e2e/navigator.spec.js`** to the current F26 flow: Start gate → navigator login
+  → department select → **PhaseHub** → Phase 1 (MCQ) completion → dashboard, and Phase 2 (Spot the
+  Error) completion → MCQ/Spot coexistence toggle. A `reachPhaseHub` helper opens the hub directly,
+  or via the dashboard's "Retake a phase" control when the test user has already completed all
+  phases (with a `toPass` retry for the late-subscription view bounce learned in PR #16). Phase 3
+  (Call QA) is intentionally **not** driven — it is a live mic voice call; its entry is covered
+  read-only by `tests/e2e/`. This file stays the **deep live-data suite**: it writes results to
+  Firestore and calls Gemini (MCQ coaching + Spot generation) on purpose.
+- **Change — suite separation (scripts):** `package.json` now has explicit scripts —
+  `test:e2e:safe` (routine, `tests/e2e/`), `test:e2e:deep` (deep, `e2e/` via a `(?<!tests/)e2e/`
+  path filter so it never picks up the safe folder), and `test:e2e:all` (both). **`test:e2e` now
+  runs the SAFE suite by default** (was: all specs), so the routine/live command can't accidentally
+  trigger destructive writes or Gemini calls. `playwright.config.js` header + README updated to
+  document safe-vs-deep and to point the live-URL example at `test:e2e:safe`.
+- **No production behavior changed**; `firestore.rules` untouched.
+- **Verification:** `npm test` → **462 passing / 23 files**; `npm run build` clean; `git diff
+  --check` clean. Playwright: `test:e2e:safe` → **12 passed** locally AND against live Railway;
+  `test:e2e:deep` → **6 passed** locally (writes Firestore + Gemini; one transient 503 absorbed by
+  key rotation during Spot generation); full `test:e2e:all` → **18 passed** locally.
+
 ### 2026-07-09 - Playwright product walkthrough QA coverage (CI-safe, no live AI/mic)
 - **Context:** Before management demos there was no repeatable browser pass that walked the app the
   way a supervisor/navigator would. The existing `e2e/` suite covers deep flows but writes to
