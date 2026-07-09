@@ -8,7 +8,8 @@
   - Added pure final-verdict helpers in `src/lib/qaFinalReview.js`.
   - Added supervisor UI in `NavigatorDetail.jsx` to confirm or override AI QA pass/fail.
   - Required reasons for overrides while preserving original AI `qa` and `grade`.
-- **Verification:** `npm test` -> **480 passing / 24 files**; `npm run build` passed; `git diff --check` clean.
+  - Follow-up fix: confirmation actions now only render when they agree with the AI verdict; NEEDS REVIEW sessions expose override-only actions so supervisors cannot silently convert an AI fail into a "confirm pass".
+- **Verification:** `npm test` -> **482 passing / 24 files**; `npm run build` passed; `git diff --check` clean.
 ### 2026-07-09 - Fix legacy Playwright navigator flow for PhaseHub (deep suite green again)
 - **Context:** After PR #16, a full `npx playwright test` (18 specs) had **3 failures**, all in the
   legacy `e2e/navigator.spec.js`. Those tests waited for the pre-F26 "Choose your assessment"

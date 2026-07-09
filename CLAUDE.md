@@ -672,7 +672,9 @@ training assignments.
 - **Supervisor final review (2026-07-09):** Call QA Test attempts now support a supervisor final
   verdict stored on the interview doc as `qaFinalReview`. The AI rubric result remains preserved on
   `qa`; supervisors can confirm AI pass/fail or override to final pass/fail with a required reason
-  for overrides. This is a management safety layer only and does not feed the capability matrix yet.
+  for overrides. Confirm actions now only appear when they agree with the AI verdict; NEEDS REVIEW
+  sessions use override-only actions. This is a management safety layer only and does not feed the
+  capability matrix yet.
 - **Navigator assessment entry (2026-07-03, rewired 2026-07-07):** The Call QA Test now serves as
   **Phase 3** (final) of the sequenced department assessment via `PhaseHub` in `NavigatorApp`.
   That route reuses `VoiceCall mode='test'`, returns to the dashboard from the review screen, and
@@ -1088,7 +1090,7 @@ of this file on 2026-07-07 to cut per-session context cost (it was ~55% of the f
   a curated Pediatrics/OB-GYN scenario bank with scenario metadata stored on interview docs, and QA
   attempts now carry a supervisor-only `qaFinalReview` verdict that preserves the AI `qa` audit
   trail while separating pending/confirmed/overridden management decisions. Build clean, tests green
-  (`npm test`  **480 passing**, 24 test files). GitHub Actions CI now mirrors the normal local gate on `main` pushes and PRs:
+  (`npm test`  **482 passing**, 24 test files). GitHub Actions CI now mirrors the normal local gate on `main` pushes and PRs:
   `npm ci` → `npm test` → `npm run build` (no deploy step).
 - **Existing functionality:** features F1–F26 (see [§4](#4-feature-inventory)) are **Complete** in
   code. F17 adds longitudinal trends + Sparkline. F18 adds dossier evidence per competency. F19
@@ -1118,7 +1120,7 @@ of this file on 2026-07-07 to cut per-session context cost (it was ~55% of the f
 - **Experimental / mockup:**
   - Training **content** is mockup (flagged in UI). Logic is real.
   - **Adult Medicine and Behavioural Health** are not assessed; **Pediatrics and OB/GYN** are live.
-- **Test coverage:** **480 tests** across **24 test files**: `scoring.test.js` (all exports incl. `optionPoints`,
+- **Test coverage:** **482 tests** across **24 test files**: `scoring.test.js` (all exports incl. `optionPoints`,
   including F17–F21 functions: buildTrend, trainingImpact, teamTrend, buildDossier, buildActionCenter,
   buildDevPath, buildMentorMatches, pairingOutcomes, buildLearningSignals,
   buildQuestionImprovementSuggestions, adaptiveTrainingRecommendations, feedbackInsights +
@@ -1203,7 +1205,7 @@ of this file on 2026-07-07 to cut per-session context cost (it was ~55% of the f
 - **Counts (today):** 6 domains (job-aligned 2026-07-02: intake · classification · routing ·
   scheduling · boundaries · documentation) · 9 competencies · 21 Pediatrics + 16
   OB/GYN = **37** seed questions (bank grows in Firestore per dept) · 4 departments (**Pediatrics
-  + OB/GYN live**, 2 mockup) · **480** unit tests (24 test files) · **12** Firestore collections
+  + OB/GYN live**, 2 mockup) · **482** unit tests (24 test files) · **12** Firestore collections
   (`roster`, `results`, `resultHistory`, `questions`, `audits`, `interviews`, `completions`,
   `pairings`, `supervisorFeedback`, `learningProposals`, `sops`, `contentMigrations`) ·
   **12** REST serverless functions (`generate-scenarios`, `generate-coaching`, `interview-turn`,
@@ -1657,7 +1659,7 @@ npm run test:e2e     # run the Playwright browser tests (auto-builds + starts th
   `roleApps.behavior.test.jsx`, Firebase/db/session/apiFetch mocked, browser APIs stubbed).
 - ✅ Supervisor grade override for practice sessions — done 2026-07-08 (450 tests, 22 test files;
   `navigatorDetail.override.test.jsx`, `gradeOverride` field, db.js mocked).
-- ✅ Call QA supervisor final verdict — done 2026-07-09 (480 tests, 24 test files;
+- ✅ Call QA supervisor final verdict — done 2026-07-09 (482 tests, 24 test files;
   `qaFinalReview` field + helper, `updateQaFinalReview`, QA-only supervisor panel in
   `NavigatorDetail.jsx`, original AI `grade`/`qa` preserved).
 
