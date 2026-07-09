@@ -17,6 +17,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { sopContextFor, sopContextForFresh } from './_sop-context.js';
+import { navigatorContextBlock } from './_navigator-operating-model.js';
 import { correctTranscriptWithStats, glossaryPromptBlock } from './_qa-glossary.js';
 import { getApiKeys, geminiWithRotation, rotationFailure } from './_gemini-client.js';
 import { validateSecret } from './_auth.js';
@@ -142,6 +143,8 @@ AUTO-FAIL CONDITIONS:
 ${autoFailText}
 
 ${glossaryPromptBlock(department)}
+
+${navigatorContextBlock({ department, mode: 'qa-grading' })}
 
 SOP CONTEXT:
 ${sopContext}`;

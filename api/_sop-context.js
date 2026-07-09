@@ -1,6 +1,7 @@
 // SOP contexts used to ground scenario generation. The leading underscore keeps
 // Express from turning this file into an HTTP route — it is a helper module.
 import { getLiveSop, getLiveSopSync } from './_sop-store.js';
+import { navigatorContextBlock } from './_navigator-operating-model.js';
 //
 // SOP_CONTEXTS is a map keyed by department id. Use sopContextFor(deptId) in
 // API handlers — it defaults to the Pediatrics context for unknown departments.
@@ -500,62 +501,20 @@ HOSPITAL SCHEDULE LIFECYCLE:
 // ─────────────────────────────────────────────────────────────────────────────
 // PATIENT NAVIGATOR ROLE CONTEXT — shared across departments.
 //
-// Distilled from the current Patient Navigator role description (2026-07).
-// Prepended to every department SOP so AI-generated scenarios, coaching, and
-// roleplay reflect how the job actually works: cross-department call handlers
-// who classify, route, schedule, protect scope/privacy, and document — never
-// giving clinical advice. Names outside Pediatrics are role labels only
-// (sanitization: the repo is public).
+// The role/operating-model context now lives in the reusable
+// api/_navigator-operating-model.js so every AI endpoint (generation, roleplay,
+// grading, QA, audit, coaching, learning paths) reasons about the SAME job model
+// — the navigator decision loop, realistic call behaviour, and the "judge the
+// decision, not the wording" scoring principles.
+//
+// NAVIGATOR_ROLE_CONTEXT is kept as a backward-compatible export (the department-
+// neutral shared block) and is still prepended to every department SOP by
+// sopContextFor / sopContextForFresh below. Department-specific routing/queue
+// facts (PEDS Encounters, OB Portal, PSS OB, provider names, etc.) remain in the
+// department SOP contexts above — the operating model deliberately stays free of
+// SOP facts and PII (the repo is public).
 // ─────────────────────────────────────────────────────────────────────────────
-export const NAVIGATOR_ROLE_CONTEXT = `
-THE PATIENT NAVIGATOR ROLE (applies across departments)
-
-Patient Navigators are cross-department inbound call handlers (Pediatrics, OB/GYN,
-Behavioral Health, and later Internal Medicine). Their job is to guide each patient to the
-correct next step WITHOUT giving clinical advice. Main systems: Intermedia (inbound calls),
-eCW/ECW (charts, scheduling, e-prescription logs, Telephone Encounters), Microsoft Teams
-(department group chats — checked at shift start for workflow changes, approvals, provider
-and schedule updates).
-
-CALL OPENING — lookup adapts to the department, but the scored issue is chart safety:
-- Pediatrics often starts with the parent or family account because one caller may be handling
-  several children.
-- Adult departments often start with the patient’s own identifiers because the patient usually
-  calls for themselves.
-- Different navigators may reach the correct chart in different sequences; what matters is
-  confirming the correct patient, the caller’s authorization, and the right chart before acting.
-
-CLASSIFICATION — the navigator's first decision on every call: is this scheduling, a
-clinical question, a refill, a lab result, a form/record request, a referral, a complaint,
-an urgent symptom, a wrong-department call, or something that needs approval? One call can
-contain several requests; each gets its own workflow.
-
-TELEPHONE ENCOUNTER ROUTING (current floor rules):
-- Pediatrics: medical questions / lab results / refills → PEDS Encounters queue;
-  referrals → Anisa Azeez.
-- OB/GYN: pregnant patient or pregnancy-related issue → OB Portal; non-pregnant GYN
-  visit-related issue → PSS OB; established MFM patient → the MFM coordinator only.
-- Behavioral Health: questions, refills, medication issues, clinical concerns → assign the
-  TE directly to the provider.
-
-REFILLS: ask for the prescription name and preferred pharmacy. Pediatrics: check the
-e-prescription log when needed, copy the medication and prescribing provider, TE to the PEDS
-Encounters queue, and mark it HIGH PRIORITY if the patient is completely out. Do not promise
-approval, give medication advice, or deny the refill yourself based only on PE status.
-Behavioral Health additionally checks appointment continuity (last appointment, follow-up
-status) before processing.
-
-HARD BOUNDARIES — navigators never: interpret lab results, give medical advice, approve
-exceptions, independently judge clinical urgency beyond the routing rules, or promise that
-a provider will approve something. Privacy: information goes only to callers authorized on
-the account — family relationship alone authorizes nothing. Behavioral Health is strictest:
-never confirm that someone is a BH patient to an unauthorized caller, and never give a
-provider's cell number to patients or family (take the message; contact the provider
-internally).
-
-DOCUMENTATION: every TE needs the correct destination, a clear reason, the relevant clinical
-context (e.g., symptoms with onset; gestational age for OB), and callback details.
-`.trim();
+export const NAVIGATOR_ROLE_CONTEXT = navigatorContextBlock();
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Map + accessor — used by all SOP-grounded API handlers

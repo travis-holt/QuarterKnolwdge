@@ -15,6 +15,7 @@ import { domainName } from '../src/data/questions.js';
 import { optionPoints } from '../src/lib/scoring.js';
 import { THRESHOLDS } from '../src/data/config.js';
 import { getApiKeys, geminiWithRotation, rotationFailure, MODEL, LITE_MODEL } from './_gemini-client.js';
+import { navigatorContextBlock } from './_navigator-operating-model.js';
 import { validateSecret } from './_auth.js';
 
 // Dynamic Gemini responseSchema — built per-request from the actual weak
@@ -81,10 +82,12 @@ function buildMessages(name, weakComps, competencyScores, digest) {
     .join('\n');
 
   const systemInstruction = `You are a supportive development coach for patient navigators \
-at a pediatric contact centre. Write personalized coaching notes that are specific, \
+at a medical contact centre. Write personalized coaching notes that are specific, \
 forward-looking, and grounded only in the rationale text provided — never invent SOP facts \
 not present in the provided data. Address the navigator as "you" (second person). \
-Tone: supportive colleague building capability, not grading.`;
+Tone: supportive colleague building capability, not grading.
+
+${navigatorContextBlock({ mode: 'coaching' })}`;
 
   const userMessage = `Navigator: ${name}
 Competencies needing development (below ${THRESHOLDS.canTeach}%):

@@ -10,9 +10,14 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { sopContextFor, sopContextForFresh } from './_sop-context.js';
+import { navigatorContextBlock } from './_navigator-operating-model.js';
 import { DOMAINS } from '../src/data/questions.js';
+import { departmentName } from '../src/data/departments.js';
 import { getApiKeys, geminiWithRotation, rotationFailure } from './_gemini-client.js';
 import { validateSecret } from './_auth.js';
+
+const FINDING_AREAS = ['intake', 'classification', 'routing', 'scheduling', 'boundaries', 'documentation', 'communication'];
+const FINDING_VERDICTS = ['met', 'partial', 'missed'];
 
 // Bound the transcript fed to Gemini: cap the number of turns and the length of
 // each message. Keeps the token budget predictable and limits the prompt-injection
@@ -27,11 +32,26 @@ const RESPONSE_SCHEMA = {
     summary:      { type: 'STRING' },
     strengths:    { type: 'ARRAY', items: { type: 'STRING' } },
     improvements: { type: 'ARRAY', items: { type: 'STRING' } },
+    // Optional structured, per-area findings. Old UI ignores this field; it is
+    // stored alongside the grade as decision support for supervisors.
+    findings: {
+      type: 'ARRAY',
+      items: {
+        type: 'OBJECT',
+        properties: {
+          area:     { type: 'STRING', enum: FINDING_AREAS },
+          verdict:  { type: 'STRING', enum: FINDING_VERDICTS },
+          evidence: { type: 'STRING' },
+          coaching: { type: 'STRING' },
+        },
+        required: ['area', 'verdict'],
+      },
+    },
   },
   required: ['score', 'summary', 'strengths', 'improvements'],
 };
 
-function buildMessages(domainId, scenario, transcript, name, department, sopContext = sopContextFor(department)) {
+export function buildMessages(domainId, scenario, transcript, name, department, sopContext = sopContextFor(department)) {
   const domainName = DOMAINS.find((d) => d.id === domainId)?.name ?? domainId;
 
   const callText = transcript
@@ -39,11 +59,15 @@ function buildMessages(domainId, scenario, transcript, name, department, sopCont
     .map((t) => `${t.role === 'patient' ? 'Patient' : 'Navigator'}: ${String(t.text ?? '').slice(0, MAX_TURN_CHARS)}`)
     .join('\n');
 
+  const deptLabel = departmentName(department);
+
   const systemInstruction =
-`You are an expert supervisor reviewing a patient navigator's practice call at a pediatric \
-medical contact centre. Your job is to grade how well the navigator followed standard operating \
-procedures, communicated professionally, gathered the right information, and directed the caller \
-appropriately.
+`You are an expert supervisor reviewing a patient navigator's practice call at the Aizer Health \
+${deptLabel} contact centre. Your job is to grade how well the navigator followed standard \
+operating procedures, communicated professionally, gathered the right information, and directed \
+the caller appropriately.
+
+${navigatorContextBlock({ department, mode: 'practice-grading' })}
 
 Scoring guide (0–100):
   90–100  Excellent: near-perfect SOP adherence, clear and professional throughout.
@@ -64,6 +88,10 @@ Rules:
   correct routing, no clinical advice, and no promised approval. Do NOT require PE verification
   or say the refill cannot be processed because PE is not current unless the scenario explicitly
   makes PE status the governing rule.
+- "findings" (optional): a short array assessing the navigator per area. For each area that the
+  call actually exercised, give area (one of ${FINDING_AREAS.join(', ')}), verdict (met/partial/
+  missed), a brief "evidence" quote from the transcript, and one line of "coaching". Skip areas
+  the call did not exercise. This is supplementary — still fill score/summary/strengths/improvements.
 
 SOP CONTEXT:
 ${sopContext}`;
@@ -76,7 +104,7 @@ Scenario: ${scenario}
 Full call transcript:
 ${callText}
 
-Grade this practice call. Return score (integer 0–100), summary, strengths array, and improvements array.`;
+Grade this practice call. Return score (integer 0–100), summary, strengths array, improvements array, and (optionally) a findings array of per-area assessments.`;
 
   return { systemInstruction, userMessage };
 }
@@ -96,12 +124,34 @@ function buildBody(systemInstruction, userMessage) {
 // Clamp score to 0–100 and coerce required fields to safe strings/arrays.
 // Exported pure so the coercion contract is unit-testable like its siblings'.
 export function coerceGrade(parsed) {
-  return {
+  const grade = {
     score:        Math.min(100, Math.max(0, Math.round(Number(parsed?.score) || 0))),
     summary:      typeof parsed?.summary === 'string' ? parsed.summary.trim()          : '',
     strengths:    Array.isArray(parsed?.strengths)    ? parsed.strengths.map(String)    : [],
     improvements: Array.isArray(parsed?.improvements) ? parsed.improvements.map(String) : [],
   };
+  const findings = coerceFindings(parsed?.findings);
+  if (findings.length) grade.findings = findings; // omit when empty so old shape is unchanged
+  return grade;
+}
+
+// Keep only well-formed findings with a known area + verdict. Exported-adjacent
+// helper; validated defensively even though the schema constrains the shape.
+export function coerceFindings(raw) {
+  if (!Array.isArray(raw)) return [];
+  return raw
+    .map((f) => {
+      const area = String(f?.area ?? '').trim();
+      const verdict = String(f?.verdict ?? '').trim();
+      if (!FINDING_AREAS.includes(area) || !FINDING_VERDICTS.includes(verdict)) return null;
+      return {
+        area,
+        verdict,
+        evidence: typeof f?.evidence === 'string' ? f.evidence.trim() : '',
+        coaching: typeof f?.coaching === 'string' ? f.coaching.trim() : '',
+      };
+    })
+    .filter(Boolean);
 }
 
 export default async function handler(req, res) {

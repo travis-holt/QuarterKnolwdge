@@ -11,7 +11,7 @@
 > [§8 Current System State](#8-current-system-state) and [§15 Current Priorities](#15-current-priorities)
 > accurate at all times.
 >
-> **Last updated:** 2026-07-09 (Call QA supervisor final verdict + docs/tests refreshed) ·
+> **Last updated:** 2026-07-09 (Patient Navigator Operating Model injected into all AI endpoints + roleplay caseFile threaded init→turns→voice relay; domain-tagged Call QA scoring bridge) ·
 > **Doc maintainer:** Claude (AI agent) + repo owner. Assumptions are explicitly marked **[ASSUMPTION]**.
 
 ---
@@ -1089,9 +1089,19 @@ of this file on 2026-07-07 to cut per-session context cost (it was ~55% of the f
   "latest active QA" lookup that drives the phase hub and dashboard card. Call QA Test mode uses
   a curated Pediatrics/OB-GYN scenario bank with scenario metadata stored on interview docs, and QA
   attempts now carry a supervisor-only `qaFinalReview` verdict that preserves the AI `qa` audit
-  trail while separating pending/confirmed/overridden management decisions. Build clean, tests green
-  (`npm test`  **482 passing**, 24 test files). GitHub Actions CI now mirrors the normal local gate on `main` pushes and PRs:
-  `npm ci` → `npm test` → `npm run build` (no deploy step).
+  trail while separating pending/confirmed/overridden management decisions. Saved QA audits also
+  include QA-only `domainScores` + `competencyScores` (`qa.domainScoreVersion`) as a future matrix
+  bridge — surfaced as a supervisor QA-only domain signal, not blended into the capability matrix.
+  **All AI endpoints now share a Patient Navigator Operating Model**
+  (`api/_navigator-operating-model.js`, injected via `navigatorContextBlock({ department, mode })`)
+  so generation, roleplay, grading, QA, audit, coaching, and learning paths judge real navigator
+  decision quality (identify → authorize → classify → act/route/schedule → protect scope → document
+  → close) instead of exact SOP wording — strict on safety/privacy/scope/routing/scheduling/
+  documentation, flexible on natural phrasing; lookup order is not the scored target and PE status is
+  not a universal refill hard-stop. Roleplay carries a hidden `caseFile` end to end (init → chat/voice
+  turns → `/api/live` relay) so the AI caller stays consistent without leaking the answer. Build
+  clean, tests green (`npm test`  **522 passing**, 27 test files). GitHub Actions CI now mirrors the
+  normal local gate on `main` pushes and PRs: `npm ci` → `npm test` → `npm run build` (no deploy step).
 - **Existing functionality:** features F1–F26 (see [§4](#4-feature-inventory)) are **Complete** in
   code. F17 adds longitudinal trends + Sparkline. F18 adds dossier evidence per competency. F19
   adds the supervisor Action Center. F20 adds AI-sequenced dev paths + mini re-check. F21 adds
@@ -1120,7 +1130,9 @@ of this file on 2026-07-07 to cut per-session context cost (it was ~55% of the f
 - **Experimental / mockup:**
   - Training **content** is mockup (flagged in UI). Logic is real.
   - **Adult Medicine and Behavioural Health** are not assessed; **Pediatrics and OB/GYN** are live.
-- **Test coverage:** **482 tests** across **24 test files**: `scoring.test.js` (all exports incl. `optionPoints`,
+- **Test coverage:** **522 tests** across **27 test files** (adds `api/_navigator-operating-model.test.js`,
+  `src/lib/qaDomainScoring.test.js`, `src/components/voiceCall.test.js`; expanded
+  `api/api-handlers.test.js`, `grade-interview.test.js`, `generate-audit.test.js`): `scoring.test.js` (all exports incl. `optionPoints`,
   including F17–F21 functions: buildTrend, trainingImpact, teamTrend, buildDossier, buildActionCenter,
   buildDevPath, buildMentorMatches, pairingOutcomes, buildLearningSignals,
   buildQuestionImprovementSuggestions, adaptiveTrainingRecommendations, feedbackInsights +
@@ -1205,7 +1217,7 @@ of this file on 2026-07-07 to cut per-session context cost (it was ~55% of the f
 - **Counts (today):** 6 domains (job-aligned 2026-07-02: intake · classification · routing ·
   scheduling · boundaries · documentation) · 9 competencies · 21 Pediatrics + 16
   OB/GYN = **37** seed questions (bank grows in Firestore per dept) · 4 departments (**Pediatrics
-  + OB/GYN live**, 2 mockup) · **482** unit tests (24 test files) · **12** Firestore collections
+  + OB/GYN live**, 2 mockup) · **522** unit tests (27 test files) · **12** Firestore collections
   (`roster`, `results`, `resultHistory`, `questions`, `audits`, `interviews`, `completions`,
   `pairings`, `supervisorFeedback`, `learningProposals`, `sops`, `contentMigrations`) ·
   **12** REST serverless functions (`generate-scenarios`, `generate-coaching`, `interview-turn`,
@@ -1588,6 +1600,14 @@ npm run test:e2e     # run the Playwright browser tests (auto-builds + starts th
 - **To re-key the check to a different SOP:** edit `DOMAINS` in `questions.js`, refresh
   `api/_sop-context.js`, and either edit `SEED_QUESTIONS` or generate a new bank in the Question Bank
   UI; competencies + everything else follow automatically.
+- **AI prompt context is layered, do not duplicate it:** every SOP-grounded endpoint composes
+  **role/operating-model context** (`api/_navigator-operating-model.js`, injected via
+  `navigatorContextBlock({ department, mode })` and prepended into `NAVIGATOR_ROLE_CONTEXT`) **+
+  department SOP** (`api/_sop-context.js`). The operating model = the *job* (decision loop, realistic
+  call behaviour, scoring principles, mistake taxonomy) and must stay free of SOP facts/PII; the SOP
+  contexts = the *rules*. When adding an AI endpoint, inject the appropriate `mode` block rather than
+  re-writing job guidance inline. Never make lookup order the graded target or PE status a universal
+  refill hard-stop. Roleplay endpoints/relay thread the hidden `caseFile` for caller consistency.
 
 ---
 
@@ -1662,6 +1682,14 @@ npm run test:e2e     # run the Playwright browser tests (auto-builds + starts th
 - ✅ Call QA supervisor final verdict — done 2026-07-09 (482 tests, 24 test files;
   `qaFinalReview` field + helper, `updateQaFinalReview`, QA-only supervisor panel in
   `NavigatorDetail.jsx`, original AI `grade`/`qa` preserved).
+- ✅ Domain-tagged Call QA scoring bridge — done 2026-07-09 (`src/data/qaRubric.js`,
+  `src/lib/qaDomainScoring.js`, `qa.domainScores`/`competencyScores`/`domainScoreVersion`,
+  QA-only supervisor domain signal; capability matrix unchanged).
+- ✅ Patient Navigator Operating Model across all AI endpoints + roleplay `caseFile` threaded
+  init→turns→voice relay — done 2026-07-09 (522 tests, 27 test files; new
+  `api/_navigator-operating-model.js`, `caseFile` through `Interview.jsx`/`VoiceCall.jsx`/
+  `live-relay.js`, grade-interview department label + optional `findings`, audit "safe chart
+  identification" wording, Call QA retry-grading metadata fix; deterministic QA scoring unchanged).
 
 ---
 

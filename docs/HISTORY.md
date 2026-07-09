@@ -1,5 +1,69 @@
 # Development History - Knowledge Check
 
+### 2026-07-09 - Patient Navigator Operating Model injected into all AI endpoints
+- **Context:** The AI (scenario generation, roleplay, practice grading, QA grading, audit
+  generation, coaching, learning paths) was too SOP-literal — it rewarded exact wording and
+  isolated rule-recall instead of real navigator decision quality. Grading also hardcoded a
+  "pediatric medical contact centre" framing even for OB/GYN, and the audit prompt taught a single
+  "correct lookup order."
+- **Change — new shared context module** `api/_navigator-operating-model.js`: exports
+  `NAVIGATOR_DECISION_LOOP`, `REALISTIC_CALL_BEHAVIOR`, `SCORING_PRINCIPLES`,
+  `WORKFLOW_MISTAKE_TYPES`, and `navigatorContextBlock({ department, mode })`. It describes the JOB
+  (identify → authorize → classify → decide action → route/schedule → protect boundaries →
+  document → close) and the judging philosophy (strict on safety/privacy/scope/routing/scheduling/
+  documentation; flexible on natural wording; lookup order is never the scored target; PE status is
+  not a universal refill hard-stop). It carries NO SOP facts or PII — department rules still come
+  from `_sop-context.js`.
+- **Change — wiring:** `_sop-context.js` now derives `NAVIGATOR_ROLE_CONTEXT` from
+  `navigatorContextBlock()` (backward-compatible export; `sopContextFor`/`sopContextForFresh`
+  resolution order unchanged: live SOP → hardcoded dept → Pediatrics). Mode-tailored blocks injected
+  into `generate-scenarios` (scenario-generation), `interview-turn` (roleplay-init + roleplay-caller),
+  `grade-interview` (practice-grading), `generate-audit` (audit-generation), `grade-call-qa`
+  (qa-grading), `generate-coaching` (coaching), `sequence-path` (learning-path).
+- **Change — grade-interview:** replaced the hardcoded pediatric framing with `departmentName(department)`
+  and added an optional structured `findings[]` array (area/verdict/evidence/coaching) that old UI
+  ignores; `grade` output stays backward compatible.
+- **Change — roleplay `caseFile` (init → turns → voice relay):** `interview-turn` init now returns a
+  hidden `caseFile` (workflowType, patientType, callerRelationship, requestSummary, requiredActions,
+  acceptableNavigatorPaths, criticalMistakes, factsToReveal, emotionalTone, difficulty).
+  `buildSystemInstruction` renders it as private caller notes so the caller stays consistent and
+  reveals facts only when asked, never coaching the navigator. The client now carries it end to end:
+  `Interview.jsx` and `VoiceCall.jsx` capture `caseFile` from init and echo it back on each turn /
+  in the `/api/live` start payload; `live-relay.js` forwards it into `buildSystemInstruction`. Fully
+  backward compatible — roleplay still works without a `caseFile`.
+- **Change — generate-audit:** removed "correct lookup order for the department"; now "identify the
+  correct patient/chart safely for the department context" and the full call shape (identify →
+  classify → act/route/schedule/escalate → document/close). All existing guards + Agent-error-index
+  validation unchanged.
+- **Change — VoiceCall.jsx:** `retryGrading()` now passes `metadata: qaScenarioMetadataRef.current`
+  into `gradeSavedAttempt`, so a retried Call QA grade keeps the curated scenario's expectedActions /
+  criticalMisses (initial grading already did). Deterministic QA scoring math in `_qa-rubric.js` is
+  unchanged.
+- **Files:** new `api/_navigator-operating-model.js` (+ `.test.js`); edited `api/_sop-context.js`,
+  `api/generate-scenarios.js`, `api/interview-turn.js`, `api/grade-interview.js`,
+  `api/generate-audit.js`, `api/grade-call-qa.js`, `api/generate-coaching.js`, `api/sequence-path.js`,
+  `api/live-relay.js`, `src/components/Interview.jsx`, `src/components/VoiceCall.jsx`; tests
+  added/updated in `api/api-handlers.test.js`, `api/grade-interview.test.js`,
+  `api/generate-audit.test.js`, new `src/components/voiceCall.test.js`.
+- **Verification:** `npm test` -> **522 passing / 27 files**; `npm run build` passed; `git diff --check`
+  clean. Rebased onto `main` after the Call QA final-verdict merge; no merge, no deploy.
+
+### 2026-07-09 - Domain-tagged Call QA scoring bridge
+- **Context:** Call QA should eventually contribute to the capability matrix, but only after rubric
+  criteria map to patient-navigator domains and competencies. A single overall QA score must not be
+  spread across every domain.
+- **Changes:**
+  - Added shared `src/data/qaRubric.js` metadata so every Call QA criterion and auto-fail carries
+    valid `domainIds` and `competencyIds`.
+  - Added pure QA-only scoring helpers in `src/lib/qaDomainScoring.js` that split multi-tag criteria
+    evenly, exclude `NA` from the denominator, and return per-domain / per-competency score objects.
+  - Updated `/api/grade-call-qa` to attach `qa.domainScores`, `qa.competencyScores`, and
+    `qa.domainScoreVersion = '2026-07-09-v1'` to the saved QA result without changing pass/fail math.
+  - Added a compact **QA-only domain signal** section to the supervisor QA session panel in
+    `NavigatorDetail.jsx`. The capability matrix is intentionally still unchanged.
+- **Verification:** covered by `src/lib/qaDomainScoring.test.js`; folded into the branch's final
+  `npm test` -> **522 passing / 27 files** gate. No merge, no deploy.
+
 ### 2026-07-09 - Call QA supervisor final verdict
 - **Context:** Call QA now has reliable persistence and curated scenarios, but management still needs a human final-decision layer before relying on AI pass/fail for high-stakes review.
 - **Changes:**

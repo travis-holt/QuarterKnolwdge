@@ -15,8 +15,8 @@
 // (pilot toggle; legacy secret still accepted when ALLOW_LEGACY_API_SECRET=true).
 //
 // Protocol (all JSON over the browser socket):
-//   client → relay   { type:'start', callerName, scenario,
-//                      department, openingLine }                      (first msg)
+//   client → relay   { type:'start', callerName, scenario, department,
+//                      openingLine, caseFile? }                       (first msg)
 //                    { type:'audio', data }   base64 PCM16 mono @16kHz mic frames
 //   relay  → client  { type:'ready' }                                 (call can begin)
 //                    { type:'audio', data }   base64 PCM16 mono @24kHz caller voice
@@ -119,6 +119,7 @@ function bridge(client, req) {
               text: buildSystemInstruction(startMsg.callerName || 'the caller', startMsg.scenario || '', {
                 department: startMsg.department || 'pediatrics',
                 openingLine: startMsg.openingLine || '',
+                caseFile: startMsg.caseFile || null,
               }),
             }],
           },

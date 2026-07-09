@@ -14,6 +14,7 @@ import { DOMAINS } from '../src/data/questions.js';
 import { workflowOptionsFor } from '../src/data/auditWorkflows.js';
 import { validateAuditContent } from '../src/lib/contentGuards.js';
 import { sopContextFor, sopContextForFresh } from './_sop-context.js';
+import { navigatorContextBlock } from './_navigator-operating-model.js';
 import { getApiKeys, geminiWithRotation, rotationFailure } from './_gemini-client.js';
 import { validateSecret } from './_auth.js';
 
@@ -41,11 +42,13 @@ const AUDIT_SCHEMA = {
   required: ['transcript', 'errorIndex', 'hint', 'modelExplanation', 'workflowType', 'errorKind', 'difficulty'],
 };
 
-function buildPrompt(domain, department, workflowType, avoidWorkflowTypes = [], sopContext = sopContextFor(department)) {
+export function buildPrompt(domain, department, workflowType, avoidWorkflowTypes = [], sopContext = sopContextFor(department)) {
   const allowedWorkflows = workflowOptionsFor(domain.id);
   return `You are creating a QA training exercise for contact-centre patient navigators.
 
 Generate a realistic 10-message chat transcript between a patient (or caregiver) and a contact-centre agent. The agent makes exactly ONE critical policy mistake that violates the SOP for the domain below.
+
+${navigatorContextBlock({ department, mode: 'audit-generation' })}
 
 Domain: "${domain.name}" — ${domain.blurb}
 Required workflow type: "${workflowType}"
@@ -66,9 +69,9 @@ REALISM RULES (the transcript must read like a real recorded call, not a trainin
   types, queues, timing rules, and routing rules. Never a generic "I have a question" call.
 - The caller talks like a real person on the phone: short sentences, occasional imprecision
   ("sometime this week?", "I think it was last month"), answers only what was asked.
-- The Agent follows the real call shape from the SOP: identify the patient (correct lookup order
-  for the department), classify the request, then act — with realistic small confirmations
-  ("one moment while I pull that up").
+- The Agent follows the real call shape from the SOP: identify the correct patient/chart safely
+  for the department context, classify the request, then act/route/schedule/escalate — with
+  realistic small confirmations ("one moment while I pull that up") — then document and close.
 - The planted error must be PLAUSIBLE — the kind of mistake a rushed but competent agent actually
   makes (wrong queue, skipped verification step, promising something the SOP forbids, wrong
   timing rule), NOT cartoonish rudeness or an obviously absurd statement.

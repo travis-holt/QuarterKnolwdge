@@ -20,6 +20,7 @@ import { DOMAINS } from '../src/data/questions.js';
 import { COMPETENCIES } from '../src/data/competencies.js';
 import { validateQuestionContent } from '../src/lib/contentGuards.js';
 import { sopContextFor, sopContextForFresh } from './_sop-context.js';
+import { navigatorContextBlock } from './_navigator-operating-model.js';
 import { getApiKeys, geminiWithRotation, rotationFailure } from './_gemini-client.js';
 import { validateSession } from './_auth.js';
 
@@ -52,11 +53,13 @@ const RESPONSE_SCHEMA = {
   },
 };
 
-function buildPrompt(domain, count, department, sopContext = sopContextFor(department)) {
+export function buildPrompt(domain, count, department, sopContext = sopContextFor(department)) {
   const compList = COMPETENCIES.map((c) => `${c.id} (${c.name})`).join(', ');
   return `You are an instructional designer writing a competency assessment for patient
 navigators (contact-centre agents) based ONLY on the SOP reference below. Do not invent
 facts that are not supported by it.
+
+${navigatorContextBlock({ department, mode: 'scenario-generation' })}
 
 SOP REFERENCE:
 ${sopContext}
