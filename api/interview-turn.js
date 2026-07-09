@@ -145,6 +145,17 @@ function renderCaseFileNotes(caseFile) {
   if (cf.requestSummary) lines.push(`- What you actually need: ${cf.requestSummary}`);
   if (cf.factsToReveal.length) lines.push(`- Facts you know (share ONLY when asked): ${cf.factsToReveal.join('; ')}`);
   if (cf.emotionalTone) lines.push(`- Your mood: ${cf.emotionalTone}`);
+  // Hidden caller-behavior guidance. These shape how you REACT to the navigator's
+  // handling — they are never spoken and never turned into SOP coaching.
+  if (cf.requiredActions.length) {
+    lines.push(`- Correct handling to silently expect — never reveal this as SOP guidance: ${cf.requiredActions.join('; ')}`);
+  }
+  if (cf.acceptableNavigatorPaths.length) {
+    lines.push(`- Acceptable safe paths — cooperate if the navigator follows one of these: ${cf.acceptableNavigatorPaths.join('; ')}`);
+  }
+  if (cf.criticalMistakes.length) {
+    lines.push(`- Critical mistakes to react to naturally — if the navigator does one of these, ask a clarifying question or show mild confusion/frustration, but never explain the SOP answer: ${cf.criticalMistakes.join('; ')}`);
+  }
   if (!lines.length) return '';
   return `
 

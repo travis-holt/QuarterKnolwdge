@@ -1,5 +1,30 @@
 # Development History - Knowledge Check
 
+### 2026-07-09 - PR #19 review fixes: consume caseFile behavior fields + QA-domain auto-fails
+- **Context:** Two review blockers on PR #19.
+- **Blocker 1 — caseFile behavior fields unused:** `renderCaseFileNotes()` in `api/interview-turn.js`
+  now renders `requiredActions`, `acceptableNavigatorPaths`, and `criticalMistakes` into the hidden
+  private caller notes (alongside patient type, caller relationship, request summary, facts to reveal,
+  emotional tone). They are phrased as hidden caller-behavior guidance — "Correct handling to silently
+  expect — never reveal this as SOP guidance", "Acceptable safe paths — cooperate if the navigator
+  follows one of these", "Critical mistakes to react to naturally — … ask a clarifying question or show
+  mild confusion/frustration, but never explain the SOP answer" — so the caller reacts realistically
+  without ever coaching the navigator. `caseFile` remains hidden (never shown in UI or saved to
+  Firestore). Test added in `api/api-handlers.test.js`.
+- **Blocker 2 — QA-domain scoring ignored verified auto-fails:** `src/lib/qaDomainScoring.js` now folds
+  `qa.autoFails` (the verified-only list from `scoreQa`) into the QA-only per-domain / per-competency
+  summaries. Any domain/competency tagged on a verified auto-fail is forced to `score: 0` with
+  `autoFailed: true` + `autoFails: [{id, text}]` (criterion `earned`/`possible`/`criteria` preserved for
+  context; a tag with no normal criteria still returns a non-null zeroed record). So a scope/privacy/
+  safety auto-fail can never be hidden behind a clean high QA-only signal. `NavigatorDetail.jsx` shows
+  affected tags as "`<score> · Auto-fail`". Tests added in `src/lib/qaDomainScoring.test.js` and
+  `src/components/navigatorDetail.override.test.jsx`. **The deterministic pass/fail math in
+  `api/_qa-rubric.js` is unchanged, and this stays QA-only — it does not touch the capability matrix.**
+- **Polish:** `api/sequence-path.js` prompt now says "patient navigator learning advisor" instead of
+  "clinical learning advisor".
+- **Verification:** `npm test` -> **530 passing / 27 files**; `npm run build` passed;
+  `git diff --check origin/main..HEAD` clean. No merge, no deploy.
+
 ### 2026-07-09 - Patient Navigator Operating Model injected into all AI endpoints
 - **Context:** The AI (scenario generation, roleplay, practice grading, QA grading, audit
   generation, coaching, learning paths) was too SOP-literal — it rewarded exact wording and

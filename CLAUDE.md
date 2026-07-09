@@ -1092,6 +1092,11 @@ of this file on 2026-07-07 to cut per-session context cost (it was ~55% of the f
   trail while separating pending/confirmed/overridden management decisions. Saved QA audits also
   include QA-only `domainScores` + `competencyScores` (`qa.domainScoreVersion`) as a future matrix
   bridge — surfaced as a supervisor QA-only domain signal, not blended into the capability matrix.
+  Verified auto-fails (`qa.autoFails`) are folded into that QA-only signal: any domain/competency
+  tagged on a verified scope/privacy/HIPAA/conduct auto-fail is forced to `score:0` with
+  `autoFailed:true` and shown as "· Auto-fail" in `NavigatorDetail.jsx`, so a safety failure can
+  never hide behind a clean high QA-only score (deterministic pass/fail math in `_qa-rubric.js`
+  unchanged; still QA-only, never the capability matrix).
   **All AI endpoints now share a Patient Navigator Operating Model**
   (`api/_navigator-operating-model.js`, injected via `navigatorContextBlock({ department, mode })`)
   so generation, roleplay, grading, QA, audit, coaching, and learning paths judge real navigator
@@ -1099,8 +1104,10 @@ of this file on 2026-07-07 to cut per-session context cost (it was ~55% of the f
   → close) instead of exact SOP wording — strict on safety/privacy/scope/routing/scheduling/
   documentation, flexible on natural phrasing; lookup order is not the scored target and PE status is
   not a universal refill hard-stop. Roleplay carries a hidden `caseFile` end to end (init → chat/voice
-  turns → `/api/live` relay) so the AI caller stays consistent without leaking the answer. Build
-  clean, tests green (`npm test`  **522 passing**, 27 test files). GitHub Actions CI now mirrors the
+  turns → `/api/live` relay) so the AI caller stays consistent without leaking the answer; the hidden
+  case notes include `requiredActions` / `acceptableNavigatorPaths` / `criticalMistakes` as
+  caller-behavior guidance (how to react to over-promising / under-clarifying / wrong routing) — never
+  as SOP coaching. Build clean, tests green (`npm test`  **530 passing**, 27 test files). GitHub Actions CI now mirrors the
   normal local gate on `main` pushes and PRs: `npm ci` → `npm test` → `npm run build` (no deploy step).
 - **Existing functionality:** features F1–F26 (see [§4](#4-feature-inventory)) are **Complete** in
   code. F17 adds longitudinal trends + Sparkline. F18 adds dossier evidence per competency. F19
@@ -1130,7 +1137,7 @@ of this file on 2026-07-07 to cut per-session context cost (it was ~55% of the f
 - **Experimental / mockup:**
   - Training **content** is mockup (flagged in UI). Logic is real.
   - **Adult Medicine and Behavioural Health** are not assessed; **Pediatrics and OB/GYN** are live.
-- **Test coverage:** **522 tests** across **27 test files** (adds `api/_navigator-operating-model.test.js`,
+- **Test coverage:** **530 tests** across **27 test files** (adds `api/_navigator-operating-model.test.js`,
   `src/lib/qaDomainScoring.test.js`, `src/components/voiceCall.test.js`; expanded
   `api/api-handlers.test.js`, `grade-interview.test.js`, `generate-audit.test.js`): `scoring.test.js` (all exports incl. `optionPoints`,
   including F17–F21 functions: buildTrend, trainingImpact, teamTrend, buildDossier, buildActionCenter,
@@ -1217,7 +1224,7 @@ of this file on 2026-07-07 to cut per-session context cost (it was ~55% of the f
 - **Counts (today):** 6 domains (job-aligned 2026-07-02: intake · classification · routing ·
   scheduling · boundaries · documentation) · 9 competencies · 21 Pediatrics + 16
   OB/GYN = **37** seed questions (bank grows in Firestore per dept) · 4 departments (**Pediatrics
-  + OB/GYN live**, 2 mockup) · **522** unit tests (27 test files) · **12** Firestore collections
+  + OB/GYN live**, 2 mockup) · **530** unit tests (27 test files) · **12** Firestore collections
   (`roster`, `results`, `resultHistory`, `questions`, `audits`, `interviews`, `completions`,
   `pairings`, `supervisorFeedback`, `learningProposals`, `sops`, `contentMigrations`) ·
   **12** REST serverless functions (`generate-scenarios`, `generate-coaching`, `interview-turn`,
@@ -1690,6 +1697,11 @@ npm run test:e2e     # run the Playwright browser tests (auto-builds + starts th
   `api/_navigator-operating-model.js`, `caseFile` through `Interview.jsx`/`VoiceCall.jsx`/
   `live-relay.js`, grade-interview department label + optional `findings`, audit "safe chart
   identification" wording, Call QA retry-grading metadata fix; deterministic QA scoring unchanged).
+- ✅ PR #19 review fixes — done 2026-07-09 (530 tests, 27 test files; `renderCaseFileNotes` now
+  renders `requiredActions`/`acceptableNavigatorPaths`/`criticalMistakes` as hidden caller-behavior
+  guidance; `qaDomainScoring` folds verified `qa.autoFails` into QA-only domain/competency signals
+  (`autoFailed:true`, score 0) with an "· Auto-fail" label; `sequence-path` "patient navigator
+  learning advisor"; `_qa-rubric.js` pass/fail math + capability matrix unchanged).
 
 ---
 

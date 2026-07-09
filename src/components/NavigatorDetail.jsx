@@ -25,6 +25,9 @@ function formatDate(ts) {
 
 function qaSignalLabel(detail) {
   if (!detail || typeof detail.score !== 'number') return '—';
+  // A verified auto-fail zeroes the domain/competency — surface it explicitly so a
+  // supervisor can never read an affected tag as a clean score. QA-only signal.
+  if (detail.autoFailed) return `${detail.score} · Auto-fail`;
   return `${detail.score}`;
 }
 

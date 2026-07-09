@@ -168,6 +168,26 @@ describe('NavigatorDetail — supervisor grade override', () => {
     expect(screen.getByText(/Scheduling & Appointment Rules:/).closest('li')?.textContent).toContain('—');
   });
 
+  it('labels an auto-failed domain in the QA-only domain signal', async () => {
+    renderDetail(qaSession({
+      qa: {
+        pass: false,
+        score: 0,
+        passThreshold: 85,
+        review: { recommendation: 'fail', confidence: 'high', safetyRisk: 'high', reviewFlags: [] },
+        domainScores: {
+          intake: { score: 92 },
+          boundaries: { score: 0, earned: 0, possible: 6, criteria: ['verify-three'], autoFailed: true, autoFails: [{ id: 'af-scope', text: 'Read lab/imaging results...' }] },
+        },
+      },
+    }));
+    fireEvent.click(await screen.findByText('Jordan'));
+    expect(await screen.findByText('QA-only domain signal')).toBeInTheDocument();
+    const boundariesLi = screen.getByText(/Scope & Privacy:/).closest('li');
+    expect(boundariesLi?.textContent).toContain('Auto-fail');
+    expect(boundariesLi?.textContent).not.toMatch(/92/); // affected tag never reads as a clean high score
+  });
+
   it('does not render QA-only domain signal when missing', async () => {
     renderDetail(qaSession());
     fireEvent.click(await screen.findByText('Jordan'));

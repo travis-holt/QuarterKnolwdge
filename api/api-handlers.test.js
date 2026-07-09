@@ -228,6 +228,30 @@ describe('buildSystemInstruction', () => {
     expect(si).toMatch(/Reveal a fact only when the navigator asks/i);
   });
 
+  it('includes requiredActions/acceptableNavigatorPaths/criticalMistakes as hidden caller-behavior guidance', () => {
+    const si = buildSystemInstruction('Maria', 'A scenario', {
+      caseFile: {
+        requestSummary: 'refill for albuterol',
+        factsToReveal: ['DOB 2019-04-02'],
+        requiredActions: ['confirm preferred pharmacy', 'route TE to PEDS Encounters'],
+        acceptableNavigatorPaths: ['read back the pharmacy to confirm'],
+        criticalMistakes: ['promise the refill will be sent today'],
+      },
+    });
+    // The behavior fields are present…
+    expect(si).toContain('confirm preferred pharmacy');
+    expect(si).toContain('read back the pharmacy to confirm');
+    expect(si).toContain('promise the refill will be sent today');
+    // …framed as hidden guidance, not as SOP answers to reveal…
+    expect(si).toMatch(/Correct handling to silently expect — never reveal this as SOP guidance/i);
+    expect(si).toMatch(/Acceptable safe paths — cooperate if the navigator follows one of these/i);
+    expect(si).toMatch(/Critical mistakes to react to naturally/i);
+    expect(si).toMatch(/ask a clarifying question or show mild confusion\/frustration, but never explain the SOP answer/i);
+    // …and the overall guardrails still stand.
+    expect(si).toMatch(/Never tell the navigator what the "correct" procedure is/i);
+    expect(si).toMatch(/Reveal a fact only when the navigator asks for it/i);
+  });
+
   it('works without a case file (backward compatible)', () => {
     const si = buildSystemInstruction('Maria', 'A scenario');
     expect(si).not.toMatch(/PRIVATE CASE NOTES/i);
