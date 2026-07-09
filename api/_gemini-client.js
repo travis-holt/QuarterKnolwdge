@@ -19,7 +19,7 @@
 
 // gemini-2.5-flash has free-tier availability on the project keys in use (2.0-flash
 // returns a free-tier limit of 0 in this region). Swap here if quota/model changes.
-export const MODEL = 'gemini-2.5-flash';
+export const MODEL = 'gemini-3.5-flash';
 
 // Overflow model. Free-tier rate limits are per MODEL per project, so when every
 // key is rate-limited on the primary model, retrying on flash-lite draws from a
@@ -27,7 +27,7 @@ export const MODEL = 'gemini-2.5-flash';
 // ("high demand") at times, so it is a cushion, not guaranteed capacity — callers
 // opt in via `models: [MODEL, LITE_MODEL]` only where a quality dip is acceptable
 // (chat roleplay turns, advisory coaching), never for scored/authoring output.
-export const LITE_MODEL = 'gemini-2.5-flash-lite';
+export const LITE_MODEL = 'gemini-3.1-flash-lite';
 
 // Per-key failures where trying a DIFFERENT key may succeed (quota / rate limit /
 // permission / transient overload). A 400 (bad request) is our bug, not the key's,

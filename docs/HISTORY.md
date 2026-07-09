@@ -1,5 +1,12 @@
 # Development History - Knowledge Check
 
+### 2026-07-09 - Gemini REST migration and 503 capacity fallback
+- **Fix:** REST Gemini calls use `gemini-3.5-flash`, with practice-call and Call QA grading
+  falling back to `gemini-3.1-flash-lite` when the primary is unavailable (503/high demand).
+  Deterministic QA rubric and score math remain unchanged; the primary model is preferred.
+- **Reason:** Rotating keys cannot resolve a model-wide capacity outage when every key returns 503.
+- **Verification:** API syntax checks, `npm test` (**548 passing**), and `npm run build` passed.
+
 ### 2026-07-09 - PR #19 review fixes: consume caseFile behavior fields + QA-domain auto-fails
 - **Context:** Two review blockers on PR #19.
 - **Blocker 1 — caseFile behavior fields unused:** `renderCaseFileNotes()` in `api/interview-turn.js`
