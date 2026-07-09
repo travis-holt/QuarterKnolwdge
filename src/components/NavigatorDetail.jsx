@@ -552,6 +552,12 @@ export default function NavigatorDetail({ rows, name, deptName, dept, deptMatrix
                 const g = session.grade ?? null;
                 const override = session.gradeOverride ?? null;
                 const qaVerdict = session.qa ? qaFinalVerdict(session) : null;
+                // AI-verdict gates for the supervisor final-review actions: a supervisor may
+                // confirm the AI verdict OR override to the opposite, never both confirms and
+                // never a confirm on a NEEDS REVIEW session (override-only, reason required).
+                const aiNeedsReview = session.qa?.review?.recommendation === 'needs_review';
+                const aiPass = qaVerdict?.aiPass === true;
+                const aiFail = qaVerdict?.aiPass === false;
                 const effectiveScore = override ? override.score : g?.score;
                 const scoreColor = g ? interviewScoreColor(effectiveScore) : undefined;
                 const isEditing = overrideId === session.id;
@@ -691,46 +697,54 @@ export default function NavigatorDetail({ rows, name, deptName, dept, deptMatrix
                                 )}
                                 {(!qaReviewed || isQaReviewEditing) ? (
                                   <div className="qa-final-review__actions">
-                                    <button
-                                      className="btn btn--ghost btn--sm"
-                                      onClick={() => submitQaReview(session, 'confirmed_pass')}
-                                      disabled={qaReviewSaving}
-                                      type="button"
-                                    >
-                                      Confirm Pass
-                                    </button>
-                                    <button
-                                      className="btn btn--ghost btn--sm"
-                                      onClick={() => submitQaReview(session, 'confirmed_fail')}
-                                      disabled={qaReviewSaving}
-                                      type="button"
-                                    >
-                                      Confirm Fail
-                                    </button>
-                                    <button
-                                      className={`btn btn--ghost btn--sm${qaReviewAction === 'overridden_pass' ? ' is-active' : ''}`}
-                                      onClick={() => {
-                                        setQaReviewEditId(session.id);
-                                        setQaReviewAction('overridden_pass');
-                                        setQaReviewError('');
-                                      }}
-                                      disabled={qaReviewSaving}
-                                      type="button"
-                                    >
-                                      Override to Pass
-                                    </button>
-                                    <button
-                                      className={`btn btn--ghost btn--sm${qaReviewAction === 'overridden_fail' ? ' is-active' : ''}`}
-                                      onClick={() => {
-                                        setQaReviewEditId(session.id);
-                                        setQaReviewAction('overridden_fail');
-                                        setQaReviewError('');
-                                      }}
-                                      disabled={qaReviewSaving}
-                                      type="button"
-                                    >
-                                      Override to Fail
-                                    </button>
+                                    {!aiNeedsReview && aiPass && (
+                                      <button
+                                        className="btn btn--ghost btn--sm"
+                                        onClick={() => submitQaReview(session, 'confirmed_pass')}
+                                        disabled={qaReviewSaving}
+                                        type="button"
+                                      >
+                                        Confirm Pass
+                                      </button>
+                                    )}
+                                    {!aiNeedsReview && aiFail && (
+                                      <button
+                                        className="btn btn--ghost btn--sm"
+                                        onClick={() => submitQaReview(session, 'confirmed_fail')}
+                                        disabled={qaReviewSaving}
+                                        type="button"
+                                      >
+                                        Confirm Fail
+                                      </button>
+                                    )}
+                                    {(!aiPass || aiNeedsReview) && (
+                                      <button
+                                        className={`btn btn--ghost btn--sm${qaReviewAction === 'overridden_pass' ? ' is-active' : ''}`}
+                                        onClick={() => {
+                                          setQaReviewEditId(session.id);
+                                          setQaReviewAction('overridden_pass');
+                                          setQaReviewError('');
+                                        }}
+                                        disabled={qaReviewSaving}
+                                        type="button"
+                                      >
+                                        Override to Pass
+                                      </button>
+                                    )}
+                                    {(aiPass || aiNeedsReview) && (
+                                      <button
+                                        className={`btn btn--ghost btn--sm${qaReviewAction === 'overridden_fail' ? ' is-active' : ''}`}
+                                        onClick={() => {
+                                          setQaReviewEditId(session.id);
+                                          setQaReviewAction('overridden_fail');
+                                          setQaReviewError('');
+                                        }}
+                                        disabled={qaReviewSaving}
+                                        type="button"
+                                      >
+                                        Override to Fail
+                                      </button>
+                                    )}
                                   </div>
                                 ) : (
                                   <button className="linkbtn qa-final-review__edit" onClick={() => openQaReviewEdit(session)} type="button">

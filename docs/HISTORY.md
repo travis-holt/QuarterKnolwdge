@@ -22,7 +22,14 @@
   `api/_qa-rubric.js` is unchanged, and this stays QA-only — it does not touch the capability matrix.**
 - **Polish:** `api/sequence-path.js` prompt now says "patient navigator learning advisor" instead of
   "clinical learning advisor".
-- **Verification:** `npm test` -> **530 passing / 27 files**; `npm run build` passed;
+- **Regression fix — QA final-review action gating restored in `NavigatorDetail.jsx`:** the branch had
+  accidentally shown Confirm Pass, Confirm Fail, Override to Pass, and Override to Fail together for
+  every unreviewed/editing QA session. Restored the AI-verdict gating (matching main): AI PASS →
+  Confirm Pass + Override to Fail only; AI FAIL → Confirm Fail + Override to Pass only; NEEDS REVIEW →
+  no confirm buttons, both overrides only (each requires a reason). The QA-only domain signal and
+  "· Auto-fail" label are unchanged. Tests in `navigatorDetail.override.test.jsx` cover all three
+  verdict states plus both reason-required overrides.
+- **Verification:** `npm test` -> **535 passing / 27 files**; `npm run build` passed;
   `git diff --check origin/main..HEAD` clean. No merge, no deploy.
 
 ### 2026-07-09 - Patient Navigator Operating Model injected into all AI endpoints
