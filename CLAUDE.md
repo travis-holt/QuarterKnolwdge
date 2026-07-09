@@ -1137,6 +1137,17 @@ of this file on 2026-07-07 to cut per-session context cost (it was ~55% of the f
   The F22 voice call (relay + Web Audio) is verified by live
   end-to-end probe rather than unit tests — audio I/O isn't unit-testable headlessly. Deeper
   per-tab role-app behaviour remains untested (the smoke tests cover shell mount + routing only).
+- **Browser E2E (Playwright):** two suites under `e2e/` and `tests/e2e/` (config: `playwright.config.js`;
+  run `npm run test:e2e`). `e2e/` holds the original deep flows (write to Firestore + call Gemini).
+  `tests/e2e/` is a **CI-safe product walkthrough + demo smoke** (`product-walkthrough.spec.js` ×12,
+  `demo-smoke.spec.js` ×3, `helpers.js`): read-only navigation of the main supervisor/navigator
+  journeys — Start gate, navigator sign-in → Pediatrics → phase hub → open MCQ (no submit) →
+  Practice Voice/Chat entry (no mic), supervisor login → shell → Overview/Matrix/Navigators/
+  Questions/SOPs → Navigator Detail. It never submits, saves, starts `getUserMedia`, or triggers a
+  live Gemini call, and skips data-backed steps gracefully when the backend is empty. Set
+  `PLAYWRIGHT_BASE_URL` to run against the live Railway URL instead of a local server; failures
+  retain screenshot + video + trace. These are separate from the Vitest suite and not part of the
+  `npm test` gate.
 - **Client fetch layer:** `src/lib/apiFetch.js` — shared helper for all `/api` calls (AbortController
   timeout, `credentials: 'same-origin'` so the supervisor session cookie rides along, Content-Type,
   error-body parsing). It **no longer injects `body.secret`** (the old public-passcode gate);

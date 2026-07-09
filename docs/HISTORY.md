@@ -1,5 +1,32 @@
 # Development History - Knowledge Check
 
+### 2026-07-09 - Playwright product walkthrough QA coverage (CI-safe, no live AI/mic)
+- **Context:** Before management demos there was no repeatable browser pass that walked the app the
+  way a supervisor/navigator would. The existing `e2e/` suite covers deep flows but writes to
+  Firestore and calls Gemini, so it is not something to run casually or in CI.
+- **Change — config:** `playwright.config.js` now discovers both `e2e/**` (original live-data
+  suite) and the new `tests/e2e/**` suite from a root `testDir`, ignores `.codex-worktrees/`,
+  `node_modules/`, and `stress/`, honours `PLAYWRIGHT_BASE_URL` (skips the local `webServer` and
+  runs against a live URL when set), and retains **screenshot + video + trace on failure**.
+- **Change — tests:** new `tests/e2e/product-walkthrough.spec.js` (12 tests) and
+  `tests/e2e/demo-smoke.spec.js` (3 tests), plus `tests/e2e/helpers.js`. The walkthrough covers:
+  Start gate → navigator role/roster gate → sign-in → pick Pediatrics → phase hub → open the MCQ
+  check (no submit) → Practice tab shows Voice/Chat entry points **without invoking the mic** →
+  supervisor login screen → wrong-passcode rejection → management shell + Overview/Matrix/
+  Navigators/Questions/SOPs tabs → open a Navigator Detail shell via a Matrix row.
+- **CI-safety guarantees:** read-only navigation only — **no** assessment submits, result saves,
+  `getUserMedia`/voice calls, or live Gemini generations. Data-backed navigator steps `test.skip`
+  gracefully when the roster is empty (a Firebase-less build); the completed-phases path opens the
+  hub via "Retake a phase" so the MCQ-entry step still runs for a fully-completed test user.
+- **Selector discipline:** role/text selectors preferred over brittle CSS. Added a `visibleWithin`
+  helper because `locator.isVisible()` samples the current state and never polls — the naive skip
+  guard was mis-reading subscription-loaded content (matrix rows, phase hub) as absent.
+- **Docs:** README gained a "Browser end-to-end tests (Playwright)" section documenting
+  `npm run test:e2e` and the `PLAYWRIGHT_BASE_URL=…` live-URL form.
+- **Verification:** `npm test` → **462 passing / 23 files**; `npm run build` clean (existing
+  Firebase chunk-size warning only); `npx playwright test tests/e2e/` → **12 passed** locally
+  against `npm start` (Firebase-backed); `git diff --check` clean. No production source changed.
+
 ### 2026-07-08 - Call QA grader receives curated scenario expectations (PR #15 review fix)
 - **Context:** PR #15 review caught that the curated scenario's `expectedActions`/`criticalMisses`
   were persisted on the interview doc but never reached `/api/grade-call-qa` — `VoiceCall` only sent
