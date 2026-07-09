@@ -11,7 +11,7 @@
 > [§8 Current System State](#8-current-system-state) and [§15 Current Priorities](#15-current-priorities)
 > accurate at all times.
 >
-> **Last updated:** 2026-07-09 (Patient Navigator Operating Model injected into all AI endpoints + roleplay caseFile threaded init→turns→voice relay; domain-tagged Call QA scoring bridge; REST Gemini model migration to 3.5 Flash with capacity fallback) ·
+> **Last updated:** 2026-07-09 (MCQ v2 operating-model question bank replaces weak active MCQs via a marker-gated archive-and-replace migration; Patient Navigator Operating Model injected into all AI endpoints + roleplay caseFile threaded init→turns→voice relay; domain-tagged Call QA scoring bridge; REST Gemini model migration to 3.5 Flash with capacity fallback) ·
 > **Doc maintainer:** Claude (AI agent) + repo owner. Assumptions are explicitly marked **[ASSUMPTION]**.
 
 ---
@@ -728,6 +728,21 @@ training assignments.
   **active** questions appear in the check; AI drafts require human activation.
 - **Status:** Complete. Owner sets `GEMINI_API_KEYS`/`GEMINI_API_KEY` + `GENERATION_SECRET` in
   Railway for deployed AI features.
+- **MCQ v2 operating-model bank (2026-07-09):** the active MCQ bank was replaced with an
+  operating-model-driven v2 bank ([src/data/questions-v2.js](src/data/questions-v2.js)) — 48
+  scenario-based MCQs (**24 Pediatrics + 24 OB/GYN, 4 per domain per department**) that test real
+  navigator decision quality (identify → authorize → classify → act/route/schedule → protect scope
+  → document → close) with realistic near-miss distractors, not SOP-wording recall. Same doc shape
+  as before, so the **capability-matrix scoring model is unchanged**. Delivered by a marker-gated,
+  once-only migration `runMcqV2OperatingModelMigration()` (`db.js`, marker
+  `contentMigrations/2026-07-mcq-v2-operating-model`): it **archives** the current active
+  generated/seed MCQs for Pediatrics + OB/GYN (`status:'archived'` + `archivedReason` /
+  `replacedByVersion` = `mcq-v2-operating-model-2026-07` + `archivedAt` — **never deletes**),
+  **preserves** manual questions (`source==='manual'`), inserts the 48 v2 items as `active`, and
+  records `archivedQuestions`/`insertedQuestions`/`departments` on the marker. It runs on the
+  supervisor question-bank effect after `runContentQualityFixesMigration` and `seedQuestionsIfEmpty`.
+  All 48 items pass the shared content guards; tests in
+  [src/data/questions-v2.test.js](src/data/questions-v2.test.js) and `src/lib/db.test.js`.
 
 ---
 
@@ -1223,8 +1238,10 @@ of this file on 2026-07-07 to cut per-session context cost (it was ~55% of the f
   now stored on every new result doc; legacy docs (pre-this-change) are skipped silently.
 - **Counts (today):** 6 domains (job-aligned 2026-07-02: intake · classification · routing ·
   scheduling · boundaries · documentation) · 9 competencies · 21 Pediatrics + 16
-  OB/GYN = **37** seed questions (bank grows in Firestore per dept) · 4 departments (**Pediatrics
-  + OB/GYN live**, 2 mockup) · **535** unit tests (27 test files) · **12** Firestore collections
+  OB/GYN = **37** seed questions (offline fallback) + the **48-item MCQ v2 operating-model bank**
+  (24 Pediatrics + 24 OB/GYN) that replaces the weak active bank via a marker-gated
+  archive-and-replace migration (bank grows in Firestore per dept) · 4 departments (**Pediatrics
+  + OB/GYN live**, 2 mockup) · **548** unit tests (28 test files) · **12** Firestore collections
   (`roster`, `results`, `resultHistory`, `questions`, `audits`, `interviews`, `completions`,
   `pairings`, `supervisorFeedback`, `learningProposals`, `sops`, `contentMigrations`) ·
   **12** REST serverless functions (`generate-scenarios`, `generate-coaching`, `interview-turn`,

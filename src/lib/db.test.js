@@ -87,7 +87,9 @@ import {
   getActiveAudits,
   activateAudit,
   runContentQualityFixesMigration,
+  runMcqV2OperatingModelMigration,
 } from './db.js';
+import { ALL_V2_QUESTIONS } from '../data/questions-v2.js';
 
 beforeEach(() => vi.clearAllMocks());
 
@@ -588,6 +590,75 @@ describe('audit bank db helpers', () => {
     mocks.getDoc.mockResolvedValue({ exists: () => true });
 
     await expect(runContentQualityFixesMigration()).resolves.toBe(false);
+
+    expect(mocks.getDocs).not.toHaveBeenCalled();
+    expect(mocks.updateDoc).not.toHaveBeenCalled();
+    expect(mocks.setDoc).not.toHaveBeenCalled();
+  });
+});
+
+describe('runMcqV2OperatingModelMigration', () => {
+  it('archives active generated/seed MCQs, preserves manual, inserts v2 active, and records counts', async () => {
+    const batch = { set: vi.fn(), commit: vi.fn().mockResolvedValue() };
+    mocks.writeBatch.mockReturnValue(batch);
+    // marker doc does not exist yet
+    mocks.getDoc.mockResolvedValue({ exists: () => false });
+    // current active question bank the migration scans + archives
+    mocks.getDocs.mockResolvedValue({
+      docs: [
+        { id: 'q-int-1', data: () => ({ status: 'active', department: 'pediatrics', source: 'seed' }) },
+        { id: 'q-obgyn-rt-2', data: () => ({ status: 'active', department: 'obgyn', source: 'gemini' }) },
+        { id: 'q-manual', data: () => ({ status: 'active', department: 'pediatrics', source: 'manual' }) },
+        { id: 'q-adult', data: () => ({ status: 'active', department: 'adult', source: 'seed' }) },
+        { id: 'q-already-archived', data: () => ({ status: 'archived', department: 'pediatrics', source: 'seed' }) },
+      ],
+    });
+    mocks.updateDoc.mockResolvedValue();
+    mocks.setDoc.mockResolvedValue();
+
+    await expect(runMcqV2OperatingModelMigration()).resolves.toBe(true);
+
+    // The two active generated/seed peds+obgyn docs are archived (not deleted).
+    expect(mocks.deleteDoc).not.toHaveBeenCalled();
+    const archivedIds = mocks.updateDoc.mock.calls.map(([ref]) => ref.id);
+    expect(archivedIds).toEqual(expect.arrayContaining(['q-int-1', 'q-obgyn-rt-2']));
+    expect(archivedIds).not.toContain('q-manual');   // manual preserved
+    expect(archivedIds).not.toContain('q-adult');     // other department untouched
+    expect(archivedIds).not.toContain('q-already-archived');
+    for (const [ref, patch] of mocks.updateDoc.mock.calls) {
+      if (ref.col !== 'questions') continue;
+      expect(patch).toMatchObject({
+        status: 'archived',
+        archivedReason: 'mcq-v2-operating-model-2026-07',
+        replacedByVersion: 'mcq-v2-operating-model-2026-07',
+      });
+    }
+
+    // All v2 questions inserted as active in a single batch.
+    expect(batch.set).toHaveBeenCalledTimes(ALL_V2_QUESTIONS.length);
+    expect(batch.set.mock.calls[0][1]).toMatchObject({
+      status: 'active',
+      source: 'mcq-v2-operating-model-2026-07',
+    });
+    expect(batch.commit).toHaveBeenCalledOnce();
+
+    // Marker records what happened.
+    expect(mocks.setDoc).toHaveBeenCalledWith(
+      { id: '2026-07-mcq-v2-operating-model', col: 'contentMigrations' },
+      expect.objectContaining({
+        version: '2026-07-mcq-v2-operating-model',
+        reason: 'mcq-v2-operating-model-2026-07',
+        archivedQuestions: 2,
+        insertedQuestions: ALL_V2_QUESTIONS.length,
+        departments: ['pediatrics', 'obgyn'],
+      })
+    );
+  });
+
+  it('does not rerun when its marker already exists', async () => {
+    mocks.getDoc.mockResolvedValue({ exists: () => true });
+
+    await expect(runMcqV2OperatingModelMigration()).resolves.toBe(false);
 
     expect(mocks.getDocs).not.toHaveBeenCalled();
     expect(mocks.updateDoc).not.toHaveBeenCalled();
