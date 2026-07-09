@@ -1,5 +1,37 @@
 # Development History - Knowledge Check
 
+### 2026-07-09 - MCQ v2 operating-model question bank replaces weak active MCQs
+- **Context:** The active MCQ bank (original seed questions + early Gemini-generated scenarios) was
+  too SOP-literal and too easy — it tested "what is the rule" instead of "what is the right decision
+  on a messy real call." With the Patient Navigator Operating Model now merged, the active bank was
+  rewritten to match it.
+- **New bank — `src/data/questions-v2.js`:** 48 scenario-based MCQs — **24 Pediatrics + 24 OB/GYN, 4
+  per domain per department** (intake · classification · routing · scheduling · boundaries ·
+  documentation). Every item tests real navigator decision quality across the eight-step decision
+  loop with realistic near-miss distractors from the mistake taxonomy (wrong chart, missing
+  authorization, wrong queue/owner, wrong appointment type/timing, clinical-advice/result-reading
+  overreach, promised approval, over-/under-escalation, incomplete documentation, multi-child
+  chart-mixing, same-name wrong-chart). Same doc shape as before (one 100-point best answer,
+  partial-credit distractors, per-option rationale, domain + competency tags) — **the capability
+  matrix scoring model is unchanged.** No new SOP facts were invented; all referenced facts already
+  existed in the seed banks / `_sop-context.js`.
+- **Marker-gated migration — `runMcqV2OperatingModelMigration()` in `src/lib/db.js`:** runs once
+  (marker `contentMigrations/2026-07-mcq-v2-operating-model`). It **archives** the current active
+  generated/seed MCQs for Pediatrics + OB/GYN (`status:'archived'`, `archivedReason` /
+  `replacedByVersion` = `mcq-v2-operating-model-2026-07`, `archivedAt`) — **never deletes** them —
+  **preserves** manual/supervisor-authored questions (`source==='manual'`), and inserts the 48 v2
+  items as `active`. The marker records `archivedQuestions`, `insertedQuestions`, `departments`, and
+  `reason`. Hooked into the SupervisorApp question-bank effect, now ordered
+  `runContentQualityFixesMigration → seedQuestionsIfEmpty → runMcqV2OperatingModelMigration` so a
+  fresh DB seeds first, then has its seed content archived and replaced.
+- **Tests:** new `src/data/questions-v2.test.js` (bank shape, unique ids, exactly one 100-point
+  option, correctOptionId integrity, every option has a rationale, dept/domain/competency tags,
+  content-guard compliance, 4-per-domain-per-department balance, and a scoring-pipeline
+  no-regression check via `scorePerDomain`/`scorePerCompetency`); `src/lib/db.test.js` extended with
+  archive-not-delete / manual-preserved / v2-inserted-active / marker-count and no-rerun cases.
+- **Verification:** `npm test` -> **548 passing / 28 files**; `npm run build` passed;
+  `git diff --check` clean. No merge, no deploy. Old questions archived, not deleted.
+
 ### 2026-07-09 - Gemini REST migration and 503 capacity fallback
 - **Fix:** REST Gemini calls use `gemini-3.5-flash`, with practice-call and Call QA grading
   falling back to `gemini-3.1-flash-lite` when the primary is unavailable (503/high demand).

@@ -50,6 +50,7 @@
 
 import { db, authReady } from './firebase.js';
 import { ALL_SEED_QUESTIONS } from '../data/questions.js';
+import { ALL_V2_QUESTIONS, V2_DEPARTMENTS, V2_VERSION } from '../data/questions-v2.js';
 import { validateQuestionContent, validateAuditContent } from './contentGuards.js';
 import {
   collection,
@@ -851,6 +852,76 @@ export async function runContentQualityFixesMigration() {
     patchedSeeds,
     archivedQuestions,
     archivedAudits,
+  });
+  return true;
+}
+
+// —— 2026-07 MCQ v2 operating-model replacement ————————————————————————————————
+
+const MCQ_V2_MARKER = '2026-07-mcq-v2-operating-model';
+const MCQ_V2_DEPTS = new Set(V2_DEPARTMENTS);
+
+/**
+ * Replace the weak active MCQ bank with the operating-model v2 question bank.
+ *
+ * Marker-gated (runs once): archives the current active generated/seed MCQs for
+ * the assessed departments (pediatrics + obgyn), then inserts the v2 questions as
+ * `active`. Old docs are ARCHIVED, never deleted — they keep their id and history
+ * and carry archive metadata (archivedReason / archivedAt / replacedByVersion).
+ * Manual/supervisor-authored questions (`source === 'manual'`) are PRESERVED.
+ *
+ * The capability-matrix scoring model is unchanged: v2 items use the same doc
+ * shape, so scoring/analytics work identically. Run it after seedQuestionsIfEmpty
+ * so a fresh database seeds first and then has its seed content archived here.
+ *
+ * @returns {Promise<boolean>} true if it ran, false if the marker already existed
+ */
+export async function runMcqV2OperatingModelMigration() {
+  await authReady;
+
+  const markerRef = doc(db, CONTENT_FIX_MIGRATIONS_COL, MCQ_V2_MARKER);
+  const markerSnap = await getDoc(markerRef);
+  if (markerSnap.exists()) return false;
+
+  // Archive the current active generated/seed MCQs for the assessed departments.
+  // Preserve manual questions and never touch the incoming v2 ids.
+  const v2Ids = new Set(ALL_V2_QUESTIONS.map((q) => q.id));
+  const snap = await getDocs(collection(db, QUESTIONS_COL));
+  let archivedQuestions = 0;
+  for (const row of snap.docs.map((d) => ({ id: d.id, ...d.data() }))) {
+    if ((row.status ?? 'active') !== 'active') continue;
+    if (!MCQ_V2_DEPTS.has(deptOf(row))) continue;
+    if (row.source === 'manual') continue;      // keep supervisor-authored content
+    if (v2Ids.has(row.id)) continue;            // never archive an incoming v2 item
+    await updateDoc(doc(db, QUESTIONS_COL, row.id), {
+      status: 'archived',
+      archivedReason: V2_VERSION,
+      archivedAt: serverTimestamp(),
+      replacedByVersion: V2_VERSION,
+    });
+    archivedQuestions += 1;
+  }
+
+  // Insert the v2 questions as active, keyed by their stable ids.
+  const batch = writeBatch(db);
+  for (const q of ALL_V2_QUESTIONS) {
+    batch.set(doc(db, QUESTIONS_COL, q.id), {
+      ...QUESTION_FIELDS(q),
+      department: q.department ?? 'pediatrics',
+      status: 'active',
+      source: V2_VERSION,
+      createdAt: serverTimestamp(),
+    });
+  }
+  await batch.commit();
+
+  await setDoc(markerRef, {
+    version: MCQ_V2_MARKER,
+    reason: V2_VERSION,
+    completedAt: serverTimestamp(),
+    archivedQuestions,
+    insertedQuestions: ALL_V2_QUESTIONS.length,
+    departments: V2_DEPARTMENTS,
   });
   return true;
 }

@@ -38,6 +38,7 @@ import {
   archiveAudit,
   deleteAudit,
   runContentQualityFixesMigration,
+  runMcqV2OperatingModelMigration,
   subscribeCompletions,
   subscribeResultHistory,
   subscribeInterviews,
@@ -134,10 +135,14 @@ export default function SupervisorApp({ onSignOut }) {
   // Question bank — seed once from the static seed, then live-subscribe.
   useEffect(() => {
     if (!isFirebaseConfigured) return undefined;
-    runContentQualityFixesMigration().catch((err) => {
-      console.error('runContentQualityFixesMigration:', err);
-    });
-    seedQuestionsIfEmpty(ALL_SEED_QUESTIONS).catch((err) => console.error('seedQuestions:', err));
+    // Ordered so a fresh DB seeds first, then has its weak seed/generated content
+    // archived and replaced by the operating-model v2 bank. Both migrations are
+    // marker-gated and run once; the live subscription reflects each write.
+    (async () => {
+      await runContentQualityFixesMigration();
+      await seedQuestionsIfEmpty(ALL_SEED_QUESTIONS);
+      await runMcqV2OperatingModelMigration();
+    })().catch((err) => console.error('question-bank migrations:', err));
     const unsub = subscribeQuestions(setQuestions, (err) => {
       console.error('subscribeQuestions:', err);
       setSubscribeError(true);
