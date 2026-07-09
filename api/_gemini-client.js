@@ -17,17 +17,19 @@
 //   { ok: false, reason: 'exhausted' }      → keys rate-limited / overloaded  → 429
 // ─────────────────────────────────────────────────────────────────────────────
 
-// gemini-2.5-flash has free-tier availability on the project keys in use (2.0-flash
-// returns a free-tier limit of 0 in this region). Swap here if quota/model changes.
-export const MODEL = 'gemini-2.5-flash';
+// REST Gemini model defaults. The old `gemini-2.5-flash` default began returning
+// 404 "model no longer available" from the Gemini API in July 2026, which broke
+// Call QA grading and every other endpoint using this shared client. Use current
+// stable Gemini 3 model names by default, while keeping server-side env overrides
+// so Railway can hot-swap models without another deploy if Google changes names.
+export const MODEL = process.env.GEMINI_MODEL || 'gemini-3.5-flash';
 
-// Overflow model. Free-tier rate limits are per MODEL per project, so when every
-// key is rate-limited on the primary model, retrying on flash-lite draws from a
-// separate quota bucket on the same keys. flash-lite free tier 503s under load
-// ("high demand") at times, so it is a cushion, not guaranteed capacity — callers
-// opt in via `models: [MODEL, LITE_MODEL]` only where a quality dip is acceptable
-// (chat roleplay turns, advisory coaching), never for scored/authoring output.
-export const LITE_MODEL = 'gemini-2.5-flash-lite';
+// Overflow model. Rate limits are per MODEL per project, so when every key is
+// rate-limited on the primary model, retrying on Flash-Lite can draw from a
+// separate quota bucket on the same keys. Callers opt in via
+// `models: [MODEL, LITE_MODEL]` only where a quality dip is acceptable (chat
+// roleplay turns, advisory coaching), never for scored/authoring output.
+export const LITE_MODEL = process.env.GEMINI_LITE_MODEL || 'gemini-3.1-flash-lite';
 
 // Per-key failures where trying a DIFFERENT key may succeed (quota / rate limit /
 // permission / transient overload). A 400 (bad request) is our bug, not the key's,
