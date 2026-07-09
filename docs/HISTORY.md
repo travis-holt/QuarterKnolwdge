@@ -1,5 +1,22 @@
 # Development History - Knowledge Check
 
+### 2026-07-08 - Call QA grader receives curated scenario expectations (PR #15 review fix)
+- **Context:** PR #15 review caught that the curated scenario's `expectedActions`/`criticalMisses`
+  were persisted on the interview doc but never reached `/api/grade-call-qa` — `VoiceCall` only sent
+  `{ scenario, transcript, department }`, so the deterministic grader graded without knowing what
+  "good" looked like for the selected call.
+- **Changes:**
+  - Added `buildCallQaGradingScenario(scenario, metadata)` in `VoiceCall.jsx` — appends a plain-text
+    "GRADING CONTEXT" block (title / workflow / difficulty + expected behaviors + critical misses)
+    to the scenario string. Endpoint already accepts a scenario string, so no rubric change.
+  - Threaded `metadata` through `runQaPersistenceSequence → gradeSavedAttempt → gradeQaRequest`;
+    generated (non-curated) calls send the original scenario unchanged.
+  - Added a component test proving curated `expectedActions`/`criticalMisses` appear in the scenario
+    passed to `gradeQaFn`, plus a focused unit test for the helper; kept the existing
+    persistence-metadata test.
+- **Verification:** `npm test` -> **462 passing / 23 files**; `npm run build` clean; `git diff --check`
+  clean.
+
 ### 2026-07-08 - Curated Call QA scenario bank
 - **Context:** Call QA persistence was reliable, but test scenarios were still generated live at
   call start, which made difficulty and coverage less controlled for management-grade assessment.
