@@ -241,6 +241,7 @@ export default function VoiceCall({ navigatorId, name, department = 'pediatrics'
   const segmentsRef  = useRef([]);          // [{role, text}] transcript, coalesced by role
   const finalRef     = useRef(null);        // { transcript, docId } kept after teardown for grade retries
   const qaScenarioMetadataRef = useRef({});
+  const caseFileRef = useRef(null); // hidden case file from a generated practice scenario, forwarded to the relay for a consistent caller
   const domain = DOMAINS.find((d) => d.id === domainId);
 
   function clearPersistenceState() {
@@ -323,6 +324,7 @@ export default function VoiceCall({ navigatorId, name, department = 'pediatrics'
     setCaptions([]);
     clearPersistenceState();
     qaScenarioMetadataRef.current = {};
+    caseFileRef.current = null;
 
     // 1) Set up the scenario + caller. Test mode uses the curated bank; practice stays generated.
     const pick = DOMAINS[Math.floor(Math.random() * DOMAINS.length)].id;
@@ -348,6 +350,7 @@ export default function VoiceCall({ navigatorId, name, department = 'pediatrics'
         const data = await apiFetch('/api/interview-turn', { domain: pick, department }, 20_000);
         scen = data.scenario; caller = data.callerName;
         opener = data.reply || '';
+        caseFileRef.current = data.caseFile ?? null;
         setScenario(scen); setCallerName(caller);
       } catch {
         setError('Could not set up the call scenario. Try again.');
@@ -409,6 +412,7 @@ export default function VoiceCall({ navigatorId, name, department = 'pediatrics'
         scenario: scen,
         department,
         openingLine: opener,
+        caseFile: caseFileRef.current,
       }));
     };
     ws.onmessage = (ev) => {
@@ -547,6 +551,7 @@ export default function VoiceCall({ navigatorId, name, department = 'pediatrics'
           scenario,
           transcript: pendingTranscript ?? [],
           department,
+          metadata: qaScenarioMetadataRef.current,
         });
         setPendingGradePayload({ docId: result.docId, grade: result.grade, qa: result.qa });
         setQa(result.qa);

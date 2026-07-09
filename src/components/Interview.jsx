@@ -38,6 +38,7 @@ export default function Interview({ navigatorId, name, department = 'pediatrics'
   const bottomRef = useRef(null);
   const inputRef  = useRef(null);
   const docIdRef  = useRef(null);   // saved interview doc, kept so a grade retry can write back
+  const caseFileRef = useRef(null); // hidden scenario case file from init, echoed back on turns so the caller stays consistent
   const domain    = DOMAINS.find((d) => d.id === domainId);
 
   useEffect(() => {
@@ -64,6 +65,7 @@ export default function Interview({ navigatorId, name, department = 'pediatrics'
       const data = await callTurnApi({ domain: pick, department }, INIT_TIMEOUT_MS);
       setScenario(data.scenario);
       setCallerName(data.callerName);
+      caseFileRef.current = data.caseFile ?? null;
       setTranscript([{ role: 'patient', text: data.reply }]);
       setPhase('active');
     } catch (err) {
@@ -84,7 +86,7 @@ export default function Interview({ navigatorId, name, department = 'pediatrics'
     setTranscript(withNav);
     try {
       const data = await callTurnApi(
-        { domain: domainId, department, scenario, callerName, history: transcript, navigatorMessage: text },
+        { domain: domainId, department, scenario, callerName, caseFile: caseFileRef.current, history: transcript, navigatorMessage: text },
         TURN_TIMEOUT_MS
       );
       setTranscript([...withNav, { role: 'patient', text: data.reply }]);

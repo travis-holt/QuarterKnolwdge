@@ -57,25 +57,27 @@ function qaSession(extra = {}) {
   });
 }
 
+// AI FAIL: a confident sub-threshold verdict.
 function qaFailSession(extra = {}) {
   return qaSession({
     qa: {
       pass: false,
-      score: 74,
+      score: 40,
       passThreshold: 85,
-      review: { recommendation: 'fail', confidence: 'high', safetyRisk: 'none', reviewFlags: [] },
+      review: { recommendation: 'fail', confidence: 'high', safetyRisk: 'high', reviewFlags: [] },
     },
     ...extra,
   });
 }
 
+// AI NEEDS REVIEW: borderline / low-confidence — supervisor must decide (override-only).
 function qaNeedsReviewSession(extra = {}) {
   return qaSession({
     qa: {
-      pass: true,
+      pass: false,
       score: 84,
       passThreshold: 85,
-      review: { recommendation: 'needs_review', confidence: 'medium', safetyRisk: 'elevated', reviewFlags: [] },
+      review: { recommendation: 'needs_review', confidence: 'low', safetyRisk: 'medium', reviewFlags: ['borderline-score'] },
     },
     ...extra,
   });
@@ -169,6 +171,100 @@ describe('NavigatorDetail — supervisor grade override', () => {
     expect(screen.getByText('Pending')).toBeInTheDocument();
   });
 
+  it('renders QA-only domain signal when QA domain scores exist', async () => {
+    renderDetail(qaSession({
+      qa: {
+        pass: true,
+        score: 92,
+        passThreshold: 85,
+        review: { recommendation: 'pass', confidence: 'high', safetyRisk: 'none', reviewFlags: [] },
+        domainScores: {
+          intake: { score: 92 },
+          classification: { score: 80 },
+          routing: { score: 70 },
+          scheduling: null,
+          boundaries: { score: 100 },
+          documentation: { score: 85 },
+        },
+      },
+    }));
+    fireEvent.click(await screen.findByText('Jordan'));
+    expect(await screen.findByText('QA-only domain signal')).toBeInTheDocument();
+    expect(screen.getByText(/Call Opening & Identification:/).closest('li')?.textContent).toContain('92');
+    expect(screen.getByText(/Scheduling & Appointment Rules:/).closest('li')?.textContent).toContain('—');
+  });
+
+  it('labels an auto-failed domain in the QA-only domain signal', async () => {
+    renderDetail(qaSession({
+      qa: {
+        pass: false,
+        score: 0,
+        passThreshold: 85,
+        review: { recommendation: 'fail', confidence: 'high', safetyRisk: 'high', reviewFlags: [] },
+        domainScores: {
+          intake: { score: 92 },
+          boundaries: { score: 0, earned: 0, possible: 6, criteria: ['verify-three'], autoFailed: true, autoFails: [{ id: 'af-scope', text: 'Read lab/imaging results...' }] },
+        },
+      },
+    }));
+    fireEvent.click(await screen.findByText('Jordan'));
+    expect(await screen.findByText('QA-only domain signal')).toBeInTheDocument();
+    const boundariesLi = screen.getByText(/Scope & Privacy:/).closest('li');
+    expect(boundariesLi?.textContent).toContain('Auto-fail');
+    expect(boundariesLi?.textContent).not.toMatch(/92/); // affected tag never reads as a clean high score
+  });
+
+  it('does not render QA-only domain signal when missing', async () => {
+    renderDetail(qaSession());
+    fireEvent.click(await screen.findByText('Jordan'));
+    expect(screen.queryByText('QA-only domain signal')).not.toBeInTheDocument();
+  });
+
+  it('AI PASS shows only Confirm Pass + Override to Fail', async () => {
+    renderDetail(qaSession());
+    fireEvent.click(await screen.findByText('Jordan'));
+    expect(screen.getByRole('button', { name: 'Confirm Pass' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Override to Fail' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Confirm Fail' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Override to Pass' })).not.toBeInTheDocument();
+  });
+
+  it('AI FAIL shows only Confirm Fail + Override to Pass', async () => {
+    renderDetail(qaFailSession());
+    fireEvent.click(await screen.findByText('Jordan'));
+    expect(screen.getByRole('button', { name: 'Confirm Fail' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Override to Pass' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Confirm Pass' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Override to Fail' })).not.toBeInTheDocument();
+  });
+
+  it('AI NEEDS REVIEW hides both confirm buttons and shows both override actions', async () => {
+    renderDetail(qaNeedsReviewSession());
+    fireEvent.click(await screen.findByText('Jordan'));
+    expect(screen.queryByRole('button', { name: 'Confirm Pass' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Confirm Fail' })).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Override to Pass' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Override to Fail' })).toBeInTheDocument();
+  });
+
+  it('NEEDS REVIEW: Override to Pass requires a reason', async () => {
+    renderDetail(qaNeedsReviewSession());
+    fireEvent.click(await screen.findByText('Jordan'));
+    fireEvent.click(screen.getByRole('button', { name: 'Override to Pass' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Save final review' }));
+    expect(await screen.findByText(/reason is required for overrides/i)).toBeInTheDocument();
+    expect(dbMocks.updateQaFinalReview).not.toHaveBeenCalled();
+  });
+
+  it('NEEDS REVIEW: Override to Fail requires a reason', async () => {
+    renderDetail(qaNeedsReviewSession());
+    fireEvent.click(await screen.findByText('Jordan'));
+    fireEvent.click(screen.getByRole('button', { name: 'Override to Fail' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Save final review' }));
+    expect(await screen.findByText(/reason is required for overrides/i)).toBeInTheDocument();
+    expect(dbMocks.updateQaFinalReview).not.toHaveBeenCalled();
+  });
+
   it('Confirm Pass calls updateQaFinalReview with confirmed_pass', async () => {
     dbMocks.updateQaFinalReview.mockResolvedValue();
     renderDetail(qaSession());
@@ -183,20 +279,21 @@ describe('NavigatorDetail — supervisor grade override', () => {
     expect(await screen.findByText('FINAL PASS')).toBeInTheDocument();
   });
 
-  it('AI PASS shows only Confirm Pass plus Override to Fail, and override fail still requires reason', async () => {
-    renderDetail(qaSession());
+  it('Confirm Fail (AI FAIL) calls updateQaFinalReview with confirmed_fail', async () => {
+    dbMocks.updateQaFinalReview.mockResolvedValue();
+    renderDetail(qaFailSession());
     fireEvent.click(await screen.findByText('Jordan'));
-    expect(screen.getByRole('button', { name: 'Confirm Pass' })).toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: 'Confirm Fail' })).not.toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Override to Fail' })).toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: 'Override to Pass' })).not.toBeInTheDocument();
-    fireEvent.click(screen.getByRole('button', { name: 'Override to Fail' }));
-    fireEvent.click(screen.getByRole('button', { name: 'Save final review' }));
-    expect(await screen.findByText(/reason is required for overrides/i)).toBeInTheDocument();
-    expect(dbMocks.updateQaFinalReview).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole('button', { name: 'Confirm Fail' }));
+    await waitFor(() =>
+      expect(dbMocks.updateQaFinalReview).toHaveBeenCalledWith('qa-1', {
+        status: 'confirmed_fail',
+        reason: '',
+      })
+    );
+    expect(await screen.findByText('FINAL FAIL')).toBeInTheDocument();
   });
 
-  it('Override to Fail calls updateQaFinalReview with overridden_fail and reason', async () => {
+  it('Override to Fail (AI PASS) calls updateQaFinalReview with overridden_fail and reason', async () => {
     dbMocks.updateQaFinalReview.mockResolvedValue();
     renderDetail(qaSession());
     fireEvent.click(await screen.findByText('Jordan'));
@@ -212,39 +309,6 @@ describe('NavigatorDetail — supervisor grade override', () => {
       })
     );
     expect(await screen.findByText('OVERRIDDEN FAIL')).toBeInTheDocument();
-  });
-
-  it('AI FAIL shows only Confirm Fail plus Override to Pass, and override pass still requires reason', async () => {
-    renderDetail(qaFailSession());
-    fireEvent.click(await screen.findByText('Jordan'));
-    expect(screen.getByRole('button', { name: 'Confirm Fail' })).toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: 'Confirm Pass' })).not.toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Override to Pass' })).toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: 'Override to Fail' })).not.toBeInTheDocument();
-    fireEvent.click(screen.getByRole('button', { name: 'Override to Pass' }));
-    fireEvent.click(screen.getByRole('button', { name: 'Save final review' }));
-    expect(await screen.findByText(/reason is required for overrides/i)).toBeInTheDocument();
-    expect(dbMocks.updateQaFinalReview).not.toHaveBeenCalled();
-  });
-
-  it('AI NEEDS REVIEW hides both confirm buttons and both overrides require reason', async () => {
-    renderDetail(qaNeedsReviewSession());
-    fireEvent.click(await screen.findByText('Jordan'));
-    expect(screen.queryByRole('button', { name: 'Confirm Pass' })).not.toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: 'Confirm Fail' })).not.toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Override to Pass' })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Override to Fail' })).toBeInTheDocument();
-
-    fireEvent.click(screen.getByRole('button', { name: 'Override to Pass' }));
-    fireEvent.click(screen.getByRole('button', { name: 'Save final review' }));
-    expect(await screen.findByText(/reason is required for overrides/i)).toBeInTheDocument();
-    expect(dbMocks.updateQaFinalReview).not.toHaveBeenCalled();
-
-    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
-    fireEvent.click(screen.getByRole('button', { name: 'Override to Fail' }));
-    fireEvent.click(screen.getByRole('button', { name: 'Save final review' }));
-    expect(await screen.findByText(/reason is required for overrides/i)).toBeInTheDocument();
-    expect(dbMocks.updateQaFinalReview).not.toHaveBeenCalled();
   });
 
   it('saved final review appears in the session panel', async () => {

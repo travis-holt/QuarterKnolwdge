@@ -6,6 +6,7 @@
 import { validateSecret } from './_auth.js';
 import { geminiWithRotation, getApiKeys, rotationFailure } from './_gemini-client.js';
 import { sopContextForFresh } from './_sop-context.js';
+import { navigatorContextBlock } from './_navigator-operating-model.js';
 
 const VALID_KINDS = ['coaching', 'practice', 'interview', 'module', 'minicheck'];
 
@@ -44,7 +45,9 @@ export default async function handler(req, res) {
     interviews.length > 0 ? `Practice calls: ${interviews.slice(0, 8).map((iv) => `${iv.domainId}:${iv.grade?.score ?? 'ungraded'}/100`).join(', ')}` : '',
   ].filter(Boolean).join('\n') || 'No completion or practice-call evidence provided.';
 
-  const prompt = `You are a clinical learning advisor for a contact-centre patient navigator team.
+  const prompt = `You are a patient navigator learning advisor for a contact-centre patient navigator team.
+
+${navigatorContextBlock({ department, mode: 'learning-path' })}
 
 Navigator: ${name}
 Domains needing development:

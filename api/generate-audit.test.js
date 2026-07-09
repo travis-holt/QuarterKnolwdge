@@ -7,7 +7,8 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { describe, it, expect } from 'vitest';
-import { validateAuditResponse } from './generate-audit.js';
+import { validateAuditResponse, buildPrompt } from './generate-audit.js';
+import { DOMAINS } from '../src/data/questions.js';
 
 // ── helpers ──────────────────────────────────────────────────────────────────
 
@@ -146,5 +147,21 @@ describe('validateAuditResponse', () => {
   it('handles a null / undefined input gracefully', () => {
     expect(validateAuditResponse(null).error).toMatch(/incomplete transcript/);
     expect(validateAuditResponse(undefined).error).toMatch(/incomplete transcript/);
+  });
+});
+
+describe('buildPrompt (generate-audit)', () => {
+  const domain = DOMAINS[0];
+
+  it('no longer instructs "correct lookup order" and asks for safe chart identification', () => {
+    const prompt = buildPrompt(domain, 'pediatrics', 'wf', [], 'SOP');
+    expect(prompt).not.toMatch(/correct lookup order/i);
+    expect(prompt).toMatch(/correct patient\/chart safely/i);
+  });
+
+  it('injects the navigator operating model', () => {
+    const prompt = buildPrompt(domain, 'pediatrics', 'wf', [], 'SOP');
+    expect(prompt).toMatch(/OPERATING MODEL/i);
+    expect(prompt).toMatch(/DECISION LOOP/i);
   });
 });

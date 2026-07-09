@@ -23,6 +23,14 @@ function formatDate(ts) {
   return date.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
 }
 
+function qaSignalLabel(detail) {
+  if (!detail || typeof detail.score !== 'number') return '—';
+  // A verified auto-fail zeroes the domain/competency — surface it explicitly so a
+  // supervisor can never read an affected tag as a clean score. QA-only signal.
+  if (detail.autoFailed) return `${detail.score} · Auto-fail`;
+  return `${detail.score}`;
+}
+
 // completedDomains: Set<domainId> — domains where the navigator has practiced a
 // "Spot the Error" scenario (supervisor view passes this from completionMap).
 // completions: full completion records for training impact and evidence dossier.
@@ -544,6 +552,9 @@ export default function NavigatorDetail({ rows, name, deptName, dept, deptMatrix
                 const g = session.grade ?? null;
                 const override = session.gradeOverride ?? null;
                 const qaVerdict = session.qa ? qaFinalVerdict(session) : null;
+                // AI-verdict gates for the supervisor final-review actions: a supervisor may
+                // confirm the AI verdict OR override to the opposite, never both confirms and
+                // never a confirm on a NEEDS REVIEW session (override-only, reason required).
                 const aiNeedsReview = session.qa?.review?.recommendation === 'needs_review';
                 const aiPass = qaVerdict?.aiPass === true;
                 const aiFail = qaVerdict?.aiPass === false;
@@ -770,6 +781,18 @@ export default function NavigatorDetail({ rows, name, deptName, dept, deptMatrix
                                 {qaReviewError && !(qaReviewAction.startsWith('overridden_') && isQaReviewEditing) && (
                                   <p className="grade-override__error">{qaReviewError}</p>
                                 )}
+                              </div>
+                            )}
+                            {session.qa?.domainScores && (
+                              <div className="interview-log__grade-section">
+                                <p className="interview-log__grade-heading">QA-only domain signal</p>
+                                <ul>
+                                  {DOMAINS.map((domain) => (
+                                    <li key={domain.id}>
+                                      <strong>{domainName(domain.id)}:</strong> {qaSignalLabel(session.qa.domainScores[domain.id])}
+                                    </li>
+                                  ))}
+                                </ul>
                               </div>
                             )}
                             {g.strengths?.length > 0 && (

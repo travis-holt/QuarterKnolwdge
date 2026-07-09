@@ -8,9 +8,10 @@
 
 import { describe, it, expect } from 'vitest';
 
-import { sanitize }             from './generate-scenarios.js';
+import { sanitize, buildPrompt as buildScenarioPrompt } from './generate-scenarios.js';
 import { buildDigest }          from './generate-coaching.js';
-import { buildSystemInstruction, buildContents } from './interview-turn.js';
+import { buildSystemInstruction, buildContents, coerceCaseFile } from './interview-turn.js';
+import { buildMessages as buildQaMessages } from './grade-call-qa.js';
 
 import { COMPETENCIES }  from '../src/data/competencies.js';
 import { DOMAINS }       from '../src/data/questions.js';
@@ -207,6 +208,105 @@ describe('buildSystemInstruction', () => {
     });
     expect(si).toContain('Hi, I need help scheduling my prenatal visit.');
     expect(si).toContain('first spoken turn');
+  });
+
+  it('injects the roleplay-caller operating model guidance', () => {
+    const si = buildSystemInstruction('Maria', 'A scenario');
+    expect(si).toMatch(/ROLEPLAY AS THE CALLER/i);
+  });
+
+  it('renders hidden case notes without leaking the correct SOP answer', () => {
+    const si = buildSystemInstruction('Maria', 'A scenario', {
+      caseFile: {
+        requestSummary: 'refill for albuterol',
+        factsToReveal: ['DOB 2019-04-02', 'CVS on Main St'],
+        emotionalTone: 'worried',
+      },
+    });
+    expect(si).toMatch(/PRIVATE CASE NOTES/i);
+    expect(si).toContain('refill for albuterol');
+    expect(si).toMatch(/Reveal a fact only when the navigator asks/i);
+  });
+
+  it('includes requiredActions/acceptableNavigatorPaths/criticalMistakes as hidden caller-behavior guidance', () => {
+    const si = buildSystemInstruction('Maria', 'A scenario', {
+      caseFile: {
+        requestSummary: 'refill for albuterol',
+        factsToReveal: ['DOB 2019-04-02'],
+        requiredActions: ['confirm preferred pharmacy', 'route TE to PEDS Encounters'],
+        acceptableNavigatorPaths: ['read back the pharmacy to confirm'],
+        criticalMistakes: ['promise the refill will be sent today'],
+      },
+    });
+    // The behavior fields are present…
+    expect(si).toContain('confirm preferred pharmacy');
+    expect(si).toContain('read back the pharmacy to confirm');
+    expect(si).toContain('promise the refill will be sent today');
+    // …framed as hidden guidance, not as SOP answers to reveal…
+    expect(si).toMatch(/Correct handling to silently expect — never reveal this as SOP guidance/i);
+    expect(si).toMatch(/Acceptable safe paths — cooperate if the navigator follows one of these/i);
+    expect(si).toMatch(/Critical mistakes to react to naturally/i);
+    expect(si).toMatch(/ask a clarifying question or show mild confusion\/frustration, but never explain the SOP answer/i);
+    // …and the overall guardrails still stand.
+    expect(si).toMatch(/Never tell the navigator what the "correct" procedure is/i);
+    expect(si).toMatch(/Reveal a fact only when the navigator asks for it/i);
+  });
+
+  it('works without a case file (backward compatible)', () => {
+    const si = buildSystemInstruction('Maria', 'A scenario');
+    expect(si).not.toMatch(/PRIVATE CASE NOTES/i);
+  });
+});
+
+// ── coerceCaseFile ────────────────────────────────────────────────────────────
+
+describe('coerceCaseFile', () => {
+  it('returns null for absent/empty case files', () => {
+    expect(coerceCaseFile(null)).toBeNull();
+    expect(coerceCaseFile({})).toBeNull();
+    expect(coerceCaseFile('x')).toBeNull();
+  });
+
+  it('coerces arrays and strings and keeps a meaningful record', () => {
+    const cf = coerceCaseFile({
+      workflowType: ' refill ',
+      requestSummary: 'needs a refill',
+      requiredActions: ['ask pharmacy', 42],
+      factsToReveal: ['DOB'],
+    });
+    expect(cf.workflowType).toBe('refill');
+    expect(cf.requiredActions).toEqual(['ask pharmacy', '42']);
+    expect(cf.factsToReveal).toEqual(['DOB']);
+  });
+});
+
+// ── generate-scenarios prompt ─────────────────────────────────────────────────
+
+describe('buildScenarioPrompt (generate-scenarios)', () => {
+  it('injects the navigator operating model and mistake types', () => {
+    const prompt = buildScenarioPrompt(DOMAINS[0], 3, 'pediatrics', 'SOP');
+    expect(prompt).toMatch(/OPERATING MODEL/i);
+    expect(prompt).toMatch(/DECISION LOOP/i);
+    expect(prompt).toMatch(/MISTAKE TYPES/i);
+  });
+
+  it('keeps the content guards against lookup-order-only and refill/PE hard-stop content', () => {
+    const prompt = buildScenarioPrompt(DOMAINS[0], 3, 'pediatrics', 'SOP');
+    expect(prompt).toMatch(/phone number before date of birth/i);
+    expect(prompt).toMatch(/do NOT require PE verification/i);
+  });
+});
+
+// ── grade-call-qa prompt ──────────────────────────────────────────────────────
+
+describe('buildQaMessages (grade-call-qa)', () => {
+  it('injects the qa-grading operating model before the SOP context', () => {
+    const { systemInstruction } = buildQaMessages('A scenario', [{ role: 'navigator', text: 'Hi' }], 'pediatrics', 'ZZ_SOP_BODY_MARKER');
+    expect(systemInstruction).toMatch(/OPERATING MODEL/i);
+    const opIdx = systemInstruction.indexOf('OPERATING MODEL');
+    const sopBodyIdx = systemInstruction.indexOf('ZZ_SOP_BODY_MARKER');
+    expect(opIdx).toBeGreaterThan(-1);
+    expect(opIdx).toBeLessThan(sopBodyIdx);
   });
 });
 

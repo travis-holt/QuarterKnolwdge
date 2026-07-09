@@ -23,6 +23,7 @@
 import { DOMAINS } from '../src/data/questions.js';
 import { departmentName } from '../src/data/departments.js';
 import { sopContextFor, sopContextForFresh } from './_sop-context.js';
+import { navigatorContextBlock } from './_navigator-operating-model.js';
 import { getApiKeys, geminiWithRotation, rotationFailure, MODEL, LITE_MODEL } from './_gemini-client.js';
 
 // Roleplay is conversational, not scored — a lighter model beats a 429 for the
@@ -33,15 +34,59 @@ import { validateSecret } from './_auth.js';
 
 // ── Schema for the init call ──────────────────────────────────────────────────
 
+// The init call also returns a hidden `caseFile`: a small structured record of
+// the scenario's facts and expectations so the roleplay caller stays consistent
+// and the client can (optionally) carry it internally. It is NOT an answer key
+// shown to the navigator — the caller reveals facts only when asked and never
+// volunteers the correct SOP action.
+const CASE_FILE_SCHEMA = {
+  type: 'OBJECT',
+  properties: {
+    workflowType:            { type: 'STRING' },
+    patientType:             { type: 'STRING' },
+    callerRelationship:      { type: 'STRING' },
+    requestSummary:          { type: 'STRING' },
+    requiredActions:         { type: 'ARRAY', items: { type: 'STRING' } },
+    acceptableNavigatorPaths:{ type: 'ARRAY', items: { type: 'STRING' } },
+    criticalMistakes:        { type: 'ARRAY', items: { type: 'STRING' } },
+    factsToReveal:           { type: 'ARRAY', items: { type: 'STRING' } },
+    emotionalTone:           { type: 'STRING' },
+    difficulty:              { type: 'STRING' },
+  },
+};
+
 const INIT_SCHEMA = {
   type: 'OBJECT',
   properties: {
     scenario:    { type: 'STRING' },
     callerName:  { type: 'STRING' },
     openingLine: { type: 'STRING' },
+    caseFile:    CASE_FILE_SCHEMA,
   },
   required: ['scenario', 'callerName', 'openingLine'],
 };
+
+// Coerce a raw caseFile into a safe shape, or null if absent/unusable. Kept pure
+// and exported so the contract is unit-testable.
+export function coerceCaseFile(raw) {
+  if (!raw || typeof raw !== 'object') return null;
+  const str = (v) => (typeof v === 'string' ? v.trim() : '');
+  const arr = (v) => (Array.isArray(v) ? v.map(String).map((s) => s.trim()).filter(Boolean) : []);
+  const cf = {
+    workflowType:             str(raw.workflowType),
+    patientType:              str(raw.patientType),
+    callerRelationship:       str(raw.callerRelationship),
+    requestSummary:           str(raw.requestSummary),
+    requiredActions:          arr(raw.requiredActions),
+    acceptableNavigatorPaths: arr(raw.acceptableNavigatorPaths),
+    criticalMistakes:         arr(raw.criticalMistakes),
+    factsToReveal:            arr(raw.factsToReveal),
+    emotionalTone:            str(raw.emotionalTone),
+    difficulty:               str(raw.difficulty),
+  };
+  // Require at least a request summary or workflow type to be meaningful.
+  return cf.requestSummary || cf.workflowType ? cf : null;
+}
 
 // ── Prompts ───────────────────────────────────────────────────────────────────
 
@@ -50,6 +95,8 @@ function buildInitPrompt(domain, department, sopContext = sopContextFor(departme
 
 Domain: "${domain.name}" — ${domain.blurb}
 
+${navigatorContextBlock({ department, mode: 'roleplay-init' })}
+
 Using ONLY facts grounded in the SOP reference below, generate:
 - "scenario": 2 sentences the NAVIGATOR reads before the call. Be specific: reference actual
   visit types, timing rules, routing queues, or insurance rules from the SOP. This tells the
@@ -57,6 +104,19 @@ Using ONLY facts grounded in the SOP reference below, generate:
 - "callerName": a realistic first name for the caller (patient or caregiver).
 - "openingLine": the caller's natural first sentence when the navigator picks up. Keep it brief
   (1-2 sentences) — callers don't over-explain upfront.
+- "caseFile": a HIDDEN structured record of this call so the caller stays consistent (the
+  navigator never sees it — do not put the correct SOP answer in the scenario or opening line):
+    - "workflowType": short label for the request type (e.g. "prescription_refill", "new_ob_visit").
+    - "patientType": e.g. "established pediatric patient", "new OB patient", "non-pregnant GYN".
+    - "callerRelationship": who is calling relative to the patient (self, parent, caregiver).
+    - "requestSummary": one plain sentence describing what the caller actually needs.
+    - "requiredActions": the navigator behaviors that make this call correct per the SOP.
+    - "acceptableNavigatorPaths": reasonable variations that still reach a safe, correct outcome.
+    - "criticalMistakes": handling that would make this call wrong or unsafe.
+    - "factsToReveal": concrete facts (name, DOB, medication, pharmacy, symptoms/onset, gestational
+      age, insurance) the caller knows and will share ONLY when asked.
+    - "emotionalTone": e.g. "calm", "worried", "rushed", "frustrated".
+    - "difficulty": one of easy, medium, hard.
 
 Vary the difficulty. Mix normal situations, edge cases, insurance nuances, and routing exceptions
 drawn from the SOP. Write everything in English.
@@ -73,16 +133,51 @@ SOP REFERENCE:
 ${sopContext}`;
 }
 
+// Render the hidden case file into private caller notes. These stay in the system
+// instruction only — the caller uses them to answer consistently and react
+// naturally; they are never spoken verbatim and never reveal the correct SOP action.
+function renderCaseFileNotes(caseFile) {
+  const cf = coerceCaseFile(caseFile);
+  if (!cf) return '';
+  const lines = [];
+  if (cf.patientType) lines.push(`- Patient: ${cf.patientType}`);
+  if (cf.callerRelationship) lines.push(`- You are calling as: ${cf.callerRelationship}`);
+  if (cf.requestSummary) lines.push(`- What you actually need: ${cf.requestSummary}`);
+  if (cf.factsToReveal.length) lines.push(`- Facts you know (share ONLY when asked): ${cf.factsToReveal.join('; ')}`);
+  if (cf.emotionalTone) lines.push(`- Your mood: ${cf.emotionalTone}`);
+  // Hidden caller-behavior guidance. These shape how you REACT to the navigator's
+  // handling — they are never spoken and never turned into SOP coaching.
+  if (cf.requiredActions.length) {
+    lines.push(`- Correct handling to silently expect — never reveal this as SOP guidance: ${cf.requiredActions.join('; ')}`);
+  }
+  if (cf.acceptableNavigatorPaths.length) {
+    lines.push(`- Acceptable safe paths — cooperate if the navigator follows one of these: ${cf.acceptableNavigatorPaths.join('; ')}`);
+  }
+  if (cf.criticalMistakes.length) {
+    lines.push(`- Critical mistakes to react to naturally — if the navigator does one of these, ask a clarifying question or show mild confusion/frustration, but never explain the SOP answer: ${cf.criticalMistakes.join('; ')}`);
+  }
+  if (!lines.length) return '';
+  return `
+
+YOUR PRIVATE CASE NOTES (never read these aloud; use them to stay consistent):
+${lines.join('\n')}
+Stay strictly consistent with these facts. Reveal a fact only when the navigator asks for it.
+Never tell the navigator what the "correct" procedure is — you are the caller, not their coach.`;
+}
+
 export function buildSystemInstruction(callerName, scenario, options = {}) {
   const department = options.department ?? 'pediatrics';
   const deptName = departmentName(department);
   const openingLine = options.openingLine?.trim();
+  const caseNotes = renderCaseFileNotes(options.caseFile);
 
   return `You are ${callerName}, a patient, parent/guardian, or caregiver calling the Aizer Health ${deptName} contact centre.
 
 Your situation: ${scenario}
 Department: ${deptName}
-${openingLine ? `Opening line: when the call begins, your first spoken turn must be this line or a natural very close variation: "${openingLine}"` : ''}
+${openingLine ? `Opening line: when the call begins, your first spoken turn must be this line or a natural very close variation: "${openingLine}"` : ''}${caseNotes}
+
+${navigatorContextBlock({ department, mode: 'roleplay-caller' })}
 
 Rules:
 - Stay in character as the caller throughout. Never break character or acknowledge this is training.
@@ -137,6 +232,7 @@ export default async function handler(req, res) {
     history = [],
     navigatorMessage,
     department = 'pediatrics',
+    caseFile,
   } = req.body ?? {};
 
   const domain = DOMAINS.find((d) => d.id === domainId);
@@ -171,6 +267,7 @@ export default async function handler(req, res) {
       scenario:    parsed.scenario.trim(),
       callerName:  parsed.callerName.trim(),
       reply:       parsed.openingLine.trim(),
+      caseFile:    coerceCaseFile(parsed.caseFile), // hidden; client may carry it back on turns
     });
   }
 
@@ -180,7 +277,7 @@ export default async function handler(req, res) {
   }
 
   const body = {
-    system_instruction: { parts: [{ text: buildSystemInstruction(callerName, scenario, { department }) }] },
+    system_instruction: { parts: [{ text: buildSystemInstruction(callerName, scenario, { department, caseFile }) }] },
     contents: buildContents(history, navigatorMessage.trim()),
     generationConfig: { temperature: 0.5 },
   };
