@@ -8,8 +8,8 @@
   suite) and the new `tests/e2e/**` suite from a root `testDir`, ignores `.codex-worktrees/`,
   `node_modules/`, and `stress/`, honours `PLAYWRIGHT_BASE_URL` (skips the local `webServer` and
   runs against a live URL when set), and retains **screenshot + video + trace on failure**.
-- **Change — tests:** new `tests/e2e/product-walkthrough.spec.js` (12 tests) and
-  `tests/e2e/demo-smoke.spec.js` (3 tests), plus `tests/e2e/helpers.js`. The walkthrough covers:
+- **Change — tests:** new `tests/e2e/product-walkthrough.spec.js` (9 tests) and
+  `tests/e2e/demo-smoke.spec.js` (3 tests) — **12 tests total** — plus `tests/e2e/helpers.js`. The walkthrough covers:
   Start gate → navigator role/roster gate → sign-in → pick Pediatrics → phase hub → open the MCQ
   check (no submit) → Practice tab shows Voice/Chat entry points **without invoking the mic** →
   supervisor login screen → wrong-passcode rejection → management shell + Overview/Matrix/

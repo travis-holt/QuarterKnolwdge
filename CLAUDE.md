@@ -1139,8 +1139,8 @@ of this file on 2026-07-07 to cut per-session context cost (it was ~55% of the f
   per-tab role-app behaviour remains untested (the smoke tests cover shell mount + routing only).
 - **Browser E2E (Playwright):** two suites under `e2e/` and `tests/e2e/` (config: `playwright.config.js`;
   run `npm run test:e2e`). `e2e/` holds the original deep flows (write to Firestore + call Gemini).
-  `tests/e2e/` is a **CI-safe product walkthrough + demo smoke** (`product-walkthrough.spec.js` ×12,
-  `demo-smoke.spec.js` ×3, `helpers.js`): read-only navigation of the main supervisor/navigator
+  `tests/e2e/` is a **CI-safe product walkthrough + demo smoke** (`product-walkthrough.spec.js` ×9,
+  `demo-smoke.spec.js` ×3 — 12 total, `helpers.js`): read-only navigation of the main supervisor/navigator
   journeys — Start gate, navigator sign-in → Pediatrics → phase hub → open MCQ (no submit) →
   Practice Voice/Chat entry (no mic), supervisor login → shell → Overview/Matrix/Navigators/
   Questions/SOPs → Navigator Detail. It never submits, saves, starts `getUserMedia`, or triggers a
