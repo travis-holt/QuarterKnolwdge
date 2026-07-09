@@ -71,6 +71,7 @@ import {
   clearResult,
   archiveQaAttempts,
   saveInterview,
+  updateQaFinalReview,
   getRoster,
   subscribeRoster,
   seedQuestionsIfEmpty,
@@ -300,6 +301,57 @@ describe('saveInterview', () => {
     await saveInterview('nav-id', 'Ada', 'routing', 'Scenario', 'Caller', [], 'pediatrics', metadata);
 
     expect(mocks.setDoc.mock.calls[0][1]).toMatchObject(metadata);
+  });
+});
+
+describe('updateQaFinalReview', () => {
+  it('writes confirmed_pass with finalPass true', async () => {
+    mocks.updateDoc.mockResolvedValue();
+    await updateQaFinalReview('iv-1', { status: 'confirmed_pass' });
+    expect(mocks.updateDoc).toHaveBeenCalledWith(
+      { id: 'iv-1', col: 'interviews' },
+      {
+        qaFinalReview: {
+          status: 'confirmed_pass',
+          finalPass: true,
+          reason: '',
+          reviewedAt: '__ts__',
+          reviewedBy: 'supervisor',
+        },
+      }
+    );
+  });
+
+  it('writes confirmed_fail with finalPass false', async () => {
+    mocks.updateDoc.mockResolvedValue();
+    await updateQaFinalReview('iv-1', { status: 'confirmed_fail' });
+    expect(mocks.updateDoc.mock.calls[0][1].qaFinalReview.finalPass).toBe(false);
+  });
+
+  it('writes overridden_pass with required reason and finalPass true', async () => {
+    mocks.updateDoc.mockResolvedValue();
+    await updateQaFinalReview('iv-1', { status: 'overridden_pass', reason: 'Navigator routed correctly.' });
+    expect(mocks.updateDoc.mock.calls[0][1]).toEqual({
+      qaFinalReview: {
+        status: 'overridden_pass',
+        finalPass: true,
+        reason: 'Navigator routed correctly.',
+        reviewedAt: '__ts__',
+        reviewedBy: 'supervisor',
+      },
+    });
+  });
+
+  it('rejects override with empty reason', async () => {
+    await expect(updateQaFinalReview('iv-1', { status: 'overridden_fail', reason: '   ' }))
+      .rejects.toThrow(/Override reason is required/);
+    expect(mocks.updateDoc).not.toHaveBeenCalled();
+  });
+
+  it('rejects invalid status', async () => {
+    await expect(updateQaFinalReview('iv-1', { status: 'pending' }))
+      .rejects.toThrow(/Invalid QA final review status/);
+    expect(mocks.updateDoc).not.toHaveBeenCalled();
   });
 });
 

@@ -3063,6 +3063,48 @@ textarea:focus-visible {
 }
 
 /* ── My training (navigator) ───────────────────────────────────────────────── */
+.qa-final-review {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding-top: 2px;
+}
+.qa-final-review__row {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  font-size: 0.82rem;
+  color: var(--ink-soft);
+}
+.qa-final-review__label {
+  font-weight: 700;
+  color: var(--ink);
+}
+.qa-final-review__meta {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 0.78rem;
+  color: var(--ink-soft);
+}
+.qa-final-review__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.qa-final-review__form {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface-3, var(--surface-2));
+}
+.qa-final-review__edit {
+  align-self: flex-start;
+  font-size: 0.8rem;
+}
 .mytraining__list {
   display: grid;
   gap: 14px;

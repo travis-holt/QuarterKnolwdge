@@ -4,7 +4,8 @@ import { COMPETENCIES, competencyName } from '../data/competencies.js';
 import { DEPARTMENTS, isAssessed } from '../data/departments.js';
 import { LEVELS, interviewScoreColor } from '../data/config.js';
 import { findRow, mentorSuggestions, trainingForRow, buildTrend, trainingImpact, buildDossier } from '../lib/scoring.js';
-import { getInterviews, getResultHistory, updateInterviewGradeOverride } from '../lib/db.js';
+import { getInterviews, getResultHistory, updateInterviewGradeOverride, updateQaFinalReview } from '../lib/db.js';
+import { qaFinalReviewLabel, qaFinalVerdict } from '../lib/qaFinalReview.js';
 import Sparkline from './Sparkline.jsx';
 import FeedbackControls from './FeedbackControls.jsx';
 
@@ -47,6 +48,11 @@ export default function NavigatorDetail({ rows, name, deptName, dept, deptMatrix
   const [overrideReason, setOverrideReason] = useState('');
   const [overrideError, setOverrideError] = useState('');
   const [overrideSaving, setOverrideSaving] = useState(false);
+  const [qaReviewEditId, setQaReviewEditId] = useState(null);
+  const [qaReviewAction, setQaReviewAction] = useState('');
+  const [qaReviewReason, setQaReviewReason] = useState('');
+  const [qaReviewError, setQaReviewError] = useState('');
+  const [qaReviewSaving, setQaReviewSaving] = useState(false);
 
   useEffect(() => {
     if (!navigatorId) return;
@@ -89,6 +95,56 @@ export default function NavigatorDetail({ rows, name, deptName, dept, deptMatrix
     setOverrideId(null);
     setOverrideError('');
     setOverrideSaving(false);
+  };
+  const openQaReviewEdit = (session) => {
+    setQaReviewEditId(session.id);
+    setQaReviewAction('');
+    setQaReviewReason(session.qaFinalReview?.reason ?? '');
+    setQaReviewError('');
+    setQaReviewSaving(false);
+  };
+  const cancelQaReviewEdit = () => {
+    setQaReviewEditId(null);
+    setQaReviewAction('');
+    setQaReviewReason('');
+    setQaReviewError('');
+    setQaReviewSaving(false);
+  };
+  const applyLocalQaReview = (sessionId, status, reason) => {
+    setInterviews((prev) =>
+      (prev ?? []).map((s) =>
+        s.id === sessionId
+          ? {
+              ...s,
+              qaFinalReview: {
+                status,
+                finalPass: status.endsWith('_pass'),
+                reason,
+                reviewedBy: 'supervisor',
+                reviewedAt: { seconds: Math.floor(Date.now() / 1000) },
+              },
+            }
+          : s
+      )
+    );
+  };
+  const submitQaReview = async (session, status, reason = '') => {
+    const trimmedReason = reason.trim();
+    if (status.startsWith('overridden_') && !trimmedReason) {
+      setQaReviewError('A short reason is required for overrides.');
+      return;
+    }
+    setQaReviewSaving(true);
+    setQaReviewError('');
+    try {
+      await updateQaFinalReview(session.id, { status, reason: trimmedReason });
+      applyLocalQaReview(session.id, status, trimmedReason);
+      cancelQaReviewEdit();
+    } catch (err) {
+      console.error('updateQaFinalReview:', err);
+      setQaReviewError('Could not save the final review. Try again.');
+      setQaReviewSaving(false);
+    }
   };
   const saveOverride = async (session) => {
     const reason = overrideReason.trim();
@@ -487,9 +543,12 @@ export default function NavigatorDetail({ rows, name, deptName, dept, deptMatrix
                 const navTurns = session.transcript.filter((t) => t.role === 'navigator').length;
                 const g = session.grade ?? null;
                 const override = session.gradeOverride ?? null;
+                const qaVerdict = session.qa ? qaFinalVerdict(session) : null;
                 const effectiveScore = override ? override.score : g?.score;
                 const scoreColor = g ? interviewScoreColor(effectiveScore) : undefined;
                 const isEditing = overrideId === session.id;
+                const isQaReviewEditing = qaReviewEditId === session.id;
+                const qaReviewed = Boolean(session.qaFinalReview);
                 return (
                   <li key={session.id} className={`interview-log__item ${isOpen ? 'is-open' : ''}`}>
                     <button
@@ -600,6 +659,106 @@ export default function NavigatorDetail({ rows, name, deptName, dept, deptMatrix
                                     <li key={f.id}><strong>{f.label}:</strong> {f.detail}</li>
                                   ))}
                                 </ul>
+                              </div>
+                            )}
+                            {session.qa && (
+                              <div className="qa-final-review">
+                                <div className="qa-final-review__row">
+                                  <span className="qa-final-review__label">AI verdict:</span>
+                                  <strong>{session.qa.review?.recommendation === 'needs_review' ? 'NEEDS REVIEW' : qaVerdict.aiPass ? 'PASS' : 'FAIL'}</strong>
+                                </div>
+                                <div className="qa-final-review__row">
+                                  <span className="qa-final-review__label">Final verdict:</span>
+                                  <strong>{qaFinalReviewLabel(session)}</strong>
+                                </div>
+                                {qaReviewed && !isQaReviewEditing && (
+                                  <div className="qa-final-review__meta">
+                                    <span>
+                                      Reviewed by {session.qaFinalReview.reviewedBy ?? 'supervisor'} on {formatDate(session.qaFinalReview.reviewedAt)}
+                                    </span>
+                                    {session.qaFinalReview.reason && (
+                                      <span>Reason: {session.qaFinalReview.reason}</span>
+                                    )}
+                                  </div>
+                                )}
+                                {(!qaReviewed || isQaReviewEditing) ? (
+                                  <div className="qa-final-review__actions">
+                                    <button
+                                      className="btn btn--ghost btn--sm"
+                                      onClick={() => submitQaReview(session, 'confirmed_pass')}
+                                      disabled={qaReviewSaving}
+                                      type="button"
+                                    >
+                                      Confirm Pass
+                                    </button>
+                                    <button
+                                      className="btn btn--ghost btn--sm"
+                                      onClick={() => submitQaReview(session, 'confirmed_fail')}
+                                      disabled={qaReviewSaving}
+                                      type="button"
+                                    >
+                                      Confirm Fail
+                                    </button>
+                                    <button
+                                      className={`btn btn--ghost btn--sm${qaReviewAction === 'overridden_pass' ? ' is-active' : ''}`}
+                                      onClick={() => {
+                                        setQaReviewEditId(session.id);
+                                        setQaReviewAction('overridden_pass');
+                                        setQaReviewError('');
+                                      }}
+                                      disabled={qaReviewSaving}
+                                      type="button"
+                                    >
+                                      Override to Pass
+                                    </button>
+                                    <button
+                                      className={`btn btn--ghost btn--sm${qaReviewAction === 'overridden_fail' ? ' is-active' : ''}`}
+                                      onClick={() => {
+                                        setQaReviewEditId(session.id);
+                                        setQaReviewAction('overridden_fail');
+                                        setQaReviewError('');
+                                      }}
+                                      disabled={qaReviewSaving}
+                                      type="button"
+                                    >
+                                      Override to Fail
+                                    </button>
+                                  </div>
+                                ) : (
+                                  <button className="linkbtn qa-final-review__edit" onClick={() => openQaReviewEdit(session)} type="button">
+                                    Edit final review
+                                  </button>
+                                )}
+                                {qaReviewAction.startsWith('overridden_') && isQaReviewEditing && (
+                                  <div className="qa-final-review__form">
+                                    <label className="grade-override__field">
+                                      <span>Override reason (required)</span>
+                                      <textarea
+                                        rows="2"
+                                        value={qaReviewReason}
+                                        onChange={(e) => setQaReviewReason(e.target.value)}
+                                        aria-label="QA final review reason"
+                                      />
+                                    </label>
+                                    {qaReviewError && <p className="grade-override__error">{qaReviewError}</p>}
+                                    <div className="grade-override__actions">
+                                      <button
+                                        className="btn btn--sm"
+                                        onClick={() => submitQaReview(session, qaReviewAction, qaReviewReason)}
+                                        disabled={qaReviewSaving}
+                                        type="button"
+                                      >
+                                        {qaReviewSaving ? 'Saving…' : 'Save final review'}
+                                      </button>
+                                      <button className="linkbtn" onClick={cancelQaReviewEdit} disabled={qaReviewSaving} type="button">
+                                        Cancel
+                                      </button>
+                                    </div>
+                                  </div>
+                                )}
+                                {qaReviewError && !(qaReviewAction.startsWith('overridden_') && isQaReviewEditing) && (
+                                  <p className="grade-override__error">{qaReviewError}</p>
+                                )}
                               </div>
                             )}
                             {g.strengths?.length > 0 && (

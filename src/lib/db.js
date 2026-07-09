@@ -469,6 +469,39 @@ export async function updateInterviewGradeOverride(id, override) {
   });
 }
 
+const QA_FINAL_REVIEW_STATUSES = new Set([
+  'confirmed_pass',
+  'confirmed_fail',
+  'overridden_pass',
+  'overridden_fail',
+]);
+
+/**
+ * Supervisor: record the final Call QA verdict while preserving the original
+ * AI rubric result. Pilot-grade: `reviewedBy` is a placeholder until real
+ * per-user auth lands.
+ * @param {string} interviewId
+ * @param {{ status:string, reason?:string }} review
+ */
+export async function updateQaFinalReview(interviewId, review) {
+  if (!interviewId) throw new Error('Interview id is required.');
+  const status = String(review?.status ?? '').trim();
+  if (!QA_FINAL_REVIEW_STATUSES.has(status)) throw new Error('Invalid QA final review status.');
+  const reason = String(review?.reason ?? '').trim();
+  if (status.startsWith('overridden_') && !reason) {
+    throw new Error('Override reason is required.');
+  }
+  await updateDoc(doc(db, INTERVIEWS, interviewId), {
+    qaFinalReview: {
+      status,
+      finalPass: status.endsWith('_pass'),
+      reason,
+      reviewedAt: serverTimestamp(),
+      reviewedBy: 'supervisor',
+    },
+  });
+}
+
 /**
  * One-time fetch of all interviews for a navigator (for their history view).
  * @param {string} navigatorId

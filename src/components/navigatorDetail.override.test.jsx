@@ -1,8 +1,8 @@
 // @vitest-environment jsdom
 // ─────────────────────────────────────────────────────────────────────────────
-// NavigatorDetail — supervisor grade-override behaviour (F15 supervisor override).
-// db writes are mocked; no real Firebase calls. Focuses on the Practice sessions
-// panel: displaying AI vs override score, opening the form, validation, and payload.
+// NavigatorDetail — supervisor session review behaviour.
+// db writes are mocked; no real Firebase calls. Covers both the existing
+// practice-score override and the Call QA final-review panel.
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
@@ -15,6 +15,7 @@ const dbMocks = vi.hoisted(() => ({
   getInterviews: vi.fn(),
   getResultHistory: vi.fn(),
   updateInterviewGradeOverride: vi.fn(),
+  updateQaFinalReview: vi.fn(),
 }));
 
 vi.mock('../lib/db.js', () => dbMocks);
@@ -43,8 +44,22 @@ function baseSession(extra = {}) {
   };
 }
 
-function renderDetail(session) {
-  dbMocks.getInterviews.mockResolvedValue([session]);
+function qaSession(extra = {}) {
+  return baseSession({
+    id: 'qa-1',
+    qa: {
+      pass: true,
+      score: 92,
+      passThreshold: 85,
+      review: { recommendation: 'pass', confidence: 'high', safetyRisk: 'none', reviewFlags: [] },
+    },
+    ...extra,
+  });
+}
+
+function renderDetail(sessionOrSessions) {
+  const sessions = Array.isArray(sessionOrSessions) ? sessionOrSessions : [sessionOrSessions];
+  dbMocks.getInterviews.mockResolvedValue(sessions);
   dbMocks.getResultHistory.mockResolvedValue([]);
   return render(
     <NavigatorDetail rows={rows} name="Alex Rivera" deptName="Pediatrics" dept="pediatrics" navigatorId="nav-1" />
@@ -119,5 +134,86 @@ describe('NavigatorDetail — supervisor grade override', () => {
     );
     expect(await screen.findByText('Supervisor override')).toBeInTheDocument();
     expect(screen.getByText('Original AI score: 72/100')).toBeInTheDocument();
+  });
+
+  it('QA session shows pending final review', async () => {
+    renderDetail(qaSession());
+    fireEvent.click(await screen.findByText('Jordan'));
+    expect(await screen.findByText('AI verdict:')).toBeInTheDocument();
+    expect(screen.getByText('PASS')).toBeInTheDocument();
+    expect(screen.getByText('Final verdict:')).toBeInTheDocument();
+    expect(screen.getByText('Pending')).toBeInTheDocument();
+  });
+
+  it('Confirm Pass calls updateQaFinalReview with confirmed_pass', async () => {
+    dbMocks.updateQaFinalReview.mockResolvedValue();
+    renderDetail(qaSession());
+    fireEvent.click(await screen.findByText('Jordan'));
+    fireEvent.click(screen.getByRole('button', { name: 'Confirm Pass' }));
+    await waitFor(() =>
+      expect(dbMocks.updateQaFinalReview).toHaveBeenCalledWith('qa-1', {
+        status: 'confirmed_pass',
+        reason: '',
+      })
+    );
+    expect(await screen.findByText('FINAL PASS')).toBeInTheDocument();
+  });
+
+  it('Override to Pass requires a reason', async () => {
+    renderDetail(qaSession());
+    fireEvent.click(await screen.findByText('Jordan'));
+    fireEvent.click(screen.getByRole('button', { name: 'Override to Pass' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Save final review' }));
+    expect(await screen.findByText(/reason is required for overrides/i)).toBeInTheDocument();
+    expect(dbMocks.updateQaFinalReview).not.toHaveBeenCalled();
+  });
+
+  it('Override to Fail calls updateQaFinalReview with overridden_fail and reason', async () => {
+    dbMocks.updateQaFinalReview.mockResolvedValue();
+    renderDetail(qaSession());
+    fireEvent.click(await screen.findByText('Jordan'));
+    fireEvent.click(screen.getByRole('button', { name: 'Override to Fail' }));
+    fireEvent.change(screen.getByLabelText('QA final review reason'), {
+      target: { value: 'Caller was not safely verified before details were discussed.' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Save final review' }));
+    await waitFor(() =>
+      expect(dbMocks.updateQaFinalReview).toHaveBeenCalledWith('qa-1', {
+        status: 'overridden_fail',
+        reason: 'Caller was not safely verified before details were discussed.',
+      })
+    );
+    expect(await screen.findByText('OVERRIDDEN FAIL')).toBeInTheDocument();
+  });
+
+  it('saved final review appears in the session panel', async () => {
+    renderDetail(qaSession({
+      qaFinalReview: {
+        status: 'confirmed_fail',
+        finalPass: false,
+        reason: '',
+        reviewedBy: 'supervisor',
+        reviewedAt: { seconds: 1000 },
+      },
+    }));
+    fireEvent.click(await screen.findByText('Jordan'));
+    expect(await screen.findByText('FINAL FAIL')).toBeInTheDocument();
+    expect(screen.getByText(/Reviewed by supervisor on/)).toBeInTheDocument();
+    expect(screen.getByText('Edit final review')).toBeInTheDocument();
+  });
+
+  it('Practice gradeOverride still renders independently', async () => {
+    renderDetail([
+      qaSession(),
+      baseSession({
+        id: 'practice-1',
+        callerName: 'Casey',
+        gradeOverride: { score: 88, reason: 'Missed by grader', overriddenBy: 'supervisor' },
+      }),
+    ]);
+    fireEvent.click(await screen.findByText('Casey'));
+    expect(await screen.findByText('Supervisor override')).toBeInTheDocument();
+    expect(screen.getByText('Original AI score: 72/100')).toBeInTheDocument();
+    expect(screen.queryByText('Edit final review')).not.toBeInTheDocument();
   });
 });
