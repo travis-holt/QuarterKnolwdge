@@ -17,16 +17,23 @@
 //   { ok: false, reason: 'exhausted' }      → keys rate-limited / overloaded  → 429
 // ─────────────────────────────────────────────────────────────────────────────
 
-// gemini-2.5-flash has free-tier availability on the project keys in use (2.0-flash
-// returns a free-tier limit of 0 in this region). Swap here if quota/model changes.
-export const MODEL = 'gemini-3.5-flash';
+// Primary model. gemini-3.5-flash was tried here (2026-07-09) but its free tier is
+// currently unusable: mostly 503 UNAVAILABLE on all 4 project keys, and the rare
+// 200 took 50–76 seconds — a random one-minute hang inside a live practice call.
+// gemini-2.5-flash (the pre-migration primary) answered on every key in ~3s with
+// clean structured output. Revisit 3.5-flash when its free-tier capacity stabilizes.
+export const MODEL = 'gemini-2.5-flash';
 
-// Overflow model. Free-tier rate limits are per MODEL per project, so when every
-// key is rate-limited on the primary model, retrying on flash-lite draws from a
-// separate quota bucket on the same keys. flash-lite free tier 503s under load
-// ("high demand") at times, so it is a cushion, not guaranteed capacity — callers
-// opt in via `models: [MODEL, LITE_MODEL]` only where a quality dip is acceptable
-// (chat roleplay turns, advisory coaching), never for scored/authoring output.
+// First fallback for EVERY endpoint (scored/authoring included). Free-tier rate
+// limits and capacity are per MODEL per project, so this is a separate quota
+// bucket on the same keys. Probed 2026-07-09: answers on all 4 keys in <1s.
+export const STABLE_MODEL = 'gemini-2.5-flash-lite';
+
+// Last-resort overflow model — a THIRD independent quota bucket on the same keys.
+// It can 503 under load ("high demand") at times, so it is a cushion, not
+// guaranteed capacity — callers opt in via the models chain only where a quality
+// dip is acceptable (chat roleplay turns, advisory coaching/grading), never for
+// authoring output. Probed 2026-07-09: answers on all 4 keys in <1s.
 export const LITE_MODEL = 'gemini-3.1-flash-lite';
 
 // Per-key failures where trying a DIFFERENT key may succeed (quota / rate limit /
@@ -86,10 +93,13 @@ export async function callGemini(apiKey, body, model = MODEL) {
 }
 
 // ── Per-key cooldown ──────────────────────────────────────────────────────────
-// A key that just 429'd is rate-limited for the rest of its quota window, so
-// concurrent/subsequent requests skip it instead of burning a round-trip to
-// re-learn that. Keyed per model because quota buckets are per model per project.
-// Gemini's 429 body carries a RetryInfo retryDelay ("32s") — honored when present.
+// A key that just 429'd is rate-limited for the rest of its quota window, and a
+// key that just 503'd is hitting a model with no free-tier capacity — either way
+// subsequent requests skip it instead of burning a round-trip to re-learn that.
+// Keyed per model because quota/capacity buckets are per model per project.
+// Gemini's 429 body carries a RetryInfo retryDelay ("32s") — honored when present;
+// 503s use the default cooldown so a capacity-dead model is skipped quickly and
+// requests fall straight through to the working fallback model.
 
 const cooldowns = new Map(); // `${model}::${key}` → epoch ms when the key is usable again
 const DEFAULT_COOLDOWN_MS = 30_000;
@@ -156,7 +166,9 @@ export async function geminiWithRotation(keys, body, { label = 'gemini', models 
         } else {
           sawNonAuthFailure = true;
           const quota = result.status === 429 ? quotaInfo(result.detail) : '';
-          if (result.status === 429) cooldowns.set(cdKey, Date.now() + retryDelayMs(result.detail));
+          if (result.status === 429 || result.status === 503) {
+            cooldowns.set(cdKey, Date.now() + retryDelayMs(result.detail));
+          }
           console.warn(`${label}: key #${idx} (${model}) returned ${result.status}${quota} — rotating`);
         }
         continue;

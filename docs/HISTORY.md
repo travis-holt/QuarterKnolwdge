@@ -1,5 +1,26 @@
 # Development History - Knowledge Check
 
+### 2026-07-09 - Gemini REST primary reverted to 2.5 Flash + universal fallback chain + 503 cooldown
+- **Problem:** Practice calls (`interview-turn`) and grading (`grade-interview`/`grade-call-qa`)
+  kept failing with `503 — rotating` on `gemini-3.5-flash`. Live probe against all 4 project keys:
+  3.5-flash free tier returned 503 UNAVAILABLE on every key most of the time, and the rare 200
+  took **50–76 seconds** — a random one-minute hang inside a live call. (`gemini-3.1-flash`, the
+  pre-migration model, now 404s — that was the earlier "model not available" error.)
+- **Fix (probe-driven, `api/_gemini-client.js`):**
+  - `MODEL` reverted to `gemini-2.5-flash` (answered on all 4 keys in ~3s with clean structured
+    output). Revisit 3.5-flash when its free tier stabilizes.
+  - New `STABLE_MODEL = 'gemini-2.5-flash-lite'` — a second independent per-model quota bucket,
+    now a fallback on **every** REST endpoint, including the five that previously had none
+    (`generate-audit`, `generate-scenarios`, `refine-sop`, `sequence-path`, `coach-audit`).
+  - Chat/advisory endpoints (`interview-turn`, `generate-coaching`, `grade-interview`,
+    `grade-call-qa`) chain a third bucket: `[MODEL, STABLE_MODEL, LITE_MODEL]`
+    (`gemini-3.1-flash-lite`).
+  - 503s now put the key+model on cooldown like 429s do, so a capacity-dead model is skipped
+    instead of re-probed on every request.
+- **Verification:** live end-to-end probe with the real keys (both chains answered in ~1s),
+  `node --check` on all edited handlers, `npm test` green (+2 new cooldown/fallback tests),
+  `npm run build` clean.
+
 ### 2026-07-09 - MCQ v2 operating-model question bank replaces weak active MCQs
 - **Context:** The active MCQ bank (original seed questions + early Gemini-generated scenarios) was
   too SOP-literal and too easy — it tested "what is the rule" instead of "what is the right decision

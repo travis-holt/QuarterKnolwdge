@@ -6,7 +6,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { getApiKeys, geminiWithRotation, resetCooldowns, rotationFailure, redactKeys, MODEL, LITE_MODEL } from './_gemini-client.js';
+import { getApiKeys, geminiWithRotation, resetCooldowns, rotationFailure, redactKeys, MODEL, STABLE_MODEL, LITE_MODEL } from './_gemini-client.js';
 
 // ── getApiKeys ────────────────────────────────────────────────────────────────
 
@@ -230,6 +230,29 @@ describe('geminiWithRotation', () => {
     expect(await geminiWithRotation(['k1'], {}, { label: 'test' }))
       .toEqual({ ok: true, text: 'back' });
     expect(fetch).toHaveBeenCalledTimes(2);
+  });
+
+  it('puts a key on cooldown after a 503 (capacity-dead model is not re-probed)', async () => {
+    fetch.mockResolvedValue(errResponse(503));
+    await geminiWithRotation(['k1'], {}, { label: 'test' }); // trips the cooldown
+    expect(fetch).toHaveBeenCalledTimes(1);
+
+    const result = await geminiWithRotation(['k1'], {}, { label: 'test' });
+    expect(result).toEqual({ ok: false, reason: 'exhausted' });
+    expect(fetch).toHaveBeenCalledTimes(1); // second request made ZERO network calls
+  });
+
+  it('a 503-cooling primary falls straight through to the stable fallback model', async () => {
+    fetch
+      .mockResolvedValueOnce(errResponse(503)) // k1 on MODEL → cooldown
+      .mockResolvedValue(okResponse('stable-ok'));
+    await geminiWithRotation(['k1'], {}, { label: 'test', models: [MODEL, STABLE_MODEL] });
+    expect(fetch).toHaveBeenCalledTimes(2);
+
+    const result = await geminiWithRotation(['k1'], {}, { label: 'test', models: [MODEL, STABLE_MODEL] });
+    expect(result).toEqual({ ok: true, text: 'stable-ok' });
+    expect(fetch).toHaveBeenCalledTimes(3); // MODEL skipped — only STABLE_MODEL was called
+    expect(fetch.mock.calls[2][0]).toContain(`/models/${STABLE_MODEL}:`);
   });
 
   it('cooldown is per model — a key cooling on the primary is still tried on the fallback', async () => {

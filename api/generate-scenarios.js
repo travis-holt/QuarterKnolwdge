@@ -21,7 +21,7 @@ import { COMPETENCIES } from '../src/data/competencies.js';
 import { validateQuestionContent } from '../src/lib/contentGuards.js';
 import { sopContextFor, sopContextForFresh } from './_sop-context.js';
 import { navigatorContextBlock } from './_navigator-operating-model.js';
-import { getApiKeys, geminiWithRotation, rotationFailure } from './_gemini-client.js';
+import { getApiKeys, geminiWithRotation, rotationFailure, MODEL, STABLE_MODEL } from './_gemini-client.js';
 import { validateSession } from './_auth.js';
 
 const COMPETENCY_IDS = new Set(COMPETENCIES.map((c) => c.id));
@@ -162,7 +162,7 @@ export default async function handler(req, res) {
     },
   };
 
-  const result = await geminiWithRotation(keys, requestBody, { label: 'generate-scenarios' });
+  const result = await geminiWithRotation(keys, requestBody, { label: 'generate-scenarios', models: [MODEL, STABLE_MODEL] });
   if (!result.ok) {
     const { status, error } = rotationFailure(result);
     return res.status(status).json({ error });

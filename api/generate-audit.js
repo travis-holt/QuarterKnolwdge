@@ -15,7 +15,7 @@ import { workflowOptionsFor } from '../src/data/auditWorkflows.js';
 import { validateAuditContent } from '../src/lib/contentGuards.js';
 import { sopContextFor, sopContextForFresh } from './_sop-context.js';
 import { navigatorContextBlock } from './_navigator-operating-model.js';
-import { getApiKeys, geminiWithRotation, rotationFailure } from './_gemini-client.js';
+import { getApiKeys, geminiWithRotation, rotationFailure, MODEL, STABLE_MODEL } from './_gemini-client.js';
 import { validateSecret } from './_auth.js';
 
 const AUDIT_SCHEMA = {
@@ -170,7 +170,7 @@ export default async function handler(req, res) {
     },
   };
 
-  const result = await geminiWithRotation(keys, body, { label: 'generate-audit' });
+  const result = await geminiWithRotation(keys, body, { label: 'generate-audit', models: [MODEL, STABLE_MODEL] });
   if (!result.ok) {
     const { status, error } = rotationFailure(result, { fatal: 'Gemini returned an error generating the audit transcript.' });
     return res.status(status).json({ error });

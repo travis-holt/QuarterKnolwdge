@@ -30,7 +30,7 @@
 // when ALLOW_LEGACY_API_SECRET=true).
 
 import { validateSession } from './_auth.js';
-import { geminiWithRotation, getApiKeys, rotationFailure } from './_gemini-client.js';
+import { geminiWithRotation, getApiKeys, rotationFailure, MODEL, STABLE_MODEL } from './_gemini-client.js';
 
 const MAX_INPUT_CHARS = 48_000; // bounds the token budget + prompt-injection surface
 const MAX_FILE_BASE64 = 14_000_000; // ~10 MB binary
@@ -106,7 +106,7 @@ async function geminiJson(keys, parts, { label, temperature }) {
     contents: [{ role: 'user', parts }],
     generationConfig: { temperature, responseMimeType: 'application/json' },
   };
-  const result = await geminiWithRotation(keys, body, { label });
+  const result = await geminiWithRotation(keys, body, { label, models: [MODEL, STABLE_MODEL] });
   if (!result.ok) return { failed: result };
   try {
     return { parsed: JSON.parse(result.text) };

@@ -11,7 +11,7 @@
 > [§8 Current System State](#8-current-system-state) and [§15 Current Priorities](#15-current-priorities)
 > accurate at all times.
 >
-> **Last updated:** 2026-07-09 (MCQ v2 operating-model question bank replaces weak active MCQs via a marker-gated archive-and-replace migration; Patient Navigator Operating Model injected into all AI endpoints + roleplay caseFile threaded init→turns→voice relay; domain-tagged Call QA scoring bridge; REST Gemini model migration to 3.5 Flash with capacity fallback) ·
+> **Last updated:** 2026-07-09 (REST Gemini primary reverted to 2.5 Flash (3.5 Flash free tier 503/50s+ latency) with two lite fallback quota buckets + 503 key cooldown; MCQ v2 operating-model question bank replaces weak active MCQs via a marker-gated archive-and-replace migration; Patient Navigator Operating Model injected into all AI endpoints + roleplay caseFile threaded init→turns→voice relay; domain-tagged Call QA scoring bridge) ·
 > **Doc maintainer:** Claude (AI agent) + repo owner. Assumptions are explicitly marked **[ASSUMPTION]**.
 
 ---
@@ -286,7 +286,7 @@ training assignments.
   - [api/interview-turn.js](api/interview-turn.js) — two-mode Gemini proxy: **init** generates
     caller scenario + opening line; **turn** continues the call in character.
   - [api/grade-interview.js](api/grade-interview.js) — new grading endpoint. Takes the full
-    transcript + scenario + domain, calls the shared Gemini REST model (`gemini-3.5-flash`) at temperature 0.3 grounded in
+    transcript + scenario + domain, calls the shared Gemini REST model (`gemini-2.5-flash`) at temperature 0.3 grounded in
     `SOP_CONTEXT`, returns `{ grade: { score, summary, strengths[], improvements[] } }`. Score is
     clamped 0–100 and validated before returning.
   - [src/components/Interview.jsx](src/components/Interview.jsx) — phases: `setup → loading →
@@ -723,7 +723,7 @@ training assignments.
   `db.js` CRUD (`subscribeQuestions`, `getActiveQuestions`, `saveDraftQuestions`, `activate/archive/
   delete/updateQuestion`, `seedQuestionsIfEmpty`); supervisor UI
   [QuestionBank.jsx](src/components/QuestionBank.jsx) + [QuestionEditor.jsx](src/components/QuestionEditor.jsx);
-  server [api/generate-scenarios.js](api/generate-scenarios.js) (shared Gemini REST model (`gemini-3.5-flash`),
+  server [api/generate-scenarios.js](api/generate-scenarios.js) (shared Gemini REST model (`gemini-2.5-flash`),
   structured JSON output, validated/repaired; rotates across multiple keys on rate-limit). Only
   **active** questions appear in the check; AI drafts require human activation.
 - **Status:** Complete. Owner sets `GEMINI_API_KEYS`/`GEMINI_API_KEY` + `GENERATION_SECRET` in

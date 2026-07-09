@@ -24,12 +24,12 @@ import { DOMAINS } from '../src/data/questions.js';
 import { departmentName } from '../src/data/departments.js';
 import { sopContextFor, sopContextForFresh } from './_sop-context.js';
 import { navigatorContextBlock } from './_navigator-operating-model.js';
-import { getApiKeys, geminiWithRotation, rotationFailure, MODEL, LITE_MODEL } from './_gemini-client.js';
+import { getApiKeys, geminiWithRotation, rotationFailure, MODEL, STABLE_MODEL, LITE_MODEL } from './_gemini-client.js';
 
-// Roleplay is conversational, not scored — a lighter model beats a 429 for the
-// navigator mid-call, so overflow to flash-lite's separate quota bucket when
-// every key is rate-limited on the primary model.
-const CHAT_MODELS = [MODEL, LITE_MODEL];
+// Roleplay is conversational, not scored — any answer beats a 429/503 for the
+// navigator mid-call. Fall to the stable full model first (separate capacity
+// bucket), then flash-lite as the last-resort overflow lane.
+const CHAT_MODELS = [MODEL, STABLE_MODEL, LITE_MODEL];
 import { validateSecret } from './_auth.js';
 
 // ── Schema for the init call ──────────────────────────────────────────────────

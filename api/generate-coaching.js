@@ -14,7 +14,7 @@ import { COMPETENCIES, competencyName } from '../src/data/competencies.js';
 import { domainName } from '../src/data/questions.js';
 import { optionPoints } from '../src/lib/scoring.js';
 import { THRESHOLDS } from '../src/data/config.js';
-import { getApiKeys, geminiWithRotation, rotationFailure, MODEL, LITE_MODEL } from './_gemini-client.js';
+import { getApiKeys, geminiWithRotation, rotationFailure, MODEL, STABLE_MODEL, LITE_MODEL } from './_gemini-client.js';
 import { navigatorContextBlock } from './_navigator-operating-model.js';
 import { validateSecret } from './_auth.js';
 
@@ -154,7 +154,7 @@ export default async function handler(req, res) {
   // Coaching notes are advisory prose — overflow to flash-lite's separate quota
   // bucket rather than falling back to rule-based when the primary model is
   // rate-limited (the client silently drops this section on 429 anyway).
-  const result = await geminiWithRotation(keys, body, { label: 'generate-coaching', models: [MODEL, LITE_MODEL] });
+  const result = await geminiWithRotation(keys, body, { label: 'generate-coaching', models: [MODEL, STABLE_MODEL, LITE_MODEL] });
   if (!result.ok) {
     const { status, error } = rotationFailure(result);
     return res.status(status).json({ error });

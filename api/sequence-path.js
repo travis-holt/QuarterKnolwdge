@@ -4,7 +4,7 @@
 // Advisory: if Gemini fails or output is invalid, callers fall back to the deterministic order.
 
 import { validateSecret } from './_auth.js';
-import { geminiWithRotation, getApiKeys, rotationFailure } from './_gemini-client.js';
+import { geminiWithRotation, getApiKeys, rotationFailure, MODEL, STABLE_MODEL } from './_gemini-client.js';
 import { sopContextForFresh } from './_sop-context.js';
 import { navigatorContextBlock } from './_navigator-operating-model.js';
 
@@ -94,7 +94,7 @@ Respond ONLY with valid JSON matching this schema exactly:
     },
   };
 
-  const result = await geminiWithRotation(keys, body, { label: 'sequence-path' });
+  const result = await geminiWithRotation(keys, body, { label: 'sequence-path', models: [MODEL, STABLE_MODEL] });
   if (!result.ok) {
     // fatal → 502, auth → 500, exhausted → 429 (previously every non-fatal
     // failure fell to 502 because auth/exhausted results carry no `.status`).
