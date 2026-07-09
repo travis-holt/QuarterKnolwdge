@@ -1,5 +1,15 @@
 # Development History - Knowledge Check
 
+### 2026-07-09 - Call QA supervisor final verdict
+- **Context:** Call QA now has reliable persistence and curated scenarios, but management still needs a human final-decision layer before relying on AI pass/fail for high-stakes review.
+- **Changes:**
+  - Added `qaFinalReview` on QA interview docs.
+  - Added `updateQaFinalReview()` in `src/lib/db.js`.
+  - Added pure final-verdict helpers in `src/lib/qaFinalReview.js`.
+  - Added supervisor UI in `NavigatorDetail.jsx` to confirm or override AI QA pass/fail.
+  - Required reasons for overrides while preserving original AI `qa` and `grade`.
+  - Follow-up fix: confirmation actions now only render when they agree with the AI verdict; NEEDS REVIEW sessions expose override-only actions so supervisors cannot silently convert an AI fail into a "confirm pass".
+- **Verification:** `npm test` -> **482 passing / 24 files**; `npm run build` passed; `git diff --check` clean.
 ### 2026-07-09 - Fix legacy Playwright navigator flow for PhaseHub (deep suite green again)
 - **Context:** After PR #16, a full `npx playwright test` (18 specs) had **3 failures**, all in the
   legacy `e2e/navigator.spec.js`. Those tests waited for the pre-F26 "Choose your assessment"

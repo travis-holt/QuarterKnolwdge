@@ -11,7 +11,7 @@
 > [§8 Current System State](#8-current-system-state) and [§15 Current Priorities](#15-current-priorities)
 > accurate at all times.
 >
-> **Last updated:** 2026-07-08 (curated Call QA scenario bank; supervisor grade override merged) ·
+> **Last updated:** 2026-07-09 (Call QA supervisor final verdict + docs/tests refreshed) ·
 > **Doc maintainer:** Claude (AI agent) + repo owner. Assumptions are explicitly marked **[ASSUMPTION]**.
 
 ---
@@ -669,6 +669,12 @@ training assignments.
   generated roleplay scenarios. QA interview docs store compact scenario metadata including
   `qaScenarioId`, `workflowType`, `difficulty`, `domainIds`, and `competencyIds` so supervisors can
   review coverage and future dashboards can group attempts by workflow.
+- **Supervisor final review (2026-07-09):** Call QA Test attempts now support a supervisor final
+  verdict stored on the interview doc as `qaFinalReview`. The AI rubric result remains preserved on
+  `qa`; supervisors can confirm AI pass/fail or override to final pass/fail with a required reason
+  for overrides. Confirm actions now only appear when they agree with the AI verdict; NEEDS REVIEW
+  sessions use override-only actions. This is a management safety layer only and does not feed the
+  capability matrix yet.
 - **Navigator assessment entry (2026-07-03, rewired 2026-07-07):** The Call QA Test now serves as
   **Phase 3** (final) of the sequenced department assessment via `PhaseHub` in `NavigatorApp`.
   That route reuses `VoiceCall mode='test'`, returns to the dashboard from the review screen, and
@@ -683,7 +689,7 @@ training assignments.
 - **Notes:** Call QA does not feed the capability matrix until the QA rubric is domain-tagged.
   Advisory practice grading (`grade-interview`) is unchanged. Domain-practice analytics ignore interview
   docs that have `qa`, so the random scenario domain used to generate the voice call cannot count
-  as domain practice evidence. Supervisor override remains Planned.
+  as domain practice evidence.
 - **Files:** new `api/{_qa-rubric,grade-call-qa,grade-call-qa.test,_qa-glossary,_qa-glossary.test}.js`;
   edited `server.js`, `src/lib/{db,scoring,scoring.test}.js`,
   `src/components/{VoiceCall,NavigatorApp,NavigatorDetail,Interview}.jsx`, `src/styles.css`.
@@ -1081,8 +1087,10 @@ of this file on 2026-07-07 to cut per-session context cost (it was ~55% of the f
   loads do not rescan repeatedly. Call QA Phase 3 completion now requires both a persisted
   interview doc and a successfully saved QA grade; archived/reset QA attempts are ignored by the
   "latest active QA" lookup that drives the phase hub and dashboard card. Call QA Test mode uses
-  a curated Pediatrics/OB-GYN scenario bank with scenario metadata stored on interview docs.
-  Build clean, tests green (`npm test`  **462 passing**, 23 test files). GitHub Actions CI now mirrors the normal local gate on `main` pushes and PRs:
+  a curated Pediatrics/OB-GYN scenario bank with scenario metadata stored on interview docs, and QA
+  attempts now carry a supervisor-only `qaFinalReview` verdict that preserves the AI `qa` audit
+  trail while separating pending/confirmed/overridden management decisions. Build clean, tests green
+  (`npm test`  **482 passing**, 24 test files). GitHub Actions CI now mirrors the normal local gate on `main` pushes and PRs:
   `npm ci` → `npm test` → `npm run build` (no deploy step).
 - **Existing functionality:** features F1–F26 (see [§4](#4-feature-inventory)) are **Complete** in
   code. F17 adds longitudinal trends + Sparkline. F18 adds dossier evidence per competency. F19
@@ -1112,7 +1120,7 @@ of this file on 2026-07-07 to cut per-session context cost (it was ~55% of the f
 - **Experimental / mockup:**
   - Training **content** is mockup (flagged in UI). Logic is real.
   - **Adult Medicine and Behavioural Health** are not assessed; **Pediatrics and OB/GYN** are live.
-- **Test coverage:** **462 tests** across **23 test files**: `scoring.test.js` (all exports incl. `optionPoints`,
+- **Test coverage:** **482 tests** across **24 test files**: `scoring.test.js` (all exports incl. `optionPoints`,
   including F17–F21 functions: buildTrend, trainingImpact, teamTrend, buildDossier, buildActionCenter,
   buildDevPath, buildMentorMatches, pairingOutcomes, buildLearningSignals,
   buildQuestionImprovementSuggestions, adaptiveTrainingRecommendations, feedbackInsights +
@@ -1124,6 +1132,7 @@ of this file on 2026-07-07 to cut per-session context cost (it was ~55% of the f
   `src/components/components.test.jsx`, `src/lib/phases.test.js`, `src/lib/apiFetch.test.js` (apiFetch/`fetchErrorMessage`/`runPooled`),
   `api/_auth.test.js` (secret gate), `api/grade-interview.test.js` (`coerceGrade`),
   `src/lib/contentGuards.test.js`, `src/data/auditWorkflows.test.js`, `src/data/callQaScenarios.test.js`,
+  `src/lib/qaFinalReview.test.js`,
   `src/components/spotTheError.test.js`,
   `src/components/roleApps.smoke.test.jsx` (8 smoke tests for App / Start / SupervisorApp /
   NavigatorApp — renders-without-crashing + gate/session routing, with Firebase/db/session mocked),
@@ -1196,7 +1205,7 @@ of this file on 2026-07-07 to cut per-session context cost (it was ~55% of the f
 - **Counts (today):** 6 domains (job-aligned 2026-07-02: intake · classification · routing ·
   scheduling · boundaries · documentation) · 9 competencies · 21 Pediatrics + 16
   OB/GYN = **37** seed questions (bank grows in Firestore per dept) · 4 departments (**Pediatrics
-  + OB/GYN live**, 2 mockup) · **462** unit tests (23 test files) · **12** Firestore collections
+  + OB/GYN live**, 2 mockup) · **482** unit tests (24 test files) · **12** Firestore collections
   (`roster`, `results`, `resultHistory`, `questions`, `audits`, `interviews`, `completions`,
   `pairings`, `supervisorFeedback`, `learningProposals`, `sops`, `contentMigrations`) ·
   **12** REST serverless functions (`generate-scenarios`, `generate-coaching`, `interview-turn`,
@@ -1590,10 +1599,11 @@ npm run test:e2e     # run the Playwright browser tests (auto-builds + starts th
    `App`, `Start`, `SupervisorApp`, and `NavigatorApp` now both exist (2026-07-08). Per-child-widget
    interaction coverage (editing questions, generating SOPs, submitting a full check end-to-end) is
    the next coverage milestone.
-3. ✅ **Supervisor grade override** — done 2026-07-08. Supervisors adjust the AI practice score with a
-   required reason in the Practice sessions panel; original AI grade preserved (`gradeOverride` field),
-   advisory only (no matrix/history/assessment feed). Next: attribute overrides to a specific supervisor
-   once real per-user auth lands.
+3. ✅ **Supervisor review layers** — practice score override done 2026-07-08; Call QA final verdict done
+   2026-07-09. Practice sessions keep `gradeOverride`; QA test attempts now keep `qaFinalReview`
+   (pending/confirmed/overridden pass/fail with required reasons for overrides) while preserving the
+   original AI `grade` + `qa`. Next: attribute both actions to a specific supervisor once real per-user
+   auth lands.
 
 **Active work items:**
 - **Pilot-feedback follow-ups (2026-07-03):** after the 2026-07-07 content-quality fix, supervisors
@@ -1649,6 +1659,9 @@ npm run test:e2e     # run the Playwright browser tests (auto-builds + starts th
   `roleApps.behavior.test.jsx`, Firebase/db/session/apiFetch mocked, browser APIs stubbed).
 - ✅ Supervisor grade override for practice sessions — done 2026-07-08 (450 tests, 22 test files;
   `navigatorDetail.override.test.jsx`, `gradeOverride` field, db.js mocked).
+- ✅ Call QA supervisor final verdict — done 2026-07-09 (482 tests, 24 test files;
+  `qaFinalReview` field + helper, `updateQaFinalReview`, QA-only supervisor panel in
+  `NavigatorDetail.jsx`, original AI `grade`/`qa` preserved).
 
 ---
 
