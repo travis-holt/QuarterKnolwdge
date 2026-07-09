@@ -121,6 +121,32 @@ npm run build       # production build to dist/
 # GEMINI_API_KEYS/GEMINI_API_KEY + GENERATION_SECRET (server-only).
 ```
 
+## Browser end-to-end tests (Playwright)
+
+Two Playwright suites live under [`e2e/`](e2e) and [`tests/e2e/`](tests/e2e):
+
+- **`e2e/`** — the original deep flows (they write to Firestore and call Gemini; need `.env.local`).
+- **`tests/e2e/`** — a **CI-safe product walkthrough + demo smoke** that walks the app like a real
+  supervisor/navigator before a management demo. It is **read-only**: it never submits an
+  assessment, saves a result, starts a mic/voice call, or triggers a live Gemini generation, so it
+  is safe to run repeatedly. Data-backed navigator steps **skip gracefully** when the backend has no
+  data (e.g. a Firebase-less build).
+
+```bash
+# first-time browser install
+npx playwright install chromium          # add --with-deps on Linux/CI
+
+npm run test:e2e                          # builds + starts the local server, then runs all suites
+npx playwright test tests/e2e/            # just the CI-safe walkthrough + demo smoke
+
+# run against the live Railway deployment (no local server is started):
+PLAYWRIGHT_BASE_URL=https://quarterknolwdge-production.up.railway.app npm run test:e2e
+```
+
+Failures retain a **screenshot, video, and trace** (`playwright-report/` + `test-results/`); open
+the last run with `npx playwright show-report`. The credentials used are the same pilot-grade,
+public, in-repo values (test navigator + supervisor passcode) — no secrets.
+
 The live check currently assesses **Pediatrics** and **OB/GYN**; Adult Medicine and Behavioral
 Health remain placeholders until they get their own SOP-backed question sets. All navigator data is
 real (from Firestore) — there are no sample navigators.
