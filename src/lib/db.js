@@ -27,7 +27,10 @@
 //                   status: draft|active|archived, source, createdAt }. Same
 //                   review-gate model as questions; only `active` items are served.
 //   interviews    — practice roleplay transcripts { navigatorId, name, domainId,
-//                   scenario, callerName, transcript, endedAt }
+//                   scenario, callerName, transcript, endedAt, grade?,
+//                   qa? }. Call QA attempts keep the full `qa` audit on the
+//                   interview doc, including `domainScores`, `competencyScores`,
+//                   `domainScoreVersion`, and optional `qaFinalReview`.
 //   completions   — exercise completions { navigatorId, name, domainId, kind,
 //                   completedAt }. `kind` defaults to 'practice' for legacy docs.
 //   pairings      — mentor-mentee pairings { domainId, mentorId, mentorName,
@@ -437,7 +440,8 @@ export async function saveInterview(navigatorId, name, domainId, scenario, calle
  * @param {string} id   interview doc id returned by saveInterview
  * @param {{ score:number, summary:string, strengths:string[], improvements:string[] }} grade
  * @param {object} [qa] full QA-test scorecard (criteria verdicts, categories,
- *                      auto-fails, pass/fail) — present only for QA test calls.
+ *                      auto-fails, pass/fail, QA-only domain/competency scores)
+ *                      — present only for QA test calls.
  */
 export async function updateInterviewGrade(id, grade, qa = null) {
   await updateDoc(doc(db, INTERVIEWS, id), qa ? { grade, qa } : { grade });

@@ -24,6 +24,7 @@ import {
   QA_RUBRIC, QA_AUTO_FAILS, rubricCriteria,
   validateQaResponse, scoreQa, assessQa, buildGradeProjection,
 } from './_qa-rubric.js';
+import { qaDomainScoreSummary } from '../src/lib/qaDomainScoring.js';
 
 const MAX_TURNS = 60;
 const MAX_TURN_CHARS = 2000;
@@ -169,6 +170,19 @@ function buildBody(systemInstruction, userMessage) {
   };
 }
 
+export function finalizeQaResult(scored, transcript, correctedTurns = 0) {
+  const review = assessQa(scored, transcript, { correctedTurns });
+  const qa = {
+    ...scored,
+    ...qaDomainScoreSummary(scored),
+    domainScoreVersion: '2026-07-09-v1',
+    review,
+    correctedTurns,
+  };
+  const grade = buildGradeProjection(qa);
+  return { qa, grade };
+}
+
 export default async function handler(req, res) {
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
 
@@ -219,12 +233,7 @@ export default async function handler(req, res) {
     .slice(0, MAX_TURNS)
     .map((t) => ({ role: t.role, text: String(t.text ?? '').slice(0, MAX_TURN_CHARS) }));
   const scored = scoreQa(validated.criteria, validated.autoFails, boundedTranscript);
-  // Deterministic confidence / supervisor-review layer: the AI result is
-  // decision support — borderline scores, questionable transcripts, and
-  // unconfirmed safety reports are flagged instead of silently pass/failed.
-  const review = assessQa(scored, boundedTranscript, { correctedTurns });
-  const qa = { ...scored, review, correctedTurns };
-  const grade = buildGradeProjection(qa);
+  const { qa, grade } = finalizeQaResult(scored, boundedTranscript, correctedTurns);
 
   return res.status(200).json({ qa, grade });
 }

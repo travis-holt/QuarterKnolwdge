@@ -18,110 +18,15 @@
 // The leading `_` keeps Express from turning this module into a route.
 // ─────────────────────────────────────────────────────────────────────────────
 
-// A criterion is `core` when it applies to EVERY call (greeting, verification,
-// tone, closing…). Only scenario-dependent criteria (scheduling, documentation
-// specifics) may legitimately come back NA.
-export const QA_RUBRIC = [
-  {
-    id: 'opening', name: 'Opening', criteria: [
-      { id: 'open-greet', points: 4, core: true,
-        text: 'Opened with a pleasant, professional greeting.' },
-      { id: 'open-name', points: 3, core: true,
-        text: 'Stated their own first name during the greeting.' },
-      { id: 'open-org', points: 3, core: true,
-        text: 'Identified the organization (Aizer Health) during the greeting.' },
-    ],
-  },
-  {
-    id: 'verification', name: 'Verification', criteria: [
-      { id: 'verify-three', points: 6, core: true,
-        text: 'Collected three (3) identifiers — first name, last name, and DOB (or home address / phone number) — before discussing any account or chart specifics.' },
-      { id: 'verify-before-access', points: 4, core: true,
-        text: 'Completed identity verification BEFORE sharing or confirming any account, appointment, or chart detail.' },
-    ],
-  },
-  {
-    id: 'callControl', name: 'Call Control', criteria: [
-      { id: 'control-narrate', points: 5, core: true,
-        text: 'Narrated system actions or explained waits before them ("I\'m pulling up the schedule now…"), and explained why before any hold.' },
-      { id: 'control-guide', points: 5, core: true,
-        text: 'Kept the call moving toward a resolution with purposeful questions — did not drift, stall, or leave the caller directing the call.' },
-    ],
-  },
-  {
-    id: 'docReason', name: 'Documentation Reason', criteria: [
-      { id: 'doc-reason', points: 6, core: false,
-        text: 'Stated or confirmed an accurate, specific visit/documentation reason matching SOP conventions (e.g., "Shots PE UTD", "GS" for Good Samaritan newborns).' },
-      { id: 'doc-te', points: 4, core: false,
-        text: 'Routed or logged a Telephone Encounter to the correct queue or contact when the scenario called for one (per the escalation matrix).' },
-    ],
-  },
-  {
-    id: 'communication', name: 'Communication', criteria: [
-      { id: 'comm-plain', points: 5, core: true,
-        text: 'Used simple, jargon-free language the caller could follow.' },
-      { id: 'comm-professional', points: 5, core: true,
-        text: 'Was courteous and professional in every turn.' },
-      { id: 'comm-empathy', points: 5, core: true,
-        text: 'Responded warmly and empathetically where the caller expressed worry, frustration, or urgency.' },
-    ],
-  },
-  {
-    id: 'activeListening', name: 'Active Listening', criteria: [
-      { id: 'listen-ack', points: 5, core: true,
-        text: 'Explicitly acknowledged the caller\'s concern ("I understand…", "I hear you…").' },
-      { id: 'listen-gather', points: 5, core: true,
-        text: 'Gathered the needed information before answering — no assumptions or premature answers.' },
-    ],
-  },
-  {
-    id: 'knowledge', name: 'Knowledge', criteria: [
-      { id: 'know-rule', points: 9, core: true,
-        text: 'Applied the correct SOP rule for this scenario (PE frequency, newborn scheduling, provider constraints, escalation-matrix routing, queue selection…).' },
-      { id: 'know-details', points: 6, core: false,
-        text: 'Every concrete detail given (facility, address, provider, process step) was accurate per the SOP — nothing invented.' },
-    ],
-  },
-  {
-    id: 'scheduling', name: 'Appointment Scheduling', criteria: [
-      { id: 'sched-flow', points: 8, core: false,
-        text: 'Reached the correct scheduling outcome — right provider, visit type, and location for the request.' },
-      { id: 'sched-recap', points: 7, core: false,
-        text: 'Recapped the appointment date, time, and place, and gave arrival instructions.' },
-    ],
-  },
-  {
-    id: 'closing', name: 'Closing', criteria: [
-      { id: 'close-survey', points: 3, core: true,
-        text: 'Prompted the caller to stay on the line for the survey before the call ended.' },
-      { id: 'close-anything-thanks', points: 2, core: true,
-        text: 'Closed the call courteously — offered further help and/or exchanged thanks and a goodbye. A natural, mutual close counts; exact scripted wording is not required.' },
-    ],
-  },
-];
+import {
+  QA_RUBRIC,
+  QA_AUTO_FAILS,
+  QA_PASS_THRESHOLD,
+  VERDICTS,
+  rubricCriteria,
+} from '../src/data/qaRubric.js';
 
-// Critical -100 deductions. An auto-fail zeroes the test regardless of the
-// rubric score — but ONLY when the model can quote the offending transcript
-// line and that quote verifies. A hallucinated auto-fail must never fail a real
-// person's test.
-export const QA_AUTO_FAILS = [
-  { id: 'af-hipaa',
-    text: 'Disclosed Protected Health Information or discussed account/chart details WITHOUT first completing 3-point identity verification.' },
-  { id: 'af-scope',
-    text: 'Read lab/imaging results to the caller or gave clinical/medication advice, instead of transferring to nursing.' },
-  { id: 'af-conduct',
-    text: 'Used profanity or sarcasm toward the caller.' },
-];
-
-export const QA_PASS_THRESHOLD = 85;
-
-export const VERDICTS = new Set(['MET', 'NOT_MET', 'NA']);
-
-// Flat list of all criteria with their category attached.
-export function rubricCriteria() {
-  return QA_RUBRIC.flatMap((cat) =>
-    cat.criteria.map((c) => ({ ...c, categoryId: cat.id, categoryName: cat.name })));
-}
+export { QA_RUBRIC, QA_AUTO_FAILS, QA_PASS_THRESHOLD, VERDICTS, rubricCriteria };
 
 // ── Evidence verification ────────────────────────────────────────────────────
 

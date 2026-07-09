@@ -6,7 +6,9 @@ import {
   QA_RUBRIC, QA_AUTO_FAILS, QA_PASS_THRESHOLD, QA_REVIEW_MARGIN, rubricCriteria,
   verifyEvidence, validateQaResponse, scoreQa, assessQa, buildGradeProjection,
 } from './_qa-rubric.js';
-import { buildMessages } from './grade-call-qa.js';
+import { buildMessages, finalizeQaResult } from './grade-call-qa.js';
+import { COMPETENCY_IDS } from '../src/data/competencies.js';
+import { DOMAINS } from '../src/data/questions.js';
 
 // ── Fixtures ─────────────────────────────────────────────────────────────────
 
@@ -66,6 +68,30 @@ describe('QA_RUBRIC', () => {
       opening: 10, verification: 10, callControl: 10, docReason: 10,
       communication: 15, activeListening: 10, knowledge: 15, scheduling: 15, closing: 5,
     });
+  });
+
+  it('tags every criterion with valid domainIds and competencyIds', () => {
+    const domainIds = new Set(DOMAINS.map((d) => d.id));
+    for (const criterion of rubricCriteria()) {
+      expect(Array.isArray(criterion.domainIds)).toBe(true);
+      expect(criterion.domainIds.length).toBeGreaterThan(0);
+      expect(Array.isArray(criterion.competencyIds)).toBe(true);
+      expect(criterion.competencyIds.length).toBeGreaterThan(0);
+      for (const domainId of criterion.domainIds) expect(domainIds.has(domainId)).toBe(true);
+      for (const competencyId of criterion.competencyIds) expect(COMPETENCY_IDS.has(competencyId)).toBe(true);
+    }
+  });
+
+  it('tags every auto-fail with valid domainIds and competencyIds', () => {
+    const domainIds = new Set(DOMAINS.map((d) => d.id));
+    for (const autoFail of QA_AUTO_FAILS) {
+      expect(Array.isArray(autoFail.domainIds)).toBe(true);
+      expect(autoFail.domainIds.length).toBeGreaterThan(0);
+      expect(Array.isArray(autoFail.competencyIds)).toBe(true);
+      expect(autoFail.competencyIds.length).toBeGreaterThan(0);
+      for (const domainId of autoFail.domainIds) expect(domainIds.has(domainId)).toBe(true);
+      for (const competencyId of autoFail.competencyIds) expect(COMPETENCY_IDS.has(competencyId)).toBe(true);
+    }
   });
 });
 
@@ -365,6 +391,19 @@ describe('buildGradeProjection', () => {
     const grade = buildGradeProjection({ ...qa, review });
     expect(grade.summary).toMatch(/FLAGGED FOR SUPERVISOR REVIEW/);
     expect(grade.summary).toMatch(/unconfirmed/i);
+  });
+});
+
+describe('finalizeQaResult', () => {
+  it('adds QA-only domain/competency scores and a scoring version without changing pass/fail', () => {
+    const scored = scoreQa(allMetVerdicts(), [], TRANSCRIPT);
+    const { qa, grade } = finalizeQaResult(scored, TRANSCRIPT, 0);
+    expect(qa.pass).toBe(scored.pass);
+    expect(qa.score).toBe(scored.score);
+    expect(qa.domainScoreVersion).toBe('2026-07-09-v1');
+    expect(qa.domainScores.intake).toEqual(expect.objectContaining({ score: 100 }));
+    expect(qa.competencyScores.communication).toEqual(expect.objectContaining({ score: 100 }));
+    expect(grade.score).toBe(scored.score);
   });
 });
 
