@@ -12,7 +12,7 @@ import Footer     from './Footer.jsx';
 import Nav        from './Nav.jsx';
 import PhaseHub   from './PhaseHub.jsx';
 import Start      from './Start.jsx';
-import { callQaScenarioMetadata, runQaPersistenceSequence } from './VoiceCall.jsx';
+import { callQaScenarioMetadata, runQaPersistenceSequence, buildCallQaGradingScenario } from './VoiceCall.jsx';
 import { CALL_QA_SCENARIOS } from '../data/callQaScenarios.js';
 
 const startMocks = vi.hoisted(() => ({
@@ -299,5 +299,61 @@ describe('runQaPersistenceSequence', () => {
       'pediatrics',
       metadata
     );
+  });
+
+  it('passes curated expectedActions/criticalMisses into the scenario sent to the grader', async () => {
+    const saveInterviewFn = vi.fn().mockResolvedValue('iv-1');
+    const gradeQaFn = vi.fn().mockResolvedValue({
+      grade: { score: 90 },
+      qa: { score: 90, pass: true },
+    });
+    const saveGradeFn = vi.fn().mockResolvedValue();
+    const source = CALL_QA_SCENARIOS[0];
+    const metadata = callQaScenarioMetadata(source);
+
+    await runQaPersistenceSequence({
+      navigatorId: 'nav-1',
+      name: 'Ada',
+      domainId: 'routing',
+      scenario: 'Scenario',
+      callerName: 'Caller',
+      transcript: [{ role: 'patient', text: 'Help' }],
+      department: 'pediatrics',
+      metadata,
+    }, {
+      saveInterviewFn,
+      gradeQaFn,
+      saveGradeFn,
+    });
+
+    expect(gradeQaFn).toHaveBeenCalledTimes(1);
+    const sentScenario = gradeQaFn.mock.calls[0][0].scenario;
+    expect(sentScenario).toContain('Scenario');
+    expect(sentScenario).toContain('GRADING CONTEXT');
+    source.expectedActions.forEach((a) => expect(sentScenario).toContain(a));
+    source.criticalMisses.forEach((m) => expect(sentScenario).toContain(m));
+  });
+});
+
+describe('buildCallQaGradingScenario', () => {
+  it('returns the original scenario unchanged when there is no curated metadata', () => {
+    expect(buildCallQaGradingScenario('Base scenario')).toBe('Base scenario');
+    expect(buildCallQaGradingScenario('Base scenario', {})).toBe('Base scenario');
+  });
+
+  it('appends a plain-text grading context block from curated metadata', () => {
+    const out = buildCallQaGradingScenario('Base scenario', {
+      qaScenarioTitle: 'Refill request',
+      workflowType: 'prescription_refill',
+      difficulty: 'medium',
+      expectedActions: ['Verify identity', 'Route to pharmacy queue'],
+      criticalMisses: ['Gives medical advice'],
+    });
+    expect(out).toContain('Base scenario');
+    expect(out).toContain('Refill request');
+    expect(out).toContain('prescription_refill');
+    expect(out).toContain('Verify identity');
+    expect(out).toContain('Route to pharmacy queue');
+    expect(out).toContain('Gives medical advice');
   });
 });

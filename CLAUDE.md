@@ -1082,7 +1082,7 @@ of this file on 2026-07-07 to cut per-session context cost (it was ~55% of the f
   interview doc and a successfully saved QA grade; archived/reset QA attempts are ignored by the
   "latest active QA" lookup that drives the phase hub and dashboard card. Call QA Test mode uses
   a curated Pediatrics/OB-GYN scenario bank with scenario metadata stored on interview docs.
-  Build clean, tests green (`npm test`  **459 passing**, 23 test files). GitHub Actions CI now mirrors the normal local gate on `main` pushes and PRs:
+  Build clean, tests green (`npm test`  **462 passing**, 23 test files). GitHub Actions CI now mirrors the normal local gate on `main` pushes and PRs:
   `npm ci` → `npm test` → `npm run build` (no deploy step).
 - **Existing functionality:** features F1–F26 (see [§4](#4-feature-inventory)) are **Complete** in
   code. F17 adds longitudinal trends + Sparkline. F18 adds dossier evidence per competency. F19
@@ -1112,7 +1112,7 @@ of this file on 2026-07-07 to cut per-session context cost (it was ~55% of the f
 - **Experimental / mockup:**
   - Training **content** is mockup (flagged in UI). Logic is real.
   - **Adult Medicine and Behavioural Health** are not assessed; **Pediatrics and OB/GYN** are live.
-- **Test coverage:** **459 tests** across **23 test files**: `scoring.test.js` (all exports incl. `optionPoints`,
+- **Test coverage:** **462 tests** across **23 test files**: `scoring.test.js` (all exports incl. `optionPoints`,
   including F17–F21 functions: buildTrend, trainingImpact, teamTrend, buildDossier, buildActionCenter,
   buildDevPath, buildMentorMatches, pairingOutcomes, buildLearningSignals,
   buildQuestionImprovementSuggestions, adaptiveTrainingRecommendations, feedbackInsights +
@@ -1182,7 +1182,7 @@ of this file on 2026-07-07 to cut per-session context cost (it was ~55% of the f
 - **Counts (today):** 6 domains (job-aligned 2026-07-02: intake · classification · routing ·
   scheduling · boundaries · documentation) · 9 competencies · 21 Pediatrics + 16
   OB/GYN = **37** seed questions (bank grows in Firestore per dept) · 4 departments (**Pediatrics
-  + OB/GYN live**, 2 mockup) · **459** unit tests (23 test files) · **12** Firestore collections
+  + OB/GYN live**, 2 mockup) · **462** unit tests (23 test files) · **12** Firestore collections
   (`roster`, `results`, `resultHistory`, `questions`, `audits`, `interviews`, `completions`,
   `pairings`, `supervisorFeedback`, `learningProposals`, `sops`, `contentMigrations`) ·
   **12** REST serverless functions (`generate-scenarios`, `generate-coaching`, `interview-turn`,
@@ -1397,7 +1397,7 @@ npm run test:e2e     # run the Playwright browser tests (auto-builds + starts th
 - Heatmap intensity toggle (show % inside matrix cells).
 
 ### Technical Debt
-- **459 tests** across 23 test files as of 2026-07-08. **Role-app coverage** (`App`, `Start`,
+- **462 tests** across 23 test files as of 2026-07-08. **Role-app coverage** (`App`, `Start`,
   `SupervisorApp`, `NavigatorApp`) now includes both shell smoke tests (mount + gate/session routing)
   and per-tab behavioural tests (`roleApps.behavior.test.jsx`: tab transitions, empty states,
   dept-select → phase/dashboard flows, navigator-detail open). Deeper per-child-widget interaction

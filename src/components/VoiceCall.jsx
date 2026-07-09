@@ -38,6 +38,39 @@ async function gradeQaRequest({ scenario, transcript, department }) {
   return apiFetch('/api/grade-call-qa', { scenario, transcript, department }, QA_GRADE_TIMEOUT_MS);
 }
 
+// Enrich the plain-text scenario passed to /api/grade-call-qa with the curated
+// scenario's expectations, so the deterministic grader knows what "good" looks like
+// for this specific call. The endpoint already accepts a scenario string, so this
+// stays plain text. When no curated metadata exists (generated calls), the original
+// scenario is returned unchanged.
+export function buildCallQaGradingScenario(scenario, metadata = {}) {
+  const base = String(scenario || '').trim();
+  const meta = metadata || {};
+  const expected = Array.isArray(meta.expectedActions) ? meta.expectedActions.filter(Boolean) : [];
+  const misses = Array.isArray(meta.criticalMisses) ? meta.criticalMisses.filter(Boolean) : [];
+  const header = [];
+  if (meta.qaScenarioTitle) header.push(`Scenario: ${meta.qaScenarioTitle}`);
+  if (meta.workflowType) header.push(`Workflow type: ${meta.workflowType}`);
+  if (meta.difficulty) header.push(`Difficulty: ${meta.difficulty}`);
+
+  if (!header.length && !expected.length && !misses.length) return base;
+
+  const parts = [];
+  if (base) parts.push(base);
+  const context = ['GRADING CONTEXT (curated scenario expectations):'];
+  if (header.length) context.push(header.join(' · '));
+  if (expected.length) {
+    context.push('Expected navigator behaviors:');
+    expected.forEach((a) => context.push(`- ${a}`));
+  }
+  if (misses.length) {
+    context.push('Critical misses (fail the relevant criteria if these occur):');
+    misses.forEach((m) => context.push(`- ${m}`));
+  }
+  parts.push(context.join('\n'));
+  return parts.join('\n\n');
+}
+
 export function callQaScenarioMetadata(selectedScenario) {
   if (!selectedScenario) return {};
   return {
@@ -92,12 +125,16 @@ export async function saveGradeToAttempt(docId, grade, qa, saveGradeFn = updateI
 }
 
 export async function gradeSavedAttempt(
-  { docId, scenario, transcript, department },
+  { docId, scenario, transcript, department, metadata },
   { gradeQaFn = gradeQaRequest, saveGradeFn = updateInterviewGrade } = {}
 ) {
   let data;
   try {
-    data = await gradeQaFn({ scenario, transcript, department });
+    data = await gradeQaFn({
+      scenario: buildCallQaGradingScenario(scenario, metadata),
+      transcript,
+      department,
+    });
   } catch (cause) {
     throw new VoiceCallPersistenceError(
       'grade',
@@ -120,6 +157,7 @@ export async function runQaPersistenceSequence(payload, deps = {}) {
       scenario: payload.scenario,
       transcript: payload.transcript,
       department: payload.department,
+      metadata: payload.metadata,
     },
     deps
   );
