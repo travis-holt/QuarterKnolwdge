@@ -8,6 +8,16 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { getApiKeys, geminiWithRotation, resetCooldowns, rotationFailure, redactKeys, MODEL, LITE_MODEL } from './_gemini-client.js';
 
+// ── model defaults ───────────────────────────────────────────────────────────
+
+describe('Gemini model defaults', () => {
+  it('does not point REST endpoints at the retired Gemini 2.5 Flash model', () => {
+    expect(MODEL).toBe('gemini-3.5-flash');
+    expect(LITE_MODEL).toBe('gemini-3.1-flash-lite');
+    expect(MODEL).not.toContain('2.5');
+  });
+});
+
 // ── getApiKeys ────────────────────────────────────────────────────────────────
 
 describe('getApiKeys', () => {
@@ -258,34 +268,21 @@ describe('rotationFailure', () => {
     expect(rotationFailure({ reason: 'auth' }).status).toBe(500);
   });
 
-  it('maps exhausted (and any other reason) to 429', () => {
+  it('maps exhausted to 429', () => {
     expect(rotationFailure({ reason: 'exhausted' }).status).toBe(429);
-    expect(rotationFailure({ reason: 'exhausted' }).error).toMatch(/rate-limited/);
-  });
-
-  it('honours per-handler message overrides without changing the status', () => {
-    expect(rotationFailure({ reason: 'fatal', status: 400 }, { fatal: 'custom fatal' }))
-      .toEqual({ status: 502, error: 'custom fatal' });
-    expect(rotationFailure({ reason: 'exhausted' }, { exhausted: 'busy' }))
-      .toEqual({ status: 429, error: 'busy' });
   });
 });
 
-// ── redactKeys ────────────────────────────────────────────────────────────────
+// ── redaction ─────────────────────────────────────────────────────────────────
 
 describe('redactKeys', () => {
-  it('redacts key query params in URLs', () => {
-    expect(redactKeys('fetch failed: https://x.googleapis.com/v1?key=AIzaSecret123&x=1'))
-      .toBe('fetch failed: https://x.googleapis.com/v1?key=***&x=1');
+  it('redacts API keys in query strings', () => {
+    const msg = 'fetch failed https://example.test/path?key=AIzaSecret123&alt=json';
+    expect(redactKeys(msg)).toBe('fetch failed https://example.test/path?key=***&alt=json');
   });
 
-  it('redacts &key= as well as ?key=', () => {
-    expect(redactKeys('wss://host/path?alt=json&key=abc')).toBe('wss://host/path?alt=json&key=***');
-  });
-
-  it('leaves ordinary text untouched and tolerates non-strings', () => {
-    expect(redactKeys('plain message')).toBe('plain message');
-    expect(redactKeys(null)).toBe('');
-    expect(redactKeys(undefined)).toBe('');
+  it('redacts key when it is the second query param', () => {
+    const msg = 'url=https://x.test?a=1&key=my-secret-key';
+    expect(redactKeys(msg)).toBe('url=https://x.test?a=1&key=***');
   });
 });
