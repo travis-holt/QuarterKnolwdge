@@ -1,5 +1,11 @@
 # Development History - Knowledge Check
 
+### 2026-07-10 - Call QA fairness hardening for refill PE status and natural TE wording
+- **Problem:** The QA grader could deduct for missing PE status during a standard pediatric refill or for not saying the internal Telephone Encounter phrase verbatim.
+- **Fix:** Curated scenario scoring notes now reach grading; the prompt accepts natural message/routing wording; a transparent deterministic repair layer corrects only these verified false-negative patterns before scoring.
+- **Safety:** Repairs do not excuse wrong routing, missing medication/pharmacy details, overpromising, clinical advice, or privacy failures. `qa.repairs` is supervisor-visible.
+- **Tests:** Added focused refill, TE wording, no-over-repair, prompt, metadata, and supervisor-transparency coverage. Verified with `npm test -- grade-call-qa` (50 passing), `npm test` (554 passing), `npm run build`, and `git diff --check`.
+
 ### 2026-07-09 - Gemini REST primary reverted to 2.5 Flash + universal fallback chain + 503 cooldown
 - **Problem:** Practice calls (`interview-turn`) and grading (`grade-interview`/`grade-call-qa`)
   kept failing with `503 — rotating` on `gemini-3.5-flash`. Live probe against all 4 project keys:

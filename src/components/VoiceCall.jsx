@@ -34,8 +34,8 @@ class VoiceCallPersistenceError extends Error {
   }
 }
 
-async function gradeQaRequest({ scenario, transcript, department }) {
-  return apiFetch('/api/grade-call-qa', { scenario, transcript, department }, QA_GRADE_TIMEOUT_MS);
+async function gradeQaRequest({ scenario, transcript, department, metadata }) {
+  return apiFetch('/api/grade-call-qa', { scenario, transcript, department, metadata }, QA_GRADE_TIMEOUT_MS);
 }
 
 // Enrich the plain-text scenario passed to /api/grade-call-qa with the curated
@@ -48,12 +48,13 @@ export function buildCallQaGradingScenario(scenario, metadata = {}) {
   const meta = metadata || {};
   const expected = Array.isArray(meta.expectedActions) ? meta.expectedActions.filter(Boolean) : [];
   const misses = Array.isArray(meta.criticalMisses) ? meta.criticalMisses.filter(Boolean) : [];
+  const scoringNotes = Array.isArray(meta.scoringNotes) ? meta.scoringNotes.filter(Boolean) : [];
   const header = [];
   if (meta.qaScenarioTitle) header.push(`Scenario: ${meta.qaScenarioTitle}`);
   if (meta.workflowType) header.push(`Workflow type: ${meta.workflowType}`);
   if (meta.difficulty) header.push(`Difficulty: ${meta.difficulty}`);
 
-  if (!header.length && !expected.length && !misses.length) return base;
+  if (!header.length && !expected.length && !misses.length && !scoringNotes.length) return base;
 
   const parts = [];
   if (base) parts.push(base);
@@ -66,6 +67,10 @@ export function buildCallQaGradingScenario(scenario, metadata = {}) {
   if (misses.length) {
     context.push('Critical misses (fail the relevant criteria if these occur):');
     misses.forEach((m) => context.push(`- ${m}`));
+  }
+  if (scoringNotes.length) {
+    context.push('Scenario-specific grading notes:');
+    scoringNotes.forEach((note) => context.push(`- ${note}`));
   }
   parts.push(context.join('\n'));
   return parts.join('\n\n');
@@ -83,6 +88,7 @@ export function callQaScenarioMetadata(selectedScenario) {
     competencyIds: selectedScenario.competencyIds,
     expectedActions: selectedScenario.expectedActions,
     criticalMisses: selectedScenario.criticalMisses,
+    scoringNotes: selectedScenario.scoringNotes ?? [],
   };
 }
 
@@ -134,6 +140,7 @@ export async function gradeSavedAttempt(
       scenario: buildCallQaGradingScenario(scenario, metadata),
       transcript,
       department,
+      metadata,
     });
   } catch (cause) {
     throw new VoiceCallPersistenceError(
@@ -766,6 +773,10 @@ export default function VoiceCall({ navigatorId, name, department = 'pediatrics'
               </>
             )}
           </div>
+
+          {qa?.repairs?.length > 0 && (
+            <p className="readoff__sub">Some rubric wording was normalized for fair scoring.</p>
+          )}
 
           {qa?.review?.reviewFlags?.length > 0 && (
             <div className="card qa-reviewflags">

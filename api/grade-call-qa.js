@@ -24,7 +24,7 @@ import { getApiKeys, geminiWithRotation, rotationFailure, MODEL, STABLE_MODEL, L
 import { validateSecret } from './_auth.js';
 import {
   QA_RUBRIC, QA_AUTO_FAILS, rubricCriteria,
-  validateQaResponse, scoreQa, assessQa, buildGradeProjection,
+  validateQaResponse, repairQaVerdictsForScenario, scoreQa, assessQa, buildGradeProjection,
 } from './_qa-rubric.js';
 import { qaDomainScoreSummary } from '../src/lib/qaDomainScoring.js';
 
@@ -130,8 +130,11 @@ place, or term looks mis-transcribed or was said as a valid synonym (see the voc
 enough. If the caller has already said thanks or goodbye and the navigator responds in kind, or \
 the navigator gives any polite sign-off, treat the closing pleasantry as MET even without the \
 exact scripted phrase. Do not require rote wording.
-These two carve-outs apply ONLY to closing pleasantries and mis-transcribed / synonymous terms. \
-Verification, privacy/scope, routing, scheduling, and SOP-knowledge criteria stay strict.
+- WORKFLOW FAIRNESS RULES: For a standard medication refill, do not require PE / Physical Exam / physical status verification unless the scenario makes it the governing issue. Require medication name, preferred pharmacy, callback details when needed, out-of-medication urgency, a correct message/routing step, no promised approval, and no medication advice. Do not fail Knowledge solely because PE was not asked.
+- System-visible facts: do not penalize a navigator for not asking about facts normally checked in the ECW/system/chart unless the scenario requires caller confirmation. Do not invent a missing caller question as a failure.
+- Natural routing wording: exact TE or Telephone Encounter wording is not required. "send the request," "send a message," "send this over," "route this," "put in a note," or sending it to the nurse, provider, refill team, or clinical team counts when the workflow and destination are correct.
+- Still strict: these fairness rules never excuse a wrong queue/destination, no next step, missing medication/pharmacy/callback details when required, missed urgency, promised approval or unsupported same-day completion, medication/dosing or clinical advice, result interpretation, or privacy/verification failure.
+Fairness rules never weaken verification, privacy/scope, routing, scheduling, or real SOP-knowledge failures.
 
 Separately, check the auto-fail conditions. Set "triggered": true ONLY if the transcript \
 contains an explicit violation, and quote the offending navigator line verbatim in "evidence". \
@@ -174,14 +177,16 @@ function buildBody(systemInstruction, userMessage) {
   };
 }
 
-export function finalizeQaResult(scored, transcript, correctedTurns = 0) {
-  const review = assessQa(scored, transcript, { correctedTurns });
+export function finalizeQaResult(scored, transcript, correctedTurns = 0, repairs = []) {
+  const review = assessQa(scored, transcript, { correctedTurns, repairs });
   const qa = {
     ...scored,
     ...qaDomainScoreSummary(scored),
     domainScoreVersion: '2026-07-09-v1',
     review,
     correctedTurns,
+    repairs,
+    repairCount: repairs.length,
   };
   const grade = buildGradeProjection(qa);
   return { qa, grade };
@@ -195,7 +200,7 @@ export default async function handler(req, res) {
   const keys = getApiKeys();
   if (!keys.length) return res.status(500).json({ error: 'Grading is not configured on the server.' });
 
-  const { scenario, transcript: rawTranscript, department = 'pediatrics' } = req.body ?? {};
+  const { scenario, transcript: rawTranscript, department = 'pediatrics', metadata = {} } = req.body ?? {};
 
   if (!scenario || !Array.isArray(rawTranscript) || rawTranscript.length === 0) {
     return res.status(400).json({ error: 'Missing required fields.' });
@@ -236,8 +241,9 @@ export default async function handler(req, res) {
   const boundedTranscript = transcript
     .slice(0, MAX_TURNS)
     .map((t) => ({ role: t.role, text: String(t.text ?? '').slice(0, MAX_TURN_CHARS) }));
-  const scored = scoreQa(validated.criteria, validated.autoFails, boundedTranscript);
-  const { qa, grade } = finalizeQaResult(scored, boundedTranscript, correctedTurns);
+  const repaired = repairQaVerdictsForScenario(validated, boundedTranscript, { scenario, department, metadata });
+  const scored = scoreQa(repaired.criteria, repaired.autoFails, boundedTranscript);
+  const { qa, grade } = finalizeQaResult(scored, boundedTranscript, correctedTurns, repaired.repairs);
 
   return res.status(200).json({ qa, grade });
 }

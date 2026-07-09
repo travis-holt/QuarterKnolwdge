@@ -220,6 +220,18 @@ describe('NavigatorDetail — supervisor grade override', () => {
     expect(screen.queryByText('QA-only domain signal')).not.toBeInTheDocument();
   });
 
+  it('shows fairness repair evidence to the supervisor', async () => {
+    renderDetail(qaSession({ qa: {
+      pass: true, score: 92, passThreshold: 85,
+      review: { recommendation: 'pass', confidence: 'high', safetyRisk: 'none', reviewFlags: [] },
+      repairs: [{ criterionId: 'doc-te', rule: 'natural-message-routing-wording', reason: 'Accepted natural wording.', evidence: 'I will send this request to the refill team.' }],
+    } }));
+    fireEvent.click(await screen.findByText('Jordan'));
+    expect(await screen.findByText('Fairness guardrails applied')).toBeInTheDocument();
+    expect(screen.getByText(/Accepted natural wording/)).toBeInTheDocument();
+    expect(screen.getByText(/send this request to the refill team/)).toBeInTheDocument();
+  });
+
   it('AI PASS shows only Confirm Pass + Override to Fail', async () => {
     renderDetail(qaSession());
     fireEvent.click(await screen.findByText('Jordan'));

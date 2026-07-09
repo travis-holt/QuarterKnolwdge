@@ -675,6 +675,15 @@ export default function NavigatorDetail({ rows, name, deptName, dept, deptMatrix
                                 </ul>
                               </div>
                             )}
+                            {session.qa?.repairs?.length > 0 && (
+                              <div className="interview-log__grade-section">
+                                <p className="interview-log__grade-heading">Fairness guardrails applied</p>
+                                <p>These deterministic checks corrected likely false-negative rubric verdicts before scoring.</p>
+                                <ul>{session.qa.repairs.map((repair, index) => (
+                                  <li key={`${repair.criterionId}-${index}`}><strong>Criterion:</strong> {repair.criterionId} · <strong>Rule:</strong> {repair.rule} · <strong>Reason:</strong> {repair.reason} · <strong>Evidence:</strong> &ldquo;{repair.evidence}&rdquo;</li>
+                                ))}</ul>
+                              </div>
+                            )}
                             {session.qa && (
                               <div className="qa-final-review">
                                 <div className="qa-final-review__row">

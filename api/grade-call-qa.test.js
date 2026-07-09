@@ -4,7 +4,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   QA_RUBRIC, QA_AUTO_FAILS, QA_PASS_THRESHOLD, QA_REVIEW_MARGIN, rubricCriteria,
-  verifyEvidence, validateQaResponse, scoreQa, assessQa, buildGradeProjection,
+  verifyEvidence, validateQaResponse, repairQaVerdictsForScenario, scoreQa, assessQa, buildGradeProjection,
 } from './_qa-rubric.js';
 import { buildMessages, finalizeQaResult } from './grade-call-qa.js';
 import { COMPETENCY_IDS } from '../src/data/competencies.js';
@@ -407,6 +407,54 @@ describe('finalizeQaResult', () => {
   });
 });
 
+describe('repairQaVerdictsForScenario', () => {
+  const refillTranscript = [
+    { role: 'navigator', text: 'What is the medication name?' },
+    { role: 'navigator', text: 'Which pharmacy do you prefer?' },
+    { role: 'navigator', text: 'I will send this request to the refill team and mark it urgent because she is out.' },
+  ];
+  const repairedVerdicts = () => allMetVerdicts().map((criterion) => criterion.id === 'know-rule'
+    ? { ...criterion, verdict: 'NOT_MET', evidence: '', note: 'The navigator failed to ask about the patient PE status.' }
+    : criterion.id === 'doc-te'
+      ? { ...criterion, verdict: 'NOT_MET', evidence: '', note: 'The transcript does not contain evidence that the navigator routed or logged a Telephone Encounter.' }
+      : criterion);
+
+  it('restores PE-only refill knowledge and natural routing wording without changing other rules', () => {
+    const repaired = repairQaVerdictsForScenario(
+      { criteria: repairedVerdicts(), autoFails: [] }, refillTranscript,
+      { scenario: 'A standard pediatric medication refill.', department: 'pediatrics', metadata: { workflowType: 'prescription_refill' } },
+    );
+    expect(repaired.criteria.find((c) => c.id === 'know-rule').verdict).toBe('MET');
+    expect(repaired.criteria.find((c) => c.id === 'doc-te').evidence).toContain('send this request');
+    expect(repaired.repairs.map((repair) => repair.rule)).toEqual(expect.arrayContaining([
+      'standard-refill-no-pe-requirement', 'natural-message-routing-wording',
+    ]));
+  });
+
+  it('does not repair an incomplete or over-promised refill', () => {
+    const incomplete = refillTranscript.filter((turn) => !turn.text.includes('pharmacy'));
+    const repaired = repairQaVerdictsForScenario(
+      { criteria: repairedVerdicts(), autoFails: [] }, incomplete,
+      { scenario: 'A standard pediatric medication refill.', department: 'pediatrics', metadata: { workflowType: 'prescription_refill' } },
+    );
+    expect(repaired.repairs).toHaveLength(0);
+    const promised = refillTranscript.map((turn) => turn.text.includes('send this')
+      ? { ...turn, text: 'I will make sure the doctor approves it and sends it today.' } : turn);
+    expect(repairQaVerdictsForScenario(
+      { criteria: repairedVerdicts(), autoFails: [] }, promised,
+      { scenario: 'A standard pediatric medication refill.', department: 'pediatrics', metadata: { workflowType: 'prescription_refill' } },
+    ).repairs).toHaveLength(0);
+  });
+
+  it('keeps PE requirements when the scenario is a referral', () => {
+    const repaired = repairQaVerdictsForScenario(
+      { criteria: repairedVerdicts(), autoFails: [] }, refillTranscript,
+      { scenario: 'A pediatric referral where physical exam status is the governing issue.', department: 'pediatrics', metadata: { workflowType: 'referral' } },
+    );
+    expect(repaired.criteria.find((c) => c.id === 'know-rule').verdict).toBe('NOT_MET');
+  });
+});
+
 // ── buildMessages ────────────────────────────────────────────────────────────
 
 describe('grade-call-qa buildMessages', () => {
@@ -434,5 +482,9 @@ describe('grade-call-qa buildMessages', () => {
     const { systemInstruction } = buildMessages('scenario', TRANSCRIPT, 'pediatrics');
     expect(systemInstruction).toMatch(/Do NOT require PE verification or deny the refill/);
     expect(systemInstruction).toMatch(/preferred pharmacy/);
+    expect(systemInstruction).toMatch(/system-visible/i);
+    expect(systemInstruction).toMatch(/send the request/i);
+    expect(systemInstruction).toMatch(/send a message/i);
+    expect(systemInstruction).toMatch(/exact TE/i);
   });
 });

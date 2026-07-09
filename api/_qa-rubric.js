@@ -114,6 +114,82 @@ export function validateQaResponse(parsed) {
   return { data: { criteria: rubricCriteria().map((c) => byId.get(c.id)), autoFails } };
 }
 
+export const CALL_QA_FAIRNESS_RULES = {
+  standardRefillNoPeRequirement: 'standard-refill-no-pe-requirement',
+  naturalMessageRoutingWording: 'natural-message-routing-wording',
+};
+
+export function normalizeQaText(text) {
+  return String(text ?? '').toLowerCase().replace(/[^\p{L}\p{N}\s]/gu, ' ').replace(/\s+/g, ' ').trim();
+}
+
+export function navigatorLines(transcript) {
+  return (Array.isArray(transcript) ? transcript : []).filter((turn) => turn?.role === 'navigator' && String(turn.text ?? '').trim());
+}
+
+export function transcriptText(transcript) {
+  return (Array.isArray(transcript) ? transcript : []).map((turn) => String(turn?.text ?? '')).join(' ');
+}
+
+export function lineMatchesAny(line, regexes) {
+  return regexes.some((regex) => regex.test(String(line?.text ?? line ?? '')));
+}
+
+export function findBestNavigatorLine(transcript, regexes) {
+  return navigatorLines(transcript).find((line) => lineMatchesAny(line, regexes))?.text ?? null;
+}
+
+const REFILL_ROUTING = [/send (the|this|that|your)? ?(request|message|note)/i, /send .* (over|to)/i, /route .* (to|over)/i, /put .* (note|message)/i, /forward .* (request|message)/i, /pass .* (along|to)/i, /clinical team/i, /refill team/i, /nurse/i, /provider/i, /peds encounters/i, /pediatrics encounters/i, /team .* follow up/i];
+const OTHER_WORKFLOW_FAILURE = /wrong (queue|destination)|promis|missing (medication|pharmacy)|failed to.*(medication|pharmacy)|did not.*(medication|pharmacy)|no (medication|pharmacy|routing)|clinical advice/i;
+
+export function isStandardPediatricRefill({ scenario = '', department = 'pediatrics', metadata = {} } = {}) {
+  const text = normalizeQaText(scenario);
+  if (department !== 'pediatrics' || /referral|shots|immunization|vaccine|specialty|school form|pe scheduling|physical exam.*governing|pe status.*governing/.test(text)) return false;
+  return metadata.workflowType === 'prescription_refill' || String(metadata.qaScenarioId ?? '').toLowerCase().includes('refill') || /standard pediatric medication refill|standard prescription refill/.test(text) || (text.includes('medication refill') && !/referral|shots|immunization|vaccine|specialty eligibility/.test(text));
+}
+
+export function getRefillWorkflowSignals(transcript) {
+  const lines = navigatorLines(transcript);
+  const matches = (regexes) => lines.some((line) => lineMatchesAny(line, regexes));
+  return {
+    medication: matches([/medication name/i, /prescription name/i, /what medication/i, /which medicine/i, /name of the medicine/i, /allergy medicine/i, /refill.*for/i]),
+    pharmacy: matches([/preferred pharmacy/i, /which pharmacy/i, /what pharmacy/i, /pharmacy.*send/i, /send.*pharmacy/i]),
+    callback: matches([/callback/i, /call back/i, /best number/i, /phone number/i, /reach you/i]),
+    outOrUrgency: matches([/completely out/i, /out of (the )?medication/i, /out of (her|his|their) medicine/i, /any left/i, /how many.*left/i, /mark.*urgent/i, /high priority/i, /priority/i]),
+    naturalRoutingLine: findBestNavigatorLine(transcript, REFILL_ROUTING),
+    overPromise: matches([/will be approved/i, /guarantee/i, /definitely/i, /will be sent today/i, /doctor will send/i, /provider will approve/i, /i.?ll make sure.*approved/i]),
+    clinicalAdvice: matches([/give (her|him|them).*dose/i, /take .* twice/i, /increase/i, /decrease/i, /stop taking/i, /safe to/i, /not serious/i, /you should take/i, /medical advice/i]),
+    wrongDestination: matches([/referral coordinator/i, /school\/?forms team/i, /records team/i, /scheduling only/i, /front desk only/i, /specialist referral/i, /ob portal/i, /pss ob/i]),
+  };
+}
+
+export function repairQaVerdictsForScenario(validated, transcript, context = {}) {
+  const criteria = validated.criteria.map((criterion) => ({ ...criterion }));
+  const repairs = [];
+  const signals = getRefillWorkflowSignals(transcript);
+  const standardRefill = isStandardPediatricRefill(context);
+  const requiredDetailsMissing = standardRefill && (!signals.medication || !signals.pharmacy);
+  const workflowFailure = criteria.some((criterion) => criterion.id !== 'doc-te' && criterion.verdict === 'NOT_MET' && OTHER_WORKFLOW_FAILURE.test(`${criterion.note} ${criterion.evidence}`));
+  const safeRouting = signals.naturalRoutingLine && !signals.overPromise && !signals.clinicalAdvice && !signals.wrongDestination;
+  const peOnly = (criterion) => /\bpe\b|physical exam|physical status|up to date|\butd\b|not current/i.test(`${criterion.note} ${criterion.evidence}`) && !OTHER_WORKFLOW_FAILURE.test(`${criterion.note} ${criterion.evidence}`);
+  const needsMessage = ['prescription_refill', 'referral', 'records_forms', 'urgent_symptom_boundary', 'wrong_department_unclear_request'].includes(context.metadata?.workflowType) || /refill|referral|lab result|medical question|form|record|message|route|request|nurse|provider|clinical team/i.test(context.scenario ?? '');
+  const literalTeFailure = (criterion) => /telephone encounter|\bte\b|does not contain evidence|did not say|not documented|no evidence.*rout|no evidence.*log/i.test(`${criterion.note} ${criterion.evidence}`);
+
+  for (const criterion of criteria) {
+    if (criterion.id === 'know-rule' && standardRefill && criterion.verdict === 'NOT_MET' && peOnly(criterion) && signals.medication && signals.pharmacy && safeRouting) {
+      const reason = 'Fairness repair: standard pediatric refill does not require caller-facing PE/Physical Exam verification unless PE is the governing issue.';
+      criterion.verdict = 'MET'; criterion.evidence = signals.naturalRoutingLine; criterion.note = reason;
+      repairs.push({ criterionId: criterion.id, rule: CALL_QA_FAIRNESS_RULES.standardRefillNoPeRequirement, from: 'NOT_MET', to: 'MET', reason, evidence: criterion.evidence });
+    }
+    if (criterion.id === 'doc-te' && criterion.verdict === 'NOT_MET' && needsMessage && literalTeFailure(criterion) && safeRouting && !workflowFailure && !requiredDetailsMissing) {
+      const reason = 'Fairness repair: accepted natural patient-facing message/routing wording; exact TE/Telephone Encounter phrase is not required.';
+      criterion.verdict = 'MET'; criterion.evidence = signals.naturalRoutingLine; criterion.note = reason;
+      repairs.push({ criterionId: criterion.id, rule: CALL_QA_FAIRNESS_RULES.naturalMessageRoutingWording, from: 'NOT_MET', to: 'MET', reason, evidence: criterion.evidence });
+    }
+  }
+  return { criteria, autoFails: validated.autoFails, repairs };
+}
+
 // ── Deterministic scoring ────────────────────────────────────────────────────
 
 /**
@@ -212,7 +288,7 @@ export const QA_REVIEW_MARGIN = 5;
  *             safetyRisk: 'none'|'elevated'|'critical',
  *             reviewFlags: {id:string, label:string, detail:string}[] }}
  */
-export function assessQa(qa, transcript, { correctedTurns = 0 } = {}) {
+export function assessQa(qa, transcript, { correctedTurns = 0, repairs = [] } = {}) {
   const flags = [];
 
   const navigatorTurns = (transcript ?? []).filter((t) => t?.role === 'navigator').length;
@@ -282,6 +358,9 @@ export function assessQa(qa, transcript, { correctedTurns = 0 } = {}) {
       label: 'Auto-fail — supervisor confirmation required',
       detail: 'A verified auto-fail zeroed this test. Confirm the quoted line and the context before treating the fail as final.',
     });
+  }
+  if (repairs.length > 0) {
+    flags.push({ id: 'fairness-repair-applied', label: 'Fairness repair applied', detail: 'Deterministic Call QA guardrails corrected one or more likely false-negative rubric verdicts. Review repaired criteria for transparency.' });
   }
 
   const confidenceHits = flags.filter((f) =>

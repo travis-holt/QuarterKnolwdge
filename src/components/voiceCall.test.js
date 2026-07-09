@@ -24,6 +24,7 @@ const curated = {
   competencyIds: ['sopKnowledge'],
   expectedActions: ['Confirm medication name and preferred pharmacy', 'Mark HIGH PRIORITY (out of med)'],
   criticalMisses: ['Promised the refill would be sent today'],
+  scoringNotes: ['Do not require PE-status verification unless the caller makes that the governing issue.'],
 };
 
 describe('buildCallQaGradingScenario', () => {
@@ -39,6 +40,8 @@ describe('buildCallQaGradingScenario', () => {
     expect(out).toContain('Critical misses');
     expect(out).toContain('Promised the refill would be sent today');
     expect(out).toContain('Workflow type: prescription_refill');
+    expect(out).toContain('Scenario-specific grading notes:');
+    expect(out).toContain('Do not require PE-status verification');
   });
 });
 
@@ -57,5 +60,6 @@ describe('gradeSavedAttempt forwards curated metadata into the grading scenario'
     const sentScenario = gradeQaFn.mock.calls[0][0].scenario;
     expect(sentScenario).toContain('Confirm medication name and preferred pharmacy');
     expect(sentScenario).toContain('Promised the refill would be sent today');
+    expect(gradeQaFn.mock.calls[0][0].metadata.scoringNotes).toContain('Do not require PE-status verification unless the caller makes that the governing issue.');
   });
 });
