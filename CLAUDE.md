@@ -11,7 +11,7 @@
 > [§8 Current System State](#8-current-system-state) and [§15 Current Priorities](#15-current-priorities)
 > accurate at all times.
 >
-> **Last updated:** 2026-07-09 (Patient Navigator Operating Model injected into all AI endpoints + roleplay caseFile threaded init→turns→voice relay; domain-tagged Call QA scoring bridge; REST Gemini model migration to 3.5 Flash) ·
+> **Last updated:** 2026-07-09 (Patient Navigator Operating Model injected into all AI endpoints + roleplay caseFile threaded init→turns→voice relay; domain-tagged Call QA scoring bridge; REST Gemini model migration to 3.5 Flash with capacity fallback) ·
 > **Doc maintainer:** Claude (AI agent) + repo owner. Assumptions are explicitly marked **[ASSUMPTION]**.
 
 ---

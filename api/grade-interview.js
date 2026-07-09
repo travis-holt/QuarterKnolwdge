@@ -13,7 +13,7 @@ import { sopContextFor, sopContextForFresh } from './_sop-context.js';
 import { navigatorContextBlock } from './_navigator-operating-model.js';
 import { DOMAINS } from '../src/data/questions.js';
 import { departmentName } from '../src/data/departments.js';
-import { getApiKeys, geminiWithRotation, rotationFailure } from './_gemini-client.js';
+import { getApiKeys, geminiWithRotation, rotationFailure, MODEL, LITE_MODEL } from './_gemini-client.js';
 import { validateSecret } from './_auth.js';
 
 const FINDING_AREAS = ['intake', 'classification', 'routing', 'scheduling', 'boundaries', 'documentation', 'communication'];
@@ -171,7 +171,7 @@ export default async function handler(req, res) {
   const { systemInstruction, userMessage } = buildMessages(domain, scenario, transcript, name, department, await sopContextForFresh(department));
   const body = buildBody(systemInstruction, userMessage);
 
-  const result = await geminiWithRotation(keys, body, { label: 'grade-interview' });
+  const result = await geminiWithRotation(keys, body, { label: 'grade-interview', models: [MODEL, LITE_MODEL] });
   if (!result.ok) {
     const { status, error } = rotationFailure(result);
     return res.status(status).json({ error });

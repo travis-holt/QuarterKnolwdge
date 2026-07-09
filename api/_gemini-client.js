@@ -17,7 +17,8 @@
 //   { ok: false, reason: 'exhausted' }      → keys rate-limited / overloaded  → 429
 // ─────────────────────────────────────────────────────────────────────────────
 
-// Keep the model choice here so every REST Gemini endpoint migrates together.
+// gemini-2.5-flash has free-tier availability on the project keys in use (2.0-flash
+// returns a free-tier limit of 0 in this region). Swap here if quota/model changes.
 export const MODEL = 'gemini-3.5-flash';
 
 // Overflow model. Free-tier rate limits are per MODEL per project, so when every

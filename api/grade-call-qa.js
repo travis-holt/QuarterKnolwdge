@@ -13,13 +13,14 @@
 // the projection stored on the interview doc so the existing supervisor panel
 // renders QA tests with zero changes.
 //
-// Scored output → NO lite-model fallback (same quality gate as grade-interview).
+// Scored output prefers the primary model, then uses the lite fallback on capacity errors;
+// deterministic rubric scoring remains the quality gate.
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { sopContextFor, sopContextForFresh } from './_sop-context.js';
 import { navigatorContextBlock } from './_navigator-operating-model.js';
 import { correctTranscriptWithStats, glossaryPromptBlock } from './_qa-glossary.js';
-import { getApiKeys, geminiWithRotation, rotationFailure } from './_gemini-client.js';
+import { getApiKeys, geminiWithRotation, rotationFailure, MODEL, LITE_MODEL } from './_gemini-client.js';
 import { validateSecret } from './_auth.js';
 import {
   QA_RUBRIC, QA_AUTO_FAILS, rubricCriteria,
@@ -213,7 +214,7 @@ export default async function handler(req, res) {
   // well-formed, but a missing criterion id would otherwise 502 a real test.
   let validated = null;
   for (let attempt = 0; attempt < 2 && !validated; attempt++) {
-    const result = await geminiWithRotation(keys, body, { label: 'grade-call-qa' });
+    const result = await geminiWithRotation(keys, body, { label: 'grade-call-qa', models: [MODEL, LITE_MODEL] });
     if (!result.ok) {
       const { status, error } = rotationFailure(result, { exhausted: 'The grader is busy right now. Try again shortly.' });
       return res.status(status).json({ error });

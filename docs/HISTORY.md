@@ -1,12 +1,11 @@
 # Development History - Knowledge Check
 
-### 2026-07-09 - Gemini REST model migration
-- **Fix:** `api/_gemini-client.js` now uses `gemini-3.5-flash` for every REST Gemini endpoint and
-  `gemini-3.1-flash-lite` for the existing advisory overflow lane. This fixes the 404 returned after
-  `gemini-2.5-flash` became unavailable to the deployed API keys; both practice-call and Call QA
-  grading inherit the change through the shared client. The separate Live API voice model is unchanged.
-- **Verification:** `node --check api/_gemini-client.js`, `npm test` (**548 passing**), and
-  `npm run build` passed; `git diff --check` clean.
+### 2026-07-09 - Gemini REST migration and 503 capacity fallback
+- **Fix:** REST Gemini calls use `gemini-3.5-flash`, with practice-call and Call QA grading
+  falling back to `gemini-3.1-flash-lite` when the primary is unavailable (503/high demand).
+  Deterministic QA rubric and score math remain unchanged; the primary model is preferred.
+- **Reason:** Rotating keys cannot resolve a model-wide capacity outage when every key returns 503.
+- **Verification:** API syntax checks, `npm test` (**548 passing**), and `npm run build` passed.
 
 ### 2026-07-09 - PR #19 review fixes: consume caseFile behavior fields + QA-domain auto-fails
 - **Context:** Two review blockers on PR #19.
