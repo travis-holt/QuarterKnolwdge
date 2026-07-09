@@ -3,9 +3,14 @@ import { defineConfig, devices } from '@playwright/test';
 // Playwright end-to-end config for Knowledge Check.
 //
 // Two test suites live under here:
-//   e2e/           — the original live-data flows (write to Firestore / call Gemini).
 //   tests/e2e/     — the CI-safe product walkthrough + demo smoke suite (read-only
 //                    navigation; no submits, no mic, no AI calls, no destructive writes).
+//                    This is the ROUTINE suite. Scripts: `npm run test:e2e` and
+//                    `npm run test:e2e:safe` both run it. Safe against live Railway.
+//   e2e/           — the DEEP live-data flows (WRITE to Firestore + CALL Gemini).
+//                    Run deliberately with `npm run test:e2e:deep`; needs .env.local
+//                    (Firebase + Gemini). Do NOT point this at a shared/live URL.
+//   `npm run test:e2e:all` runs both.
 //
 // The app is a Vite SPA served (together with the /api Gemini routes) by the
 // Express server in server.js. By default the webServer below runs a production
@@ -14,12 +19,15 @@ import { defineConfig, devices } from '@playwright/test';
 // flows to work — the same file `npm start` already loads via load-env.js.
 //
 // To run against the live Railway deployment instead of a local server, set
-// PLAYWRIGHT_BASE_URL — the local webServer is then skipped entirely:
-//   PLAYWRIGHT_BASE_URL=https://quarterknolwdge-production.up.railway.app npm run test:e2e
+// PLAYWRIGHT_BASE_URL — the local webServer is then skipped entirely. Only point
+// the SAFE suite at a live URL (the deep suite writes data + calls Gemini):
+//   PLAYWRIGHT_BASE_URL=https://quarterknolwdge-production.up.railway.app npm run test:e2e:safe
 //
-// Run with:  npm run test:e2e                 (headless, local server)
-//            npm run test:e2e -- --headed      (watch it drive a real browser)
-//            PLAYWRIGHT_BASE_URL=... npm run test:e2e   (against a live URL)
+// Run with:  npm run test:e2e            (routine SAFE suite, local server)
+//            npm run test:e2e:deep       (deep live-data suite: writes + Gemini)
+//            npm run test:e2e:all        (both suites)
+//            npm run test:e2e -- --headed (watch it drive a real browser)
+//            PLAYWRIGHT_BASE_URL=... npm run test:e2e:safe (safe suite, live URL)
 const baseURL = process.env.PLAYWRIGHT_BASE_URL || 'http://localhost:3000';
 const useLiveURL = Boolean(process.env.PLAYWRIGHT_BASE_URL);
 
