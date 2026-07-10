@@ -670,7 +670,7 @@ training assignments.
   `qaScenarioId`, `workflowType`, `difficulty`, `domainIds`, and `competencyIds` so supervisors can
   review coverage and future dashboards can group attempts by workflow.
 - **Fairness hardening (2026-07-10):** QA grading now passes curated `scoringNotes` into the prompt and applies narrow deterministic repairs after model validation but before scoring. Standard pediatric refills cannot lose Knowledge points solely for omitting caller-facing PE status, and natural safe message/routing wording does not require literal TE wording. Repairs are stored in `qa.repairs`, surfaced to supervisors, and never excuse missing refill details, wrong routing, overpromising, clinical advice, or privacy failures.
-  Destination-only mentions (for example, provider or nurse) are not routing evidence; a repair requires an explicit send, route, message, forward, note, or follow-up action.
+  Destination-only mentions, action questions, historical checks, and hypotheticals are not routing evidence; a repair requires committed navigator ownership or a committed future follow-up from the responsible team/person.
 - **Supervisor final review (2026-07-09):** Call QA Test attempts now support a supervisor final
   verdict stored on the interview doc as `qaFinalReview`. The AI rubric result remains preserved on
   `qa`; supervisors can confirm AI pass/fail or override to final pass/fail with a required reason

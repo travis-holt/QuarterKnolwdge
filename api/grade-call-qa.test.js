@@ -489,9 +489,70 @@ describe('repairQaVerdictsForScenario', () => {
     ]).naturalRoutingLine).toBeNull();
   });
 
-  it('distinguishes safe expectations from a real approval promise', () => {
+  it.each([
+    'Did you send this request already?',
+    'Can you send this request to the pharmacy?',
+    'Could you message the nurse?',
+    'Was this request forwarded to the provider?',
+    'Did someone put in a note?',
+    'Has the team received the message?',
+    'Do you want me to send a request?',
+    'Should I put in a note?',
+    'Maybe the nurse can call.',
+    'Someone should send the request.',
+    'You can send a request.',
+    'The caller said the nurse would call.',
+  ])('rejects routing questions, history, or hypotheticals: %s', (line) => {
+    expect(getRefillWorkflowSignals([{ role: 'navigator', text: line }]).naturalRoutingLine).toBeNull();
+  });
+
+  it.each([
+    'I’ll send this request to the refill team.',
+    'I will send a message to the nurse.',
+    'I’m going to route this to the clinical team.',
+    'I can put in a message for the provider.',
+    'Let me send this over.',
+    'I’m forwarding the request now.',
+    'We’ll put in a note.',
+    'I’ll let the nurse know.',
+    'I’ll have the team follow up.',
+    'The team will call you back.',
+    'The provider will review the request.',
+    'PEDS Encounters will review the message.',
+  ])('accepts a committed routing or follow-up line: %s', (line) => {
+    expect(getRefillWorkflowSignals([{ role: 'navigator', text: line }]).naturalRoutingLine).toBe(line);
+  });
+
+  it('never uses caller wording as routing evidence', () => {
     expect(getRefillWorkflowSignals([
-      { role: 'navigator', text: 'The team will review it and follow up, but I cannot promise approval or exact timing.' },
+      { role: 'patient', text: 'I will send a message to the nurse.' },
+      { role: 'navigator', text: 'Which provider prescribed it?' },
+    ]).naturalRoutingLine).toBeNull();
+  });
+
+  it('does not repair doc-te from a routing question', () => {
+    const transcript = [
+      { role: 'navigator', text: 'What is the medication name?' },
+      { role: 'navigator', text: 'Which pharmacy do you prefer?' },
+      { role: 'navigator', text: 'Did you send this request already?' },
+    ];
+    const repaired = repairQaVerdictsForScenario(
+      { criteria: repairedVerdicts(), autoFails: [] }, transcript,
+      { scenario: 'A standard pediatric medication refill.', department: 'pediatrics', metadata: { workflowType: 'prescription_refill' } },
+    );
+    expect(getRefillWorkflowSignals(transcript).naturalRoutingLine).toBeNull();
+    expect(repaired.criteria.find((criterion) => criterion.id === 'doc-te').verdict).toBe('NOT_MET');
+    expect(repaired.repairs.some((repair) => repair.criterionId === 'doc-te')).toBe(false);
+  });
+
+  it('distinguishes safe expectations from a real approval promise', () => {
+    const safeLine = 'The team will review it and follow up, but I cannot promise approval or exact timing.';
+    expect(getRefillWorkflowSignals([{ role: 'navigator', text: safeLine }])).toMatchObject({
+      naturalRoutingLine: safeLine,
+      overPromise: false,
+    });
+    expect(getRefillWorkflowSignals([
+      { role: 'navigator', text: 'I can’t guarantee it will be completed today.' },
     ]).overPromise).toBe(false);
     const transcript = [
       { role: 'navigator', text: 'What is the medication name?' },
@@ -499,6 +560,30 @@ describe('repairQaVerdictsForScenario', () => {
       { role: 'navigator', text: 'I will make sure the doctor approves it and sends it today.' },
     ];
     expect(getRefillWorkflowSignals(transcript).overPromise).toBe(true);
+    expect(repairQaVerdictsForScenario(
+      { criteria: repairedVerdicts(), autoFails: [] }, transcript,
+      { scenario: 'A standard pediatric medication refill.', department: 'pediatrics', metadata: { workflowType: 'prescription_refill' } },
+    ).repairs).toHaveLength(0);
+  });
+
+  it.each([
+    [
+      [refillTranscript[1], refillTranscript[2]],
+      'missing medication',
+    ],
+    [
+      [refillTranscript[0], refillTranscript[2]],
+      'missing pharmacy',
+    ],
+    [
+      [refillTranscript[0], refillTranscript[1], { role: 'navigator', text: 'I will send this request to the referral coordinator.' }],
+      'wrong destination',
+    ],
+    [
+      [...refillTranscript, { role: 'navigator', text: 'You should take twice the dose until then.' }],
+      'clinical advice',
+    ],
+  ])('does not repair an unsafe or incomplete refill: %s', (transcript) => {
     expect(repairQaVerdictsForScenario(
       { criteria: repairedVerdicts(), autoFails: [] }, transcript,
       { scenario: 'A standard pediatric medication refill.', department: 'pediatrics', metadata: { workflowType: 'prescription_refill' } },

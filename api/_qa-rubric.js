@@ -139,38 +139,42 @@ export function findBestNavigatorLine(transcript, regexes) {
   return navigatorLines(transcript).find((line) => lineMatchesAny(line, regexes))?.text ?? null;
 }
 
-const ROUTING_ACTION = /\b(?:send|route|forward|message|pass along|put in|let)\b/i;
 const ROUTING_DESTINATION = /\b(?:nurse|provider|doctor|team|refill team|clinical team|peds encounters|pediatrics encounters)\b/i;
-const ROUTING_OWNERSHIP = [
-  /\b(?:i|we)\s*(?:will|'ll|am going to|can)\s+(?:send|route|forward|message|pass|put)\b.*\b(?:request|message|note|this|that|it)\b/i,
-  /\b(?:send|route|forward|message|pass along|put in)\b.*\b(?:request|message|note|this|that|it)\b/i,
-  /\b(?:i|we)\s*(?:will|'ll|am going to|can)\s+(?:send|route|forward|message|pass|put)\b.*\b(?:nurse|provider|doctor|team|refill team|clinical team|peds encounters|pediatrics encounters)\b/i,
-  /\b(?:i|we)\s*(?:will|'ll|am going to|can)\s+let\s+(?:the\s+)?(?:nurse|provider|doctor|team)\s+know\b/i,
-  /\b(?:the\s+)?team\s+(?:will|'ll)\s+(?:follow up|call back|get back to you|review)\b/i,
-  /\b(?:i|we)\s*(?:will|'ll)\s+have\s+(?:the\s+)?(?:team|nurse|provider|doctor)\s+(?:follow up|call back|get back to you|review)\b/i,
+const NAVIGATOR_ROUTING_COMMITMENT_PATTERNS = [
+  /\b(?:i|we)\s*(?:will|['’]ll|['’]m going to|am going to|are going to|can)\s+(?:go ahead and\s+)?(?:send|route|forward|message|pass(?:\s+along)?|put\s+in)\b/i,
+  /\blet me\s+(?:go ahead and\s+)?(?:send|route|forward|message|pass(?:\s+along)?|put\s+in)\b/i,
+  /\bi(?:['’]m| am)\s+(?:sending|routing|forwarding|messaging|passing|putting)\b/i,
+  /\b(?:i|we)\s*(?:will|['’]ll|['’]m going to|am going to|are going to)\s+let\s+(?:the\s+)?(?:nurse|provider|doctor|team|refill team|clinical team)\s+know\b/i,
+  /\b(?:i|we)\s*(?:will|['’]ll|['’]m going to|am going to|are going to)\s+have\s+(?:the\s+)?(?:team|nurse|provider|doctor|refill team|clinical team)\s+(?:follow up|call(?: you)? back|get back to you|review)\b/i,
+];
+const COMMITTED_FOLLOW_UP_PATTERNS = [
+  /\b(?:the\s+)?(?:team|nurse|provider|doctor|refill team|clinical team|peds encounters|pediatrics encounters)\s+(?:will|['’]ll)\s+(?:follow up|call(?: you)? back|get back to you|review)\b/i,
 ];
 const OTHER_WORKFLOW_FAILURE = /wrong (queue|destination)|promis|missing (medication|pharmacy)|failed to.*(medication|pharmacy)|did not.*(medication|pharmacy)|no (medication|pharmacy|routing)|clinical advice/i;
-
-export function hasRoutingAction(line) {
-  return ROUTING_ACTION.test(String(line?.text ?? line ?? ''));
-}
 
 export function hasRoutingDestination(line) {
   return ROUTING_DESTINATION.test(String(line?.text ?? line ?? ''));
 }
 
-export function hasRoutingOwnership(line) {
+function isRoutingQuestionOrHypothetical(line) {
+  const text = String(line?.text ?? line ?? '').trim();
+  return /^(?:did|do|does|can you|could you|would you|was|were|has|have you|should|maybe|perhaps|someone should|you can|the caller said)\b/i.test(text)
+    || (/\?$/.test(text) && /^(?:who|what|when|where|why|how|is|are|did|do|does|can|could|would|was|were|has|have|should)\b/i.test(text));
+}
+
+export function hasRoutingCommitment(line) {
   const text = String(line?.text ?? line ?? '');
-  return ROUTING_OWNERSHIP.some((pattern) => pattern.test(text))
-    && (hasRoutingAction(text) || hasRoutingDestination(text));
+  if (isRoutingQuestionOrHypothetical(text)) return false;
+  return NAVIGATOR_ROUTING_COMMITMENT_PATTERNS.some((pattern) => pattern.test(text))
+    || COMMITTED_FOLLOW_UP_PATTERNS.some((pattern) => pattern.test(text));
 }
 
 export function findNaturalRoutingActionLine(transcript) {
-  return navigatorLines(transcript).find(hasRoutingOwnership)?.text ?? null;
+  return navigatorLines(transcript).find(hasRoutingCommitment)?.text ?? null;
 }
 
 function isSafeNonPromise(line) {
-  return /can(?:not|'t) promise|not able to guarantee|no guarantee/i.test(String(line?.text ?? line ?? ''));
+  return /can(?:not|['’]t) (?:promise|guarantee)|not able to guarantee|no guarantee/i.test(String(line?.text ?? line ?? ''));
 }
 
 export function isStandardPediatricRefill({ scenario = '', department = 'pediatrics', metadata = {} } = {}) {
