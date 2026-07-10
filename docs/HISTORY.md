@@ -1,5 +1,13 @@
 # Development History - Knowledge Check
 
+### 2026-07-10 - Call QA conflict labeling and literal-TE detail guard
+- Deterministic over-promise/clinical-advice findings now represent an actual model-positive
+  conflict only when `know-rule` was marked `MET`; model-detected safety misses remain in the
+  original criterion instead of being mislabeled as conflicts. Literal-TE repair now rejects a
+  routing/message wording complaint that also says details or information are missing.
+- Added adversarial regressions for both cases. Focused Call QA: **188**; corpus: **54**;
+  invariants: **17**; full suite: **764/30 files**; production build clean.
+
 ### 2026-07-10 - Centralize deterministic Call QA review gating
 - `assessQa` now accepts persisted deterministic findings and independently forces
   `needs_review` for model-positive routing or safety conflicts; `finalizeQaResult`

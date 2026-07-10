@@ -228,7 +228,7 @@ export function isStrictPeOnlyFailure(criterion) {
 // substantive wrongness, missing-detail, urgency, destination, or
 // incompleteness complaint — those are real verdicts and always stand.
 const LITERAL_TE_TARGET = /telephone encounter|\bte\b|\brout(?:e|ed|es|ing)\b|\bsen[dt]\b|\bmessage\b|\blog(?:ged)?\b|\bforward(?:ed)?\b/i;
-const SUBSTANTIVE_DOC_COMPLAINT = /wrong|incorrect|instead of|should (?:have|be)|belongs (?:to|in)|mis-?rout|which queue|medication|pharmacy|callback|phone number|urgen|destination|next step|explain|incomplete|correctly|properly|conflat|identity|identifier|hipaa|privacy|promis|guarantee|advi[cs]|dos(?:e|age|ing)|escalat/i;
+const SUBSTANTIVE_DOC_COMPLAINT = /wrong|incorrect|instead of|should (?:have|be)|belongs (?:to|in)|mis-?rout|which queue|medication|pharmacy|callback|phone number|urgen|destination|next step|explain|incomplete|missing (?:details?|information)|(?:details?|information) (?:were|was|are|is) missing|correctly|properly|conflat|identity|identifier|hipaa|privacy|promis|guarantee|advi[cs]|dos(?:e|age|ing)|escalat/i;
 
 export function isLiteralTeWordingFailure(criterion) {
   const text = `${criterion.note} ${criterion.evidence}`;
@@ -499,7 +499,10 @@ export function evaluateQaDeterministicFindings(criteria, transcript, context = 
       affectedCriteria: metRoutingCriteria,
     });
   }
-  if (signals.overPromise) {
+  // A finding is a model conflict only when the model gave the affected
+  // safety criterion credit. A correctly detected model miss is already
+  // preserved in the criterion and is not mislabeled as a conflict.
+  if (signals.overPromise && metRoutingCriteria.includes('know-rule')) {
     findings.push({
       id: 'deterministic-overpromise',
       type: 'safety',
@@ -509,7 +512,7 @@ export function evaluateQaDeterministicFindings(criteria, transcript, context = 
       affectedCriteria: ['know-rule'],
     });
   }
-  if (signals.clinicalAdvice) {
+  if (signals.clinicalAdvice && metRoutingCriteria.includes('know-rule')) {
     findings.push({
       id: 'deterministic-clinical-advice',
       type: 'safety',

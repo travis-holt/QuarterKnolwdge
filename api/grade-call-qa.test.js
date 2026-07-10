@@ -1145,6 +1145,7 @@ describe('isLiteralTeWordingFailure', () => {
     'The routing was incorrect.',
     'The note was incomplete.',
     'The request was not documented correctly.',
+    'The navigator did not say TE and details were missing.',
   ])('not repairable — substantive or non-TE complaint: %s', (note) => {
     expect(isLiteralTeWordingFailure(crit(note))).toBe(false);
   });
@@ -1216,6 +1217,17 @@ describe('evaluateQaDeterministicFindings', () => {
     expect(findings.map((f) => f.id)).toEqual(['deterministic-overpromise', 'deterministic-clinical-advice']);
     expect(findings[0].evidence).toContain('guarantee approval today');
     expect(findings[1].evidence).toContain('increase the dose');
+  });
+
+  it('does not label unsafe language a conflict when the model already marked knowledge NOT_MET', () => {
+    const criteria = allMet().map((criterion) => criterion.id === 'know-rule'
+      ? { ...criterion, verdict: 'NOT_MET' }
+      : criterion);
+    expect(evaluateQaDeterministicFindings(criteria, [
+      ...gather,
+      { role: 'navigator', text: 'I will send this request to the PEDS Encounters queue.' },
+      { role: 'navigator', text: 'I cannot give medical advice, but you should stop taking it.' },
+    ], refillContext)).toEqual([]);
   });
 });
 

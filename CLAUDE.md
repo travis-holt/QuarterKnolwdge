@@ -11,7 +11,7 @@
 > [§8 Current System State](#8-current-system-state) and [§15 Current Priorities](#15-current-priorities)
 > accurate at all times.
 >
-> **Last updated:** 2026-07-10 (Call QA reliability follow-up plus centralized deterministic review gating) ·
+> **Last updated:** 2026-07-10 (Call QA deterministic-conflict and literal-TE reliability follow-up) ·
 > **Doc maintainer:** Claude (AI agent) + repo owner. Assumptions are explicitly marked **[ASSUMPTION]**.
 
 ---
@@ -1168,9 +1168,9 @@ of this file on 2026-07-07 to cut per-session context cost (it was ~55% of the f
   turns → `/api/live` relay) so the AI caller stays consistent without leaking the answer; the hidden
   case notes include `requiredActions` / `acceptableNavigatorPaths` / `criticalMistakes` as
   caller-behavior guidance (how to react to over-promising / under-clarifying / wrong routing) — never
-  as SOP coaching. Build clean; focused Call QA tests **204/204** (grade-call-qa 186 + glossary 18),
+  as SOP coaching. Build clean; focused Call QA tests **206/206** (grade-call-qa 188 + glossary 18),
   deterministic corpus **54/54**, grading invariants **17/17**,
-  and full `npm test` **761/761 across 30 files**. GitHub Actions mirrors the
+  and full `npm test` **764/764 across 30 files**. GitHub Actions mirrors the
   normal local gate on `main` pushes and PRs: `npm ci` → `npm test` → `npm run build` (no deploy step).
 - **Existing functionality:** features F1–F26 (see [§4](#4-feature-inventory)) are **Complete** in
   code. F17 adds longitudinal trends + Sparkline. F18 adds dossier evidence per competency. F19
@@ -1200,7 +1200,7 @@ of this file on 2026-07-07 to cut per-session context cost (it was ~55% of the f
 - **Experimental / mockup:**
   - Training **content** is mockup (flagged in UI). Logic is real.
   - **Adult Medicine and Behavioural Health** are not assessed; **Pediatrics and OB/GYN** are live.
-- **Test coverage:** **761 tests** across **30 test files** (includes `api/_qa-grading-corpus.test.js` —
+- **Test coverage:** **764 tests** across **30 test files** (includes `api/_qa-grading-corpus.test.js` —
   the deterministic Call QA grading-pipeline corpus + captured-response replay harness — and `src/lib/gradingInvariants.test.js` — the
   executable cross-system grading invariants, contract in `docs/GRADING_INVARIANTS.md`; plus `api/_navigator-operating-model.test.js`,
   `src/lib/qaDomainScoring.test.js`, `src/components/voiceCall.test.js`; expanded
@@ -1211,7 +1211,7 @@ of this file on 2026-07-07 to cut per-session context cost (it was ~55% of the f
   malformed-input edge cases), `session.test.js`,
   `db.test.js` (incl. audit-bank helpers), `api/api-handlers.test.js`, `api/generate-audit.test.js`,
   `api/_gemini-client.test.js`, `api/sequence-path.test.js` (9 tests for `validateSequenceResponse`),
-  `api/refine-sop.test.js`, `api/grade-call-qa.test.js` (186 tests for the QA-test rubric, routing-policy, contradiction, metadata-integrity, clause-aware safety, hedging, strict PE/TE scoping, and deterministic-conflict pipeline),
+  `api/refine-sop.test.js`, `api/grade-call-qa.test.js` (188 tests for the QA-test rubric, routing-policy, contradiction, metadata-integrity, clause-aware safety, hedging, strict PE/TE scoping, and deterministic-conflict pipeline),
   `api/_qa-glossary.test.js` (18 tests for the transcript-correction glossary),
   `src/components/components.test.jsx`, `src/lib/phases.test.js`, `src/lib/apiFetch.test.js` (apiFetch/`fetchErrorMessage`/`runPooled`),
   `api/_auth.test.js` (secret gate), `api/grade-interview.test.js` (`coerceGrade`),
@@ -1291,7 +1291,7 @@ of this file on 2026-07-07 to cut per-session context cost (it was ~55% of the f
   OB/GYN = **37** seed questions (offline fallback) + the **48-item MCQ v2 operating-model bank**
   (24 Pediatrics + 24 OB/GYN) that replaces the weak active bank via a marker-gated
   archive-and-replace migration (bank grows in Firestore per dept) · 4 departments (**Pediatrics
-  + OB/GYN live**, 2 mockup) · **761** unit tests (30 test files) · **12** Firestore collections
+  + OB/GYN live**, 2 mockup) · **764** unit tests (30 test files) · **12** Firestore collections
   (`roster`, `results`, `resultHistory`, `questions`, `audits`, `interviews`, `completions`,
   `pairings`, `supervisorFeedback`, `learningProposals`, `sops`, `contentMigrations`) ·
   **12** REST serverless functions (`generate-scenarios`, `generate-coaching`, `interview-turn`,
