@@ -141,10 +141,11 @@ export function findBestNavigatorLine(transcript, regexes) {
 
 export const ROUTING_DESTINATIONS = [
   ['peds-encounters', /\b(?:peds|pediatric(?:s)?)\s+(?:telephone\s+encounters?|encounters?)\s*(?:queue|team)?\b/i],
-  ['peds-referral', /\b(?:anisa azeez|pediatrics?\s+referral\s+(?:specialist|coordinator)|referral\s+(?:specialist|coordinator))\b/i],
-  ['ob-pss', /\b(?:pss(?:\s+ob)?(?:\s+queue)?|patient scheduling services(?:\s+queue)?|ob(?:\s*\/\s*gyn)?\s+(?:scheduling|pss)\s+queue)\b/i],
+  ['peds-referral-owner', /\b(?:anisa(?:\s+azeez)?|pediatrics?\s+referral\s+owner\s*,?\s*anisa)\b/i],
+  ['ob-pss', /\b(?:pss\s+ob|ob\s+pss|patient scheduling services\s+for\s+ob(?:\s*\/\s*gyn)?)\b/i],
+  ['ob-portal', /\b(?:ob\s+portal|pregnancy\s+portal)\b/i],
   ['ob-prevention', /\b(?:prevention|preventive)\s+coordinator\b/i],
-  ['ob-mfm', /\b(?:mfm|maternal[ -]fetal medicine)\s+(?:nurse|coordinator|team)\b/i],
+  ['ob-mfm-owner', /\b(?:rebecca|mfm\s+owner\s*,?\s*rebecca)\b/i],
   ['ob-nursing', /\b(?:(?:ob(?:\s*\/\s*gyn)?|obstetrics?)\s+nurse|nursing team|clinical team)\b/i],
   ['labor-delivery', /\b(?:l\s*&\s*d|labor (?:and|&) delivery)\b/i],
   ['medical-records', /\b(?:medical records|records)\s+(?:team|department)\b/i],
@@ -161,17 +162,17 @@ export const ROUTING_DESTINATIONS = [
 export const ROUTING_POLICIES = {
   pediatrics: {
     prescription_refill: { allowed: ['peds-encounters'], messageRepair: true },
-    referral: { allowed: ['peds-referral'], messageRepair: true },
+    referral: { allowed: ['peds-referral-owner'], messageRepair: true },
     records_forms: { allowed: [], reviewOnly: true },
     urgent_symptom_boundary: { allowed: [], reviewOnly: true },
     wrong_department_unclear_request: { allowed: [], reviewOnly: true },
   },
   obgyn: {
     new_gyn_visit: { allowed: ['ob-pss'] },
-    pregnancy_related_visit: { allowed: ['ob-pss'] },
-    test_result_medical_advice_boundary: { allowed: ['ob-nursing'], messageRepair: true },
+    pregnancy_related_visit: { allowed: ['ob-portal'] },
+    test_result_medical_advice_boundary: { allowed: ['ob-portal', 'ob-nursing'], messageRepair: true },
     prescription_refill: { allowed: ['ob-nursing'], messageRepair: true },
-    mfm_related_request: { allowed: ['ob-mfm'] },
+    mfm_related_request: { allowed: ['ob-mfm-owner'] },
     records_forms: { allowed: ['medical-records'] },
     scheduling_change: { allowed: ['ob-pss'] },
     wrong_department_unclear_request: { allowed: [], reviewOnly: true },
@@ -188,6 +189,7 @@ const NAVIGATOR_ROUTING_COMMITMENT_PATTERNS = [
 const COMMITTED_FOLLOW_UP_PATTERNS = [
   /\b(?:the\s+)?(?:team|nurse|provider|doctor|clinical team|peds encounters|pediatrics encounters|pss(?: ob)?|patient scheduling services|referral (?:specialist|coordinator)|mfm nurse|medical records team)\s+(?:will|['’]ll)\s+(?:follow up|call(?: you)? back|get back to you|review)\b/i,
 ];
+const EXTRA_ROUTING_COMMITMENT = /\b(?:i|we)\s+(?:will|shall)\s+(?:assign|submit|create\s+(?:a\s+)?te|put\s+this\s+through)\b|\b(?:this\s+goes\s+to|the\s+correct\s+(?:queue|destination)\s+is|this\s+belongs\s+with|handles\s+this)\b/i;
 // An offer is not a commitment: "do you want me to send it?" leaves the action
 // undecided, so it can never stand as routing evidence.
 const ROUTING_OFFER = /\b(?:do you want|would you like|should i|want me to|if you(?:['’]d)? (?:like|want|prefer))\b/i;
@@ -208,12 +210,14 @@ export function routingPolicyFor({ department = '', metadata = {} } = {}) {
 
 export function routingDestinationsForLine(line) {
   const text = String(line?.text ?? line ?? '');
-  const specific = ROUTING_DESTINATIONS
-    .filter(([, pattern, generic]) => !generic && pattern.test(text))
-    .map(([id]) => id);
-  return specific.length
-    ? [...new Set(specific)]
-    : [...new Set(ROUTING_DESTINATIONS.filter(([, pattern, generic]) => generic && pattern.test(text)).map(([id]) => id))];
+  const matches = ROUTING_DESTINATIONS.flatMap(([id, pattern, generic]) => {
+    const match = pattern.exec(text);
+    if (!match) return [];
+    const start = Math.max(text.lastIndexOf(';', match.index), text.lastIndexOf('.', match.index), text.lastIndexOf('?', match.index), text.lastIndexOf('!', match.index)) + 1;
+    return /\bnot\s+(?:sending|routing|forwarding|messaging|passing|assigning|submitting|putting)[^.;?!]*$/i.test(text.slice(start, match.index)) ? [] : [{ id, generic }];
+  });
+  const specific = matches.filter((match) => !match.generic).map((match) => match.id);
+  return [...new Set(specific.length ? specific : matches.map((match) => match.id))];
 }
 
 export function hasRoutingDestination(line, context) {
@@ -234,7 +238,8 @@ export function hasRoutingCommitment(line) {
   const text = String(line?.text ?? line ?? '');
   if (isRoutingQuestionOrHypothetical(text)) return false;
   return NAVIGATOR_ROUTING_COMMITMENT_PATTERNS.some((pattern) => pattern.test(text))
-    || COMMITTED_FOLLOW_UP_PATTERNS.some((pattern) => pattern.test(text));
+    || COMMITTED_FOLLOW_UP_PATTERNS.some((pattern) => pattern.test(text))
+    || EXTRA_ROUTING_COMMITMENT.test(text);
 }
 
 export function findNaturalRoutingActionLine(transcript) {
@@ -251,15 +256,26 @@ export function evaluateRoutingDecision(transcript, context = {}) {
     return { acceptable: false, reason: 'routing-policy-review-only', line: null, destinationId: null };
   }
 
-  const commitments = navigatorLines(transcript)
+  const decisions = navigatorLines(transcript)
     .map((line) => ({
       line: line.text,
       destinations: routingDestinationsForLine(line),
       correction: ROUTING_CORRECTION.test(line.text),
+      committed: hasRoutingCommitment(line),
     }))
-    .filter((entry) => hasRoutingCommitment(entry.line));
-  if (!commitments.length) {
+    .filter((entry) => entry.committed || entry.destinations.length > 0);
+  if (!decisions.some((entry) => entry.committed)) {
     return { acceptable: false, reason: 'no-routing-commitment', line: null, destinationId: null };
+  }
+
+  for (let index = 0; index < decisions.length; index++) {
+    const entry = decisions[index];
+    if (!entry.committed && entry.correction && decisions.slice(0, index).some((prior) => prior.committed)) entry.committed = true;
+  }
+  const commitments = decisions.filter((entry) => entry.committed);
+  const trailingMention = decisions.at(-1);
+  if (!trailingMention.committed && commitments.length) {
+    return { acceptable: false, reason: 'contradictory-routing-commitments', line: trailingMention.line, destinationId: trailingMention.destinations[0] ?? null };
   }
 
   const final = commitments.at(-1);

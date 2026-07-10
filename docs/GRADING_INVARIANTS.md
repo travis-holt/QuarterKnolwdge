@@ -77,6 +77,27 @@ routing uncertainty is flagged for supervisor review.
 
 ## 4. Review-layer invariants
 
+### Routing authority and calibration limits
+
+Routing authority is strictly ordered: (1) owner-confirmed floor operations, (2)
+explicit non-conflicting department SOP rules, (3) the trusted curated Call QA
+scenario, then (4) generic/sanitized repository language only when consistent.
+The server resolves the scenario ID and policy; browser metadata cannot alter it.
+Owner-confirmed deterministic routes are PEDS Encounters for pediatric refills,
+Anisa for pediatric referrals, PSS OB for non-pregnant GYN, OB Portal for
+pregnancy, Rebecca for MFM, and OB Portal or the scenario's explicit clinical
+TE/message path for OB/GYN results. Pediatric records/forms (apart from trusted
+subtype rules), urgent symptoms, unclear requests, and unknown/conflicting OB
+workflows are review-only.
+
+Routing decisions distinguish navigator commitments, destination mentions,
+corrections, questions/offers/history, and negations. A clear correction can
+inherit the prior action without repeating its verb; unresolved contradictions
+cannot repair. The deterministic grading-pipeline regression corpus uses
+simulated grader profiles and the captured-response replay fixture only. It
+does not prove live Gemini accuracy. TODO: calibrate with de-identified real
+Gemini outputs.
+
 | # | Invariant | Enforced by |
 |---|-----------|-------------|
 | V1 | A verified auto-fail → score 0, `pass: false`, recommendation `fail`, and a supervisor-confirmation flag. | rubric tests |

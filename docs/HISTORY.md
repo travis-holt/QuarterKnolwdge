@@ -1,5 +1,20 @@
 # Development History - Knowledge Check
 
+### 2026-07-10 - Call QA owner-confirmed routing reliability review
+- **Authority:** routing now prioritizes owner-confirmed floor operations over conflicting sanitized
+  SOP text, then explicit SOP rules, trusted curated scenarios, and only then generic language.
+  The server policy accepts PEDS Encounters for pediatric refills, Anisa for referrals, PSS OB for
+  non-pregnant GYN, OB Portal for pregnancy, Rebecca for MFM, and OB Portal or the scenario's
+  explicit clinical TE/message path for OB/GYN results. Named owners use stable destination IDs and
+  the approved minimum public label.
+- **Final decision:** deterministic routing separates commitments, mentions, corrections,
+  questions/offers/history, and negations. A clear correction inherits the prior action without its
+  verb; unresolved later ownership/destination contradictions cannot repair.
+- **Limits:** pediatric records/forms (except trusted subtype rules), urgent symptoms, unclear
+  requests, and unknown/conflicting OB workflows remain review-only. The deterministic
+  grading-pipeline regression corpus, simulated grader profiles, and captured-response replay fixture
+  do not prove live Gemini accuracy. TODO: calibrate with de-identified captured real-model outputs.
+
 ### 2026-07-10 - Call QA workflow routing policy + server-authoritative scenario metadata
 - **Routing policy:** replaced the global destination allow/block lists with one destination
   vocabulary plus department/workflow policies derived from `_sop-context.js` and the curated QA

@@ -686,15 +686,58 @@ describe('repairQaVerdictsForScenario', () => {
     const obRecords = { department: 'obgyn', metadata: { workflowType: 'records_forms' } };
     const route = (text, context) => evaluateRoutingDecision([{ role: 'navigator', text }], context);
 
-    expect(route('I will send this to the Pediatrics referral coordinator.', pedsReferral).acceptable).toBe(true);
-    expect(route('I will send this to the Pediatrics referral specialist.', pedsReferral).acceptable).toBe(true);
-    expect(route('I will send this to the Pediatrics referral coordinator.', repairContext).acceptable).toBe(false);
-    expect(route('I will route this to the PSS queue.', obGyn).acceptable).toBe(true);
-    expect(route('I will route this to the PSS queue.', obPregnancy).acceptable).toBe(true);
+    expect(route('I will send this to Anisa Azeez.', pedsReferral).acceptable).toBe(true);
+    expect(route('I will send this to the referral coordinator.', pedsReferral).acceptable).toBe(false);
+    expect(route('I will send this to Anisa.', repairContext).acceptable).toBe(false);
+    expect(route('I will route this to PSS OB.', obGyn).acceptable).toBe(true);
+    expect(route('I will route this to OB Portal.', obPregnancy).acceptable).toBe(true);
     expect(route('I will send a message to the nursing team.', obResults).acceptable).toBe(true);
-    expect(route('I will route this to the MFM nurse.', obMfm).acceptable).toBe(true);
+    expect(route('I will route this to Rebecca.', obMfm).acceptable).toBe(true);
     expect(route('I will send this to the medical records team.', obRecords).acceptable).toBe(true);
     expect(route('I will send a message to the nursing team.', repairContext).acceptable).toBe(false);
+  });
+
+  it('implements the owner-confirmed routing matrix without cross-department leakage', () => {
+    const route = (text, department, workflowType) => evaluateRoutingDecision(
+      [{ role: 'navigator', text }], { department, metadata: { workflowType } },
+    ).acceptable;
+    expect(route('I will create a TE for PEDS Encounters.', 'pediatrics', 'prescription_refill')).toBe(true);
+    expect(route('I will create a TE for the nursing team.', 'pediatrics', 'prescription_refill')).toBe(false);
+    expect(route('This goes to Anisa.', 'pediatrics', 'referral')).toBe(true);
+    expect(route('This goes to the referral team.', 'pediatrics', 'referral')).toBe(false);
+    expect(route('I will assign this to PSS OB.', 'obgyn', 'new_gyn_visit')).toBe(true);
+    expect(route('I will assign this to OB Portal.', 'obgyn', 'new_gyn_visit')).toBe(false);
+    expect(route('I will submit this to OB Portal.', 'obgyn', 'pregnancy_related_visit')).toBe(true);
+    expect(route('I will submit this to PSS OB.', 'obgyn', 'pregnancy_related_visit')).toBe(false);
+    expect(route('I will pass this to Rebecca.', 'obgyn', 'mfm_related_request')).toBe(true);
+    expect(route('I will pass this to the MFM team.', 'obgyn', 'mfm_related_request')).toBe(false);
+    expect(route('I will send this to PEDS Encounters.', 'obgyn', 'test_result_medical_advice_boundary')).toBe(false);
+    expect(route('I will send this to OB Portal.', 'pediatrics', 'prescription_refill')).toBe(false);
+  });
+
+  it('accepts every trusted OB/GYN results destination', () => {
+    const context = { department: 'obgyn', metadata: { workflowType: 'test_result_medical_advice_boundary' } };
+    expect(evaluateRoutingDecision([{ role: 'navigator', text: 'The correct destination is OB Portal.' }], context).acceptable).toBe(true);
+    expect(evaluateRoutingDecision([{ role: 'navigator', text: 'I will create a TE for the nursing team.' }], context).acceptable).toBe(true);
+  });
+
+  it('uses the final operative decision even when a correction omits the action verb', () => {
+    const decision = (lines) => evaluateRoutingDecision(lines.map((text) => ({ role: 'navigator', text })), repairContext);
+    expect(decision(['I will send this to PEDS Encounters.', 'Actually, billing handles this.'])).toMatchObject({ acceptable: false, destinationId: 'billing' });
+    expect(decision(['I will send this to billing.', 'Sorry, PEDS Encounters is the correct queue.'])).toMatchObject({ acceptable: true, destinationId: 'peds-encounters' });
+    expect(decision(['I will send this to the nurse.', 'No, correction: Anisa handles referrals.'])).toMatchObject({ acceptable: false, destinationId: 'peds-referral-owner' });
+    expect(decision(['I will send this to PEDS Encounters.', 'The billing team will take it from there.'])).toMatchObject({ acceptable: false, reason: 'contradictory-routing-commitments' });
+    expect(decision(["I'm not sending this to billing; I'm sending it to PEDS Encounters."])).toMatchObject({ acceptable: true, destinationId: 'peds-encounters' });
+  });
+
+  it('does not turn mentions, questions, offers, or history into current routing decisions', () => {
+    const noRepair = (role, text) => evaluateRoutingDecision(
+      [{ role, text }], repairContext,
+    ).acceptable;
+    expect(noRepair('patient', 'Please send it to PEDS Encounters.')).toBe(false);
+    expect(noRepair('navigator', 'Should this go to PEDS Encounters?')).toBe(false);
+    expect(noRepair('navigator', 'Would you like me to send it to PEDS Encounters?')).toBe(false);
+    expect(noRepair('navigator', 'Yesterday I sent a refill to PEDS Encounters.')).toBe(false);
   });
 
   it('repairs natural OB/GYN results routing only for the OB/GYN results workflow', () => {
@@ -879,7 +922,7 @@ describe('server-authoritative Call QA scenario metadata', () => {
   it('builds grader expectations only from the trusted server scenario', () => {
     const gradingScenario = buildTrustedGradingScenario(trusted);
     expect(gradingScenario).toContain('server-authoritative curated scenario');
-    expect(gradingScenario).toContain('Route the refill request to the correct Pediatrics clinical destination.');
+    expect(gradingScenario).toContain('Route the refill request to PEDS Encounters');
     expect(gradingScenario).toContain('Do not require PE-status verification');
   });
 

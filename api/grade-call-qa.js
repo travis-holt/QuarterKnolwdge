@@ -67,7 +67,7 @@ export function resolveQaScenarioContext({ scenario = '', department = 'pediatri
   if (!requestedId) status = 'missing-scenario-id';
   else if (!trusted) status = 'unknown-scenario-id';
   else if (trusted.department !== department) status = 'department-mismatch';
-  else if (String(scenario).trim() !== trusted.scenario.trim()) status = 'scenario-mismatch';
+  else if (normalizeScenario(scenario) !== normalizeScenario(trusted.scenario)) status = 'scenario-mismatch';
 
   return {
     verified: status === 'verified',
@@ -81,6 +81,10 @@ export function resolveQaScenarioContext({ scenario = '', department = 'pediatri
       metadata: trusted ? trustedScenarioMetadata(trusted) : {},
     },
   };
+}
+
+function normalizeScenario(value) {
+  return String(value ?? '').toLowerCase().replace(/[^\p{L}\p{N}\s]/gu, ' ').replace(/\s+/g, ' ').trim();
 }
 
 const RESPONSE_SCHEMA = {

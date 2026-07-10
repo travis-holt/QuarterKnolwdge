@@ -516,6 +516,15 @@ HOSPITAL SCHEDULE LIFECYCLE:
 // ─────────────────────────────────────────────────────────────────────────────
 export const NAVIGATOR_ROLE_CONTEXT = navigatorContextBlock();
 
+// Owner-confirmed floor operations outrank conflicting sanitized SOP language.
+// Keep named owners to the approved public minimum; the deterministic layer uses stable IDs.
+const OWNER_CONFIRMED_ROUTING_OVERRIDES = `
+CALL QA ROUTING AUTHORITY (highest priority): owner-confirmed floor operations override conflicting sanitized SOP wording. Then use explicit department SOP rules, then the trusted curated scenario, then generic language only when consistent.
+- Pediatrics standard refill: PEDS Encounters / Pediatrics Telephone Encounter queue; collect medication, pharmacy, callback, out status and high-priority if out. No PE question unless PE governs this case.
+- Pediatrics referral: Anisa Azeez. Records/forms, urgent symptoms, and unclear requests have no universal route unless the trusted scenario gives an exact subtype rule; escalate uncertain routing for supervisor review.
+- OB/GYN non-pregnant GYN: PSS OB. Pregnancy-related request: OB Portal. MFM request: Rebecca (MFM owner). Results/clinical question: OB Portal or the exact trusted clinical TE/message path. OB refill uses its trusted OB workflow; OB records use Medical Records only where the trusted workflow establishes it. Unknown/conflicting OB workflows require review.
+`.trim();
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Map + accessor — used by all SOP-grounded API handlers
 // ─────────────────────────────────────────────────────────────────────────────
@@ -536,11 +545,11 @@ export const SOP_CONTEXTS = {
 export function sopContextFor(deptId) {
   const live = getLiveSopSync(deptId);
   const dept = live ?? SOP_CONTEXTS[deptId] ?? SOP_CONTEXTS.pediatrics;
-  return `${NAVIGATOR_ROLE_CONTEXT}\n\n${dept}`;
+  return `${NAVIGATOR_ROLE_CONTEXT}\n\n${OWNER_CONFIRMED_ROUTING_OVERRIDES}\n\n${dept}`;
 }
 
 export async function sopContextForFresh(deptId) {
   const live = await getLiveSop(deptId);
   const dept = live ?? SOP_CONTEXTS[deptId] ?? SOP_CONTEXTS.pediatrics;
-  return `${NAVIGATOR_ROLE_CONTEXT}\n\n${dept}`;
+  return `${NAVIGATOR_ROLE_CONTEXT}\n\n${OWNER_CONFIRMED_ROUTING_OVERRIDES}\n\n${dept}`;
 }

@@ -671,7 +671,15 @@ training assignments.
   review coverage and future dashboards can group attempts by workflow.
 - **Fairness hardening (2026-07-10):** QA grading resolves curated `scoringNotes` and workflow metadata server-side from the trusted scenario id, then applies narrow deterministic repairs after model validation but before scoring. Standard pediatric refills cannot lose Knowledge points solely for omitting caller-facing PE status, and natural safe message/routing wording does not require literal TE wording. Repairs are stored in `qa.repairs`, surfaced to supervisors, and never excuse missing refill details, wrong routing, overpromising, clinical advice, or privacy failures. Missing/unknown/mismatched scenario authority disables repairs and forces `needs_review`; browser-supplied workflow/scoring arrays are ignored by grading.
   Destination-only mentions, action questions, historical checks, and hypotheticals are not routing evidence; a repair requires committed navigator ownership or a committed future follow-up from the responsible team/person.
-  **Evidence-model hardening + grading corpus (2026-07-10):** repair evidence now requires the
+  **Owner-confirmed routing authority (2026-07-10):** deterministic routing follows this hierarchy:
+  owner-confirmed floor operations, explicit non-conflicting SOP rules, trusted curated scenarios,
+  then compatible generic/sanitized language. Supported routes are PEDS Encounters for pediatric
+  refills, Anisa for referrals, PSS OB for non-pregnant GYN, OB Portal for pregnancy, Rebecca for
+  MFM, and OB Portal or the trusted clinical path for OB/GYN results. A correction may inherit the
+  prior routing action without restating its verb; unresolved conflicting destination claims require
+  supervisor review. Pediatric records/forms (except trusted subtype rules), urgent symptoms, unclear
+  requests, and unknown/conflicting OB workflows remain review-only. Named-owner policy uses stable
+  destination IDs with only the owner-approved public label. **Evidence-model hardening + grading corpus (2026-07-10):** repair evidence now requires the
   final committed line to match a department + workflow policy derived from `_sop-context.js` and
   curated scenario sources. Correct→wrong never repairs; wrong→correct requires an explicit later
   correction; unexplained conflicting destinations and generic "team" wording are insufficient.
