@@ -34,46 +34,8 @@ class VoiceCallPersistenceError extends Error {
   }
 }
 
-async function gradeQaRequest({ scenario, transcript, department, metadata }) {
-  return apiFetch('/api/grade-call-qa', { scenario, transcript, department, metadata }, QA_GRADE_TIMEOUT_MS);
-}
-
-// Enrich the plain-text scenario passed to /api/grade-call-qa with the curated
-// scenario's expectations, so the deterministic grader knows what "good" looks like
-// for this specific call. The endpoint already accepts a scenario string, so this
-// stays plain text. When no curated metadata exists (generated calls), the original
-// scenario is returned unchanged.
-export function buildCallQaGradingScenario(scenario, metadata = {}) {
-  const base = String(scenario || '').trim();
-  const meta = metadata || {};
-  const expected = Array.isArray(meta.expectedActions) ? meta.expectedActions.filter(Boolean) : [];
-  const misses = Array.isArray(meta.criticalMisses) ? meta.criticalMisses.filter(Boolean) : [];
-  const scoringNotes = Array.isArray(meta.scoringNotes) ? meta.scoringNotes.filter(Boolean) : [];
-  const header = [];
-  if (meta.qaScenarioTitle) header.push(`Scenario: ${meta.qaScenarioTitle}`);
-  if (meta.workflowType) header.push(`Workflow type: ${meta.workflowType}`);
-  if (meta.difficulty) header.push(`Difficulty: ${meta.difficulty}`);
-
-  if (!header.length && !expected.length && !misses.length && !scoringNotes.length) return base;
-
-  const parts = [];
-  if (base) parts.push(base);
-  const context = ['GRADING CONTEXT (curated scenario expectations):'];
-  if (header.length) context.push(header.join(' · '));
-  if (expected.length) {
-    context.push('Expected navigator behaviors:');
-    expected.forEach((a) => context.push(`- ${a}`));
-  }
-  if (misses.length) {
-    context.push('Critical misses (fail the relevant criteria if these occur):');
-    misses.forEach((m) => context.push(`- ${m}`));
-  }
-  if (scoringNotes.length) {
-    context.push('Scenario-specific grading notes:');
-    scoringNotes.forEach((note) => context.push(`- ${note}`));
-  }
-  parts.push(context.join('\n'));
-  return parts.join('\n\n');
+async function gradeQaRequest({ scenario, transcript, department, qaScenarioId }) {
+  return apiFetch('/api/grade-call-qa', { scenario, transcript, department, qaScenarioId }, QA_GRADE_TIMEOUT_MS);
 }
 
 export function callQaScenarioMetadata(selectedScenario) {
@@ -137,10 +99,10 @@ export async function gradeSavedAttempt(
   let data;
   try {
     data = await gradeQaFn({
-      scenario: buildCallQaGradingScenario(scenario, metadata),
+      scenario,
       transcript,
       department,
-      metadata,
+      qaScenarioId: metadata?.qaScenarioId,
     });
   } catch (cause) {
     throw new VoiceCallPersistenceError(
@@ -523,7 +485,9 @@ export default function VoiceCall({ navigatorId, name, department = 'pediatrics'
     if (!transcript) return;
     try {
       if (isTest) {
-        const data = await apiFetch('/api/grade-call-qa', { scenario, transcript, department }, QA_GRADE_TIMEOUT_MS);
+        const data = await apiFetch('/api/grade-call-qa', {
+          scenario, transcript, department, qaScenarioId: qaScenarioMetadataRef.current.qaScenarioId,
+        }, QA_GRADE_TIMEOUT_MS);
         if (data.qa && data.grade) {
           setQa(data.qa);
           setGrade(data.grade);

@@ -77,7 +77,7 @@ describe('invariant: shared 0–100 scale and thresholds', () => {
 const REFILL_TRANSCRIPT = [
   { role: 'navigator', text: 'What is the medication name?' },
   { role: 'navigator', text: 'Which pharmacy do you prefer?' },
-  { role: 'navigator', text: 'I will send this request to the refill team and mark it urgent because she is out.' },
+  { role: 'navigator', text: 'I will send this request to the PEDS Encounters queue and mark it urgent because she is out.' },
   { role: 'patient', text: 'Thank you.' },
 ];
 const REFILL_CONTEXT = {
@@ -98,7 +98,7 @@ function temptingVerdicts() {
         ? 'The navigator failed to ask about the patient PE status.'
         : 'The transcript does not contain evidence that the navigator routed or logged a Telephone Encounter.',
     })),
-    autoFails: [{ id: 'af-scope', evidence: 'I will send this request to the refill team and mark it urgent because she is out.', note: '' }],
+    autoFails: [{ id: 'af-scope', evidence: 'I will send this request to the PEDS Encounters queue and mark it urgent because she is out.', note: '' }],
   };
 }
 

@@ -1,6 +1,31 @@
 # Development History - Knowledge Check
 
-### 2026-07-10 - Call QA evidence-model hardening + gold-standard grading corpus + grading invariants
+### 2026-07-10 - Call QA workflow routing policy + server-authoritative scenario metadata
+- **Routing policy:** replaced the global destination allow/block lists with one destination
+  vocabulary plus department/workflow policies derived from `_sop-context.js` and the curated QA
+  scenarios. Pediatrics refill/referral and OB/GYN PSS/nursing/MFM/records destinations are scoped
+  independently. Pediatrics generic records/forms, urgent symptoms, and unclear requests remain
+  review-only because the repository does not establish one precise destination.
+- **Contradictions:** call-level validation now uses the final committed routing decision. A later
+  wrong route defeats an earlier correct route; a wrong route can be superseded only by an explicit
+  correction to the policy-correct destination; unexplained conflicts and generic "team" wording
+  cannot support repairs. Line and call checks share the same destination vocabulary.
+- **Grading authority:** `/api/grade-call-qa` now resolves workflow/scoring metadata from the
+  server-owned curated scenario id and builds the grading context server-side. Browser-supplied
+  `workflowType`, `scoringNotes`, `expectedActions`, and `criticalMisses` no longer influence scoring
+  or repairs. Missing, unknown, department-mismatched, or scenario-mismatched authority disables
+  repairs and adds an `unverified-scenario-metadata` supervisor-review flag.
+- **Calibration claims:** renamed the existing corpus as a deterministic grading-pipeline regression
+  corpus using simulated grader verdicts; it does not independently validate Gemini judgment.
+  `api/fixtures/qa-model-capture.example.json` defines a replayable captured-response format and is
+  explicitly labelled as a simulated example until real model responses are captured. Documentation
+  now separates deterministic regression, captured real-model replay, and live model evaluation.
+- **Tests:** added adversarial coverage for final-route contradictions, explicit corrections,
+  generic destinations, Pediatrics/OB-GYN route isolation, review-only workflows, and forged/missing
+  scenario metadata. Focused Call QA: **117/117**; deterministic corpus: **43/43**; full
+  `npm test`: **673/673 across 30 files**; production build and `git diff --check` clean.
+
+### 2026-07-10 - Call QA evidence-model hardening + deterministic grading corpus + grading invariants
 - **Context:** Independent re-review of PR #24's repair layer, reasoning over the whole evidence
   model (glossary → grader → validation → repairs → trust-gated scoring → review → supervisor
   verdict) so each fairness fix cannot open a new loophole.
@@ -11,6 +36,8 @@
      destination named (nurse/provider/doctor/team/queue) AND no known-wrong destination
      (billing, front desk, records, referral coordinator, scheduling, specialist, OB...).
      Destination-less "I'll send it" is no longer sufficient to overturn a grader verdict.
+     **Superseded by the entry above:** destination validity is now department/workflow-specific;
+     generic team/person words are not a universal allowlist.
   2. Offer-questions ("I can send it — do you want me to?") counted as commitments → rejected
      via a `ROUTING_OFFER` pattern.
   3. A grader note mixing PE with another real failure (wrong routing, identity, scheduling,
@@ -25,13 +52,13 @@
   7. Over-broad repair BLOCKERS caused retained false negatives: bare `/definitely/` no longer
      reads "I'll definitely pass this along" as an over-promise, and scope-deferral lines
      ("I can't tell you if it's safe — that's for the nurse") no longer read as clinical advice.
-- **Gold-standard grading corpus (`api/_qa-grading-corpus.js` + `_qa-grading-corpus.test.js`):**
+- **Deterministic grading-pipeline corpus (`api/_qa-grading-corpus.js` + `_qa-grading-corpus.test.js`):**
   ~20 full-call cases across good / borderline / unsafe / incomplete / natural-phrasing /
-  question-vs-commitment / ambiguous-intent categories, each with ground truth and simulated
+  question-vs-commitment / ambiguous-intent categories, each with an authored expected outcome and simulated
   `accurate` + `literalist` grader profiles, plus paraphrase variants and glossary mis-hearing
   (speech-transcription) variants. The harness runs every case × profile × variant through the
   REAL pipeline and asserts **zero false passes, zero false fails, zero review misses, zero
-  silent passes** — measuring outcomes, not merely that functions execute. Validated by running
+  silent passes** — measuring deterministic pipeline outcomes, not live Gemini judgment. Validated by running
   the corpus against the pre-hardening repair layer: it correctly failed 11 tests there,
   including a confident false pass from the wrong-destination loophole.
 - **Grading invariants (`docs/GRADING_INVARIANTS.md` + `src/lib/gradingInvariants.test.js`):**

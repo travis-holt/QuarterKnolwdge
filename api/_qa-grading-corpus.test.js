@@ -1,26 +1,28 @@
 // ─────────────────────────────────────────────────────────────────────────────
-// Gold-standard corpus harness: every corpus case × grader profile × paraphrase
+// Deterministic regression-corpus harness: every corpus case × simulated grader
+// profile × paraphrase
 // variant runs through the REAL deterministic grading pipeline (glossary
 // correction → validation → fairness repairs → trust-gated scoring → review
 // assessment), and the aggregate is measured for FALSE PASSES and FALSE FAILS
-// against ground truth — not merely "the functions execute".
+// against authored expectations — not merely "the functions execute".
 //
 // Outcome definitions (see docs/GRADING_INVARIANTS.md):
-//   false pass — ground truth 'fail'  but the pipeline passed with a confident
+//   false pass — expected 'fail' but the pipeline passed with a confident
 //                'pass' recommendation (a pass flagged needs_review is escalated
 //                to a supervisor and is NOT a false pass).
-//   false fail — ground truth 'pass'  but the pipeline failed with a confident
+//   false fail — expected 'pass' but the pipeline failed with a confident
 //                'fail' recommendation (a fail flagged needs_review escalates).
-//   review miss — ground truth 'review' but the pipeline returned a confident
+//   review miss — expected 'review' but the pipeline returned a confident
 //                verdict instead of needs_review.
 // All three must be zero, permanently.
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { describe, it, expect } from 'vitest';
+import { readFileSync } from 'node:fs';
 import { QA_GRADING_CORPUS, simulateGrader, applyVariant } from './_qa-grading-corpus.js';
 import { correctTranscriptWithStats } from './_qa-glossary.js';
 import { validateQaResponse, repairQaVerdictsForScenario, scoreQa } from './_qa-rubric.js';
-import { finalizeQaResult } from './grade-call-qa.js';
+import { finalizeQaResult, resolveQaScenarioContext } from './grade-call-qa.js';
 
 function runPipeline(caseDef, profileName, transcriptOverride) {
   const raw = transcriptOverride ?? caseDef.transcript;
@@ -34,7 +36,9 @@ function runPipeline(caseDef, profileName, transcriptOverride) {
     metadata: caseDef.metadata,
   });
   const scored = scoreQa(repaired.criteria, repaired.autoFails, transcript);
-  const { qa, grade } = finalizeQaResult(scored, transcript, correctedTurns, repaired.repairs);
+  const { qa, grade } = finalizeQaResult(
+    scored, transcript, correctedTurns, repaired.repairs, { verified: true, status: 'verified' }, repaired.reviewReasons,
+  );
   return { qa, grade, correctedTurns };
 }
 
@@ -174,5 +178,28 @@ describe('QA grading corpus — aggregate error rates', () => {
     const a = runPipeline(caseDef, 'literalist');
     const b = runPipeline(caseDef, 'literalist');
     expect(JSON.parse(JSON.stringify(a))).toEqual(JSON.parse(JSON.stringify(b)));
+  });
+});
+
+describe('captured grader-response fixture format', () => {
+  it('replays a stored raw response through validation, repairs, scoring, and review without a live API call', () => {
+    const fixture = JSON.parse(readFileSync(new URL('./fixtures/qa-model-capture.example.json', import.meta.url), 'utf8'));
+    expect(fixture).toMatchObject({ formatVersion: 1, captureType: 'simulated-example' });
+
+    const context = resolveQaScenarioContext({
+      scenario: fixture.request.scenario,
+      department: fixture.request.department,
+      qaScenarioId: fixture.scenarioId,
+    });
+    expect(context.verified).toBe(true);
+    const { transcript, correctedTurns } = correctTranscriptWithStats(fixture.transcript, context.department);
+    const validated = validateQaResponse(fixture.rawModelResponse);
+    expect(validated.data).toBeDefined();
+    const repaired = repairQaVerdictsForScenario(validated.data, transcript, context.repairContext);
+    const scored = scoreQa(repaired.criteria, repaired.autoFails, transcript);
+    const { qa } = finalizeQaResult(scored, transcript, correctedTurns, repaired.repairs, context);
+
+    expect(qa.pass).toBe(fixture.expected.pass);
+    expect(qa.review.recommendation).toBe(fixture.expected.recommendation);
   });
 });

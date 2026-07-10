@@ -11,7 +11,7 @@
 > [§8 Current System State](#8-current-system-state) and [§15 Current Priorities](#15-current-priorities)
 > accurate at all times.
 >
-> **Last updated:** 2026-07-10 (Call QA evidence-model hardening: destination-gated repair evidence, offer/mixed-note/wrongness rejection, repair originals preserved, outcome-flipping repairs force supervisor review; gold-standard grading corpus measuring zero false passes/fails; explicit cross-system grading invariants in docs/GRADING_INVARIANTS.md) ·
+> **Last updated:** 2026-07-10 (Call QA reliability follow-up: department/workflow routing policy, final-decision contradiction handling, server-authoritative curated scenario metadata, review-only uncertain routes, deterministic corpus claims corrected, captured-response replay format added) ·
 > **Doc maintainer:** Claude (AI agent) + repo owner. Assumptions are explicitly marked **[ASSUMPTION]**.
 
 ---
@@ -669,18 +669,24 @@ training assignments.
   generated roleplay scenarios. QA interview docs store compact scenario metadata including
   `qaScenarioId`, `workflowType`, `difficulty`, `domainIds`, and `competencyIds` so supervisors can
   review coverage and future dashboards can group attempts by workflow.
-- **Fairness hardening (2026-07-10):** QA grading now passes curated `scoringNotes` into the prompt and applies narrow deterministic repairs after model validation but before scoring. Standard pediatric refills cannot lose Knowledge points solely for omitting caller-facing PE status, and natural safe message/routing wording does not require literal TE wording. Repairs are stored in `qa.repairs`, surfaced to supervisors, and never excuse missing refill details, wrong routing, overpromising, clinical advice, or privacy failures.
+- **Fairness hardening (2026-07-10):** QA grading resolves curated `scoringNotes` and workflow metadata server-side from the trusted scenario id, then applies narrow deterministic repairs after model validation but before scoring. Standard pediatric refills cannot lose Knowledge points solely for omitting caller-facing PE status, and natural safe message/routing wording does not require literal TE wording. Repairs are stored in `qa.repairs`, surfaced to supervisors, and never excuse missing refill details, wrong routing, overpromising, clinical advice, or privacy failures. Missing/unknown/mismatched scenario authority disables repairs and forces `needs_review`; browser-supplied workflow/scoring arrays are ignored by grading.
   Destination-only mentions, action questions, historical checks, and hypotheticals are not routing evidence; a repair requires committed navigator ownership or a committed future follow-up from the responsible team/person.
-  **Evidence-model hardening + grading corpus (2026-07-10):** repair evidence now requires a
-  committed line with a positively-cleared destination (wrong destinations like billing/front
-  desk/records/referral coordinator are rejected line-level; destination-less "I'll send it" is
-  insufficient); offer-questions ("do you want me to send it?") never count as commitments; mixed
+  **Evidence-model hardening + grading corpus (2026-07-10):** repair evidence now requires the
+  final committed line to match a department + workflow policy derived from `_sop-context.js` and
+  curated scenario sources. Correct→wrong never repairs; wrong→correct requires an explicit later
+  correction; unexplained conflicting destinations and generic "team" wording are insufficient.
+  Pediatrics refill/referral and OB/GYN PSS/nursing/MFM/records routes are scoped independently;
+  Pediatrics records/forms, urgent symptoms, and unclear requests remain review-only because the
+  repo does not establish one precise destination. Offer-questions never count as commitments; mixed
   grader notes (PE + any other failure) and routing-was-WRONG notes are never repaired; every
   repair records the grader's `originalVerdict`/`originalNote`/`originalEvidence`; and a repair
   that flips fail→pass forces `needs_review` via the `repair-changed-outcome` flag. The whole
-  evidence model is pinned by a **gold-standard grading corpus** (`api/_qa-grading-corpus.js` +
-  harness, ~20 full-call cases × accurate/literalist grader profiles × paraphrase/transcription
-  variants, measured for zero false passes / false fails / review misses) and by explicit
+  evidence model is pinned by a **deterministic grading-pipeline regression corpus**
+  (`api/_qa-grading-corpus.js` + harness, ~20 authored calls × simulated accurate/literalist grader
+  profiles × paraphrase/transcription variants). It measures deterministic repair/scoring behavior;
+  it does not validate live Gemini judgment. A versioned captured-response fixture format now replays
+  stored raw grader responses without network calls; live-model evaluation remains a separate future
+  calibration activity. Explicit
   **grading invariants** ([docs/GRADING_INVARIANTS.md](docs/GRADING_INVARIANTS.md), enforced in
   `src/lib/gradingInvariants.test.js`). All future grading changes must preserve those invariants.
 - **Supervisor final review (2026-07-09):** Call QA Test attempts now support a supervisor final
@@ -1126,6 +1132,10 @@ of this file on 2026-07-07 to cut per-session context cost (it was ~55% of the f
   `autoFailed:true` and shown as "· Auto-fail" in `NavigatorDetail.jsx`, so a safety failure can
   never hide behind a clean high QA-only score (deterministic pass/fail math in `_qa-rubric.js`
   unchanged; still QA-only, never the capability matrix).
+  Call QA grading now treats the curated scenario id as the only metadata authority: the server
+  resolves workflow/scoring notes, checks department + scenario integrity, and disables repairs with
+  supervisor review on unverifiable requests. Routing repair uses the final committed decision under
+  a department/workflow policy; uncertain SOP destinations are review-only.
   **All AI endpoints now share a Patient Navigator Operating Model**
   (`api/_navigator-operating-model.js`, injected via `navigatorContextBlock({ department, mode })`)
   so generation, roleplay, grading, QA, audit, coaching, and learning paths judge real navigator
@@ -1136,7 +1146,8 @@ of this file on 2026-07-07 to cut per-session context cost (it was ~55% of the f
   turns → `/api/live` relay) so the AI caller stays consistent without leaking the answer; the hidden
   case notes include `requiredActions` / `acceptableNavigatorPaths` / `criticalMistakes` as
   caller-behavior guidance (how to react to over-promising / under-clarifying / wrong routing) — never
-  as SOP coaching. Build clean, tests green (`npm test`  **659 passing**, 30 test files). GitHub Actions CI now mirrors the
+  as SOP coaching. Build clean; focused Call QA tests **117/117**, deterministic corpus **43/43**,
+  and full `npm test` **673/673 across 30 files**. GitHub Actions mirrors the
   normal local gate on `main` pushes and PRs: `npm ci` → `npm test` → `npm run build` (no deploy step).
 - **Existing functionality:** features F1–F26 (see [§4](#4-feature-inventory)) are **Complete** in
   code. F17 adds longitudinal trends + Sparkline. F18 adds dossier evidence per competency. F19
@@ -1166,8 +1177,8 @@ of this file on 2026-07-07 to cut per-session context cost (it was ~55% of the f
 - **Experimental / mockup:**
   - Training **content** is mockup (flagged in UI). Logic is real.
   - **Adult Medicine and Behavioural Health** are not assessed; **Pediatrics and OB/GYN** are live.
-- **Test coverage:** **659 tests** across **30 test files** (adds `api/_qa-grading-corpus.test.js` —
-  the gold-standard Call QA grading corpus harness — and `src/lib/gradingInvariants.test.js` — the
+- **Test coverage:** **673 tests** across **30 test files** (includes `api/_qa-grading-corpus.test.js` —
+  the deterministic Call QA grading-pipeline corpus + captured-response replay harness — and `src/lib/gradingInvariants.test.js` — the
   executable cross-system grading invariants, contract in `docs/GRADING_INVARIANTS.md`; plus `api/_navigator-operating-model.test.js`,
   `src/lib/qaDomainScoring.test.js`, `src/components/voiceCall.test.js`; expanded
   `api/api-handlers.test.js`, `grade-interview.test.js`, `generate-audit.test.js`): `scoring.test.js` (all exports incl. `optionPoints`,
@@ -1177,7 +1188,7 @@ of this file on 2026-07-07 to cut per-session context cost (it was ~55% of the f
   malformed-input edge cases), `session.test.js`,
   `db.test.js` (incl. audit-bank helpers), `api/api-handlers.test.js`, `api/generate-audit.test.js`,
   `api/_gemini-client.test.js`, `api/sequence-path.test.js` (9 tests for `validateSequenceResponse`),
-  `api/refine-sop.test.js`, `api/grade-call-qa.test.js` (25 tests for the QA-test rubric pipeline),
+  `api/refine-sop.test.js`, `api/grade-call-qa.test.js` (114 tests for the QA-test rubric, routing-policy, contradiction, and metadata-integrity pipeline),
   `api/_qa-glossary.test.js` (16 tests for the transcript-correction glossary),
   `src/components/components.test.jsx`, `src/lib/phases.test.js`, `src/lib/apiFetch.test.js` (apiFetch/`fetchErrorMessage`/`runPooled`),
   `api/_auth.test.js` (secret gate), `api/grade-interview.test.js` (`coerceGrade`),
@@ -1257,7 +1268,7 @@ of this file on 2026-07-07 to cut per-session context cost (it was ~55% of the f
   OB/GYN = **37** seed questions (offline fallback) + the **48-item MCQ v2 operating-model bank**
   (24 Pediatrics + 24 OB/GYN) that replaces the weak active bank via a marker-gated
   archive-and-replace migration (bank grows in Firestore per dept) · 4 departments (**Pediatrics
-  + OB/GYN live**, 2 mockup) · **659** unit tests (30 test files) · **12** Firestore collections
+  + OB/GYN live**, 2 mockup) · **673** unit tests (30 test files) · **12** Firestore collections
   (`roster`, `results`, `resultHistory`, `questions`, `audits`, `interviews`, `completions`,
   `pairings`, `supervisorFeedback`, `learningProposals`, `sops`, `contentMigrations`) ·
   **12** REST serverless functions (`generate-scenarios`, `generate-coaching`, `interview-turn`,
@@ -1354,6 +1365,10 @@ of this file on 2026-07-07 to cut per-session context cost (it was ~55% of the f
     specific over time; advisory only).
   - `POST /api/interview-turn` `{ domain, secret }` (init, no scenario) → `{ scenario, callerName, reply }`. `{ domain, scenario, callerName, history, navigatorMessage, secret }` (turn) → `{ reply }`.
   - `POST /api/grade-interview` `{ domain, scenario, transcript, name, secret }` → `{ grade: { score:number(0–100), summary:string, strengths:string[], improvements:string[] } }`. Gemini reviews the full transcript against the SOP; temp 0.3 for consistency. Advisory only.
+  - `POST /api/grade-call-qa` `{ scenario, transcript, department, qaScenarioId }` → `{ qa, grade }`.
+    The server resolves all repair/scoring metadata from `qaScenarioId`; arbitrary browser metadata
+    is ignored. Missing/unknown/mismatched ids still receive a deterministic score but repairs are
+    disabled and `qa.review` is forced to supervisor review.
   - `POST /api/generate-audit` `{ domain, department, workflowType, avoidWorkflowTypes, secret }` → `{ transcript, errorIndex, hint, modelExplanation, workflowType, errorKind, difficulty }` (~10-turn flawed transcript for the "Spot the Error" exercise).
   - `POST /api/coach-audit` `{ domain, modelExplanation, navigatorAnswer, name, secret }` → `{ reply }` (warm 2–3 sentence mentor coaching note; advisory only).
   - `POST /api/refine-sop` — `{ mode:'build', rawText, department, secret }` → `{ sop: { title, body, notes[] } }` (structures a raw document into the 6-domain SOP layout); `{ mode:'refine', rawText, currentSop, department, secret }` → `{ sop: { title, body, changes:[{type, summary}] } }` (merges new material into the active SOP, flagging contradictions/outdated rules/additions/clarifications). Output is always saved client-side as a draft — the endpoint never writes Firestore.

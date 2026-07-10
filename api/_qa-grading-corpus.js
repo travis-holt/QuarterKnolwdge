@@ -1,7 +1,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
-// Gold-standard Call QA grading corpus.
+// Deterministic Call QA grading-pipeline regression corpus.
 //
-// Each case is a full call transcript with a KNOWN ground truth (`truth`) plus
+// Each case is a full call transcript with an authored expected outcome (`truth`) plus
 // one or more simulated grader profiles:
 //   accurate   — verdicts a careful grader would return for this call
 //   literalist — the false-negative-prone grader this repair layer guards
@@ -10,7 +10,7 @@
 // The harness (_qa-grading-corpus.test.js) runs every case × profile through
 // the REAL deterministic pipeline (glossary correction → validation → repairs →
 // trust-gated scoring → review assessment) and measures FALSE PASSES and FALSE
-// FAILS against ground truth. The corpus is the regression net for the entire
+// FAILS against those expectations. The corpus is the regression net for the entire
 // evidence model: any change to the rubric, repair gates, or review layer must
 // keep this corpus at zero false passes and zero false fails.
 //
@@ -114,7 +114,7 @@ export const QA_GRADING_CORPUS = [
     transcript: [
       ...OPENING,
       ...REFILL_GATHER,
-      nav("I'll send this request over to the refill team right now and mark it high priority since she is completely out. The team will call you back once it is reviewed. I can't promise exact timing though."),
+      nav("I'll send this request over to the PEDS Encounters queue right now and mark it high priority since she is completely out. The PEDS Encounters team will call you back once it is reviewed. I can't promise exact timing though."),
       pat('That works, thank you.'),
       ...CLOSE_NO_SURVEY,
     ],
@@ -136,11 +136,11 @@ export const QA_GRADING_CORPUS = [
     },
     // Paraphrase variants: the same competent call with different natural
     // routing wording must grade identically (incl. the committed-follow-up
-    // phrasing "The refill team will follow up ...").
+    // phrasing "The PEDS Encounters team will follow up ...").
     variants: [
-      { id: 'route-nurse', replaceLineContaining: "I'll send this request over", with: "I'm going to route this over to the nurse right now and mark it high priority since she is completely out. I can't promise exact timing though." },
-      { id: 'put-in-message', replaceLineContaining: "I'll send this request over", with: "Let me put in a message for the provider about this refill and mark it high priority since she is completely out. I can't promise exact timing though." },
-      { id: 'team-follow-up', replaceLineContaining: "I'll send this request over", with: 'The refill team will follow up with you once it is reviewed — I have everything marked high priority since she is completely out.' },
+      { id: 'route-queue', replaceLineContaining: "I'll send this request over", with: "I'm going to route this over to the PEDS Encounters queue right now and mark it high priority since she is completely out. I can't promise exact timing though." },
+      { id: 'put-in-message', replaceLineContaining: "I'll send this request over", with: "Let me put in a message for the PEDS Encounters queue about this refill and mark it high priority since she is completely out. I can't promise exact timing though." },
+      { id: 'team-follow-up', replaceLineContaining: "I'll send this request over", with: 'The PEDS Encounters team will follow up with you once it is reviewed — I have everything marked high priority since she is completely out.' },
     ],
   },
   {
@@ -177,7 +177,7 @@ export const QA_GRADING_CORPUS = [
   {
     id: 'good-urgent-escalation',
     category: 'good',
-    truth: 'pass',
+    truth: 'review',
     description: 'Urgent symptoms: navigator defers clinical judgment (scope discipline), escalates to the clinical team, gives permitted emergency guidance. Deferral language must not read as clinical advice.',
     department: 'pediatrics',
     scenario: 'A parent describes potentially urgent symptoms and asks the navigator to judge what to do medically. The navigator must stay inside scope, escalate per the urgent symptom policy, and document what was reported.',
@@ -200,8 +200,8 @@ export const QA_GRADING_CORPUS = [
       },
     },
     expect: {
-      accurate: { pass: true, recommendation: 'pass', repairRules: [] },
-      literalist: { pass: true, recommendation: 'pass', repairRules: ['natural-message-routing-wording'] },
+      accurate: { pass: true, recommendation: 'needs_review', repairRules: [] },
+      literalist: { pass: true, recommendation: 'needs_review', repairRules: [] },
     },
   },
   {
@@ -223,7 +223,7 @@ export const QA_GRADING_CORPUS = [
       pat('Yes. And my daughter Ana Alvarez, July 9th 2017, needs her asthma medication refilled.'),
       nav("Thank you — I'm switching to Ana's chart now so her request stays separate. What medication is the refill for, and which pharmacy do you use?"),
       pat('The inhaler, and the CVS on Main Street. She still has a little left.'),
-      nav("Got it. For Ana I'll send the refill request to the refill team now, and the team will get back to you. Leo is booked today at 3 PM at 48 Bakertown Rd — please arrive fifteen minutes early."),
+      nav("Got it. For Ana I'll send the refill request to the PEDS Encounters queue now, and that team will get back to you. Leo is booked today at 3 PM at 48 Bakertown Rd — please arrive fifteen minutes early."),
       ...CLOSE_FULL,
     ],
     graders: {
@@ -306,7 +306,7 @@ export const QA_GRADING_CORPUS = [
       ...OPENING,
       ...REFILL_GATHER,
       nav("Honestly, you can give her a double dose of what's left tonight — it's perfectly safe for kids her age."),
-      nav("I'll also send the refill request to the refill team now."),
+      nav("I'll also send the refill request to the PEDS Encounters queue now."),
       ...CLOSE_FULL,
     ],
     graders: {
@@ -365,7 +365,7 @@ export const QA_GRADING_CORPUS = [
       ...REFILL_GATHER,
       pat('Sorry, I forgot which pharmacy we switched to.'),
       nav("Well, maybe if you'd actually paid attention the first time we wouldn't be doing this twice."),
-      nav("I'll send the request to the refill team."),
+      nav("I'll send the request to the PEDS Encounters queue."),
       ...CLOSE_FULL,
     ],
     graders: {
@@ -420,7 +420,7 @@ export const QA_GRADING_CORPUS = [
     transcript: [
       ...OPENING,
       ...REFILL_GATHER,
-      nav("I'll send this request over to the refill team right now and mark it high priority since she is completely out."),
+      nav("I'll send this request over to the PEDS Encounters queue right now and mark it high priority since she is completely out."),
       ...CLOSE_FULL,
     ],
     graders: {
@@ -494,7 +494,7 @@ export const QA_GRADING_CORPUS = [
       ...VERIFY,
       nav('What medication does she need refilled?'),
       pat('Zyrtec, the liquid one.'),
-      nav("Okay, I'll send this to the refill team now."),
+      nav("Okay, I'll send this to the PEDS Encounters queue now."),
       ...CLOSE_NO_SURVEY,
     ],
     graders: {
@@ -538,7 +538,7 @@ export const QA_GRADING_CORPUS = [
       pat('Zyrtec. She is completely out.'),
       nav('Which pharmacy do you prefer, and what is the best number to reach you?'),
       pat('CVS on Main Street, this number.'),
-      nav("I'll send this request over to the refill team right now and mark it high priority since she is completely out."),
+      nav("I'll send this request over to the PEDS Encounters queue right now and mark it high priority since she is completely out."),
       ...CLOSE_FULL,
     ],
     graders: {
@@ -732,8 +732,8 @@ export const QA_GRADING_CORPUS = [
   {
     id: 'ambiguous-intent-clarified',
     category: 'ambiguous',
-    truth: 'pass',
-    description: 'Unclear request clarified into the right workflow and routed with a committed line; the literalist TE complaint is repairable.',
+    truth: 'review',
+    description: 'Unclear request clarified into a plausible workflow. The repository does not establish one exact destination for this generic fixture, so a literalist routing complaint must go to supervisor review rather than repair.',
     department: 'pediatrics',
     scenario: 'A caller has an unclear request that may belong to Pediatrics or another department. The navigator must gather enough detail to classify the request and route it correctly.',
     metadata: { qaScenarioId: 'qa-peds-unclear-001', workflowType: 'wrong_department_unclear_request', difficulty: 'medium' },
@@ -756,8 +756,8 @@ export const QA_GRADING_CORPUS = [
       },
     },
     expect: {
-      accurate: { pass: true, recommendation: 'pass', repairRules: [] },
-      literalist: { pass: true, recommendation: 'pass', repairRules: ['natural-message-routing-wording'] },
+      accurate: { pass: true, recommendation: 'needs_review', repairRules: [] },
+      literalist: { pass: true, recommendation: 'needs_review', repairRules: [] },
     },
   },
   {

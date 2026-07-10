@@ -27,9 +27,61 @@ import {
   validateQaResponse, repairQaVerdictsForScenario, scoreQa, assessQa, buildGradeProjection,
 } from './_qa-rubric.js';
 import { qaDomainScoreSummary } from '../src/lib/qaDomainScoring.js';
+import { getCallQaScenarioById } from '../src/data/callQaScenarios.js';
 
 const MAX_TURNS = 60;
 const MAX_TURN_CHARS = 2000;
+
+function trustedScenarioMetadata(scenario) {
+  return {
+    qaScenarioId: scenario.id,
+    workflowType: scenario.workflowType,
+    difficulty: scenario.difficulty,
+    expectedActions: scenario.expectedActions,
+    criticalMisses: scenario.criticalMisses,
+    scoringNotes: scenario.scoringNotes ?? [],
+  };
+}
+
+export function buildTrustedGradingScenario(scenario) {
+  const lines = [
+    scenario.scenario,
+    '',
+    'GRADING CONTEXT (server-authoritative curated scenario):',
+    `Scenario: ${scenario.title} · Workflow type: ${scenario.workflowType} · Difficulty: ${scenario.difficulty}`,
+    'Expected navigator behaviors:',
+    ...scenario.expectedActions.map((item) => `- ${item}`),
+    'Critical misses (fail the relevant criteria if these occur):',
+    ...scenario.criticalMisses.map((item) => `- ${item}`),
+  ];
+  if (scenario.scoringNotes?.length) {
+    lines.push('Scenario-specific grading notes:', ...scenario.scoringNotes.map((item) => `- ${item}`));
+  }
+  return lines.join('\n');
+}
+
+export function resolveQaScenarioContext({ scenario = '', department = 'pediatrics', qaScenarioId, metadata = {} } = {}) {
+  const requestedId = String(qaScenarioId ?? metadata?.qaScenarioId ?? '').trim();
+  const trusted = requestedId ? getCallQaScenarioById(requestedId) : null;
+  let status = 'verified';
+  if (!requestedId) status = 'missing-scenario-id';
+  else if (!trusted) status = 'unknown-scenario-id';
+  else if (trusted.department !== department) status = 'department-mismatch';
+  else if (String(scenario).trim() !== trusted.scenario.trim()) status = 'scenario-mismatch';
+
+  return {
+    verified: status === 'verified',
+    status,
+    qaScenarioId: requestedId || null,
+    department: trusted?.department ?? department,
+    gradingScenario: trusted ? buildTrustedGradingScenario(trusted) : String(scenario),
+    repairContext: {
+      scenario: trusted?.scenario ?? String(scenario),
+      department: trusted?.department ?? department,
+      metadata: trusted ? trustedScenarioMetadata(trusted) : {},
+    },
+  };
+}
 
 const RESPONSE_SCHEMA = {
   type: 'OBJECT',
@@ -177,8 +229,30 @@ function buildBody(systemInstruction, userMessage) {
   };
 }
 
-export function finalizeQaResult(scored, transcript, correctedTurns = 0, repairs = []) {
+export function finalizeQaResult(scored, transcript, correctedTurns = 0, repairs = [], metadataIntegrity = { verified: true, status: 'verified' }, forcedReviewReasons = []) {
   const review = assessQa(scored, transcript, { correctedTurns, repairs });
+  if (forcedReviewReasons.includes('routing-policy-review-only')) {
+    review.reviewFlags.push({
+      id: 'routing-policy-review-only',
+      label: 'Routing destination requires supervisor review',
+      detail: 'The repository sources do not establish one exact destination for this department/workflow, so deterministic routing repair is disabled.',
+    });
+    const applicable = scored.categories.reduce((sum, category) => sum + category.applicablePoints, 0);
+    const earned = scored.categories.reduce((sum, category) => sum + category.earned, 0);
+    const uncertainRoutingPoints = scored.criteria
+      .filter((criterion) => ['know-rule', 'doc-te'].includes(criterion.id) && criterion.verdict === 'NOT_MET')
+      .reduce((sum, criterion) => sum + criterion.points, 0);
+    const bestCaseScore = applicable > 0 ? Math.round(((earned + uncertainRoutingPoints) / applicable) * 100) : 0;
+    if (scored.pass || bestCaseScore >= scored.passThreshold) review.recommendation = 'needs_review';
+  }
+  if (!metadataIntegrity.verified) {
+    review.reviewFlags.push({
+      id: 'unverified-scenario-metadata',
+      label: 'Scenario metadata could not be verified',
+      detail: `Server verification status: ${metadataIntegrity.status}. No outcome-improving repair was allowed; a supervisor must review this result.`,
+    });
+    review.recommendation = 'needs_review';
+  }
   const qa = {
     ...scored,
     ...qaDomainScoreSummary(scored),
@@ -187,6 +261,11 @@ export function finalizeQaResult(scored, transcript, correctedTurns = 0, repairs
     correctedTurns,
     repairs,
     repairCount: repairs.length,
+    metadataIntegrity: {
+      verified: metadataIntegrity.verified,
+      status: metadataIntegrity.status,
+      qaScenarioId: metadataIntegrity.qaScenarioId ?? null,
+    },
   };
   const grade = buildGradeProjection(qa);
   return { qa, grade };
@@ -200,19 +279,26 @@ export default async function handler(req, res) {
   const keys = getApiKeys();
   if (!keys.length) return res.status(500).json({ error: 'Grading is not configured on the server.' });
 
-  const { scenario, transcript: rawTranscript, department = 'pediatrics', metadata = {} } = req.body ?? {};
+  const { scenario, transcript: rawTranscript, department = 'pediatrics', qaScenarioId, metadata = {} } = req.body ?? {};
 
   if (!scenario || !Array.isArray(rawTranscript) || rawTranscript.length === 0) {
     return res.status(400).json({ error: 'Missing required fields.' });
   }
 
+  const scenarioContext = resolveQaScenarioContext({ scenario, department, qaScenarioId, metadata });
+
   // Snap mis-transcribed SOP proper nouns/terms to their canonical form BEFORE
   // grading, so both the model's judgment and the evidence-verification gate see
   // what the navigator actually said (bounded to the glossary — never invents).
   // The correction count doubles as a transcript-quality signal for the review layer.
-  const { transcript, correctedTurns } = correctTranscriptWithStats(rawTranscript, department);
+  const { transcript, correctedTurns } = correctTranscriptWithStats(rawTranscript, scenarioContext.department);
 
-  const { systemInstruction, userMessage } = buildMessages(scenario, transcript, department, await sopContextForFresh(department));
+  const { systemInstruction, userMessage } = buildMessages(
+    scenarioContext.gradingScenario,
+    transcript,
+    scenarioContext.department,
+    await sopContextForFresh(scenarioContext.department),
+  );
   const body = buildBody(systemInstruction, userMessage);
 
   // One retry on malformed output: temp-0 structured JSON is almost always
@@ -241,9 +327,13 @@ export default async function handler(req, res) {
   const boundedTranscript = transcript
     .slice(0, MAX_TURNS)
     .map((t) => ({ role: t.role, text: String(t.text ?? '').slice(0, MAX_TURN_CHARS) }));
-  const repaired = repairQaVerdictsForScenario(validated, boundedTranscript, { scenario, department, metadata });
+  const repaired = scenarioContext.verified
+    ? repairQaVerdictsForScenario(validated, boundedTranscript, scenarioContext.repairContext)
+    : { criteria: validated.criteria, autoFails: validated.autoFails, repairs: [], reviewReasons: [] };
   const scored = scoreQa(repaired.criteria, repaired.autoFails, boundedTranscript);
-  const { qa, grade } = finalizeQaResult(scored, boundedTranscript, correctedTurns, repaired.repairs);
+  const { qa, grade } = finalizeQaResult(
+    scored, boundedTranscript, correctedTurns, repaired.repairs, scenarioContext, repaired.reviewReasons,
+  );
 
   return res.status(200).json({ qa, grade });
 }

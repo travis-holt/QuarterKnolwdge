@@ -4,7 +4,7 @@
 > Error, Call QA, QA domain/competency projections, supervisor verdicts) must preserve
 > these invariants. The executable half lives in
 > [`src/lib/gradingInvariants.test.js`](../src/lib/gradingInvariants.test.js) and the
-> gold-standard corpus harness
+> deterministic grading-pipeline corpus harness
 > [`api/_qa-grading-corpus.test.js`](../api/_qa-grading-corpus.test.js) — if one of
 > those tests fails after your change, re-read this document before "fixing" the test.
 >
@@ -60,13 +60,20 @@ literal "TE"/"Telephone Encounter" wording). They are deliberately narrow.
 | R1 | Repairs may touch ONLY the criteria in `REPAIRABLE_CRITERIA` (`know-rule`, `doc-te`), and only in the direction NOT_MET → MET. Nothing may ever be repaired downward. | `gradingInvariants.test.js` |
 | R2 | Repairs never add, remove, or alter auto-fails, and a verified auto-fail always zeroes the test regardless of repairs. | `gradingInvariants.test.js` |
 | R3 | Every repair is recorded in `qa.repairs` with the rule id, the new evidence quote, and the grader's ORIGINAL verdict, note, and evidence — supervisors can always reconstruct what the grader said. | corpus harness, unit tests |
-| R4 | Repair evidence must be a **committed navigator line with a positively-cleared destination**: a commitment verb ("I'll send / route / forward / put in", "the refill team will follow up") **plus** an approved destination (nurse / provider / doctor / team / queue) **and no known-wrong destination** (billing, front desk, records, referral coordinator, scheduling, specialist, OB...). "I'll send it" (destination unknown) is NOT repair evidence. | corpus `wrong-destination-commitment`, `commitment-without-destination`; unit tests |
-| R5 | Questions, offers, hypotheticals, historical checks, and caller lines are never commitments: "Did you send it?", "Can you send it?", "Do you want me to send it?", "Someone should send it", and any patient-role line can never serve as repair evidence. "I'll send it." (committed, navigator) can — but still needs a destination (R4). "The refill team will follow up." is a committed future follow-up and counts. | corpus `question-not-commitment`; unit tests |
-| R6 | Any over-promise, clinical-advice, or wrong-destination signal anywhere in the call blocks ALL repairs. Safe language is excluded from those signals: "I can't promise approval" is not a promise; "I can't tell you if it's safe — that's for the nurse" is not clinical advice. | corpus `unsafe-*` cases; unit tests |
+| R4 | Repair evidence must use the **department + authoritative `workflowType` routing policy**. Pediatrics refill = PEDS Encounters; Pediatrics referral = Pediatrics referral owner; OB/GYN non-pregnant GYN and pregnancy scheduling = PSS; OB/GYN results/clinical questions = TE/message to nursing/clinical staff. A destination accepted for one workflow is neither globally accepted nor globally rejected. | routing-policy unit tests |
+| R5 | Questions, offers, hypotheticals, historical checks, caller lines, destination-less commitments, and generic "team" wording are never enough when the workflow requires a specific queue/person. | corpus `question-not-commitment`; unit tests |
+| R6 | Call-level validation uses the **final committed routing decision**. Correct→wrong never repairs; wrong→correct repairs only when the later line explicitly corrects the earlier commitment; two unexplained conflicting destinations never repair. Line and call validation share one destination vocabulary. | adversarial contradiction tests |
+| R6a | Any over-promise or clinical-advice signal blocks repairs. Safe language is excluded: "I can't promise approval" is not a promise; "I can't tell you if it's safe — that's for the nurse" is scope discipline, not clinical advice. | corpus `unsafe-*` cases; unit tests |
 | R7 | Missing required workflow details block repairs: a standard refill without medication name or preferred pharmacy is never repaired. | corpus `incomplete-refill-no-pharmacy` |
 | R8 | A grader note that mixes PE with any other failure (routing, identity, scheduling, promising, advice, missing details, conflation...) is NOT "PE-only" and is never repaired. A note that says the routing was WRONG (vs. merely unworded) is never repaired. | unit tests: mixed notes / wrongness notes |
 | R9 | A repair that flips the outcome (would have failed without the repaired points) forces `recommendation: needs_review` with the `repair-changed-outcome` flag. Repairs are decision support, not the final word. | `assessQa` unit tests, corpus `good-refill-natural` literalist |
 | R10 | Every repairable criterion is also in `SAFETY_CRITICAL_CRITERIA`, so an UNREPAIRED miss on it still flags a passing call for review — the repair layer cannot become the only scrutiny those criteria get. | `gradingInvariants.test.js` |
+
+Routing policies intentionally marked review-only because the repository sources do not
+establish one exact destination: Pediatrics `records_forms`, `urgent_symptom_boundary`, and
+`wrong_department_unclear_request`, plus OB/GYN `wrong_department_unclear_request`.
+Those workflows receive no outcome-improving routing repair; a potentially outcome-changing
+routing uncertainty is flagged for supervisor review.
 
 ## 4. Review-layer invariants
 
@@ -76,6 +83,7 @@ literal "TE"/"Telephone Encounter" wording). They are deliberately narrow.
 | V2 | An UNVERIFIED auto-fail never fails the navigator and never vanishes: it becomes `possible-unsafe-behavior`, `safetyRisk: 'critical'`, recommendation `needs_review`. | corpus `unsafe-hallucinated-autofail` |
 | V3 | A pass over a safety-tagged miss, a borderline score (±5 of the pass mark), low transcript confidence, or an outcome-flipping repair is always `needs_review` — never a confident verdict. | corpus borderline cases |
 | V4 | `QA_REVIEW_MARGIN ≥ 1`, so a raw ratio that rounds up to exactly the pass mark always lands in the review band. | `gradingInvariants.test.js` |
+| V5 | The grading API resolves workflow/scoring metadata from the server-owned curated scenario id. Missing, unknown, department-mismatched, or scenario-mismatched ids disable repairs and add `unverified-scenario-metadata` with `needs_review`; browser-supplied workflow/scoring arrays are not grading authority. | metadata-integrity unit tests |
 
 ## 5. Supervisor-layer invariants
 
@@ -85,12 +93,14 @@ literal "TE"/"Telephone Encounter" wording). They are deliberately narrow.
 | S2 | Reading or rendering a final verdict never mutates the stored session. | `gradingInvariants.test.js` |
 | S3 | Supervisor overrides require a reason; confirm actions must agree with the AI verdict; NEEDS-REVIEW sessions are override-only. | `qaFinalReview` UI tests |
 
-## 6. Gold-standard corpus (measurement, not just execution)
+## 6. Calibration evidence: three distinct layers
+
+### Deterministic repair/scoring regression corpus
 
 [`api/_qa-grading-corpus.js`](../api/_qa-grading-corpus.js) holds ~20 full-call cases
 across seven categories — good, borderline, unsafe, incomplete, natural
 phrasing/transcription, question-vs-commitment, and ambiguous intent — each with a
-ground truth (`pass` / `fail` / `review`) and one or two simulated grader
+expected outcome (`pass` / `fail` / `review`) and one or two **simulated** grader
 temperaments (`accurate`, `literalist`), plus paraphrase variants and glossary
 mis-hearing variants. The harness runs every case × profile × variant through the
 real pipeline and measures:
@@ -100,11 +110,29 @@ real pipeline and measures:
 - **review miss** — truth `review` given any confident verdict;
 - **silent pass** — truth `fail` passing without at least a review flag.
 
-**All four counts must be zero, permanently.** A `needs_review` escape is acceptable
+**All four counts must be zero for these deterministic fixtures.** A `needs_review` escape is acceptable
 for hard cases (that is the design: uncertainty goes to a human); a confident wrong
 verdict is not. The corpus was validated against the pre-hardening repair layer and
-correctly failed 11 tests there (including a confident false pass from a
-wrong-destination commitment), so it demonstrably detects the loopholes it guards.
+correctly failed the prior implementation on contradiction, generic-destination, and
+cross-workflow cases. This validates the deterministic pipeline against authored
+expectations; it does **not** independently validate live Gemini judgment.
+
+### Captured real-model calibration fixtures
+
+[`api/fixtures/qa-model-capture.example.json`](../api/fixtures/qa-model-capture.example.json)
+defines the replay format: `formatVersion`, capture provenance (`captureType`, `capturedAt`,
+`model`), trusted scenario id + request context, transcript, untouched `rawModelResponse`, and
+expected pipeline outcome. The checked-in item is explicitly `simulated-example`, not a real
+Gemini capture. When real responses are captured, set `captureType: "real-model"`, record the
+actual model/timestamp, and never hand-edit `rawModelResponse`. The replay test runs stored output
+through validation → repairs → scoring → review without a live API call in CI.
+
+### Live model evaluation
+
+Live evaluation calls the configured Gemini model against a held-out call set and measures the
+model's judgment itself. It is network-, model-, quota-, and date-dependent, so it is not part of
+deterministic CI. A green corpus/captured-fixture replay cannot substitute for a periodic live
+evaluation run; the repo does not yet provide an automated live-evaluation harness.
 
 **When you change grading behavior:** add corpus cases FIRST for the behavior you
 are changing (both the fixed direction and the abuse direction), confirm they fail,

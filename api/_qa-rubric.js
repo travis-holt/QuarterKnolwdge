@@ -139,11 +139,45 @@ export function findBestNavigatorLine(transcript, regexes) {
   return navigatorLines(transcript).find((line) => lineMatchesAny(line, regexes))?.text ?? null;
 }
 
-const ROUTING_DESTINATION = /\b(?:nurse|provider|doctor|team|refill team|clinical team|peds encounters|pediatrics encounters)\b/i;
-// Destinations that are always wrong for the repairable workflows. A commitment
-// line naming one of these can never serve as repair evidence — the repair layer
-// only trusts a commitment whose destination it can positively clear.
-const WRONG_DESTINATION_LINE = /\b(?:billing|front desk|records team|records department|referral coordinator|school|forms team|scheduling team|scheduling department|specialist|ob\s*\/?\s*gyn|ob (?:office|portal|team)|pss ob|human resources)\b/i;
+export const ROUTING_DESTINATIONS = [
+  ['peds-encounters', /\b(?:peds|pediatric(?:s)?)\s+(?:telephone\s+encounters?|encounters?)\s*(?:queue|team)?\b/i],
+  ['peds-referral', /\b(?:anisa azeez|pediatrics?\s+referral\s+(?:specialist|coordinator)|referral\s+(?:specialist|coordinator))\b/i],
+  ['ob-pss', /\b(?:pss(?:\s+ob)?(?:\s+queue)?|patient scheduling services(?:\s+queue)?|ob(?:\s*\/\s*gyn)?\s+(?:scheduling|pss)\s+queue)\b/i],
+  ['ob-prevention', /\b(?:prevention|preventive)\s+coordinator\b/i],
+  ['ob-mfm', /\b(?:mfm|maternal[ -]fetal medicine)\s+(?:nurse|coordinator|team)\b/i],
+  ['ob-nursing', /\b(?:(?:ob(?:\s*\/\s*gyn)?|obstetrics?)\s+nurse|nursing team|clinical team)\b/i],
+  ['labor-delivery', /\b(?:l\s*&\s*d|labor (?:and|&) delivery)\b/i],
+  ['medical-records', /\b(?:medical records|records)\s+(?:team|department)\b/i],
+  ['forms', /\b(?:school\s+)?forms?\s+(?:team|department)\b/i],
+  ['billing', /\bbilling\s*(?:team|department)?\b/i],
+  ['front-desk', /\bfront desk\b/i],
+  ['scheduling', /\bscheduling\s+(?:team|department|queue)\b/i, true],
+  ['specialist', /\bspecialist\b/i, true],
+  ['generic-team', /\bteam\b/i, true],
+  ['generic-provider', /\b(?:provider|doctor)\b/i, true],
+  ['generic-queue', /\bqueue\b/i, true],
+];
+
+export const ROUTING_POLICIES = {
+  pediatrics: {
+    prescription_refill: { allowed: ['peds-encounters'], messageRepair: true },
+    referral: { allowed: ['peds-referral'], messageRepair: true },
+    records_forms: { allowed: [], reviewOnly: true },
+    urgent_symptom_boundary: { allowed: [], reviewOnly: true },
+    wrong_department_unclear_request: { allowed: [], reviewOnly: true },
+  },
+  obgyn: {
+    new_gyn_visit: { allowed: ['ob-pss'] },
+    pregnancy_related_visit: { allowed: ['ob-pss'] },
+    test_result_medical_advice_boundary: { allowed: ['ob-nursing'], messageRepair: true },
+    prescription_refill: { allowed: ['ob-nursing'], messageRepair: true },
+    mfm_related_request: { allowed: ['ob-mfm'] },
+    records_forms: { allowed: ['medical-records'] },
+    scheduling_change: { allowed: ['ob-pss'] },
+    wrong_department_unclear_request: { allowed: [], reviewOnly: true },
+  },
+};
+// Commitment syntax is separate from destination policy; both are required.
 const NAVIGATOR_ROUTING_COMMITMENT_PATTERNS = [
   /\b(?:i|we)\s*(?:will|['’]ll|['’]m going to|am going to|are going to|can)\s+(?:go ahead and\s+)?(?:send|route|forward|message|pass(?:\s+along)?|put\s+in)\b/i,
   /\blet me\s+(?:go ahead and\s+)?(?:send|route|forward|message|pass(?:\s+along)?|put\s+in)\b/i,
@@ -152,7 +186,7 @@ const NAVIGATOR_ROUTING_COMMITMENT_PATTERNS = [
   /\b(?:i|we)\s*(?:will|['’]ll|['’]m going to|am going to|are going to)\s+have\s+(?:the\s+)?(?:team|nurse|provider|doctor|refill team|clinical team)\s+(?:follow up|call(?: you)? back|get back to you|review)\b/i,
 ];
 const COMMITTED_FOLLOW_UP_PATTERNS = [
-  /\b(?:the\s+)?(?:team|nurse|provider|doctor|refill team|clinical team|peds encounters|pediatrics encounters)\s+(?:will|['’]ll)\s+(?:follow up|call(?: you)? back|get back to you|review)\b/i,
+  /\b(?:the\s+)?(?:team|nurse|provider|doctor|clinical team|peds encounters|pediatrics encounters|pss(?: ob)?|patient scheduling services|referral (?:specialist|coordinator)|mfm nurse|medical records team)\s+(?:will|['’]ll)\s+(?:follow up|call(?: you)? back|get back to you|review)\b/i,
 ];
 // An offer is not a commitment: "do you want me to send it?" leaves the action
 // undecided, so it can never stand as routing evidence.
@@ -168,8 +202,25 @@ const NON_PE_FAILURE_NOTE = /wrong|incorrect|instead of|\brout(?:e|ed|es|ing)\b|
 // and must never be repaired away.
 const ROUTING_WRONGNESS_NOTE = /wrong|incorrect|instead of|should (?:have|be)|belongs (?:to|in)|mis-?rout/i;
 
-export function hasRoutingDestination(line) {
-  return ROUTING_DESTINATION.test(String(line?.text ?? line ?? ''));
+export function routingPolicyFor({ department = '', metadata = {} } = {}) {
+  return ROUTING_POLICIES[department]?.[metadata?.workflowType] ?? null;
+}
+
+export function routingDestinationsForLine(line) {
+  const text = String(line?.text ?? line ?? '');
+  const specific = ROUTING_DESTINATIONS
+    .filter(([, pattern, generic]) => !generic && pattern.test(text))
+    .map(([id]) => id);
+  return specific.length
+    ? [...new Set(specific)]
+    : [...new Set(ROUTING_DESTINATIONS.filter(([, pattern, generic]) => generic && pattern.test(text)).map(([id]) => id))];
+}
+
+export function hasRoutingDestination(line, context) {
+  const ids = routingDestinationsForLine(line);
+  if (!context) return ids.some((id) => !id.startsWith('generic-'));
+  const policy = routingPolicyFor(context);
+  return Boolean(policy && ids.some((id) => policy.allowed.includes(id)));
 }
 
 function isRoutingQuestionOrHypothetical(line) {
@@ -190,17 +241,51 @@ export function findNaturalRoutingActionLine(transcript) {
   return navigatorLines(transcript).find(hasRoutingCommitment)?.text ?? null;
 }
 
-/**
- * The only line quality strong enough to overturn a grader verdict: a committed
- * routing/follow-up line that names an approved destination and names no
- * known-wrong one. "I'll send it" (destination unknown) or "I'll send this to
- * billing" (destination wrong) never qualifies.
- */
-export function findCommittedRoutingLineWithDestination(transcript) {
-  return navigatorLines(transcript).find((line) => {
-    const text = String(line?.text ?? '');
-    return hasRoutingCommitment(text) && hasRoutingDestination(text) && !WRONG_DESTINATION_LINE.test(text);
-  })?.text ?? null;
+// Only the final committed decision can support a repair. Conflicting earlier
+// decisions require an explicit correction; generic/unknown destinations fail.
+const ROUTING_CORRECTION = /\b(?:actually|correction|i mean|rather|instead|sorry)\b/i;
+
+export function evaluateRoutingDecision(transcript, context = {}) {
+  const policy = routingPolicyFor(context);
+  if (!policy || policy.reviewOnly) {
+    return { acceptable: false, reason: 'routing-policy-review-only', line: null, destinationId: null };
+  }
+
+  const commitments = navigatorLines(transcript)
+    .map((line) => ({
+      line: line.text,
+      destinations: routingDestinationsForLine(line),
+      correction: ROUTING_CORRECTION.test(line.text),
+    }))
+    .filter((entry) => hasRoutingCommitment(entry.line));
+  if (!commitments.length) {
+    return { acceptable: false, reason: 'no-routing-commitment', line: null, destinationId: null };
+  }
+
+  const final = commitments.at(-1);
+  if (final.destinations.length !== 1 || final.destinations[0].startsWith('generic-')) {
+    return {
+      acceptable: false,
+      reason: 'unknown-or-ambiguous-destination',
+      line: final.line,
+      destinationId: final.destinations[0] ?? null,
+    };
+  }
+
+  const destinationId = final.destinations[0];
+  const earlier = commitments.slice(0, -1)
+    .flatMap((entry) => entry.destinations.filter((id) => !id.startsWith('generic-')));
+  if (earlier.some((id) => id !== destinationId) && !final.correction) {
+    return { acceptable: false, reason: 'contradictory-routing-commitments', line: final.line, destinationId };
+  }
+
+  const acceptable = policy.allowed.includes(destinationId);
+  return { acceptable, reason: acceptable ? 'accepted' : 'wrong-destination', line: final.line, destinationId };
+}
+
+export function findCommittedRoutingLineWithDestination(transcript, context = {}) {
+  const decision = evaluateRoutingDecision(transcript, context);
+  return decision.acceptable ? decision.line : null;
 }
 
 function isSafeNonPromise(line) {
@@ -219,19 +304,21 @@ export function isStandardPediatricRefill({ scenario = '', department = 'pediatr
   return metadata.workflowType === 'prescription_refill' || String(metadata.qaScenarioId ?? '').toLowerCase().includes('refill') || /standard pediatric medication refill|standard prescription refill/.test(text) || (text.includes('medication refill') && !/referral|shots|immunization|vaccine|specialty eligibility/.test(text));
 }
 
-export function getRefillWorkflowSignals(transcript) {
+export function getRefillWorkflowSignals(transcript, context = {}) {
   const lines = navigatorLines(transcript);
   const matches = (regexes) => lines.some((line) => lineMatchesAny(line, regexes));
+  const routingDecision = evaluateRoutingDecision(transcript, context);
   return {
     medication: matches([/medication name/i, /prescription name/i, /what medication/i, /which medicine/i, /name of the medicine/i, /allergy medicine/i, /refill.*for/i]),
     pharmacy: matches([/preferred pharmacy/i, /which pharmacy/i, /what pharmacy/i, /pharmacy.*send/i, /send.*pharmacy/i]),
     callback: matches([/callback/i, /call back/i, /best number/i, /phone number/i, /reach you/i]),
     outOrUrgency: matches([/completely out/i, /out of (the )?medication/i, /out of (her|his|their) medicine/i, /any left/i, /how many.*left/i, /mark.*urgent/i, /high priority/i, /priority/i]),
     naturalRoutingLine: findNaturalRoutingActionLine(transcript),
-    committedRoutingLine: findCommittedRoutingLineWithDestination(transcript),
+    committedRoutingLine: routingDecision.acceptable ? routingDecision.line : null,
+    routingDecision,
     overPromise: lines.some((line) => !isSafeNonPromise(line) && lineMatchesAny(line, [/will be approved/i, /guarantee.*(approved|sent|today)/i, /definitely (?:will )?(?:be )?(?:approved|approve|sent|filled|ready|done|today)/i, /will definitely/i, /make sure.*approv/i, /make sure.*sent today/i, /doctor.*approv/i, /provider.*approv/i, /gets approved today/i, /approved today/i, /sent today/i])),
     clinicalAdvice: lines.some((line) => !isScopeDeferral(line) && lineMatchesAny(line, [/give (her|him|them).*dose/i, /take .* twice/i, /increase/i, /decrease/i, /stop taking/i, /safe to/i, /not serious/i, /you should take/i, /medical advice/i])),
-    wrongDestination: matches([/referral coordinator/i, /school\/?forms team/i, /records team/i, /scheduling only/i, /front desk only/i, /specialist referral/i, /ob portal/i, /pss ob/i]),
+    wrongDestination: routingDecision.reason === 'wrong-destination' || routingDecision.reason === 'contradictory-routing-commitments',
   };
 }
 
@@ -242,18 +329,18 @@ export const REPAIRABLE_CRITERIA = new Set(['know-rule', 'doc-te']);
 export function repairQaVerdictsForScenario(validated, transcript, context = {}) {
   const criteria = validated.criteria.map((criterion) => ({ ...criterion }));
   const repairs = [];
-  const signals = getRefillWorkflowSignals(transcript);
+  const signals = getRefillWorkflowSignals(transcript, context);
+  const routingPolicy = routingPolicyFor(context);
   const standardRefill = isStandardPediatricRefill(context);
   const requiredDetailsMissing = standardRefill && (!signals.medication || !signals.pharmacy);
   const workflowFailure = criteria.some((criterion) => criterion.id !== 'doc-te' && criterion.verdict === 'NOT_MET' && OTHER_WORKFLOW_FAILURE.test(`${criterion.note} ${criterion.evidence}`));
-  // Repair evidence must be a committed line with a positively-cleared destination;
-  // any over-promise / clinical-advice / wrong-destination signal anywhere in the
-  // call keeps the grader's verdict in place.
-  const safeRouting = signals.committedRoutingLine && !signals.overPromise && !signals.clinicalAdvice && !signals.wrongDestination;
+  // Repair evidence must be the contradiction-safe final commitment accepted by
+  // this department/workflow policy. Over-promises and clinical advice still block it.
+  const safeRouting = signals.committedRoutingLine && !signals.overPromise && !signals.clinicalAdvice;
   const peOnly = (criterion) => /\bpe\b|physical exam|physical status|up to date|\butd\b|not current/i.test(`${criterion.note} ${criterion.evidence}`)
     && !OTHER_WORKFLOW_FAILURE.test(`${criterion.note} ${criterion.evidence}`)
     && !NON_PE_FAILURE_NOTE.test(criterion.note);
-  const needsMessage = ['prescription_refill', 'referral', 'records_forms', 'urgent_symptom_boundary', 'wrong_department_unclear_request'].includes(context.metadata?.workflowType) || /refill|referral|lab result|medical question|form|record|message|route|request|nurse|provider|clinical team/i.test(context.scenario ?? '');
+  const needsMessage = routingPolicy?.messageRepair === true;
   // Only an absence-style / literal-TE-wording complaint is repairable. A note
   // that says the routing was WRONG is a substantive verdict and always stands.
   const literalTeFailure = (criterion) => /telephone encounter|\bte\b|does not contain evidence|did not say|not documented|no evidence.*rout|no evidence.*log/i.test(`${criterion.note} ${criterion.evidence}`)
@@ -278,7 +365,12 @@ export function repairQaVerdictsForScenario(validated, transcript, context = {})
         'Fairness repair: accepted natural patient-facing message/routing wording; exact TE/Telephone Encounter phrase is not required.');
     }
   }
-  return { criteria, autoFails: validated.autoFails, repairs };
+  return {
+    criteria,
+    autoFails: validated.autoFails,
+    repairs,
+    reviewReasons: routingPolicy?.reviewOnly ? ['routing-policy-review-only'] : [],
+  };
 }
 
 // ── Deterministic scoring ────────────────────────────────────────────────────
