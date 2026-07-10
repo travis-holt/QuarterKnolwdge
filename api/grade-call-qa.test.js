@@ -5,6 +5,8 @@ import { describe, it, expect } from 'vitest';
 import {
   QA_RUBRIC, QA_AUTO_FAILS, QA_PASS_THRESHOLD, QA_REVIEW_MARGIN, rubricCriteria,
   verifyEvidence, validateQaResponse, getRefillWorkflowSignals, evaluateRoutingDecision, repairQaVerdictsForScenario, scoreQa, assessQa, buildGradeProjection,
+  findOverPromiseLine, findClinicalAdviceLine, isUncertainRoutingLanguage,
+  isStrictPeOnlyFailure, isLiteralTeWordingFailure, evaluateQaDeterministicFindings,
 } from './_qa-rubric.js';
 import { buildMessages, buildTrustedGradingScenario, finalizeQaResult, resolveQaScenarioContext } from './grade-call-qa.js';
 import { getCallQaScenarioById } from '../src/data/callQaScenarios.js';
@@ -412,6 +414,7 @@ describe('repairQaVerdictsForScenario', () => {
   const refillTranscript = [
     { role: 'navigator', text: 'What is the medication name?' },
     { role: 'navigator', text: 'Which pharmacy do you prefer?' },
+    { role: 'navigator', text: 'What is the best callback number to reach you?' },
     { role: 'navigator', text: 'I will send this request to the PEDS Encounters queue and mark it urgent because she is out.' },
   ];
   const repairedVerdicts = () => allMetVerdicts().map((criterion) => criterion.id === 'know-rule'
@@ -913,6 +916,346 @@ describe('grade-call-qa buildMessages', () => {
     expect(systemInstruction).toMatch(/send the request/i);
     expect(systemInstruction).toMatch(/send a message/i);
     expect(systemInstruction).toMatch(/exact TE/i);
+  });
+});
+
+// ── Clause-aware safety detection (mixed-clause bypass hardening) ────────────
+
+describe('clause-aware over-promise detection', () => {
+  const nav = (text) => [{ role: 'navigator', text }];
+
+  it.each([
+    'I cannot promise approval or exact timing.',
+    'I can’t guarantee it will be completed today.',
+    'The team will review it, but I cannot promise the outcome.',
+    'I’ll definitely pass this along to PEDS Encounters.',
+  ])('safe — no over-promise: %s', (line) => {
+    expect(findOverPromiseLine(nav(line))).toBeNull();
+    expect(getRefillWorkflowSignals(nav(line)).overPromise).toBe(false);
+  });
+
+  it.each([
+    'I can’t promise timing, but I guarantee approval today.',
+    'I cannot guarantee when, but the doctor will definitely approve it.',
+    'The team will review it; I promise it will be sent today.',
+    'I cannot promise approval, but I will make sure it gets approved.',
+  ])('unsafe — mixed clause is an over-promise: %s', (line) => {
+    expect(findOverPromiseLine(nav(line))).toBe(line);
+    expect(getRefillWorkflowSignals(nav(line)).overPromise).toBe(true);
+  });
+
+  it('a mixed disclaimer/guarantee line blocks fairness repairs', () => {
+    const transcript = [
+      { role: 'navigator', text: 'What is the medication name?' },
+      { role: 'navigator', text: 'Which pharmacy do you prefer?' },
+      { role: 'navigator', text: 'What is the best callback number to reach you?' },
+      { role: 'navigator', text: 'I will send this request to the PEDS Encounters queue and mark it urgent because she is out.' },
+      { role: 'navigator', text: 'I can’t promise timing, but I guarantee approval today.' },
+    ];
+    const verdicts = rubricCriteria().map((c) => ({
+      id: c.id,
+      verdict: c.id === 'know-rule' || c.id === 'doc-te' ? 'NOT_MET' : 'MET',
+      evidence: c.id === 'know-rule' || c.id === 'doc-te' ? '' : 'I will send this request to the PEDS Encounters queue and mark it urgent because she is out.',
+      note: c.id === 'know-rule'
+        ? 'The navigator failed only because PE status was not verified.'
+        : c.id === 'doc-te' ? 'The navigator did not say Telephone Encounter.' : '',
+    }));
+    expect(repairQaVerdictsForScenario(
+      { criteria: verdicts, autoFails: [] }, transcript,
+      { scenario: 'A standard pediatric medication refill.', department: 'pediatrics', metadata: { workflowType: 'prescription_refill' } },
+    ).repairs).toHaveLength(0);
+  });
+});
+
+describe('clause-aware clinical-advice detection', () => {
+  const nav = (text) => [{ role: 'navigator', text }];
+
+  it.each([
+    'I can’t tell you whether it is safe to wait. That is a question for the nurse.',
+    'I am not qualified to advise you about the dosage.',
+    'Only the provider can answer whether you should stop it.',
+  ])('safe — scope deferral only: %s', (line) => {
+    expect(findClinicalAdviceLine(nav(line))).toBeNull();
+    expect(getRefillWorkflowSignals(nav(line)).clinicalAdvice).toBe(false);
+  });
+
+  it.each([
+    'I can’t tell you if it is safe to wait, but take twice the dose tonight.',
+    'That is a question for the nurse; meanwhile, increase the dose.',
+    'I cannot give medical advice, but you should stop taking it.',
+    'Only the provider can decide, although it is probably safe.',
+  ])('unsafe — deferral clause does not exempt the advice clause: %s', (line) => {
+    expect(findClinicalAdviceLine(nav(line))).toBe(line);
+    expect(getRefillWorkflowSignals(nav(line)).clinicalAdvice).toBe(true);
+  });
+
+  it('mixed deferral/advice blocks fairness repairs', () => {
+    const transcript = [
+      { role: 'navigator', text: 'What is the medication name?' },
+      { role: 'navigator', text: 'Which pharmacy do you prefer?' },
+      { role: 'navigator', text: 'What is the best callback number to reach you?' },
+      { role: 'navigator', text: 'I will send this request to the PEDS Encounters queue and mark it urgent because she is out.' },
+      { role: 'navigator', text: 'I can’t tell you if it is safe to wait, but take twice the dose tonight.' },
+    ];
+    const verdicts = rubricCriteria().map((c) => c.id === 'know-rule'
+      ? { id: c.id, verdict: 'NOT_MET', evidence: '', note: 'The navigator failed only because PE status was not verified.' }
+      : { id: c.id, verdict: 'MET', evidence: 'x', note: '' });
+    expect(repairQaVerdictsForScenario(
+      { criteria: verdicts, autoFails: [] }, transcript,
+      { scenario: 'A standard pediatric medication refill.', department: 'pediatrics', metadata: { workflowType: 'prescription_refill' } },
+    ).repairs).toHaveLength(0);
+  });
+});
+
+// ── Routing uncertainty / hedging guard ──────────────────────────────────────
+
+describe('routing uncertainty guard', () => {
+  const refillContext = { scenario: 'A standard pediatric medication refill.', department: 'pediatrics', metadata: { workflowType: 'prescription_refill' } };
+
+  it.each([
+    'I don’t know if PEDS Encounters will follow up.',
+    'I’m not sure whether PEDS Encounters will review it.',
+    'I think PEDS Encounters handles this.',
+    'I believe the nursing team will call you.',
+    'PEDS Encounters might review the request.',
+    'The provider may get back to you.',
+    'It probably goes to PEDS Encounters.',
+    'I guess the team will call.',
+  ])('hedged language is never a routing commitment: %s', (line) => {
+    expect(isUncertainRoutingLanguage(line)).toBe(true);
+    const decision = evaluateRoutingDecision([{ role: 'navigator', text: line }], refillContext);
+    expect(decision.acceptable).toBe(false);
+    expect(decision.reason).toBe('no-routing-commitment');
+    expect(getRefillWorkflowSignals([{ role: 'navigator', text: line }], refillContext).committedRoutingLine).toBeNull();
+  });
+
+  it.each([
+    'I will send this to PEDS Encounters.',
+    'PEDS Encounters will follow up.',
+    'Actually, PEDS Encounters is the correct queue.',
+    'Correction: I will route this to PEDS Encounters.',
+  ])('confident valid commitments are still accepted: %s', (line) => {
+    expect(isUncertainRoutingLanguage(line)).toBe(false);
+    expect(evaluateRoutingDecision([{ role: 'navigator', text: line }], refillContext)).toMatchObject({
+      acceptable: true, destinationId: 'peds-encounters',
+    });
+  });
+
+  it('"The nursing team will call you back." remains a committed follow-up line', () => {
+    expect(getRefillWorkflowSignals([
+      { role: 'navigator', text: 'The nursing team will call you back.' },
+    ]).naturalRoutingLine).toBe('The nursing team will call you back.');
+  });
+
+  it('hedged routing cannot support a fairness repair', () => {
+    const transcript = [
+      { role: 'navigator', text: 'What is the medication name?' },
+      { role: 'navigator', text: 'Which pharmacy do you prefer?' },
+      { role: 'navigator', text: 'What is the best callback number to reach you?' },
+      { role: 'navigator', text: 'She is completely out, so I will mark this high priority.' },
+      { role: 'navigator', text: 'I think PEDS Encounters handles this.' },
+    ];
+    const verdicts = rubricCriteria().map((c) => c.id === 'doc-te'
+      ? { id: c.id, verdict: 'NOT_MET', evidence: '', note: 'The navigator did not say Telephone Encounter.' }
+      : { id: c.id, verdict: 'MET', evidence: 'x', note: '' });
+    expect(repairQaVerdictsForScenario(
+      { criteria: verdicts, autoFails: [] }, transcript, refillContext,
+    ).repairs).toHaveLength(0);
+  });
+});
+
+// ── Strict PE-only failure check (positive scoping) ──────────────────────────
+
+describe('isStrictPeOnlyFailure', () => {
+  const crit = (note) => ({ note, evidence: '' });
+
+  it('accepts a strictly PE-only complaint', () => {
+    expect(isStrictPeOnlyFailure(crit('The navigator failed only because PE status was not verified.'))).toBe(true);
+    expect(isStrictPeOnlyFailure(crit('The navigator failed to verify that the patient PE status is up to date before submitting the refill.'))).toBe(true);
+    expect(isStrictPeOnlyFailure(crit('The navigator failed to ask about the patient PE status.'))).toBe(true);
+  });
+
+  it.each([
+    'PE status was not verified and the navigator did not ask whether the patient was out.',
+    'PE was not checked and urgency was not flagged.',
+    'PE was not current and no callback number was collected.',
+    'PE was not checked and the pharmacy was missing.',
+    'PE was not checked and the request went to the wrong queue.',
+  ])('rejects any non-PE residue: %s', (note) => {
+    expect(isStrictPeOnlyFailure(crit(note))).toBe(false);
+  });
+
+  it('rejects a note with no PE reference at all', () => {
+    expect(isStrictPeOnlyFailure(crit('The navigator did not verify the patient.'))).toBe(false);
+  });
+});
+
+describe('PE repair requires a COMPLETE standard refill', () => {
+  const refillContext = { scenario: 'A standard pediatric medication refill.', department: 'pediatrics', metadata: { workflowType: 'prescription_refill' } };
+  const peVerdicts = () => rubricCriteria().map((c) => c.id === 'know-rule'
+    ? { id: c.id, verdict: 'NOT_MET', evidence: '', note: 'The navigator failed only because PE status was not verified.' }
+    : { id: c.id, verdict: 'MET', evidence: 'x', note: '' });
+  const MED = { role: 'navigator', text: 'What is the medication name?' };
+  const PHARM = { role: 'navigator', text: 'Which pharmacy do you prefer?' };
+  const CALLBACK = { role: 'navigator', text: 'What is the best callback number to reach you?' };
+  const OUT = { role: 'navigator', text: 'Is she completely out of the medication?' };
+  const ROUTE = { role: 'navigator', text: 'I will send this request to the PEDS Encounters queue.' };
+
+  it('repairs when medication, pharmacy, callback, out/urgency, and safe routing are ALL present', () => {
+    const repaired = repairQaVerdictsForScenario(
+      { criteria: peVerdicts(), autoFails: [] }, [MED, PHARM, CALLBACK, OUT, ROUTE], refillContext,
+    );
+    expect(repaired.repairs.map((r) => r.rule)).toContain('standard-refill-no-pe-requirement');
+  });
+
+  it.each([
+    [[MED, PHARM, OUT, ROUTE], 'no callback'],
+    [[MED, PHARM, CALLBACK, ROUTE], 'no out/urgency handling'],
+    [[PHARM, CALLBACK, OUT, ROUTE], 'no medication'],
+    [[MED, CALLBACK, OUT, ROUTE], 'no pharmacy'],
+  ])('does not repair an incomplete refill (%#: %s)', (transcript) => {
+    expect(repairQaVerdictsForScenario(
+      { criteria: peVerdicts(), autoFails: [] }, transcript, refillContext,
+    ).repairs).toHaveLength(0);
+  });
+});
+
+// ── Positively scoped literal-TE wording check ───────────────────────────────
+
+describe('isLiteralTeWordingFailure', () => {
+  const crit = (note) => ({ note, evidence: '' });
+
+  it.each([
+    'The navigator did not say Telephone Encounter.',
+    'The navigator did not use the term TE.',
+    'The transcript does not explicitly state that a Telephone Encounter was created.',
+    'There is no evidence that the request was sent or routed.',
+    'The navigator said “send a message” but did not literally say TE.',
+  ])('repairable — literal wording/absence complaint: %s', (note) => {
+    expect(isLiteralTeWordingFailure(crit(note))).toBe(true);
+  });
+
+  it.each([
+    'The navigator did not say which queue would receive it.',
+    'The medication name was not documented.',
+    'The preferred pharmacy was not documented.',
+    'The callback number was not documented.',
+    'The navigator did not flag the request as urgent.',
+    'The navigator did not explain the next step.',
+    'The routing was incorrect.',
+    'The note was incomplete.',
+    'The request was not documented correctly.',
+  ])('not repairable — substantive or non-TE complaint: %s', (note) => {
+    expect(isLiteralTeWordingFailure(crit(note))).toBe(false);
+  });
+});
+
+// ── Deterministic conflict findings (model-positive error protection) ────────
+
+describe('evaluateQaDeterministicFindings', () => {
+  const refillContext = { scenario: 'A standard pediatric medication refill.', department: 'pediatrics', metadata: { workflowType: 'prescription_refill' } };
+  const allMet = () => rubricCriteria().map((c) => ({ id: c.id, verdict: 'MET', evidence: 'x', note: '' }));
+  const gather = [
+    { role: 'navigator', text: 'What is the medication name?' },
+    { role: 'navigator', text: 'Which pharmacy do you prefer?' },
+  ];
+
+  it('flags a wrong-destination route the model marked MET', () => {
+    const findings = evaluateQaDeterministicFindings(allMet(), [
+      ...gather, { role: 'navigator', text: 'I will send this refill request to the billing team.' },
+    ], refillContext);
+    expect(findings).toEqual([expect.objectContaining({
+      id: 'model-routing-conflict', type: 'routing', reason: 'wrong-destination',
+      destinationId: 'billing', affectedCriteria: expect.arrayContaining(['know-rule', 'doc-te']),
+    })]);
+    expect(findings[0].evidence).toContain('billing team');
+  });
+
+  it('flags contradictory routing commitments the model marked MET', () => {
+    const findings = evaluateQaDeterministicFindings(allMet(), [
+      ...gather,
+      { role: 'navigator', text: 'I will send this request to the PEDS Encounters queue.' },
+      { role: 'navigator', text: 'I will send it to the billing team.' },
+    ], refillContext);
+    expect(findings[0]).toMatchObject({ id: 'model-routing-conflict', reason: 'contradictory-routing-commitments' });
+  });
+
+  it('flags a generic destination and a missing routing commitment', () => {
+    expect(evaluateQaDeterministicFindings(allMet(), [
+      ...gather, { role: 'navigator', text: 'I will send this to the team.' },
+    ], refillContext)[0]).toMatchObject({ id: 'model-routing-conflict', reason: 'unknown-or-ambiguous-destination' });
+    expect(evaluateQaDeterministicFindings(allMet(), gather, refillContext)[0])
+      .toMatchObject({ id: 'model-routing-conflict', reason: 'no-routing-commitment' });
+  });
+
+  it('reports no routing finding when the route is acceptable, the model already failed the criteria, or no policy applies', () => {
+    const good = [...gather, { role: 'navigator', text: 'I will send this request to the PEDS Encounters queue.' }];
+    expect(evaluateQaDeterministicFindings(allMet(), good, refillContext)).toEqual([]);
+    const failed = allMet().map((c) => ['know-rule', 'doc-te'].includes(c.id) ? { ...c, verdict: 'NOT_MET' } : c);
+    expect(evaluateQaDeterministicFindings(failed, [
+      ...gather, { role: 'navigator', text: 'I will send this to the billing team.' },
+    ], refillContext)).toEqual([]);
+    expect(evaluateQaDeterministicFindings(allMet(), gather, {
+      department: 'pediatrics', metadata: { workflowType: 'new_appointment_scheduling' },
+    })).toEqual([]);
+  });
+
+  it('skips the routing finding for review-only workflows (already review-gated)', () => {
+    expect(evaluateQaDeterministicFindings(allMet(), gather, {
+      department: 'pediatrics', metadata: { workflowType: 'urgent_symptom_boundary' },
+    })).toEqual([]);
+  });
+
+  it('flags deterministic over-promise and clinical-advice signals with evidence', () => {
+    const findings = evaluateQaDeterministicFindings(allMet(), [
+      ...gather,
+      { role: 'navigator', text: 'I will send this request to the PEDS Encounters queue.' },
+      { role: 'navigator', text: 'I can’t promise timing, but I guarantee approval today.' },
+      { role: 'navigator', text: 'That is a question for the nurse; meanwhile, increase the dose.' },
+    ], refillContext);
+    expect(findings.map((f) => f.id)).toEqual(['deterministic-overpromise', 'deterministic-clinical-advice']);
+    expect(findings[0].evidence).toContain('guarantee approval today');
+    expect(findings[1].evidence).toContain('increase the dose');
+  });
+});
+
+describe('finalizeQaResult — deterministic findings force review of a confident pass', () => {
+  it('a routing conflict downgrades a confident pass to needs_review and persists the findings', () => {
+    const scored = scoreQa(allMetVerdicts(), [], TRANSCRIPT);
+    const findings = [{
+      id: 'model-routing-conflict', type: 'routing', reason: 'wrong-destination',
+      evidence: 'I will send this to the billing team.', destinationId: 'billing',
+      affectedCriteria: ['know-rule', 'doc-te'],
+    }];
+    const { qa } = finalizeQaResult(scored, TRANSCRIPT, 0, [], { verified: true, status: 'verified' }, [], findings);
+    expect(qa.pass).toBe(true); // model criteria and score preserved for auditability
+    expect(qa.score).toBe(scored.score);
+    expect(qa.deterministicFindings).toEqual(findings);
+    expect(qa.review.recommendation).toBe('needs_review');
+    expect(qa.review.reviewFlags.map((f) => f.id)).toContain('model-routing-conflict');
+  });
+
+  it('a deterministic safety finding blocks a confident unreviewed pass', () => {
+    const scored = scoreQa(allMetVerdicts(), [], TRANSCRIPT);
+    const findings = [{
+      id: 'deterministic-overpromise', type: 'safety', reason: 'unsafe-promise-language',
+      evidence: 'I guarantee approval today.', destinationId: null, affectedCriteria: ['know-rule'],
+    }];
+    const { qa } = finalizeQaResult(scored, TRANSCRIPT, 0, [], { verified: true, status: 'verified' }, [], findings);
+    expect(qa.review.recommendation).toBe('needs_review');
+    expect(qa.review.reviewFlags.map((f) => f.id)).toContain('deterministic-safety-conflict');
+  });
+
+  it('findings never upgrade a fail and never alter the stored criteria', () => {
+    const verdicts = allMetVerdicts().map((v) => ['comm-plain', 'comm-professional', 'comm-empathy', 'sched-flow', 'sched-recap'].includes(v.id)
+      ? { ...v, verdict: 'NOT_MET' } : v);
+    const scored = scoreQa(verdicts, [], TRANSCRIPT);
+    const { qa } = finalizeQaResult(scored, TRANSCRIPT, 0, [], { verified: true, status: 'verified' }, [], [
+      { id: 'model-routing-conflict', type: 'routing', reason: 'wrong-destination', evidence: null, destinationId: null, affectedCriteria: ['know-rule'] },
+    ]);
+    expect(qa.pass).toBe(false);
+    expect(qa.review.recommendation).toBe('fail');
+    expect(qa.criteria).toEqual(scored.criteria);
   });
 });
 

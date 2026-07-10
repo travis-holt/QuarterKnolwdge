@@ -1,5 +1,47 @@
 # Development History - Knowledge Check
 
+### 2026-07-10 - Call QA loophole-closure pass (final pre-merge reliability gate, PR #24)
+- **Deterministic conflict layer (model-positive protection):** new
+  `evaluateQaDeterministicFindings(criteria, transcript, context)` in `api/_qa-rubric.js` detects
+  the OPPOSITE model error from the repair layer — know-rule/doc-te marked MET (with a verifiable
+  quote) on a call whose committed route the routing policy knows is wrong, contradictory,
+  ambiguous, or missing, plus deterministic over-promise/clinical-advice signals. Findings are
+  stored on `qa.deterministicFindings` (`type`, `reason`, `evidence`, `destinationId`,
+  `affectedCriteria`), never touch verdicts/scores/repairs, and force `needs_review` (flags
+  `model-routing-conflict` / `deterministic-safety-conflict`) whenever the result would otherwise
+  pass confidently. Findings are NOT fairness repairs — the R1–R10 repair invariants are unchanged.
+- **Clause-aware safety detection:** over-promise and clinical-advice detection now splits each
+  navigator turn into clauses (sentence boundaries, semicolons, em dashes, but/however/although/
+  meanwhile). A safe disclaimer/deferral clause exempts only itself: "I can't promise timing, but I
+  guarantee approval today" is an over-promise; "that's for the nurse, but take twice the dose
+  tonight" is clinical advice. New `findOverPromiseLine` / `findClinicalAdviceLine` return the
+  offending line as finding evidence.
+- **Routing hedging guard:** `isUncertainRoutingLanguage` rejects hedged wording ("I think…",
+  "I'm not sure whether…", "maybe/perhaps/probably/possibly/may/might/could/whether/supposed to")
+  as a routing commitment — uncertainty can never support a repair and, when the model calls it
+  MET, becomes a deterministic conflict. Confident valid commitments (incl. "Actually, PEDS
+  Encounters is the correct queue") remain accepted.
+- **Strict PE-only repair gate:** `isStrictPeOnlyFailure` replaces the expanding blacklist with a
+  positive token check — after normalization every note token must be a PE term or generic failure
+  scaffolding; any substantive residue (urgency, "out", callback, pharmacy, queue…) blocks the
+  repair. The PE repair also now requires a COMPLETE standard refill: medication + pharmacy +
+  callback + out/urgency + safe accepted routing.
+- **Positively scoped literal-TE gate:** `isLiteralTeWordingFailure` replaces the generic
+  "did not say / not documented" matcher — the note must reference the routing/message action
+  (TE/route/send/message/log/forward) and contain no wrongness, missing-detail, urgency,
+  destination, or incompleteness complaint.
+- **Supervisor UI:** each repair in `NavigatorDetail.jsx` now shows the grader's ORIGINAL verdict,
+  reason, and evidence (with an explicit "No evidence supplied" state) alongside the applied rule
+  and replacement evidence, plus a new "Deterministic grading conflicts" section rendering
+  `qa.deterministicFindings`.
+- **Corpus + invariants:** added the `lenient` (routing-blind, false-positive-prone) simulated
+  grader profile and new cases (wrong route/contradiction/generic-team/missing-route marked MET,
+  hedged routing, mixed disclaimer+guarantee, mixed deferral+advice, PE+urgency mixed note, generic
+  doc-te complaint); aggregate false-pass/false-fail/review-miss/silent-pass counts remain zero and
+  findings never coexist with a confident pass. `docs/GRADING_INVARIANTS.md` gains §3a (C1–C4) and
+  R6a/R6b/R7/R8 updates; `gradingInvariants.test.js` gains the I-CONFLICT block. Counts: focused
+  Call QA 203 (grade-call-qa 185 + glossary 18), corpus 54, invariants 17, full suite 761/30 files.
+
 ### 2026-07-10 - Call QA owner-confirmed routing reliability review
 - **Authority:** routing now prioritizes owner-confirmed floor operations over conflicting sanitized
   SOP text, then explicit SOP rules, trusted curated scenarios, and only then generic language.

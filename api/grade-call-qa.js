@@ -25,6 +25,7 @@ import { validateSecret } from './_auth.js';
 import {
   QA_RUBRIC, QA_AUTO_FAILS, rubricCriteria,
   validateQaResponse, repairQaVerdictsForScenario, scoreQa, assessQa, buildGradeProjection,
+  evaluateQaDeterministicFindings,
 } from './_qa-rubric.js';
 import { qaDomainScoreSummary } from '../src/lib/qaDomainScoring.js';
 import { getCallQaScenarioById } from '../src/data/callQaScenarios.js';
@@ -233,8 +234,30 @@ function buildBody(systemInstruction, userMessage) {
   };
 }
 
-export function finalizeQaResult(scored, transcript, correctedTurns = 0, repairs = [], metadataIntegrity = { verified: true, status: 'verified' }, forcedReviewReasons = []) {
+export function finalizeQaResult(scored, transcript, correctedTurns = 0, repairs = [], metadataIntegrity = { verified: true, status: 'verified' }, forcedReviewReasons = [], deterministicFindings = []) {
   const review = assessQa(scored, transcript, { correctedTurns, repairs });
+  // Deterministic conflict layer (NOT repairs): a model-positive verdict that
+  // contradicts the authoritative routing policy, or a deterministic unsafe-
+  // language signal, must never become a confident unreviewed PASS. Findings
+  // never change verdicts or scores — they are persisted for supervisors and
+  // force review only when the result would otherwise pass confidently.
+  if (deterministicFindings.length > 0) {
+    if (deterministicFindings.some((finding) => finding.type === 'routing')) {
+      review.reviewFlags.push({
+        id: 'model-routing-conflict',
+        label: 'Grader verdict conflicts with deterministic routing policy',
+        detail: 'The grader marked routing/knowledge criteria MET, but the deterministic routing policy found the committed route wrong, contradictory, ambiguous, or missing. A supervisor must review this result.',
+      });
+    }
+    if (deterministicFindings.some((finding) => finding.type === 'safety')) {
+      review.reviewFlags.push({
+        id: 'deterministic-safety-conflict',
+        label: 'Deterministic unsafe-language signal detected',
+        detail: `Deterministic checks detected ${deterministicFindings.filter((f) => f.type === 'safety').map((f) => f.reason).join(', ')} in the navigator's wording. The result cannot pass without supervisor review.`,
+      });
+    }
+    if (review.recommendation === 'pass') review.recommendation = 'needs_review';
+  }
   if (forcedReviewReasons.includes('routing-policy-review-only')) {
     review.reviewFlags.push({
       id: 'routing-policy-review-only',
@@ -265,6 +288,7 @@ export function finalizeQaResult(scored, transcript, correctedTurns = 0, repairs
     correctedTurns,
     repairs,
     repairCount: repairs.length,
+    deterministicFindings,
     metadataIntegrity: {
       verified: metadataIntegrity.verified,
       status: metadataIntegrity.status,
@@ -335,8 +359,13 @@ export default async function handler(req, res) {
     ? repairQaVerdictsForScenario(validated, boundedTranscript, scenarioContext.repairContext)
     : { criteria: validated.criteria, autoFails: validated.autoFails, repairs: [], reviewReasons: [] };
   const scored = scoreQa(repaired.criteria, repaired.autoFails, boundedTranscript);
+  // Post-trust-gate criteria: model-positive verdicts that survive evidence
+  // verification are checked against the deterministic routing/safety layer.
+  const deterministicFindings = evaluateQaDeterministicFindings(
+    scored.criteria, boundedTranscript, scenarioContext.repairContext,
+  );
   const { qa, grade } = finalizeQaResult(
-    scored, boundedTranscript, correctedTurns, repaired.repairs, scenarioContext, repaired.reviewReasons,
+    scored, boundedTranscript, correctedTurns, repaired.repairs, scenarioContext, repaired.reviewReasons, deterministicFindings,
   );
 
   return res.status(200).json({ qa, grade });

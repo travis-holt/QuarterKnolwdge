@@ -232,6 +232,74 @@ describe('NavigatorDetail — supervisor grade override', () => {
     expect(screen.getByText(/send this request to the refill team/)).toBeInTheDocument();
   });
 
+  it('shows the original grader verdict, note, and evidence on each repair', async () => {
+    renderDetail(qaSession({ qa: {
+      pass: true, score: 92, passThreshold: 85,
+      review: { recommendation: 'needs_review', confidence: 'high', safetyRisk: 'none', reviewFlags: [] },
+      repairs: [{
+        criterionId: 'doc-te', rule: 'natural-message-routing-wording',
+        reason: 'Accepted natural wording.', evidence: 'I will send this request to the refill team.',
+        originalVerdict: 'NOT_MET',
+        originalNote: 'The navigator did not say Telephone Encounter.',
+        originalEvidence: 'send this request over',
+      }],
+    } }));
+    fireEvent.click(await screen.findByText('Jordan'));
+    expect(await screen.findByText('Fairness guardrails applied')).toBeInTheDocument();
+    expect(screen.getByText('Original AI grader output')).toBeInTheDocument();
+    expect(screen.getByText('Original AI verdict:').parentElement?.textContent).toContain('NOT_MET');
+    expect(screen.getByText('Original AI reason:').parentElement?.textContent).toContain('did not say Telephone Encounter');
+    expect(screen.getByText('Original AI evidence:').parentElement?.textContent).toContain('send this request over');
+    expect(screen.getByText('Replacement reason:').parentElement?.textContent).toContain('Accepted natural wording.');
+  });
+
+  it('shows an explicit "No evidence supplied" state for an evidence-less original verdict', async () => {
+    renderDetail(qaSession({ qa: {
+      pass: true, score: 92, passThreshold: 85,
+      review: { recommendation: 'needs_review', confidence: 'high', safetyRisk: 'none', reviewFlags: [] },
+      repairs: [{
+        criterionId: 'know-rule', rule: 'standard-refill-no-pe-requirement',
+        reason: 'PE not required.', evidence: 'I will send this to PEDS Encounters.',
+        originalVerdict: 'NOT_MET', originalNote: 'PE was not verified.', originalEvidence: '',
+      }],
+    } }));
+    fireEvent.click(await screen.findByText('Jordan'));
+    expect(await screen.findByText('No evidence supplied')).toBeInTheDocument();
+  });
+
+  it('renders deterministic grading conflicts in their own supervisor section', async () => {
+    renderDetail(qaSession({ qa: {
+      pass: true, score: 100, passThreshold: 85,
+      review: { recommendation: 'needs_review', confidence: 'high', safetyRisk: 'none', reviewFlags: [] },
+      deterministicFindings: [
+        {
+          id: 'model-routing-conflict', type: 'routing', reason: 'wrong-destination',
+          evidence: 'I will send this refill to the billing team.', destinationId: 'billing',
+          affectedCriteria: ['know-rule', 'doc-te'],
+        },
+        {
+          id: 'deterministic-overpromise', type: 'safety', reason: 'unsafe-promise-language',
+          evidence: 'I guarantee approval today.', destinationId: null, affectedCriteria: ['know-rule'],
+        },
+      ],
+    } }));
+    fireEvent.click(await screen.findByText('Jordan'));
+    expect(await screen.findByText('Deterministic grading conflicts')).toBeInTheDocument();
+    const routingItem = screen.getByText(/wrong-destination/).closest('li');
+    expect(routingItem?.textContent).toContain('Routing destination: billing');
+    expect(routingItem?.textContent).toContain('know-rule, doc-te');
+    expect(screen.getByText(/I will send this refill to the billing team/)).toBeInTheDocument();
+    expect(screen.getByText(/unsafe-promise-language/)).toBeInTheDocument();
+    expect(screen.getByText(/I guarantee approval today/)).toBeInTheDocument();
+  });
+
+  it('does not render the deterministic conflicts section when there are none', async () => {
+    renderDetail(qaSession());
+    fireEvent.click(await screen.findByText('Jordan'));
+    expect(await screen.findByText('AI verdict:')).toBeInTheDocument();
+    expect(screen.queryByText('Deterministic grading conflicts')).not.toBeInTheDocument();
+  });
+
   it('AI PASS shows only Confirm Pass + Override to Fail', async () => {
     renderDetail(qaSession());
     fireEvent.click(await screen.findByText('Jordan'));

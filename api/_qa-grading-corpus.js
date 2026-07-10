@@ -6,6 +6,10 @@
 //   accurate   — verdicts a careful grader would return for this call
 //   literalist — the false-negative-prone grader this repair layer guards
 //                against (fails natural wording, demands literal PE/TE phrases)
+//   lenient    — the false-POSITIVE-prone (routing-blind) grader: marks
+//                criteria MET with real verifiable quotes even when the call
+//                mis-routes, hedges, over-promises, or never routes at all.
+//                The deterministic conflict layer must catch what it misses.
 //
 // The harness (_qa-grading-corpus.test.js) runs every case × profile through
 // the REAL deterministic pipeline (glossary correction → validation → repairs →
@@ -724,9 +728,205 @@ export const QA_GRADING_CORPUS = [
         },
         na: ['sched-flow', 'sched-recap'],
       },
+      // Routing-blind grader: everything MET (verifiable quotes) despite the
+      // explicit wrong destination. The deterministic conflict layer must stop
+      // this from becoming a confident silent PASS.
+      lenient: { na: ['sched-flow', 'sched-recap'] },
     },
     expect: {
       literalist: { pass: false, recommendation: 'fail', repairRules: [] },
+      lenient: { pass: true, recommendation: 'needs_review', repairRules: [], flags: ['model-routing-conflict'] },
+    },
+  },
+  {
+    id: 'contradictory-route-lenient',
+    category: 'commitment',
+    truth: 'fail',
+    description: 'Correct route followed by an unexplained contradictory billing handoff; a routing-blind grader marks everything MET. The deterministic conflict layer must force review.',
+    department: 'pediatrics',
+    scenario: REFILL_SCENARIO,
+    metadata: REFILL_METADATA,
+    transcript: [
+      ...OPENING,
+      ...REFILL_GATHER,
+      nav("I'll send this request over to the PEDS Encounters queue right now."),
+      nav('The billing team will take it from there.'),
+      ...CLOSE_FULL,
+    ],
+    graders: {
+      lenient: { na: ['sched-flow', 'sched-recap'] },
+    },
+    expect: {
+      lenient: { pass: true, recommendation: 'needs_review', repairRules: [], flags: ['model-routing-conflict'] },
+    },
+  },
+  {
+    id: 'generic-team-route-lenient',
+    category: 'commitment',
+    truth: 'review',
+    description: 'Only a generic "team" destination for a workflow that requires a specific queue; a routing-blind grader marks everything MET. Explicit uncertainty must be escalated, never confidently passed.',
+    department: 'pediatrics',
+    scenario: REFILL_SCENARIO,
+    metadata: REFILL_METADATA,
+    transcript: [
+      ...OPENING,
+      ...REFILL_GATHER,
+      nav("I'll send this request over to the team right now and mark it high priority since she is completely out."),
+      ...CLOSE_FULL,
+    ],
+    graders: {
+      lenient: { na: ['sched-flow', 'sched-recap'] },
+    },
+    expect: {
+      lenient: { pass: true, recommendation: 'needs_review', repairRules: [], flags: ['model-routing-conflict'] },
+    },
+  },
+  {
+    id: 'missing-route-lenient',
+    category: 'commitment',
+    truth: 'fail',
+    description: 'No routing commitment anywhere, but a routing-blind grader marks doc-te and know-rule MET. The missing-commitment conflict must force review.',
+    department: 'pediatrics',
+    scenario: REFILL_SCENARIO,
+    metadata: REFILL_METADATA,
+    transcript: [
+      ...OPENING,
+      ...REFILL_GATHER,
+      nav("You're all set — have a great day!"),
+    ],
+    graders: {
+      lenient: { na: ['sched-flow', 'sched-recap'] },
+    },
+    expect: {
+      lenient: { pass: true, recommendation: 'needs_review', repairRules: [], flags: ['model-routing-conflict'] },
+    },
+  },
+  {
+    id: 'hedged-routing',
+    category: 'commitment',
+    truth: 'review',
+    description: 'Hedged routing statement ("I think PEDS Encounters handles this"): not a completed decision. A lenient grader marking it MET must be caught by the conflict layer; a literalist failing it must not be repaired from hedged evidence.',
+    department: 'pediatrics',
+    scenario: REFILL_SCENARIO,
+    metadata: REFILL_METADATA,
+    transcript: [
+      ...OPENING,
+      ...REFILL_GATHER,
+      nav('I think PEDS Encounters handles this, so it probably goes there.'),
+      ...CLOSE_FULL,
+    ],
+    graders: {
+      lenient: { na: ['sched-flow', 'sched-recap'] },
+      literalist: {
+        notMet: { 'know-rule': LITERAL_PE_NOTE, 'doc-te': LITERAL_TE_NOTE },
+        na: ['sched-flow', 'sched-recap'],
+      },
+    },
+    expect: {
+      lenient: { pass: true, recommendation: 'needs_review', repairRules: [], flags: ['model-routing-conflict'] },
+      literalist: { pass: true, recommendation: 'needs_review', repairRules: [] },
+    },
+  },
+  {
+    id: 'unsafe-mixed-promise-lenient',
+    category: 'unsafe',
+    truth: 'fail',
+    description: 'Safe disclaimer clause stitched to an approval guarantee ("I can\'t promise timing, but I guarantee the doctor will approve it today"). A lenient grader marks everything MET; the clause-aware promise detector must force review.',
+    department: 'pediatrics',
+    scenario: REFILL_SCENARIO,
+    metadata: REFILL_METADATA,
+    transcript: [
+      ...OPENING,
+      ...REFILL_GATHER,
+      nav("I'll send this request over to the PEDS Encounters queue right now. I can't promise exact timing, but I guarantee the doctor will approve it today."),
+      ...CLOSE_FULL,
+    ],
+    graders: {
+      lenient: { na: ['sched-flow', 'sched-recap'] },
+    },
+    expect: {
+      lenient: { pass: true, recommendation: 'needs_review', repairRules: [], flags: ['deterministic-safety-conflict'] },
+    },
+  },
+  {
+    id: 'unsafe-mixed-advice-lenient',
+    category: 'unsafe',
+    truth: 'fail',
+    description: 'Scope-deferral clause stitched to dosing advice ("that\'s for the nurse — but you can give her a double dose tonight"). A lenient grader marks everything MET; the clause-aware advice detector must force review.',
+    department: 'pediatrics',
+    scenario: REFILL_SCENARIO,
+    metadata: REFILL_METADATA,
+    transcript: [
+      ...OPENING,
+      ...REFILL_GATHER,
+      nav("I can't tell you if it's safe to wait — that's for the nurse — but you can give her a double dose tonight."),
+      nav("I'll send this request over to the PEDS Encounters queue right now."),
+      ...CLOSE_FULL,
+    ],
+    graders: {
+      lenient: { na: ['sched-flow', 'sched-recap'] },
+    },
+    expect: {
+      lenient: { pass: true, recommendation: 'needs_review', repairRules: [], flags: ['deterministic-safety-conflict'] },
+    },
+  },
+  {
+    id: 'pe-plus-urgency-note',
+    category: 'incomplete',
+    truth: 'review',
+    description: 'The grader complaint mixes PE with a real urgency miss ("PE status was not verified and the navigator did not ask whether the patient was out") on a call that indeed never asked. The PE repair must not fire; a supervisor decides.',
+    department: 'pediatrics',
+    scenario: REFILL_SCENARIO,
+    metadata: REFILL_METADATA,
+    transcript: [
+      ...OPENING,
+      pat('Hi, my daughter needs her allergy medicine refilled.'),
+      ...VERIFY,
+      nav('What medication does she need refilled?'),
+      pat('Zyrtec, the liquid one.'),
+      nav('Which pharmacy do you prefer, and what is the best number to reach you?'),
+      pat('CVS on Main Street, this number.'),
+      nav("I'll send this request over to the PEDS Encounters queue right now. I can't promise exact timing though."),
+      ...CLOSE_NO_SURVEY,
+    ],
+    graders: {
+      literalist: {
+        notMet: {
+          'know-rule': 'PE status was not verified and the navigator did not ask whether the patient was out.',
+          'close-survey': NO_SURVEY_NOTE,
+        },
+        na: ['sched-flow', 'sched-recap'],
+      },
+    },
+    expect: {
+      literalist: { pass: true, recommendation: 'needs_review', repairRules: [], flags: ['safety-criterion-missed'] },
+    },
+  },
+  {
+    id: 'generic-docte-complaint',
+    category: 'incomplete',
+    truth: 'review',
+    description: 'A doc-te complaint that is NOT about literal TE wording ("The medication name was not documented."). The natural-wording repair must not fire even though a correct committed route exists.',
+    department: 'pediatrics',
+    scenario: REFILL_SCENARIO,
+    metadata: REFILL_METADATA,
+    transcript: [
+      ...OPENING,
+      ...REFILL_GATHER,
+      nav("I'll send this request over to the PEDS Encounters queue right now and mark it high priority since she is completely out."),
+      ...CLOSE_NO_SURVEY,
+    ],
+    graders: {
+      literalist: {
+        notMet: {
+          'doc-te': 'The medication name was not documented in the request.',
+          'close-survey': NO_SURVEY_NOTE,
+        },
+        na: ['sched-flow', 'sched-recap'],
+      },
+    },
+    expect: {
+      literalist: { pass: true, recommendation: 'needs_review', repairRules: [], flags: ['safety-criterion-missed'] },
     },
   },
   {

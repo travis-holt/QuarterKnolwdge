@@ -22,6 +22,8 @@ voice transcript
   → fairness repairs           (deterministic, whitelist-only, evidence-gated — see §3)
   → trust-gated scoring        (MET without verifiable evidence → NOT_MET; NA on core → NOT_MET;
                                 auto-fail stands only with verified evidence and zeroes the score)
+  → deterministic conflicts    (model-POSITIVE error protection: MET verdicts that contradict the
+                                routing policy, and deterministic unsafe-language signals — see §3a)
   → review assessment          (deterministic flags → pass / needs_review / fail recommendation)
   → supervisor final verdict   (human decision stored beside, never over, the AI result)
 ```
@@ -32,6 +34,10 @@ Each layer distrusts the previous one in a specific direction:
   disappears silently — it becomes a `possible-unsafe-behavior` review flag).
 - The **grader** may be a literalist (fail natural wording, demand PE/TE phrases) →
   the repair layer may overturn exactly two criteria under strict evidence gates.
+- The **grader** may be routing-blind or lenient (mark MET with a real quote on a call
+  that mis-routes, hedges, over-promises, or gives clinical advice) → the deterministic
+  conflict layer flags the contradiction and forces `needs_review` on an
+  otherwise-confident pass. Findings never change verdicts or scores.
 - The **repair layer** may be wrong → repairs are logged with the grader's original
   verdict/note/evidence, surfaced to supervisors, and an outcome-flipping repair
   forces `needs_review`.
@@ -63,11 +69,27 @@ literal "TE"/"Telephone Encounter" wording). They are deliberately narrow.
 | R4 | Repair evidence must use the **department + authoritative `workflowType` routing policy**. Pediatrics refill = PEDS Encounters; Pediatrics referral = Pediatrics referral owner; OB/GYN non-pregnant GYN and pregnancy scheduling = PSS; OB/GYN results/clinical questions = TE/message to nursing/clinical staff. A destination accepted for one workflow is neither globally accepted nor globally rejected. | routing-policy unit tests |
 | R5 | Questions, offers, hypotheticals, historical checks, caller lines, destination-less commitments, and generic "team" wording are never enough when the workflow requires a specific queue/person. | corpus `question-not-commitment`; unit tests |
 | R6 | Call-level validation uses the **final committed routing decision**. Correct→wrong never repairs; wrong→correct repairs only when the later line explicitly corrects the earlier commitment; two unexplained conflicting destinations never repair. Line and call validation share one destination vocabulary. | adversarial contradiction tests |
-| R6a | Any over-promise or clinical-advice signal blocks repairs. Safe language is excluded: "I can't promise approval" is not a promise; "I can't tell you if it's safe — that's for the nurse" is scope discipline, not clinical advice. | corpus `unsafe-*` cases; unit tests |
-| R7 | Missing required workflow details block repairs: a standard refill without medication name or preferred pharmacy is never repaired. | corpus `incomplete-refill-no-pharmacy` |
-| R8 | A grader note that mixes PE with any other failure (routing, identity, scheduling, promising, advice, missing details, conflation...) is NOT "PE-only" and is never repaired. A note that says the routing was WRONG (vs. merely unworded) is never repaired. | unit tests: mixed notes / wrongness notes |
+| R6a | Any over-promise or clinical-advice signal blocks repairs. Safe language is excluded — but **only within its own clause**: "I can't promise approval" is not a promise, and "I can't tell you if it's safe — that's for the nurse" is scope discipline; "I can't promise timing, but I guarantee approval today" IS an over-promise, and "that's for the nurse, but take twice the dose" IS clinical advice. Detection is clause-aware (split on sentence boundaries, semicolons, em dashes, but/however/although/meanwhile). | clause-aware unit tests; corpus `unsafe-mixed-*` |
+| R6b | Hedged/uncertain routing language ("I think…", "I'm not sure whether…", "might", "may", "probably", "supposed to"…) is never a routing commitment and never supports a repair. Confident valid commitments ("I will send this to PEDS Encounters", "PEDS Encounters will follow up", "Actually, PEDS Encounters is the correct queue") remain accepted. | hedging unit tests; corpus `hedged-routing` |
+| R7 | Missing required workflow details block repairs. For the standard pediatric refill PE repair, the call must be COMPLETE: medication name, preferred pharmacy, callback details, AND out-of-medication/urgency handling, plus a safe accepted route. Any missing signal blocks the repair. | corpus `incomplete-refill-no-pharmacy`; completeness unit tests |
+| R8 | The PE repair requires a STRICTLY PE-only grader complaint, checked positively: after normalization, every token of the note must be a PE term or generic failure scaffolding — any substantive residue (urgency, "out", callback, pharmacy, queue, promise…) blocks the repair. The doc-te repair requires a POSITIVELY scoped literal-TE/absent-action complaint (must reference TE/route/send/message/log/forward and contain no wrongness, missing-detail, urgency, destination, or incompleteness complaint). Generic "did not say" / "not documented" notes are NOT sufficient. | `isStrictPeOnlyFailure` / `isLiteralTeWordingFailure` unit tests |
 | R9 | A repair that flips the outcome (would have failed without the repaired points) forces `recommendation: needs_review` with the `repair-changed-outcome` flag. Repairs are decision support, not the final word. | `assessQa` unit tests, corpus `good-refill-natural` literalist |
 | R10 | Every repairable criterion is also in `SAFETY_CRITICAL_CRITERIA`, so an UNREPAIRED miss on it still flags a passing call for review — the repair layer cannot become the only scrutiny those criteria get. | `gradingInvariants.test.js` |
+
+### §3a — Deterministic conflict layer (model-positive error protection)
+
+The repair layer guards against grader FALSE NEGATIVES. The deterministic conflict
+layer (`evaluateQaDeterministicFindings`) guards against grader FALSE POSITIVES —
+know-rule/doc-te marked MET on a call whose committed route the routing policy knows
+is wrong, contradictory, ambiguous, or missing, or where a deterministic
+over-promise / clinical-advice signal exists.
+
+| # | Invariant | Enforced by |
+|---|-----------|-------------|
+| C1 | A deterministic conflict is NOT a fairness repair: findings never touch verdicts, scores, auto-fails, or `qa.repairs`. The model's original criteria and score are preserved for auditability. | `gradingInvariants.test.js` I-CONFLICT |
+| C2 | A model-positive verdict that contradicts the authoritative routing policy can never become a confident silent pass: findings force `recommendation: needs_review` (flags `model-routing-conflict` / `deterministic-safety-conflict`) whenever the result would otherwise pass confidently. | corpus lenient cases; `finalizeQaResult` unit tests |
+| C3 | Findings are persisted on `qa.deterministicFindings` (type, reason, evidence, destinationId, affectedCriteria) and rendered to supervisors in the "Deterministic grading conflicts" section — they may force review but must never be hidden. | corpus aggregate test; `navigatorDetail.override.test.jsx` |
+| C4 | Findings never upgrade or soften a fail; they only remove unwarranted confidence from a pass. | `finalizeQaResult` unit tests |
 
 Routing policies intentionally marked review-only because the repository sources do not
 establish one exact destination: Pediatrics `records_forms`, `urgent_symptom_boundary`, and
@@ -118,13 +140,14 @@ Gemini outputs.
 
 ### Deterministic repair/scoring regression corpus
 
-[`api/_qa-grading-corpus.js`](../api/_qa-grading-corpus.js) holds ~20 full-call cases
+[`api/_qa-grading-corpus.js`](../api/_qa-grading-corpus.js) holds ~28 full-call cases
 across seven categories — good, borderline, unsafe, incomplete, natural
 phrasing/transcription, question-vs-commitment, and ambiguous intent — each with a
-expected outcome (`pass` / `fail` / `review`) and one or two **simulated** grader
-temperaments (`accurate`, `literalist`), plus paraphrase variants and glossary
-mis-hearing variants. The harness runs every case × profile × variant through the
-real pipeline and measures:
+expected outcome (`pass` / `fail` / `review`) and one or more **simulated** grader
+temperaments (`accurate`, `literalist`, and `lenient` — the routing-blind
+false-positive-prone grader that marks real failures MET), plus paraphrase variants
+and glossary mis-hearing variants. The harness runs every case × profile × variant
+through the real pipeline and measures:
 
 - **false pass** — truth `fail` graded as a confident `pass` recommendation;
 - **false fail** — truth `pass` graded as a confident `fail` recommendation;

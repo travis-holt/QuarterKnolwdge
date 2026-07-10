@@ -24,6 +24,7 @@ import { qaFinalVerdict } from './qaFinalReview.js';
 import {
   REPAIRABLE_CRITERIA, SAFETY_CRITICAL_CRITERIA, QA_REVIEW_MARGIN,
   repairQaVerdictsForScenario, scoreQa, assessQa,
+  evaluateQaDeterministicFindings, findOverPromiseLine, findClinicalAdviceLine, isUncertainRoutingLanguage,
 } from '../../api/_qa-rubric.js';
 import { finalizeQaResult } from '../../api/grade-call-qa.js';
 
@@ -77,6 +78,7 @@ describe('invariant: shared 0–100 scale and thresholds', () => {
 const REFILL_TRANSCRIPT = [
   { role: 'navigator', text: 'What is the medication name?' },
   { role: 'navigator', text: 'Which pharmacy do you prefer?' },
+  { role: 'navigator', text: 'What is the best callback number to reach you?' },
   { role: 'navigator', text: 'I will send this request to the PEDS Encounters queue and mark it urgent because she is out.' },
   { role: 'patient', text: 'Thank you.' },
 ];
@@ -184,6 +186,51 @@ describe('invariant: finalized QA result consistency', () => {
 
   it('same inputs produce an identical result (determinism)', () => {
     expect(JSON.parse(JSON.stringify(finalized()))).toEqual(JSON.parse(JSON.stringify(finalized())));
+  });
+});
+
+// ── I-CONFLICT: the deterministic conflict layer is not a repair layer ──────
+
+describe('invariant: deterministic findings are review flags, never repairs', () => {
+  const allMet = () => rubricCriteria().map((c) => ({ id: c.id, verdict: 'MET', evidence: 'What is the medication name?', note: '' }));
+  const WRONG_ROUTE = [
+    { role: 'navigator', text: 'What is the medication name?' },
+    { role: 'navigator', text: 'Which pharmacy do you prefer?' },
+    { role: 'navigator', text: 'I will send this refill request to the billing team.' },
+  ];
+
+  it('a model-positive verdict contradicting the routing policy cannot become a confident silent pass', () => {
+    const criteria = allMet();
+    const findings = evaluateQaDeterministicFindings(criteria, WRONG_ROUTE, REFILL_CONTEXT);
+    expect(findings.some((f) => f.id === 'model-routing-conflict')).toBe(true);
+    const scored = scoreQa(criteria, [], WRONG_ROUTE);
+    const { qa } = finalizeQaResult(scored, WRONG_ROUTE, 0, [], { verified: true, status: 'verified' }, [], findings);
+    expect(qa.review.recommendation).toBe('needs_review');
+    expect(qa.deterministicFindings).toEqual(findings); // never hidden
+    expect(qa.criteria).toEqual(scored.criteria);       // never a repair: verdicts untouched
+    expect(qa.score).toBe(scored.score);                // score preserved for auditability
+    expect(qa.repairs).toEqual([]);                     // findings are not logged as repairs
+  });
+
+  it('safe disclaimer language only negates matching language within its own clause', () => {
+    expect(findOverPromiseLine([{ role: 'navigator', text: 'I cannot promise approval or exact timing.' }])).toBeNull();
+    expect(findOverPromiseLine([{ role: 'navigator', text: 'I can’t promise timing, but I guarantee approval today.' }])).toBeTruthy();
+    expect(findClinicalAdviceLine([{ role: 'navigator', text: 'I can’t tell you if it is safe to wait — that is for the nurse.' }])).toBeNull();
+    expect(findClinicalAdviceLine([{ role: 'navigator', text: 'I can’t tell you if it is safe to wait, but take twice the dose tonight.' }])).toBeTruthy();
+  });
+
+  it('unknown or uncertain routing evidence cannot support an outcome-improving repair', () => {
+    expect(isUncertainRoutingLanguage('I think PEDS Encounters handles this.')).toBe(true);
+    const hedged = [
+      { role: 'navigator', text: 'What is the medication name?' },
+      { role: 'navigator', text: 'Which pharmacy do you prefer?' },
+      { role: 'navigator', text: 'What is the best callback number to reach you?' },
+      { role: 'navigator', text: 'She is completely out of the medication.' },
+      { role: 'navigator', text: 'I think PEDS Encounters handles this.' },
+    ];
+    const input = temptingVerdicts();
+    input.autoFails = [];
+    expect(repairQaVerdictsForScenario(input, hedged, REFILL_CONTEXT).repairs).toEqual([]);
   });
 });
 

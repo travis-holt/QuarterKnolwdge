@@ -678,9 +678,34 @@ export default function NavigatorDetail({ rows, name, deptName, dept, deptMatrix
                             {session.qa?.repairs?.length > 0 && (
                               <div className="interview-log__grade-section">
                                 <p className="interview-log__grade-heading">Fairness guardrails applied</p>
-                                <p>These deterministic checks corrected likely false-negative rubric verdicts before scoring.</p>
+                                <p>These deterministic checks corrected likely false-negative rubric verdicts before scoring. The grader&rsquo;s original output is preserved below each repair.</p>
                                 <ul>{session.qa.repairs.map((repair, index) => (
-                                  <li key={`${repair.criterionId}-${index}`}><strong>Criterion:</strong> {repair.criterionId} · <strong>Rule:</strong> {repair.rule} · <strong>Reason:</strong> {repair.reason} · <strong>Evidence:</strong> &ldquo;{repair.evidence}&rdquo;</li>
+                                  <li key={`${repair.criterionId}-${index}`} className="qa-repair">
+                                    <strong>Criterion:</strong> {repair.criterionId} · <strong>Rule:</strong> {repair.rule}
+                                    <div className="qa-repair__replacement">
+                                      <strong>Replacement reason:</strong> {repair.reason} · <strong>Replacement evidence:</strong> &ldquo;{repair.evidence}&rdquo;
+                                    </div>
+                                    <details className="qa-repair__original">
+                                      <summary>Original AI grader output</summary>
+                                      <div><strong>Original AI verdict:</strong> {repair.originalVerdict ?? repair.from ?? 'NOT_MET'}</div>
+                                      <div><strong>Original AI reason:</strong> {repair.originalNote?.trim() ? repair.originalNote : 'No reason supplied'}</div>
+                                      <div><strong>Original AI evidence:</strong> {repair.originalEvidence?.trim() ? <>&ldquo;{repair.originalEvidence}&rdquo;</> : 'No evidence supplied'}</div>
+                                    </details>
+                                  </li>
+                                ))}</ul>
+                              </div>
+                            )}
+                            {session.qa?.deterministicFindings?.length > 0 && (
+                              <div className="interview-log__grade-section interview-log__grade-section--flags">
+                                <p className="interview-log__grade-heading">Deterministic grading conflicts</p>
+                                <p>Deterministic checks disagreed with the AI grader&rsquo;s positive verdicts. These findings never change the score; they require supervisor review.</p>
+                                <ul>{session.qa.deterministicFindings.map((finding, index) => (
+                                  <li key={`${finding.id}-${index}`}>
+                                    <strong>Type:</strong> {finding.type} · <strong>Reason:</strong> {finding.reason}
+                                    {finding.destinationId && <> · <strong>Routing destination:</strong> {finding.destinationId}</>}
+                                    {finding.affectedCriteria?.length > 0 && <> · <strong>Affected criteria:</strong> {finding.affectedCriteria.join(', ')}</>}
+                                    {finding.evidence && <div><strong>Evidence:</strong> &ldquo;{finding.evidence}&rdquo;</div>}
+                                  </li>
                                 ))}</ul>
                               </div>
                             )}

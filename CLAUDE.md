@@ -690,13 +690,27 @@ training assignments.
   repair records the grader's `originalVerdict`/`originalNote`/`originalEvidence`; and a repair
   that flips fail→pass forces `needs_review` via the `repair-changed-outcome` flag. The whole
   evidence model is pinned by a **deterministic grading-pipeline regression corpus**
-  (`api/_qa-grading-corpus.js` + harness, ~20 authored calls × simulated accurate/literalist grader
-  profiles × paraphrase/transcription variants). It measures deterministic repair/scoring behavior;
-  it does not validate live Gemini judgment. A versioned captured-response fixture format now replays
+  (`api/_qa-grading-corpus.js` + harness, ~28 authored calls × simulated accurate/literalist/lenient
+  grader profiles × paraphrase/transcription variants). It measures deterministic repair/scoring
+  behavior; it does not validate live Gemini judgment. A versioned captured-response fixture format now replays
   stored raw grader responses without network calls; live-model evaluation remains a separate future
   calibration activity. Explicit
   **grading invariants** ([docs/GRADING_INVARIANTS.md](docs/GRADING_INVARIANTS.md), enforced in
   `src/lib/gradingInvariants.test.js`). All future grading changes must preserve those invariants.
+  **Loophole-closure pass (2026-07-10, final pre-merge gate):** a **deterministic conflict layer**
+  (`evaluateQaDeterministicFindings`) now protects against model FALSE POSITIVES — know-rule/doc-te
+  marked MET on a call whose committed route the routing policy knows is wrong, contradictory,
+  ambiguous, or missing, or where a deterministic over-promise/clinical-advice signal exists.
+  Findings live on `qa.deterministicFindings`, never change verdicts/scores/repairs, and force
+  `needs_review` (flags `model-routing-conflict` / `deterministic-safety-conflict`) on an
+  otherwise-confident pass. Over-promise/clinical-advice detection is now **clause-aware** (a safe
+  disclaimer clause no longer exempts an unsafe clause in the same turn); **hedged routing
+  language** ("I think…", "might", "probably"…) is never a commitment or repair evidence; the PE
+  repair requires a **strictly PE-only complaint** (positive token check) plus a **complete refill**
+  (medication + pharmacy + callback + out/urgency + safe route); the doc-te repair requires a
+  **positively scoped literal-TE/absent-action complaint** (generic "did not say"/"not documented"
+  notes never qualify); and the supervisor UI shows each repair's original grader
+  verdict/note/evidence plus a "Deterministic grading conflicts" section.
 - **Supervisor final review (2026-07-09):** Call QA Test attempts now support a supervisor final
   verdict stored on the interview doc as `qaFinalReview`. The AI rubric result remains preserved on
   `qa`; supervisors can confirm AI pass/fail or override to final pass/fail with a required reason
@@ -1154,8 +1168,9 @@ of this file on 2026-07-07 to cut per-session context cost (it was ~55% of the f
   turns → `/api/live` relay) so the AI caller stays consistent without leaking the answer; the hidden
   case notes include `requiredActions` / `acceptableNavigatorPaths` / `criticalMistakes` as
   caller-behavior guidance (how to react to over-promising / under-clarifying / wrong routing) — never
-  as SOP coaching. Build clean; focused Call QA tests **117/117**, deterministic corpus **43/43**,
-  and full `npm test` **673/673 across 30 files**. GitHub Actions mirrors the
+  as SOP coaching. Build clean; focused Call QA tests **203/203** (grade-call-qa 185 + glossary 18),
+  deterministic corpus **54/54**, grading invariants **17/17**,
+  and full `npm test` **761/761 across 30 files**. GitHub Actions mirrors the
   normal local gate on `main` pushes and PRs: `npm ci` → `npm test` → `npm run build` (no deploy step).
 - **Existing functionality:** features F1–F26 (see [§4](#4-feature-inventory)) are **Complete** in
   code. F17 adds longitudinal trends + Sparkline. F18 adds dossier evidence per competency. F19
@@ -1185,7 +1200,7 @@ of this file on 2026-07-07 to cut per-session context cost (it was ~55% of the f
 - **Experimental / mockup:**
   - Training **content** is mockup (flagged in UI). Logic is real.
   - **Adult Medicine and Behavioural Health** are not assessed; **Pediatrics and OB/GYN** are live.
-- **Test coverage:** **673 tests** across **30 test files** (includes `api/_qa-grading-corpus.test.js` —
+- **Test coverage:** **761 tests** across **30 test files** (includes `api/_qa-grading-corpus.test.js` —
   the deterministic Call QA grading-pipeline corpus + captured-response replay harness — and `src/lib/gradingInvariants.test.js` — the
   executable cross-system grading invariants, contract in `docs/GRADING_INVARIANTS.md`; plus `api/_navigator-operating-model.test.js`,
   `src/lib/qaDomainScoring.test.js`, `src/components/voiceCall.test.js`; expanded
@@ -1196,8 +1211,8 @@ of this file on 2026-07-07 to cut per-session context cost (it was ~55% of the f
   malformed-input edge cases), `session.test.js`,
   `db.test.js` (incl. audit-bank helpers), `api/api-handlers.test.js`, `api/generate-audit.test.js`,
   `api/_gemini-client.test.js`, `api/sequence-path.test.js` (9 tests for `validateSequenceResponse`),
-  `api/refine-sop.test.js`, `api/grade-call-qa.test.js` (114 tests for the QA-test rubric, routing-policy, contradiction, and metadata-integrity pipeline),
-  `api/_qa-glossary.test.js` (16 tests for the transcript-correction glossary),
+  `api/refine-sop.test.js`, `api/grade-call-qa.test.js` (185 tests for the QA-test rubric, routing-policy, contradiction, metadata-integrity, clause-aware safety, hedging, strict PE/TE scoping, and deterministic-conflict pipeline),
+  `api/_qa-glossary.test.js` (18 tests for the transcript-correction glossary),
   `src/components/components.test.jsx`, `src/lib/phases.test.js`, `src/lib/apiFetch.test.js` (apiFetch/`fetchErrorMessage`/`runPooled`),
   `api/_auth.test.js` (secret gate), `api/grade-interview.test.js` (`coerceGrade`),
   `src/lib/contentGuards.test.js`, `src/data/auditWorkflows.test.js`, `src/data/callQaScenarios.test.js`,
@@ -1276,7 +1291,7 @@ of this file on 2026-07-07 to cut per-session context cost (it was ~55% of the f
   OB/GYN = **37** seed questions (offline fallback) + the **48-item MCQ v2 operating-model bank**
   (24 Pediatrics + 24 OB/GYN) that replaces the weak active bank via a marker-gated
   archive-and-replace migration (bank grows in Firestore per dept) · 4 departments (**Pediatrics
-  + OB/GYN live**, 2 mockup) · **673** unit tests (30 test files) · **12** Firestore collections
+  + OB/GYN live**, 2 mockup) · **761** unit tests (30 test files) · **12** Firestore collections
   (`roster`, `results`, `resultHistory`, `questions`, `audits`, `interviews`, `completions`,
   `pairings`, `supervisorFeedback`, `learningProposals`, `sops`, `contentMigrations`) ·
   **12** REST serverless functions (`generate-scenarios`, `generate-coaching`, `interview-turn`,

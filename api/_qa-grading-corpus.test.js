@@ -21,7 +21,7 @@ import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { QA_GRADING_CORPUS, simulateGrader, applyVariant } from './_qa-grading-corpus.js';
 import { correctTranscriptWithStats } from './_qa-glossary.js';
-import { validateQaResponse, repairQaVerdictsForScenario, scoreQa } from './_qa-rubric.js';
+import { validateQaResponse, repairQaVerdictsForScenario, scoreQa, evaluateQaDeterministicFindings } from './_qa-rubric.js';
 import { finalizeQaResult, resolveQaScenarioContext } from './grade-call-qa.js';
 
 function runPipeline(caseDef, profileName, transcriptOverride) {
@@ -30,14 +30,16 @@ function runPipeline(caseDef, profileName, transcriptOverride) {
   const parsed = simulateGrader(transcript, caseDef.graders[profileName]);
   const check = validateQaResponse(parsed);
   if (!check.data) throw new Error(`corpus ${caseDef.id}/${profileName}: invalid simulated grader output: ${check.error}`);
-  const repaired = repairQaVerdictsForScenario(check.data, transcript, {
+  const context = {
     scenario: caseDef.scenario,
     department: caseDef.department,
     metadata: caseDef.metadata,
-  });
+  };
+  const repaired = repairQaVerdictsForScenario(check.data, transcript, context);
   const scored = scoreQa(repaired.criteria, repaired.autoFails, transcript);
+  const deterministicFindings = evaluateQaDeterministicFindings(scored.criteria, transcript, context);
   const { qa, grade } = finalizeQaResult(
-    scored, transcript, correctedTurns, repaired.repairs, { verified: true, status: 'verified' }, repaired.reviewReasons,
+    scored, transcript, correctedTurns, repaired.repairs, { verified: true, status: 'verified' }, repaired.reviewReasons, deterministicFindings,
   );
   return { qa, grade, correctedTurns };
 }
@@ -128,6 +130,20 @@ describe('QA grading corpus — aggregate error rates', () => {
     }
     expect(runs.length).toBeGreaterThanOrEqual(QA_GRADING_CORPUS.length);
     expect(QA_GRADING_CORPUS.some((c) => c.graders.literalist)).toBe(true);
+    // The corpus no longer assumes the model always identifies substantive
+    // failures: the lenient (routing-blind, false-positive-prone) profile must
+    // be represented.
+    expect(QA_GRADING_CORPUS.some((c) => c.graders.lenient)).toBe(true);
+  });
+
+  it('preserves deterministic findings on the result and never hides them behind a confident pass', () => {
+    for (const { caseDef, profileName, result } of runs) {
+      expect(Array.isArray(result.qa.deterministicFindings), `${caseDef.id}/${profileName}: findings persisted`).toBe(true);
+      if (result.qa.deterministicFindings.length > 0) {
+        expect(result.qa.review.recommendation, `${caseDef.id}/${profileName}: findings never coexist with a confident pass`)
+          .not.toBe('pass');
+      }
+    }
   });
 
   it('has ZERO false passes (truth=fail graded as a confident pass)', () => {
@@ -197,7 +213,8 @@ describe('captured grader-response fixture format', () => {
     expect(validated.data).toBeDefined();
     const repaired = repairQaVerdictsForScenario(validated.data, transcript, context.repairContext);
     const scored = scoreQa(repaired.criteria, repaired.autoFails, transcript);
-    const { qa } = finalizeQaResult(scored, transcript, correctedTurns, repaired.repairs, context);
+    const findings = evaluateQaDeterministicFindings(scored.criteria, transcript, context.repairContext);
+    const { qa } = finalizeQaResult(scored, transcript, correctedTurns, repaired.repairs, context, repaired.reviewReasons, findings);
 
     expect(qa.pass).toBe(fixture.expected.pass);
     expect(qa.review.recommendation).toBe(fixture.expected.recommendation);
