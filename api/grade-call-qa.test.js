@@ -589,6 +589,138 @@ describe('repairQaVerdictsForScenario', () => {
       { scenario: 'A standard pediatric medication refill.', department: 'pediatrics', metadata: { workflowType: 'prescription_refill' } },
     ).repairs).toHaveLength(0);
   });
+
+  // ── Hardened gates (evidence-model re-review) ──────────────────────────────
+
+  const repairContext = { scenario: 'A standard pediatric medication refill.', department: 'pediatrics', metadata: { workflowType: 'prescription_refill' } };
+  const withRoutingLine = (text) => [refillTranscript[0], refillTranscript[1], { role: 'navigator', text }];
+
+  it.each([
+    'I will go ahead and send this request over to the billing team.',
+    'I will send this to the front desk, they handle it.',
+    'Let me forward this to the records team.',
+    'I am sending this over to the scheduling team.',
+  ])('never repairs from a commitment to a wrong destination: %s', (line) => {
+    const repaired = repairQaVerdictsForScenario(
+      { criteria: repairedVerdicts(), autoFails: [] }, withRoutingLine(line), repairContext,
+    );
+    expect(repaired.repairs).toHaveLength(0);
+    expect(repaired.criteria.find((c) => c.id === 'doc-te').verdict).toBe('NOT_MET');
+    expect(repaired.criteria.find((c) => c.id === 'know-rule').verdict).toBe('NOT_MET');
+  });
+
+  it('never repairs from a destination-less commitment ("I\'ll send it")', () => {
+    expect(repairQaVerdictsForScenario(
+      { criteria: repairedVerdicts(), autoFails: [] }, withRoutingLine("Okay, I'll send it right now."), repairContext,
+    ).repairs).toHaveLength(0);
+  });
+
+  it.each([
+    'I can send it to the nurse — do you want me to?',
+    'Would you like me to put in a message for the provider?',
+    'I could route this to the clinical team if you want me to.',
+  ])('never treats an offer-question as a commitment: %s', (line) => {
+    expect(getRefillWorkflowSignals([{ role: 'navigator', text: line }]).committedRoutingLine ?? null).toBeNull();
+  });
+
+  it('does not repair know-rule when the grader note mixes PE with another failure', () => {
+    const mixedNote = (note) => allMetVerdicts().map((criterion) => criterion.id === 'know-rule'
+      ? { ...criterion, verdict: 'NOT_MET', evidence: '', note } : criterion);
+    for (const note of [
+      'Did not verify PE status and routed the request to the wrong queue.',
+      'Did not check the physical exam status; also skipped identity verification (no identifiers collected).',
+      'PE status not confirmed and the preferred pharmacy was never collected.',
+    ]) {
+      expect(repairQaVerdictsForScenario(
+        { criteria: mixedNote(note), autoFails: [] }, refillTranscript, repairContext,
+      ).repairs).toHaveLength(0);
+    }
+  });
+
+  it('does not repair doc-te when the grader says the routing was WRONG (not just unworded)', () => {
+    const verdicts = allMetVerdicts().map((criterion) => criterion.id === 'doc-te'
+      ? { ...criterion, verdict: 'NOT_MET', evidence: '', note: 'The navigator did not say a Telephone Encounter was created and routed the request to the wrong destination.' }
+      : criterion);
+    expect(repairQaVerdictsForScenario(
+      { criteria: verdicts, autoFails: [] }, refillTranscript, repairContext,
+    ).repairs).toHaveLength(0);
+  });
+
+  it('records the original grader verdict, note, and evidence on every repair', () => {
+    const repaired = repairQaVerdictsForScenario(
+      { criteria: repairedVerdicts(), autoFails: [] }, refillTranscript, repairContext,
+    );
+    expect(repaired.repairs.length).toBeGreaterThan(0);
+    for (const repair of repaired.repairs) {
+      expect(repair.originalVerdict).toBe('NOT_MET');
+      expect(repair.originalNote.length).toBeGreaterThan(0);
+      expect(repair.originalEvidence).toBeDefined();
+    }
+  });
+
+  it('safe deferral language ("I can\'t tell you if it\'s safe to wait") is not clinical advice', () => {
+    expect(getRefillWorkflowSignals([
+      { role: 'navigator', text: "I can't tell you whether it's safe to wait — that's a question for the nurse." },
+    ]).clinicalAdvice).toBe(false);
+    expect(getRefillWorkflowSignals([
+      { role: 'navigator', text: "It's safe to give her another dose tonight." },
+    ]).clinicalAdvice).toBe(true);
+  });
+
+  it('"I\'ll definitely pass this along to the nurse" is not an over-promise', () => {
+    expect(getRefillWorkflowSignals([
+      { role: 'navigator', text: "I'll definitely pass this along to the nurse right away." },
+    ]).overPromise).toBe(false);
+    expect(getRefillWorkflowSignals([
+      { role: 'navigator', text: 'It will definitely be approved by tomorrow.' },
+    ]).overPromise).toBe(true);
+  });
+});
+
+describe('assessQa — repair outcome-flip gate', () => {
+  const flipTranscript = [
+    { role: 'navigator', text: 'What is the medication name?' },
+    { role: 'navigator', text: 'Which pharmacy do you prefer?' },
+    { role: 'navigator', text: 'I will send this request to the refill team and mark it urgent because she is out.' },
+    { role: 'patient', text: 'Thank you.' },
+  ];
+
+  function scoredWithRepairs(extraNotMet = []) {
+    const verdicts = allMetVerdicts().map((c) => {
+      if (c.id === 'know-rule' || c.id === 'doc-te') {
+        return { ...c, verdict: 'MET', evidence: 'I will send this request to the refill team and mark it urgent because she is out.' };
+      }
+      if (extraNotMet.includes(c.id)) return { ...c, verdict: 'NOT_MET', evidence: '', note: 'Missed.' };
+      return { ...c, verdict: 'MET', evidence: 'I will send this request to the refill team and mark it urgent because she is out.' };
+    });
+    return scoreQa(verdicts, [], flipTranscript);
+  }
+
+  const repairs = [
+    { criterionId: 'know-rule', rule: 'standard-refill-no-pe-requirement', from: 'NOT_MET', to: 'MET', reason: 'r', evidence: 'e', originalVerdict: 'NOT_MET', originalNote: 'n', originalEvidence: '' },
+    { criterionId: 'doc-te', rule: 'natural-message-routing-wording', from: 'NOT_MET', to: 'MET', reason: 'r', evidence: 'e', originalVerdict: 'NOT_MET', originalNote: 'n', originalEvidence: '' },
+  ];
+
+  it('a repair that flips fail→pass forces needs_review with the repair-changed-outcome flag', () => {
+    // Score 95 (outside the borderline band): with the 13 repaired points
+    // removed the call would have scored 82 and failed, so only the flip gate
+    // can produce the needs_review here.
+    const qa = scoredWithRepairs(['comm-empathy']);
+    expect(qa.pass).toBe(true);
+    expect(qa.score).toBe(95);
+    const review = assessQa(qa, flipTranscript, { repairs });
+    expect(review.reviewFlags.map((f) => f.id)).toContain('repair-changed-outcome');
+    expect(review.recommendation).toBe('needs_review');
+  });
+
+  it('a repair that does not change the outcome keeps a confident pass', () => {
+    const qa = scoredWithRepairs([]);
+    expect(qa.pass).toBe(true);
+    const review = assessQa(qa, flipTranscript, { repairs });
+    expect(review.reviewFlags.map((f) => f.id)).not.toContain('repair-changed-outcome');
+    expect(review.reviewFlags.map((f) => f.id)).toContain('fairness-repair-applied');
+    expect(review.recommendation).toBe('pass');
+  });
 });
 
 // ── buildMessages ────────────────────────────────────────────────────────────

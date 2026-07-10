@@ -1,5 +1,52 @@
 # Development History - Knowledge Check
 
+### 2026-07-10 - Call QA evidence-model hardening + gold-standard grading corpus + grading invariants
+- **Context:** Independent re-review of PR #24's repair layer, reasoning over the whole evidence
+  model (glossary → grader → validation → repairs → trust-gated scoring → review → supervisor
+  verdict) so each fairness fix cannot open a new loophole.
+- **Loopholes found and closed (`api/_qa-rubric.js`):**
+  1. A commitment to an UNLISTED wrong destination ("I'll send this to the billing team") could
+     serve as `doc-te` repair evidence → repairs now require a committed line with a
+     positively-cleared destination (`findCommittedRoutingLineWithDestination`): approved
+     destination named (nurse/provider/doctor/team/queue) AND no known-wrong destination
+     (billing, front desk, records, referral coordinator, scheduling, specialist, OB...).
+     Destination-less "I'll send it" is no longer sufficient to overturn a grader verdict.
+  2. Offer-questions ("I can send it — do you want me to?") counted as commitments → rejected
+     via a `ROUTING_OFFER` pattern.
+  3. A grader note mixing PE with another real failure (wrong routing, identity, scheduling,
+     promising, missing details, conflation) could still repair `know-rule` → `NON_PE_FAILURE_NOTE`
+     vocabulary now disqualifies mixed notes; only strictly PE-only notes are repairable.
+  4. A `doc-te` note saying the routing was WRONG (vs merely unworded) could match the
+     literal-TE patterns → `ROUTING_WRONGNESS_NOTE` blocks wrongness notes from repair.
+  5. Repairs discarded the grader's original note/evidence → every repair now records
+     `originalVerdict`/`originalNote`/`originalEvidence` (rendered to supervisors).
+  6. A repair could silently flip fail→pass → `assessQa` now recomputes the unrepaired score;
+     an outcome-flipping repair adds the `repair-changed-outcome` flag and forces `needs_review`.
+  7. Over-broad repair BLOCKERS caused retained false negatives: bare `/definitely/` no longer
+     reads "I'll definitely pass this along" as an over-promise, and scope-deferral lines
+     ("I can't tell you if it's safe — that's for the nurse") no longer read as clinical advice.
+- **Gold-standard grading corpus (`api/_qa-grading-corpus.js` + `_qa-grading-corpus.test.js`):**
+  ~20 full-call cases across good / borderline / unsafe / incomplete / natural-phrasing /
+  question-vs-commitment / ambiguous-intent categories, each with ground truth and simulated
+  `accurate` + `literalist` grader profiles, plus paraphrase variants and glossary mis-hearing
+  (speech-transcription) variants. The harness runs every case × profile × variant through the
+  REAL pipeline and asserts **zero false passes, zero false fails, zero review misses, zero
+  silent passes** — measuring outcomes, not merely that functions execute. Validated by running
+  the corpus against the pre-hardening repair layer: it correctly failed 11 tests there,
+  including a confident false pass from the wrong-destination loophole.
+- **Grading invariants (`docs/GRADING_INVARIANTS.md` + `src/lib/gradingInvariants.test.js`):**
+  explicit, binding invariants all future grading changes must preserve — shared 0–100 scale and
+  `scoreToLevel` bands, repair whitelist/direction/logging (R1–R10), review-layer guarantees
+  (verified auto-fail zeroes; unverified auto-fail never fails but never vanishes; borderline
+  and safety-miss passes always reviewed), supervisor verdicts stored beside (never over) AI
+  originals, and the cross-system consistency audit of MCQ vs Spot the Error vs Call QA vs QA
+  projections vs supervisor verdicts (intentional differences documented, e.g. Spot's coarse
+  full-profile mode, the 85/85 pass-mark/canTeach alignment, no MCQ/Spot override layer).
+- **Verification:** `npm test` **659 passing / 30 files** (was 588/28), `npm run build` clean,
+  `node --check` on edited handlers. New unit tests cover wrong-destination rejection,
+  destination-less commitments, offer-questions, mixed/wrongness notes, repair-original
+  preservation, deferral/over-promise narrowing, and the outcome-flip review gate.
+
 ### 2026-07-10 - Call QA fairness hardening for refill PE status and natural TE wording
 - **Problem:** The QA grader could deduct for missing PE status during a standard pediatric refill or for not saying the internal Telephone Encounter phrase verbatim.
 - **Fix:** Curated scenario scoring notes now reach grading; the prompt accepts natural message/routing wording; a transparent deterministic repair layer corrects only these verified false-negative patterns before scoring.

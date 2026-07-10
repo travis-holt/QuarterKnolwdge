@@ -140,6 +140,10 @@ export function findBestNavigatorLine(transcript, regexes) {
 }
 
 const ROUTING_DESTINATION = /\b(?:nurse|provider|doctor|team|refill team|clinical team|peds encounters|pediatrics encounters)\b/i;
+// Destinations that are always wrong for the repairable workflows. A commitment
+// line naming one of these can never serve as repair evidence — the repair layer
+// only trusts a commitment whose destination it can positively clear.
+const WRONG_DESTINATION_LINE = /\b(?:billing|front desk|records team|records department|referral coordinator|school|forms team|scheduling team|scheduling department|specialist|ob\s*\/?\s*gyn|ob (?:office|portal|team)|pss ob|human resources)\b/i;
 const NAVIGATOR_ROUTING_COMMITMENT_PATTERNS = [
   /\b(?:i|we)\s*(?:will|['’]ll|['’]m going to|am going to|are going to|can)\s+(?:go ahead and\s+)?(?:send|route|forward|message|pass(?:\s+along)?|put\s+in)\b/i,
   /\blet me\s+(?:go ahead and\s+)?(?:send|route|forward|message|pass(?:\s+along)?|put\s+in)\b/i,
@@ -150,7 +154,19 @@ const NAVIGATOR_ROUTING_COMMITMENT_PATTERNS = [
 const COMMITTED_FOLLOW_UP_PATTERNS = [
   /\b(?:the\s+)?(?:team|nurse|provider|doctor|refill team|clinical team|peds encounters|pediatrics encounters)\s+(?:will|['’]ll)\s+(?:follow up|call(?: you)? back|get back to you|review)\b/i,
 ];
+// An offer is not a commitment: "do you want me to send it?" leaves the action
+// undecided, so it can never stand as routing evidence.
+const ROUTING_OFFER = /\b(?:do you want|would you like|should i|want me to|if you(?:['’]d)? (?:like|want|prefer))\b/i;
 const OTHER_WORKFLOW_FAILURE = /wrong (queue|destination)|promis|missing (medication|pharmacy)|failed to.*(medication|pharmacy)|did not.*(medication|pharmacy)|no (medication|pharmacy|routing)|clinical advice/i;
+// Grader-note vocabulary that signals a NON-PE failure is mixed into a know-rule
+// verdict (wrong routing, identity, scheduling, promising, advice, missing refill
+// details...). A note containing any of these is never "PE-only", so the refill
+// PE repair stays off — the grader may have had a second, real reason to fail.
+const NON_PE_FAILURE_NOTE = /wrong|incorrect|instead of|\brout(?:e|ed|es|ing)\b|queue|escalat|transfer(?:red)?|identity|identifier|hipaa|privacy|schedul|promis|guarantee|advi[cs]|dos(?:e|age|ing)|medication name|which pharmacy|preferred pharmacy|callback|conflat|lab result|interpret/i;
+// Grader-note vocabulary that says the routing step was WRONG (not merely worded
+// naturally / absent-in-literal-terms). A wrongness note is a substantive verdict
+// and must never be repaired away.
+const ROUTING_WRONGNESS_NOTE = /wrong|incorrect|instead of|should (?:have|be)|belongs (?:to|in)|mis-?rout/i;
 
 export function hasRoutingDestination(line) {
   return ROUTING_DESTINATION.test(String(line?.text ?? line ?? ''));
@@ -159,7 +175,8 @@ export function hasRoutingDestination(line) {
 function isRoutingQuestionOrHypothetical(line) {
   const text = String(line?.text ?? line ?? '').trim();
   return /^(?:did|do|does|can you|could you|would you|was|were|has|have you|should|maybe|perhaps|someone should|you can|the caller said)\b/i.test(text)
-    || (/\?$/.test(text) && /^(?:who|what|when|where|why|how|is|are|did|do|does|can|could|would|was|were|has|have|should)\b/i.test(text));
+    || (/\?$/.test(text) && /^(?:who|what|when|where|why|how|is|are|did|do|does|can|could|would|was|were|has|have|should)\b/i.test(text))
+    || ROUTING_OFFER.test(text);
 }
 
 export function hasRoutingCommitment(line) {
@@ -173,8 +190,27 @@ export function findNaturalRoutingActionLine(transcript) {
   return navigatorLines(transcript).find(hasRoutingCommitment)?.text ?? null;
 }
 
+/**
+ * The only line quality strong enough to overturn a grader verdict: a committed
+ * routing/follow-up line that names an approved destination and names no
+ * known-wrong one. "I'll send it" (destination unknown) or "I'll send this to
+ * billing" (destination wrong) never qualifies.
+ */
+export function findCommittedRoutingLineWithDestination(transcript) {
+  return navigatorLines(transcript).find((line) => {
+    const text = String(line?.text ?? '');
+    return hasRoutingCommitment(text) && hasRoutingDestination(text) && !WRONG_DESTINATION_LINE.test(text);
+  })?.text ?? null;
+}
+
 function isSafeNonPromise(line) {
   return /can(?:not|['’]t) (?:promise|guarantee)|not able to guarantee|no guarantee/i.test(String(line?.text ?? line ?? ''));
+}
+
+// "I can't say whether that's safe — that's a question for the nurse" is scope
+// discipline, not clinical advice; don't let it block a repair.
+function isScopeDeferral(line) {
+  return /can(?:not|['’]t) (?:say|advise|tell|speak to)|not able to (?:say|advise|tell)|not (?:qualified|allowed) to|that(?:['’]s| is) (?:a question |really )?for the (?:nurse|provider|doctor)|only the (?:nurse|provider|doctor) can/i.test(String(line?.text ?? line ?? ''));
 }
 
 export function isStandardPediatricRefill({ scenario = '', department = 'pediatrics', metadata = {} } = {}) {
@@ -192,11 +228,16 @@ export function getRefillWorkflowSignals(transcript) {
     callback: matches([/callback/i, /call back/i, /best number/i, /phone number/i, /reach you/i]),
     outOrUrgency: matches([/completely out/i, /out of (the )?medication/i, /out of (her|his|their) medicine/i, /any left/i, /how many.*left/i, /mark.*urgent/i, /high priority/i, /priority/i]),
     naturalRoutingLine: findNaturalRoutingActionLine(transcript),
-    overPromise: lines.some((line) => !isSafeNonPromise(line) && lineMatchesAny(line, [/will be approved/i, /guarantee.*(approved|sent|today)/i, /definitely/i, /make sure.*approv/i, /make sure.*sent today/i, /doctor.*approv/i, /provider.*approv/i, /gets approved today/i, /approved today/i, /sent today/i])),
-    clinicalAdvice: matches([/give (her|him|them).*dose/i, /take .* twice/i, /increase/i, /decrease/i, /stop taking/i, /safe to/i, /not serious/i, /you should take/i, /medical advice/i]),
+    committedRoutingLine: findCommittedRoutingLineWithDestination(transcript),
+    overPromise: lines.some((line) => !isSafeNonPromise(line) && lineMatchesAny(line, [/will be approved/i, /guarantee.*(approved|sent|today)/i, /definitely (?:will )?(?:be )?(?:approved|approve|sent|filled|ready|done|today)/i, /will definitely/i, /make sure.*approv/i, /make sure.*sent today/i, /doctor.*approv/i, /provider.*approv/i, /gets approved today/i, /approved today/i, /sent today/i])),
+    clinicalAdvice: lines.some((line) => !isScopeDeferral(line) && lineMatchesAny(line, [/give (her|him|them).*dose/i, /take .* twice/i, /increase/i, /decrease/i, /stop taking/i, /safe to/i, /not serious/i, /you should take/i, /medical advice/i])),
     wrongDestination: matches([/referral coordinator/i, /school\/?forms team/i, /records team/i, /scheduling only/i, /front desk only/i, /specialist referral/i, /ob portal/i, /pss ob/i]),
   };
 }
+
+// The ONLY criteria the repair layer may ever touch, and the only direction it
+// may move a verdict (NOT_MET → MET). Enforced by tests as a grading invariant.
+export const REPAIRABLE_CRITERIA = new Set(['know-rule', 'doc-te']);
 
 export function repairQaVerdictsForScenario(validated, transcript, context = {}) {
   const criteria = validated.criteria.map((criterion) => ({ ...criterion }));
@@ -205,21 +246,36 @@ export function repairQaVerdictsForScenario(validated, transcript, context = {})
   const standardRefill = isStandardPediatricRefill(context);
   const requiredDetailsMissing = standardRefill && (!signals.medication || !signals.pharmacy);
   const workflowFailure = criteria.some((criterion) => criterion.id !== 'doc-te' && criterion.verdict === 'NOT_MET' && OTHER_WORKFLOW_FAILURE.test(`${criterion.note} ${criterion.evidence}`));
-  const safeRouting = signals.naturalRoutingLine && !signals.overPromise && !signals.clinicalAdvice && !signals.wrongDestination;
-  const peOnly = (criterion) => /\bpe\b|physical exam|physical status|up to date|\butd\b|not current/i.test(`${criterion.note} ${criterion.evidence}`) && !OTHER_WORKFLOW_FAILURE.test(`${criterion.note} ${criterion.evidence}`);
+  // Repair evidence must be a committed line with a positively-cleared destination;
+  // any over-promise / clinical-advice / wrong-destination signal anywhere in the
+  // call keeps the grader's verdict in place.
+  const safeRouting = signals.committedRoutingLine && !signals.overPromise && !signals.clinicalAdvice && !signals.wrongDestination;
+  const peOnly = (criterion) => /\bpe\b|physical exam|physical status|up to date|\butd\b|not current/i.test(`${criterion.note} ${criterion.evidence}`)
+    && !OTHER_WORKFLOW_FAILURE.test(`${criterion.note} ${criterion.evidence}`)
+    && !NON_PE_FAILURE_NOTE.test(criterion.note);
   const needsMessage = ['prescription_refill', 'referral', 'records_forms', 'urgent_symptom_boundary', 'wrong_department_unclear_request'].includes(context.metadata?.workflowType) || /refill|referral|lab result|medical question|form|record|message|route|request|nurse|provider|clinical team/i.test(context.scenario ?? '');
-  const literalTeFailure = (criterion) => /telephone encounter|\bte\b|does not contain evidence|did not say|not documented|no evidence.*rout|no evidence.*log/i.test(`${criterion.note} ${criterion.evidence}`);
+  // Only an absence-style / literal-TE-wording complaint is repairable. A note
+  // that says the routing was WRONG is a substantive verdict and always stands.
+  const literalTeFailure = (criterion) => /telephone encounter|\bte\b|does not contain evidence|did not say|not documented|no evidence.*rout|no evidence.*log/i.test(`${criterion.note} ${criterion.evidence}`)
+    && !ROUTING_WRONGNESS_NOTE.test(criterion.note);
+
+  const applyRepair = (criterion, rule, reason) => {
+    repairs.push({
+      criterionId: criterion.id, rule, from: criterion.verdict, to: 'MET', reason,
+      evidence: signals.committedRoutingLine,
+      originalVerdict: criterion.verdict, originalNote: criterion.note, originalEvidence: criterion.evidence,
+    });
+    criterion.verdict = 'MET'; criterion.evidence = signals.committedRoutingLine; criterion.note = reason;
+  };
 
   for (const criterion of criteria) {
     if (criterion.id === 'know-rule' && standardRefill && criterion.verdict === 'NOT_MET' && peOnly(criterion) && signals.medication && signals.pharmacy && safeRouting) {
-      const reason = 'Fairness repair: standard pediatric refill does not require caller-facing PE/Physical Exam verification unless PE is the governing issue.';
-      criterion.verdict = 'MET'; criterion.evidence = signals.naturalRoutingLine; criterion.note = reason;
-      repairs.push({ criterionId: criterion.id, rule: CALL_QA_FAIRNESS_RULES.standardRefillNoPeRequirement, from: 'NOT_MET', to: 'MET', reason, evidence: criterion.evidence });
+      applyRepair(criterion, CALL_QA_FAIRNESS_RULES.standardRefillNoPeRequirement,
+        'Fairness repair: standard pediatric refill does not require caller-facing PE/Physical Exam verification unless PE is the governing issue.');
     }
     if (criterion.id === 'doc-te' && criterion.verdict === 'NOT_MET' && needsMessage && literalTeFailure(criterion) && safeRouting && !workflowFailure && !requiredDetailsMissing) {
-      const reason = 'Fairness repair: accepted natural patient-facing message/routing wording; exact TE/Telephone Encounter phrase is not required.';
-      criterion.verdict = 'MET'; criterion.evidence = signals.naturalRoutingLine; criterion.note = reason;
-      repairs.push({ criterionId: criterion.id, rule: CALL_QA_FAIRNESS_RULES.naturalMessageRoutingWording, from: 'NOT_MET', to: 'MET', reason, evidence: criterion.evidence });
+      applyRepair(criterion, CALL_QA_FAIRNESS_RULES.naturalMessageRoutingWording,
+        'Fairness repair: accepted natural patient-facing message/routing wording; exact TE/Telephone Encounter phrase is not required.');
     }
   }
   return { criteria, autoFails: validated.autoFails, repairs };
@@ -398,6 +454,26 @@ export function assessQa(qa, transcript, { correctedTurns = 0, repairs = [] } = 
     flags.push({ id: 'fairness-repair-applied', label: 'Fairness repair applied', detail: 'Deterministic Call QA guardrails corrected one or more likely false-negative rubric verdicts. Review repaired criteria for transparency.' });
   }
 
+  // A repair may add points but must never silently flip the outcome: if the
+  // call would have FAILED without the repaired criteria, a supervisor decides.
+  const defs = new Map(rubricCriteria().map((c) => [c.id, c]));
+  const repairedPoints = repairs
+    .filter((r) => r.to === 'MET' && r.from === 'NOT_MET')
+    .reduce((s, r) => s + (defs.get(r.criterionId)?.points ?? 0), 0);
+  const applicableTotal = qa.categories.reduce((s, c) => s + c.applicablePoints, 0);
+  const earnedTotal = qa.categories.reduce((s, c) => s + c.earned, 0);
+  const unrepairedScore = applicableTotal > 0
+    ? Math.round(((earnedTotal - repairedPoints) / applicableTotal) * 100)
+    : 0;
+  const repairFlippedOutcome = qa.pass && repairedPoints > 0 && unrepairedScore < qa.passThreshold;
+  if (repairFlippedOutcome) {
+    flags.push({
+      id: 'repair-changed-outcome',
+      label: 'Repair changed the outcome',
+      detail: `Without the fairness repair(s) this call would have scored ${unrepairedScore} and FAILED. The pass must be confirmed by a supervisor.`,
+    });
+  }
+
   const confidenceHits = flags.filter((f) =>
     ['low-transcript-confidence', 'unverified-evidence', 'possible-unsafe-behavior', 'thin-coverage'].includes(f.id)).length;
   const confidence = confidenceHits >= 2 ? 'low' : confidenceHits === 1 ? 'medium' : 'high';
@@ -410,6 +486,7 @@ export function assessQa(qa, transcript, { correctedTurns = 0, repairs = [] } = 
   if (qa.autoFails.length > 0) recommendation = 'fail';
   else if (confidence === 'low' || borderline || qa.unverifiedAutoFails?.length > 0) recommendation = 'needs_review';
   else if (qa.pass && safetyMissed.length > 0) recommendation = 'needs_review'; // never an unreviewed pass over a safety miss
+  else if (repairFlippedOutcome) recommendation = 'needs_review'; // repairs are decision support, not the final word
   else recommendation = qa.pass ? 'pass' : 'fail';
 
   return { recommendation, confidence, safetyRisk, reviewFlags: flags };
