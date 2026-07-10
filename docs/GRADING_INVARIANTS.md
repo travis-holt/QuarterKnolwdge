@@ -89,6 +89,7 @@ over-promise / clinical-advice signal exists.
 | C1 | A deterministic conflict is NOT a fairness repair: findings never touch verdicts, scores, auto-fails, or `qa.repairs`. The model's original criteria and score are preserved for auditability. | `gradingInvariants.test.js` I-CONFLICT |
 | C2 | A model-positive verdict that contradicts the authoritative routing policy can never become a confident silent pass: findings force `recommendation: needs_review` (flags `model-routing-conflict` / `deterministic-safety-conflict`) whenever the result would otherwise pass confidently. | corpus lenient cases; `finalizeQaResult` unit tests |
 | C3 | Findings are persisted on `qa.deterministicFindings` (type, reason, evidence, destinationId, affectedCriteria) and rendered to supervisors in the "Deterministic grading conflicts" section — they may force review but must never be hidden. | corpus aggregate test; `navigatorDetail.override.test.jsx` |
+| C4 | The shared `assessQa` review contract accepts deterministic findings and forces `needs_review` without changing the model score or criteria. | `api/grade-call-qa.test.js` |
 | C4 | Findings never upgrade or soften a fail; they only remove unwarranted confidence from a pass. | `finalizeQaResult` unit tests |
 
 Routing policies intentionally marked review-only because the repository sources do not

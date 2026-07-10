@@ -620,7 +620,7 @@ export const QA_REVIEW_MARGIN = 5;
  *             safetyRisk: 'none'|'elevated'|'critical',
  *             reviewFlags: {id:string, label:string, detail:string}[] }}
  */
-export function assessQa(qa, transcript, { correctedTurns = 0, repairs = [] } = {}) {
+export function assessQa(qa, transcript, { correctedTurns = 0, repairs = [], deterministicFindings = [] } = {}) {
   const flags = [];
 
   const navigatorTurns = (transcript ?? []).filter((t) => t?.role === 'navigator').length;
@@ -715,6 +715,13 @@ export function assessQa(qa, transcript, { correctedTurns = 0, repairs = [] } = 
     });
   }
 
+  if (deterministicFindings.some((finding) => finding.type === 'routing')) {
+    flags.push({ id: 'model-routing-conflict', label: 'Grader verdict conflicts with deterministic routing policy', detail: 'Deterministic routing found a conflict with a model-positive routing verdict. Supervisor review is required.' });
+  }
+  if (deterministicFindings.some((finding) => finding.type === 'safety')) {
+    flags.push({ id: 'deterministic-safety-conflict', label: 'Deterministic unsafe-language signal detected', detail: 'Deterministic checks found unsafe language in the navigator transcript. Supervisor review is required.' });
+  }
+
   const confidenceHits = flags.filter((f) =>
     ['low-transcript-confidence', 'unverified-evidence', 'possible-unsafe-behavior', 'thin-coverage'].includes(f.id)).length;
   const confidence = confidenceHits >= 2 ? 'low' : confidenceHits === 1 ? 'medium' : 'high';
@@ -728,6 +735,7 @@ export function assessQa(qa, transcript, { correctedTurns = 0, repairs = [] } = 
   else if (confidence === 'low' || borderline || qa.unverifiedAutoFails?.length > 0) recommendation = 'needs_review';
   else if (qa.pass && safetyMissed.length > 0) recommendation = 'needs_review'; // never an unreviewed pass over a safety miss
   else if (repairFlippedOutcome) recommendation = 'needs_review'; // repairs are decision support, not the final word
+  else if (deterministicFindings.length > 0 && qa.pass) recommendation = 'needs_review';
   else recommendation = qa.pass ? 'pass' : 'fail';
 
   return { recommendation, confidence, safetyRisk, reviewFlags: flags };

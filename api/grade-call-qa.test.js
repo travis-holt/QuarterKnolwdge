@@ -1259,6 +1259,18 @@ describe('finalizeQaResult — deterministic findings force review of a confiden
   });
 });
 
+describe('assessQa deterministic conflict contract', () => {
+  it('forces review without changing the model score or criteria', () => {
+    const scored = scoreQa(allMetVerdicts(), [], TRANSCRIPT);
+    const review = assessQa(scored, TRANSCRIPT, {
+      deterministicFindings: [{ id: 'model-routing-conflict', type: 'routing', reason: 'wrong-destination' }],
+    });
+    expect(review.recommendation).toBe('needs_review');
+    expect(review.reviewFlags.map((flag) => flag.id)).toContain('model-routing-conflict');
+    expect(scored.pass).toBe(true);
+  });
+});
+
 describe('server-authoritative Call QA scenario metadata', () => {
   const trusted = getCallQaScenarioById('qa-peds-refill-001');
 

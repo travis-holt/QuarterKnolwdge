@@ -235,7 +235,7 @@ function buildBody(systemInstruction, userMessage) {
 }
 
 export function finalizeQaResult(scored, transcript, correctedTurns = 0, repairs = [], metadataIntegrity = { verified: true, status: 'verified' }, forcedReviewReasons = [], deterministicFindings = []) {
-  const review = assessQa(scored, transcript, { correctedTurns, repairs });
+  const review = assessQa(scored, transcript, { correctedTurns, repairs, deterministicFindings });
   // Deterministic conflict layer (NOT repairs): a model-positive verdict that
   // contradicts the authoritative routing policy, or a deterministic unsafe-
   // language signal, must never become a confident unreviewed PASS. Findings

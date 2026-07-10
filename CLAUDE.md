@@ -11,7 +11,7 @@
 > [§8 Current System State](#8-current-system-state) and [§15 Current Priorities](#15-current-priorities)
 > accurate at all times.
 >
-> **Last updated:** 2026-07-10 (Call QA reliability follow-up: department/workflow routing policy, final-decision contradiction handling, server-authoritative curated scenario metadata, review-only uncertain routes, deterministic corpus claims corrected, captured-response replay format added) ·
+> **Last updated:** 2026-07-10 (Call QA reliability follow-up plus centralized deterministic review gating) ·
 > **Doc maintainer:** Claude (AI agent) + repo owner. Assumptions are explicitly marked **[ASSUMPTION]**.
 
 ---
@@ -1168,7 +1168,7 @@ of this file on 2026-07-07 to cut per-session context cost (it was ~55% of the f
   turns → `/api/live` relay) so the AI caller stays consistent without leaking the answer; the hidden
   case notes include `requiredActions` / `acceptableNavigatorPaths` / `criticalMistakes` as
   caller-behavior guidance (how to react to over-promising / under-clarifying / wrong routing) — never
-  as SOP coaching. Build clean; focused Call QA tests **203/203** (grade-call-qa 185 + glossary 18),
+  as SOP coaching. Build clean; focused Call QA tests **204/204** (grade-call-qa 186 + glossary 18),
   deterministic corpus **54/54**, grading invariants **17/17**,
   and full `npm test` **761/761 across 30 files**. GitHub Actions mirrors the
   normal local gate on `main` pushes and PRs: `npm ci` → `npm test` → `npm run build` (no deploy step).
@@ -1211,7 +1211,7 @@ of this file on 2026-07-07 to cut per-session context cost (it was ~55% of the f
   malformed-input edge cases), `session.test.js`,
   `db.test.js` (incl. audit-bank helpers), `api/api-handlers.test.js`, `api/generate-audit.test.js`,
   `api/_gemini-client.test.js`, `api/sequence-path.test.js` (9 tests for `validateSequenceResponse`),
-  `api/refine-sop.test.js`, `api/grade-call-qa.test.js` (185 tests for the QA-test rubric, routing-policy, contradiction, metadata-integrity, clause-aware safety, hedging, strict PE/TE scoping, and deterministic-conflict pipeline),
+  `api/refine-sop.test.js`, `api/grade-call-qa.test.js` (186 tests for the QA-test rubric, routing-policy, contradiction, metadata-integrity, clause-aware safety, hedging, strict PE/TE scoping, and deterministic-conflict pipeline),
   `api/_qa-glossary.test.js` (18 tests for the transcript-correction glossary),
   `src/components/components.test.jsx`, `src/lib/phases.test.js`, `src/lib/apiFetch.test.js` (apiFetch/`fetchErrorMessage`/`runPooled`),
   `api/_auth.test.js` (secret gate), `api/grade-interview.test.js` (`coerceGrade`),

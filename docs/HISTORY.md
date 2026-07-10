@@ -1,5 +1,12 @@
 # Development History - Knowledge Check
 
+### 2026-07-10 - Centralize deterministic Call QA review gating
+- `assessQa` now accepts persisted deterministic findings and independently forces
+  `needs_review` for model-positive routing or safety conflicts; `finalizeQaResult`
+  passes findings into that shared contract. Added regression coverage proving the
+  score and criteria remain unchanged. Focused Call QA: **186**; full suite:
+  **762/30 files**.
+
 ### 2026-07-10 - Call QA loophole-closure pass (final pre-merge reliability gate, PR #24)
 - **Deterministic conflict layer (model-positive protection):** new
   `evaluateQaDeterministicFindings(criteria, transcript, context)` in `api/_qa-rubric.js` detects
