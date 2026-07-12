@@ -79,17 +79,35 @@ export function rotationFailure(result, overrides = {}) {
   return { status: 429, error: overrides.exhausted ?? 'All Gemini keys are rate-limited right now. Try again shortly.' };
 }
 
-// One Gemini call with a given key → { ok, status, text?, detail? }.
-export async function callGemini(apiKey, body, model = MODEL) {
+export const DEFAULT_GEMINI_TIMEOUT_MS = 25_000;
+
+export function geminiTimeoutMs(env = process.env) {
+  const configured = Number(env.GEMINI_REQUEST_TIMEOUT_MS);
+  if (!Number.isFinite(configured)) return DEFAULT_GEMINI_TIMEOUT_MS;
+  return Math.max(1_000, Math.min(120_000, Math.round(configured)));
+}
+
+// One Gemini call with a given key → { ok, status, text?, detail? }. The abort
+// signal is server-owned: browser timeouts no longer leave an upstream fetch
+// consuming a socket and quota after the client has gone away.
+export async function callGemini(apiKey, body, model = MODEL, timeoutMs = geminiTimeoutMs()) {
   const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
-  const resp = await fetch(url, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
-  });
-  if (!resp.ok) return { ok: false, status: resp.status, detail: await resp.text().catch(() => '') };
-  const data = await resp.json();
-  return { ok: true, status: 200, text: data?.candidates?.[0]?.content?.parts?.[0]?.text };
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  timer.unref?.();
+  try {
+    const resp = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+      signal: controller.signal,
+    });
+    if (!resp.ok) return { ok: false, status: resp.status, detail: await resp.text().catch(() => '') };
+    const data = await resp.json();
+    return { ok: true, status: 200, text: data?.candidates?.[0]?.content?.parts?.[0]?.text };
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 // ── Per-key cooldown ──────────────────────────────────────────────────────────

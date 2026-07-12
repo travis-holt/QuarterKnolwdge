@@ -11,7 +11,7 @@
 > [§8 Current System State](#8-current-system-state) and [§15 Current Priorities](#15-current-priorities)
 > accurate at all times.
 >
-> **Last updated:** 2026-07-10 (Call QA deterministic-conflict and literal-TE reliability follow-up) ·
+> **Last updated:** 2026-07-12 (full audit remediation, identity boundary, and integrity hardening) ·
 > **Doc maintainer:** Claude (AI agent) + repo owner. Assumptions are explicitly marked **[ASSUMPTION]**.
 
 ---
@@ -238,12 +238,11 @@ training assignments.
   mounts the `/api/*` handlers (same `(req, res)` signature as the Vercel originals; reads `PORT`
   from env, Railway injects it automatically). `railway.toml` — Railpack config (`buildCommand: npm
   run build`, `startCommand: npm start`, `nixpacksConfigPath: nixpacks.toml`). `nixpacks.toml` —
-  overrides Railpack's default `npm ci` to `npm install` (avoids `EBADPLATFORM` failures for
-  cross-platform optional esbuild packages). `vercel.json` kept for potential future Vercel use.
-  Env vars set in Railway service Variables: `VITE_FIREBASE_*` (build-time, baked into bundle),
-  `GEMINI_API_KEYS`, `GENERATION_SECRET` (server-only, never bundled). `"engines": { "node":
-  ">=20.0.0" }` in `package.json` tells Railpack/Nixpacks to use Node 20 (vitest@4 and vite@8
-  require it; Railway's default is Node 18).
+  pins deployment to the committed lockfile with deterministic `npm ci`. `vercel.json` is kept
+  for potential future Vercel use. Env vars set in Railway service Variables:
+  `VITE_FIREBASE_*` (build-time), `FIREBASE_SERVICE_ACCOUNT_JSON`,
+  `SUPERVISOR_PASSCODE_SERVER`, `SESSION_SIGNING_SECRET`, and `GEMINI_API_KEYS` (server-only).
+  `"engines": { "node": "^20.19.0 || >=22.12.0" }` matches Vite 8's supported Node range.
 - **Status:** Complete (code). **[ASSUMPTION]** Owner sets env vars in Railway project Variables
   before the first deploy (VITE_FIREBASE_* must be present at build time).
 - **Notes:** Replaced GitHub Pages (no server support) and Vercel (owner chose Railway). The
@@ -792,7 +791,7 @@ training assignments.
 
 ### Frontend Architecture
 - **Framework:** React 18.3 (function components + hooks).
-- **Build tool:** Vite 5.4 (`@vitejs/plugin-react`).
+- **Build tool:** Vite 8.1 (`@vitejs/plugin-react` 6).
 - **Language:** JavaScript (JSX). No TypeScript.
 - **Styling:** A single hand-written stylesheet, [src/styles.css](src/styles.css) (BEM-ish class
   names, CSS variables for the palette). No CSS framework.
@@ -815,9 +814,9 @@ QuarterKnolwdge/
 ├── vite.config.js           # base '/' (served at root)
 ├── vercel.json              # Vercel config (kept; Railway is the active host)
 ├── railway.toml             # Railway/Railpack config (build + start + nixpacksConfigPath)
-├── nixpacks.toml            # overrides npm ci → npm install (avoids EBADPLATFORM)
+├── nixpacks.toml            # deterministic Railway install via npm ci
 ├── server.js                # Express server: serves dist/ + mounts /api/* handlers
-├── package.json             # scripts: dev/build/preview/test/test:watch/start; engines node>=20
+├── package.json             # scripts + engines node ^20.19.0 || >=22.12.0
 ├── README.md                # quick-start + tweak guide
 ├── CLAUDE.md                # THIS FILE — project knowledge base
 ├── SOP Guide.pdf            # source of truth for domains/questions
@@ -857,11 +856,11 @@ QuarterKnolwdge/
 ```
 
 ### Backend Architecture
-- **Firebase / Firestore (pilot).** The app persists data to Cloud Firestore (free Spark tier).
-  Three collections: `roster` (navigator list), `results` (submissions, now incl.
-  `competencyScores`), and `questions` (supervisor-managed scenario bank: `draft`/`active`/
-  `archived`) — all UUID-keyed. All Firestore access is isolated in [src/lib/db.js](src/lib/db.js);
-  init in [src/lib/firebase.js](src/lib/firebase.js) (reads `VITE_FIREBASE_*` from `.env.local`).
+- **Firebase / Firestore.** The app persists roster, assessments, append-only history, practice,
+  learning-loop, and SOP data to Cloud Firestore. Browser access uses server-minted Firebase
+  identities; [firestore.rules](firestore.rules) grants supervisors management access and
+  navigators ownership-scoped access only. All browser Firestore access remains isolated in
+  [src/lib/db.js](src/lib/db.js); server projections and identity use Firebase Admin.
 - **Express server + `/api` handlers.** [server.js](server.js) is the Railway entry point: an
   Express 5 app that serves `dist/` as static files (SPA catch-all via `/*splat`) and mounts
   the REST Gemini handlers plus [api/health.js](api/health.js) as Express routes. The handlers use
@@ -870,20 +869,16 @@ QuarterKnolwdge/
   Gemini with structured-JSON/text outputs, and rotates keys on 429/403/503/500. Helper modules are
   `_`-prefixed (`api/_sop-context.js`, `api/_auth.js`). **Supervisor-only authoring endpoints**
   (`generate-scenarios`, `refine-sop`) are gated by a **server-issued signed session cookie**
-  (`validateSession`); **navigator/practice + shared endpoints** are pilot-grade open (rate-limited)
-  since navigators have no server credential (`validateSecret`). See the 2026-07-08 auth-hardening
-  history entry.
-- **Auth (pilot-grade, hardened 2026-07-08):** navigators pick their name from the roster and
-  create a 4-digit PIN on first sign-in when the roster row has none; returning navigators enter
-  that PIN (validated client-side against Firestore). Supervisors enter a passcode that is now
-  **validated server-side** via `POST /api/supervisor-login`, which issues an HMAC-signed HttpOnly
-  session cookie (`kc_supervisor_session`, SameSite=Lax, 10h, Secure behind HTTPS); `POST /api/logout`
-  clears it. The bundled `SUPERVISOR_PASSCODE` is now only a **dev/localhost fallback** (used when
-  `/api` is unreachable and as the server passcode default when `SUPERVISOR_PASSCODE_SERVER` is
-  unset). Session persistence is localStorage only, isolated in
-  [src/lib/session.js](src/lib/session.js). This is **not full production auth** — there is still no
-  per-navigator server identity (needs real Firebase Auth), and Firestore rules stay pilot-grade
-  (open per-collection) — replace with real auth before production.
+  (`validateSession`); navigator/practice endpoints require a verified role-bearing Firebase ID
+  token (`validateSecret`). REST calls carry the token in `Authorization`; the voice relay verifies
+  it in the first WebSocket message. Gemini requests have a server-owned abort timeout.
+- **Auth (server-issued custom identities, hardened 2026-07-12):** the public roster projection
+  returns only `{id,name,pinSet}`. `/api/navigator-login` verifies or transactionally creates a
+  salted scrypt PIN hash and mints a custom token with `role:'navigator'` + `navigatorId`.
+  `/api/supervisor-login` verifies the server-only passcode, returns a one-time custom token with
+  `role:'supervisor'`, and sets the signed HttpOnly session cookie. Production/Railway/Vercel fails
+  closed unless `SUPERVISOR_PASSCODE_SERVER` is explicit. `localStorage` is only a routing cache;
+  `App` restores it only when Firebase claims match. Deploy requires Firebase Admin credentials.
 - **Pre-pilot state (historical):** the original prototype was fully in-memory; then a static
   GitHub-Pages + Firestore pilot with no server; then Vercel serverless; now Railway + Express.
 
@@ -893,20 +888,20 @@ QuarterKnolwdge/
 - **Repo:** `github.com/travis-holt/QuarterKnolwdge` (public).
 - **Deployment:** Railway (Git-connected to `main`). Railpack detects Node.js; `railway.toml`
   sets `buildCommand: npm run build`, `startCommand: npm start`, and points to `nixpacks.toml`
-  which overrides the install step from `npm ci` to `npm install` (prevents `EBADPLATFORM` errors
-  for cross-platform optional esbuild packages). Requires `engines.node >=20.0.0` (set in
-  `package.json`) because vitest@4 and vite@8 require Node 20+; Railway defaults to Node 18.
-  Env vars in Railway service Variables: `VITE_FIREBASE_*` (client, build-time — must be set
-  BEFORE first build), `GEMINI_API_KEYS` + `GENERATION_SECRET` (server-only, never bundled).
+  which runs deterministic `npm ci`. Requires `engines.node ^20.19.0 || >=22.12.0` (set in
+  `package.json`) for Vite 8/Vitest 4.
+  Env vars in Railway service Variables: `VITE_FIREBASE_*` (client, build-time — set before the
+  build), `FIREBASE_SERVICE_ACCOUNT_JSON`, `SUPERVISOR_PASSCODE_SERVER`,
+  `SESSION_SIGNING_SECRET`, and `GEMINI_API_KEYS` (server-only, never bundled).
   **Historical:** GitHub Pages (retired — no server) → Vercel (owner chose Railway instead).
 - **CI/CD:** GitHub Actions CI now runs `npm test` and `npm run build` on `pull_request` to `main`
   and `push` to `main` via `.github/workflows/ci.yml` (Node 24, `npm ci`, no deploy steps). The app
-  still declares `engines.node >=20.0.0` in `package.json`; CI uses Node 24 because the current
-  lockfile includes transitive packages that require newer supported minors. Railway still handles
+  declares `engines.node ^20.19.0 || >=22.12.0` in `package.json`; CI uses Node 24. Railway still handles
   deployment separately from Git pushes to `main`.
 - **Monitoring:** None (Railway console shows logs + metrics).
-- **Security:** `GEMINI_API_KEYS`/`GENERATION_SECRET` are server-only Railway env vars and never
-  in the bundle. No PII; sample/illustrative data only. Site is public to anyone with the URL.
+- **Security:** server secrets never enter the bundle; Firebase claims and Firestore rules enforce
+  role/ownership. The sign-in page is public, but staff data is not. Do not store PII in the public
+  repo; live Firestore content is governed by the deployment's access controls.
 
 ### Component / data-flow diagram
 ```mermaid
@@ -956,6 +951,25 @@ stateDiagram-v2
 ---
 
 ## 6. Technical Decisions Log
+
+### 2026-07-12 — Server-issued identities and fail-closed assessment integrity
+- **Decision:** Navigator PIN verification and supervisor passcode verification happen only on the
+  Express server. Successful logins mint Firebase custom tokens with `role` and `navigatorId`
+  claims; every API gate verifies an ID token and Firestore rules enforce supervisor/owner access.
+  PINs are transactionally created/migrated to salted scrypt hashes and are never returned to the
+  browser. Railway/Vercel/production refuse the bundled demo supervisor passcode.
+- **Reasoning:** UI roles, anonymous Firebase sessions, plaintext PINs, and client filtering cannot
+  protect staff records or management scores. The server-issued claim is now the common trust
+  boundary for REST, WebSocket, and Firestore access.
+- **Integrity impact:** result + history + completion writes are atomic; failed writes remain in a
+  keyed retry queue; partial Spot generation is never scored; mini-checks score only displayed
+  questions and record mastery only on a pass; training paths expose exactly one next step.
+- **Reliability impact:** Railway `X-Real-IP` drives independent quotas; Gemini REST calls abort
+  server-side; voice setup rotates keys with timeouts and always tears down the microphone; active
+  SOP selection uses a transactional department pointer and shared in-flight refresh.
+- **Analytics impact:** joins prefer stable navigator UUIDs, timestamps retain nanoseconds,
+  supervisor grade overrides are effective in alerts, and trend/impact comparisons never mix MCQ
+  and Spot instruments. Question health includes answer-bearing retake history.
 
 ### 2026-06-23 — Use React + Vite (not single HTML file)
 - **Decision:** Build as a React 18 + Vite SPA.
@@ -1080,6 +1094,8 @@ stateDiagram-v2
   cross-platform optional esbuild packages (netbsd-arm64, darwin-arm64, etc.) that npm records in
   the lockfile but can't install on Linux x64. Express 5 requires named wildcards so the SPA
   catch-all is `/*splat` not `*`.
+- **Superseded 2026-07-12:** the current engine range is `^20.19.0 || >=22.12.0`, the repaired
+  lockfile installs with `npm ci`, and Vite 8/plugin-react 6 are top-level.
 
 ---
 
@@ -1126,6 +1142,15 @@ of this file on 2026-07-07 to cut per-session context cost (it was ~55% of the f
 
 ## 8. Current System State
 
+- **Audit remediation (2026-07-12):** live access is no longer anonymous or role-by-localStorage.
+  Server-issued Firebase claims protect REST, WebSocket, and Firestore; PIN material stays
+  server-side; peer mentor data is a minimized protected projection. Assessment saves are atomic
+  and retryable, partial infrastructure failures cannot become employee zeroes, mini-check mastery
+  requires a passing displayed-question score, and adaptive paths have one actionable next step.
+  Proxy-aware quotas, Gemini aborts, voice teardown/key rotation, transactional SOP activation,
+  UUID joins, nanosecond timestamps, comparable-instrument analytics, and retake-aware question
+  health close the remaining audit findings. Vite 8 + plugin-react 6 now form one valid dependency
+  tree and Railway installs from the lockfile with `npm ci`.
 - **Working end to end (logic + UI):** supervisor adds navigators / generates+curates questions
   (per department) → navigators sign in → **pick department** (Pediatrics or OB/GYN) → enter the
   **3-phase assessment sequence** (MCQ scenario check → coaching → full-profile Spot the Error →
@@ -1170,7 +1195,7 @@ of this file on 2026-07-07 to cut per-session context cost (it was ~55% of the f
   caller-behavior guidance (how to react to over-promising / under-clarifying / wrong routing) — never
   as SOP coaching. Build clean; focused Call QA tests **206/206** (grade-call-qa 188 + glossary 18),
   deterministic corpus **54/54**, grading invariants **17/17**,
-  and full `npm test` **764/764 across 30 files**. GitHub Actions mirrors the
+  and full `npm test` **804/804 across 41 files**. GitHub Actions mirrors the
   normal local gate on `main` pushes and PRs: `npm ci` → `npm test` → `npm run build` (no deploy step).
 - **Existing functionality:** features F1–F26 (see [§4](#4-feature-inventory)) are **Complete** in
   code. F17 adds longitudinal trends + Sparkline. F18 adds dossier evidence per competency. F19
@@ -1200,7 +1225,7 @@ of this file on 2026-07-07 to cut per-session context cost (it was ~55% of the f
 - **Experimental / mockup:**
   - Training **content** is mockup (flagged in UI). Logic is real.
   - **Adult Medicine and Behavioural Health** are not assessed; **Pediatrics and OB/GYN** are live.
-- **Test coverage:** **764 tests** across **30 test files** (includes `api/_qa-grading-corpus.test.js` —
+- **Test coverage:** **804 tests** across **41 test files** (includes `api/_qa-grading-corpus.test.js` —
   the deterministic Call QA grading-pipeline corpus + captured-response replay harness — and `src/lib/gradingInvariants.test.js` — the
   executable cross-system grading invariants, contract in `docs/GRADING_INVARIANTS.md`; plus `api/_navigator-operating-model.test.js`,
   `src/lib/qaDomainScoring.test.js`, `src/components/voiceCall.test.js`; expanded
@@ -1210,23 +1235,24 @@ of this file on 2026-07-07 to cut per-session context cost (it was ~55% of the f
   buildQuestionImprovementSuggestions, adaptiveTrainingRecommendations, feedbackInsights +
   malformed-input edge cases), `session.test.js`,
   `db.test.js` (incl. audit-bank helpers), `api/api-handlers.test.js`, `api/generate-audit.test.js`,
-  `api/_gemini-client.test.js`, `api/sequence-path.test.js` (9 tests for `validateSequenceResponse`),
+  `api/_gemini-client.test.js`, `api/sequence-path.test.js` (strict domain/step-set validation),
   `api/refine-sop.test.js`, `api/grade-call-qa.test.js` (188 tests for the QA-test rubric, routing-policy, contradiction, metadata-integrity, clause-aware safety, hedging, strict PE/TE scoping, and deterministic-conflict pipeline),
   `api/_qa-glossary.test.js` (18 tests for the transcript-correction glossary),
   `src/components/components.test.jsx`, `src/lib/phases.test.js`, `src/lib/apiFetch.test.js` (apiFetch/`fetchErrorMessage`/`runPooled`),
-  `api/_auth.test.js` (secret gate), `api/grade-interview.test.js` (`coerceGrade`),
+  `api/_auth.test.js` (Firebase token/role gates), `api/_firebase-admin.test.js`, `_pin.test.js`,
+  `_rate-limit.test.js`, `navigator-login.test.js`, `navigator-roster.test.js`,
+  `mentor-scores.test.js`, `api/grade-interview.test.js` (`coerceGrade`),
   `src/lib/contentGuards.test.js`, `src/data/auditWorkflows.test.js`, `src/data/callQaScenarios.test.js`,
   `src/lib/qaFinalReview.test.js`,
   `src/components/spotTheError.test.js`,
-  `src/components/roleApps.smoke.test.jsx` (8 smoke tests for App / Start / SupervisorApp /
+  `src/components/roleApps.smoke.test.jsx` (smoke tests for App / Start / SupervisorApp /
   NavigatorApp — renders-without-crashing + gate/session routing, with Firebase/db/session mocked),
   `src/components/roleApps.behavior.test.jsx` (16 per-tab behavioural tests: SupervisorApp tab
   transitions + empty states + navigator-detail open; NavigatorApp dept-select → phase hub /
   dashboard / My Training / Practice chooser / My History / dept switch — Firebase/db/session/apiFetch
   mocked, browser APIs stubbed, no audio started),
-  `src/components/navigatorDetail.override.test.jsx` (6 tests for the supervisor grade-override
-  panel: AI-score display, override-score + original-AI-score display, form open, score/reason
-  validation, and db-helper payload — `db.js` mocked, no Firebase).
+  `src/components/navigatorDetail.override.test.jsx` (supervisor practice overrides, final QA
+  review actions, deterministic-conflict transparency — `db.js` mocked, no Firebase).
   The F22 voice call (relay + Web Audio) is verified by live
   end-to-end probe rather than unit tests — audio I/O isn't unit-testable headlessly. Deeper
   per-tab role-app behaviour remains untested (the smoke tests cover shell mount + routing only).
@@ -1247,15 +1273,14 @@ of this file on 2026-07-07 to cut per-session context cost (it was ~55% of the f
 - **Client fetch layer:** `src/lib/apiFetch.js` — shared helper for all `/api` calls (AbortController
   timeout, `credentials: 'same-origin'` so the supervisor session cookie rides along, Content-Type,
   error-body parsing). It **no longer injects `body.secret`** (the old public-passcode gate);
-  supervisor-only endpoints authorize via the HttpOnly session cookie, while navigator/shared
-  endpoints remain pilot-open (rate-limited). Used by Interview.jsx, SpotTheError.jsx, Coaching.jsx,
-  and SupervisorApp.jsx.
-- **Server authorization:** `api/_auth.js` — signed-session layer (HMAC-SHA256 via Node `crypto`):
-  `createSessionToken`/`verifySessionToken`, cookie helpers, `checkSupervisorPasscode`, and two
-  gates: `validateSession` (supervisor-only endpoints) and `validateSecret` (navigator/shared,
-  pilot-open). `POST /api/supervisor-login` issues the cookie; `POST /api/logout` clears it. Env:
-  `SUPERVISOR_PASSCODE_SERVER`, `SESSION_SIGNING_SECRET`, `ALLOW_LEGACY_API_SECRET`,
-  `REQUIRE_SUPERVISOR_SESSION`.
+  every protected request also carries a refreshed Firebase ID token. Used by Interview.jsx,
+  SpotTheError.jsx, Coaching.jsx, NavigatorApp.jsx, and SupervisorApp.jsx.
+- **Server authorization:** `api/_auth.js` verifies Firebase ID tokens for every navigator/shared
+  endpoint and requires both a supervisor claim and the signed HttpOnly cookie for management
+  endpoints. `api/_firebase-admin.js` owns lazy Admin initialization; `_pin.js` owns scrypt PINs.
+  `POST /api/supervisor-login` and `/api/navigator-login` mint the custom identities;
+  `POST /api/logout` clears the cookie. Env: `FIREBASE_SERVICE_ACCOUNT_JSON` (or split Admin vars),
+  `SUPERVISOR_PASSCODE_SERVER`, `SESSION_SIGNING_SECRET`; legacy body secrets are off by default.
 - **Branding:** product name is **Knowledge Check** everywhere in the UI. `public/favicon.png`
   is active (linked in `index.html`). `public/logo.png` exists in the repo but is no longer
   referenced. `styles.css` has orphaned `.start__logo`/`.nav__logo`/`logo-float` rules from
@@ -1276,30 +1301,27 @@ of this file on 2026-07-07 to cut per-session context cost (it was ~55% of the f
   (`GEMINI_API_KEYS` set in Railway Variables; all 7 REST AI endpoints live + the `/api/live`
   WebSocket relay for the real-time voice call).
 - **Deployment status:** **Railway** (Git-connected to `main`). Railway auto-deploys on push.
-  `VITE_FIREBASE_*` and `GEMINI_API_KEYS` confirmed set in Railway Variables. **Supervisor auth
-  (2026-07-08):** Railway should set `SUPERVISOR_PASSCODE_SERVER` (login passcode, not the bundled
-  config value) and `SESSION_SIGNING_SECRET` (HMAC key for session tokens). If these are unset the
-  app uses a pilot fallback (passcode-derived signing key + bundled config passcode) and **must not
-  be considered production-hardened**. `GENERATION_SECRET` is **legacy only** — accepted just as the
-  `body.secret` value, and only when `ALLOW_LEGACY_API_SECRET=true` (off by default).
+  Before deploying this branch, Railway must add `FIREBASE_SERVICE_ACCOUNT_JSON`,
+  `SUPERVISOR_PASSCODE_SERVER`, and `SESSION_SIGNING_SECRET` alongside existing
+  `VITE_FIREBASE_*`/`GEMINI_API_KEYS`, then deploy code, verify both roles, and publish the tightened
+  Firestore rules. Production fails closed if the explicit supervisor/Admin credentials are absent.
 - **Question health:** active questions in the Question Bank now show a colored health dot once
   they hit 10+ responses. Sub-20% correct rate triggers a "Review Required" flag with a "Can-Teach
-  signal" if expert-level navigators are also failing — the Reverse QA feature. Raw `answers` are
-  now stored on every new result doc; legacy docs (pre-this-change) are skipped silently.
+  signal" if expert-level navigators are also failing — the Reverse QA feature. Health uses every
+  answer-bearing `resultHistory` retake (with a current-result fallback for legacy rows), not just
+  the overwritten latest submission.
 - **Counts (today):** 6 domains (job-aligned 2026-07-02: intake · classification · routing ·
   scheduling · boundaries · documentation) · 9 competencies · 21 Pediatrics + 16
   OB/GYN = **37** seed questions (offline fallback) + the **48-item MCQ v2 operating-model bank**
   (24 Pediatrics + 24 OB/GYN) that replaces the weak active bank via a marker-gated
   archive-and-replace migration (bank grows in Firestore per dept) · 4 departments (**Pediatrics
-  + OB/GYN live**, 2 mockup) · **764** unit tests (30 test files) · **12** Firestore collections
+  + OB/GYN live**, 2 mockup) · **804** unit tests (41 test files) · **13** Firestore collections
   (`roster`, `results`, `resultHistory`, `questions`, `audits`, `interviews`, `completions`,
-  `pairings`, `supervisorFeedback`, `learningProposals`, `sops`, `contentMigrations`) ·
-  **12** REST serverless functions (`generate-scenarios`, `generate-coaching`, `interview-turn`,
+  `pairings`, `supervisorFeedback`, `learningProposals`, `sops`, `activeSops`, `contentMigrations`) ·
+  **16** REST functions (`generate-scenarios`, `generate-coaching`, `interview-turn`,
   `grade-interview`, `grade-call-qa`, `generate-audit`, `coach-audit`, `sequence-path`,
-  `refine-sop`, `supervisor-login`, `logout`, `health`) +
-  **1** WebSocket relay (`live-relay.js` → `/api/live`) · **5** shared API helpers
-  (`api/_gemini-client.js`, `api/_auth.js`, `api/_sop-store.js`, `api/_qa-rubric.js`,
-  `api/_qa-glossary.js`) · **1** shared client fetch helper (`src/lib/apiFetch.js`).
+  `refine-sop`, `supervisor-login`, `navigator-login`, `navigator-roster`, `set-navigator-pin`,
+  `mentor-scores`, `logout`, `health`) + **1** authenticated WebSocket relay (`/api/live`).
 
 ---
 
@@ -1360,8 +1382,8 @@ of this file on 2026-07-07 to cut per-session context cost (it was ~55% of the f
 
 ### Database schemas / API endpoints / env vars
 - **Firestore collections** (UUID-keyed; levels never stored — always derived client-side):
-  - `roster/{uuid}` → `{ name, pin, createdAt }` — navigator list; blank `pin` means the navigator
-    creates it on first sign-in.
+  - `roster/{uuid}` → `{ name, status, pinHash?, pinSet, createdAt, pinUpdatedAt? }`. PIN hashes are
+    server-only salted scrypt values; legacy plaintext `pin` is deleted on successful migration.
   - `results/{key}` → `{ name, navigatorId, department, assessmentType, scores:{domainId:pct},
     competencyScores:{compId:pct}, answers, submittedAt }`. Key is `${navigatorId}__${department}`
     for MCQ (legacy back-compat), `${navigatorId}__${department}__spot` for Spot the Error, and
@@ -1377,6 +1399,8 @@ of this file on 2026-07-07 to cut per-session context cost (it was ~55% of the f
   - `sops/{uuid}` → `{ department, title, body, version, status: 'draft'|'active'|'archived',
     source: 'manual'|'ai-build'|'ai-refine', createdAt, activatedAt }`. At most one active doc per
     department; the active body grounds the server's AI features (read via `api/_sop-store.js`).
+  - `activeSops/{department}` → deterministic transactional pointer + copied active SOP body used
+    by the server cache. Activation/archive updates the pointer atomically.
   - `contentMigrations/{version}` → one-time cleanup markers such as
     `2026-07-content-quality-fixes-v2`; used so supervisor-load migrations do not rescan after a
     successful run. `firestore.rules` must allow signed-in pilot access to this collection.
@@ -1395,23 +1419,26 @@ of this file on 2026-07-07 to cut per-session context cost (it was ~55% of the f
   - `POST /api/generate-audit` `{ domain, department, workflowType, avoidWorkflowTypes, secret }` → `{ transcript, errorIndex, hint, modelExplanation, workflowType, errorKind, difficulty }` (~10-turn flawed transcript for the "Spot the Error" exercise).
   - `POST /api/coach-audit` `{ domain, modelExplanation, navigatorAnswer, name, secret }` → `{ reply }` (warm 2–3 sentence mentor coaching note; advisory only).
   - `POST /api/refine-sop` — `{ mode:'build', rawText, department, secret }` → `{ sop: { title, body, notes[] } }` (structures a raw document into the 6-domain SOP layout); `{ mode:'refine', rawText, currentSop, department, secret }` → `{ sop: { title, body, changes:[{type, summary}] } }` (merges new material into the active SOP, flagging contradictions/outdated rules/additions/clarifications). Output is always saved client-side as a draft — the endpoint never writes Firestore.
-  - `POST /api/supervisor-login` `{ passcode }` → `200 { ok }` + `Set-Cookie: kc_supervisor_session`
-    (signed HttpOnly session) on match; `401 { error: 'Incorrect passcode.' }` otherwise. No secret
-    in the body; token never returned in the body.
+  - `POST /api/supervisor-login` `{ passcode }` → `200 { ok, customToken }` + signed HttpOnly
+    supervisor cookie. Production requires an explicit server-only passcode.
+  - `GET /api/navigator-roster` → `{ roster:[{id,name,pinSet}] }` (public, rate-limited, no PIN data).
+  - `POST /api/navigator-login` `{ navigatorId, pin }` → `{ customToken, navigator }`; verifies,
+    creates, or migrates the PIN in a transaction and mints navigator claims.
+  - `POST /api/set-navigator-pin` `{ navigatorId, pin }` → supervisor-only hashed PIN set/reset.
+  - `POST /api/mentor-scores` `{ department }` → authenticated minimal latest peer score projection.
   - `POST /api/logout` → `200 { ok }`, clears the session cookie (idempotent).
   - `GET /api/health` → `{ ok }`.
 - **WebSocket endpoint:**
   - `WS /api/live` — real-time voice practice call relay (F22). Client sends `{type:'start',
-    secret, callerName, scenario, department, openingLine}` then streams `{type:'audio', data}`
+    idToken, navigatorId, callerName, scenario, department, openingLine}` then streams `{type:'audio', data}`
     (base64 PCM16 @16kHz mic frames); relay forwards to Gemini Live and streams back
     `{type:'ready'|'audio'|'transcript'|'interrupted'|'turnComplete'|'error'}`. Key held
     server-side; persona built via `buildSystemInstruction()`. Model
     `gemini-3.1-flash-live-preview`.
-- **Env vars:** client (gitignored `.env.local`, build-time) `VITE_FIREBASE_*`; **server-only**
-  (Railway service Variables — never `VITE_`-prefixed) `GEMINI_API_KEYS` (comma-separated; rotated on
-  rate-limit) or single `GEMINI_API_KEY`. `GENERATION_SECRET` is optional — server falls back to
-  `SUPERVISOR_PASSCODE` when not set. **VITE_FIREBASE_* must be in Railway Variables before the
-  first build** — they're baked into the JS bundle at build time.
+- **Env vars:** client/build-time `VITE_FIREBASE_*`; server-only
+  `FIREBASE_SERVICE_ACCOUNT_JSON` (or split `FIREBASE_PROJECT_ID` / `FIREBASE_CLIENT_EMAIL` /
+  `FIREBASE_PRIVATE_KEY`), `SUPERVISOR_PASSCODE_SERVER`, `SESSION_SIGNING_SECRET`,
+  `GEMINI_API_KEYS` (or one `GEMINI_API_KEY`), and optional `GEMINI_REQUEST_TIMEOUT_MS`.
 - **db.js API** (the only Firestore surface): roster — `addToRoster`, `getRoster`,
   `subscribeRoster(cb,onError)`, `updateRosterEntry(id,patch)`, `setRosterStatus(id,status)`;
   results — `getResult(navigatorId, department, assessmentType)`,
@@ -1430,16 +1457,15 @@ of this file on 2026-07-07 to cut per-session context cost (it was ~55% of the f
   `subscribeCompletions(cb, onError)`; learning loop — `saveSupervisorFeedback`,
   `subscribeSupervisorFeedback`, `saveLearningProposal`, `updateLearningProposalStatus`,
   `subscribeLearningProposals`; SOPs — `subscribeSops`, `saveSopDraft`, `updateSop`,
-  `activateSop(id, department)` (batch-archives the previous active version), `archiveSop`,
+  `activateSop(id, department)` (transactionally replaces the active pointer), `archiveSop`,
   `deleteSop`.
-- **Secrets:** `SUPERVISOR_PASSCODE` is in the repo (pilot-acceptable) but is now only a
-  dev/localhost fallback — production should set `SUPERVISOR_PASSCODE_SERVER` +
-  `SESSION_SIGNING_SECRET` as server-only Railway Variables. `GEMINI_API_KEYS` is a
-  server-only Railway Variable, never committed or bundled.
+- **Secrets:** the bundled `SUPERVISOR_PASSCODE` is local/test convenience only. A deployed process
+  fails closed without `SUPERVISOR_PASSCODE_SERVER`; Firebase Admin and Gemini credentials are
+  server-only and must never be committed or `VITE_`-prefixed.
 
 ### Build & run
 ```bash
-npm install          # install deps
+npm ci               # install the exact committed dependency graph
 npm run dev          # local dev (http://localhost:5173, base '/'); /api NOT available here
 npm run build        # production build to dist/ (base '/')
 npm start            # run the Express server locally (serves dist/ + /api); needs .env.local
@@ -1510,15 +1536,15 @@ npm run test:e2e     # run the Playwright browser tests (auto-builds + starts th
 - Heatmap intensity toggle (show % inside matrix cells).
 
 ### Technical Debt
-- **462 tests** across 23 test files as of 2026-07-08. **Role-app coverage** (`App`, `Start`,
+- **804 tests** across 41 test files as of 2026-07-12. **Role-app coverage** (`App`, `Start`,
   `SupervisorApp`, `NavigatorApp`) now includes both shell smoke tests (mount + gate/session routing)
   and per-tab behavioural tests (`roleApps.behavior.test.jsx`: tab transitions, empty states,
   dept-select → phase/dashboard flows, navigator-detail open). Deeper per-child-widget interaction
   coverage (editing questions, generating SOPs, submitting a full check) is the remaining frontier.
-- **Vite 5.4.21 carries known moderate advisories** (`server.fs.deny` bypass on Windows, optimized-deps
-  `.map` path traversal, esbuild dev-server request exposure). The fix is a semver-major upgrade to
-  Vite 8 (+ plugin-react major) — deliberately deferred from the 2026-07-06 stability pass; these are
-  dev-server-side issues, not production-bundle issues, so risk in deployment is low.
+- ~~**Invalid/vulnerable Vite 5 + nested Vite 8/esbuild tree**~~ — **resolved 2026-07-12**:
+  Vite 8.1 + plugin-react 6 are top-level, `npm ls --all` is valid, Node engines match upstream,
+  Railway uses `npm ci`, and the compatible `uuid@11.1.1` override clears Firebase Admin's
+  vulnerable transitive v9 line. Production and full `npm audit` report zero findings.
 - ~~Components, role apps, and API handlers untested~~ — **resolved 2026-06-26**: component tests
   (jsdom + Testing Library), API handler pure-function tests, and db.js mocked tests all added.
 - ~~`getApiKeys`/`callGemini`/`geminiWithRotation` duplicated 6×~~ — **extracted to
@@ -1544,20 +1570,14 @@ npm run test:e2e     # run the Playwright browser tests (auto-builds + starts th
 - **~~Duplicate navigator names~~ (resolved 2026-06-24):** `AddNavigatorForm` performs a
   case-insensitive check against the live roster before writing; blocks duplicates with an inline
   error message.
-- **Auth is pilot-grade (partially hardened 2026-07-08):** supervisor authorization is now
-  server-side (signed HttpOnly session cookie from `/api/supervisor-login`), so the two authoring
-  endpoints no longer trust the public passcode. Still pilot-grade: navigator PINs are
-  readable/writable in Firestore by signed-in pilot clients; navigator/practice API endpoints are
-  open (rate-limited) because navigators have no server credential; the bundled `SUPERVISOR_PASSCODE`
-  remains as a dev fallback. *Severity: low for a trusted pilot.* *Mitigation:* set
-  `SUPERVISOR_PASSCODE_SERVER`/`SESSION_SIGNING_SECRET` in production; move to real Firebase Auth
-  (per-navigator identity + tightened Firestore rules) before production.
-- **Visible PINs in Navigators tab:** supervisor can see set navigator PINs in plain text and blank
-  rows show "Not set yet." *Severity: low.* A "Show PIN" toggle could be added before any broader
-  rollout.
-- **Silent save failure for navigator:** if `saveResult` fails after submission, the navigator sees
-  their results from local state but the supervisor's matrix doesn't update. *Severity: low for
-  pilot.* A future toast notification would improve this.
+- **~~Anonymous/pilot authorization~~ (resolved 2026-07-12):** server-issued Firebase role claims,
+  ownership-scoped Firestore rules, protected API/voice gates, fail-closed production supervisor
+  config, and minimized server projections replace anonymous access and localStorage trust.
+- **~~Plaintext/visible PINs~~ (resolved 2026-07-12):** PINs are salted scrypt hashes created or
+  migrated transactionally; neither the public roster nor supervisor UI receives PIN material.
+- **~~Silent navigator save failure~~ (resolved 2026-07-12):** a keyed retry queue preserves every
+  failed result independently, atomic batches keep result/history/completion in sync, and practice
+  screens expose explicit retry/discard states.
 - **Non-assessed departments are empty:** Adult Medicine and Behavioural Health are not assessed yet;
   they show an empty state until SOP-backed question sets exist. *Severity: low (intended for pilot).*
 - **~~Pages deploy is manual~~ (resolved):** Railway auto-deploys on push to `main`; no manual
@@ -1576,8 +1596,12 @@ npm run test:e2e     # run the Playwright browser tests (auto-builds + starts th
   `VoiceCall.jsx` now blocks completion unless interview save, grading, and grade-save all succeed;
   supervisor reset archives active QA attempts for that navigator + department so archived QA no
   longer counts as current completion.
-- **No known functional bugs** in scoring/read-offs or active QA completion after the 2026-07-08
-  reliability pass.
+- **Deployment prerequisite:** this branch intentionally fails closed without Firebase Admin and
+  an explicit production supervisor passcode. Follow the rollout order in `.env.local.example` /
+  `README.md`; tightening rules before deploying the identity endpoints would lock users out.
+- **Browser/live-service validation gap:** unit/build/server checks are complete, but microphone
+  interoperability and real Firebase/Gemini behavior still require the safe post-deploy smoke and
+  a deliberate voice call on the target browser.
 
 ---
 
@@ -1596,15 +1620,12 @@ npm run test:e2e     # run the Playwright browser tests (auto-builds + starts th
   "knowledge-only" conflicted; surfacing it avoided building a view that needed fabricated KPIs.
 - **Keep priority encoding separate from capability encoding.** Training Required/Stretch tags were
   deliberately kept off the red/amber/green scale to avoid confusion with levels.
-- **Railway defaults to Node 18; modern tooling needs 20+.** vitest@4 and vite@8 both require
-  Node 20+. Set `"engines": {"node":">=20.0.0"}` in `package.json` — Nixpacks/Railpack reads it.
-- **`npm ci` and cross-platform lockfiles don't mix.** When a lockfile is generated on one OS/CPU,
-  it records optional packages for all platforms (esbuild has ~27 platform variants). `npm ci` on
-  Railway then fails with `EBADPLATFORM` for incompatible ones. Fix: override the install command
-  to `npm install` via `nixpacks.toml` — it skips incompatible optional packages gracefully.
-- **Partial `npm install` updates don't always sync the lockfile.** After upgrading packages,
-  do a clean wipe (`rm -rf node_modules package-lock.json`) before `npm install` to guarantee
-  the lockfile reflects all transitive deps cleanly. Partial runs leave gaps.
+- **Railway defaults can lag modern tooling.** Vite 8 requires Node `^20.19 || >=22.12`; keep the
+  exact range in `package.json` so Railpack cannot select an unsupported early Node 20 release.
+- **Cross-platform optional packages are compatible with `npm ci` when the lockfile is healthy.**
+  The repaired lockfile installs cleanly on Linux and should remain the deployment authority.
+- **Use lockfile-first installs.** Update dependencies intentionally with `npm install`, commit the
+  resulting lockfile, then verify reproducibility with a clean `npm ci`.
 - **Express 5 requires named wildcards.** A bare `*` in `app.get('*', …)` crashes at startup
   with `PathError: Missing parameter name`. Use `/*splat` (or any `/*name` form) instead.
 - **Keep CI intentionally boring.** This repo only needs a fast test/build gate in GitHub Actions;
@@ -1692,16 +1713,13 @@ npm run test:e2e     # run the Playwright browser tests (auto-builds + starts th
 ## 15. Current Priorities
 
 1. **Maintain this CLAUDE.md** on every change (highest standing priority).
-2. **Deeper role-app tests** — smoke coverage (shell mount + gate/session routing) and per-tab
-   behavioural coverage (tab transitions, empty states, dept-select → phase/dashboard flows) for
-   `App`, `Start`, `SupervisorApp`, and `NavigatorApp` now both exist (2026-07-08). Per-child-widget
-   interaction coverage (editing questions, generating SOPs, submitting a full check end-to-end) is
-   the next coverage milestone.
-3. ✅ **Supervisor review layers** — practice score override done 2026-07-08; Call QA final verdict done
-   2026-07-09. Practice sessions keep `gradeOverride`; QA test attempts now keep `qaFinalReview`
-   (pending/confirmed/overridden pass/fail with required reasons for overrides) while preserving the
-   original AI `grade` + `qa`. Next: attribute both actions to a specific supervisor once real per-user
-   auth lands.
+2. **Deploy the identity boundary safely** — add Firebase Admin + supervisor secrets, deploy this
+   code, verify navigator/supervisor token exchange, then publish the tightened Firestore rules.
+   Never reverse that order.
+3. **Post-deploy browser smoke** — run the safe Playwright suite and one deliberate microphone call;
+   the container cannot prove real browser permission/device or live Firebase/Gemini behavior.
+4. **Deeper role-app tests** — current unit/behavior coverage is broad; editing questions,
+   generating SOPs, and a full authenticated assessment remain the next browser-automation targets.
 
 **Active work items:**
 - **Pilot-feedback follow-ups (2026-07-03):** after the 2026-07-07 content-quality fix, supervisors
@@ -1720,8 +1738,7 @@ npm run test:e2e     # run the Playwright browser tests (auto-builds + starts th
 - **SOP content** — paste the real Pediatrics / OB/GYN SOPs (and later Behavioral Health /
   Internal Medicine) into the new SOPs tab and activate, taking grounding control away from the
   hardcoded `_sop-context.js` fallbacks. Note: live SOPs in Firestore may hold real provider
-  names (not in the public repo), but rules are pilot-grade — treat PII accordingly until real
-  auth lands.
+  names (not in the public repo); keep the hardened rules deployed and continue to avoid patient PII.
 
 **Blockers:**
 - Adult Medicine and Behavioural Health remain mockup — each needs an owner-provided SOP before

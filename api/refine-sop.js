@@ -117,7 +117,7 @@ async function geminiJson(keys, parts, { label, temperature }) {
 
 export default async function handler(req, res) {
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
-  if (validateSession(req, res)) return; // supervisor-only authoring endpoint
+  if (await validateSession(req, res)) return; // supervisor-only authoring endpoint
 
   const { mode, rawText = '', currentSop = '', department = 'pediatrics', file = null } = req.body ?? {};
   if (mode !== 'build' && mode !== 'refine') {

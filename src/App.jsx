@@ -1,4 +1,4 @@
-import { useState, lazy, Suspense } from 'react';
+import { useEffect, useRef, useState, lazy, Suspense } from 'react';
 import Start from './components/Start.jsx';
 import Footer from './components/Footer.jsx';
 import { getSession, setSession, clearSession } from './lib/session.js';
@@ -32,7 +32,28 @@ function AppLoading() {
   );
 }
 export default function App() {
-  const [session, setSessionState] = useState(() => getSession());
+  const initialSession = useRef(getSession());
+  const [session, setSessionState] = useState(null);
+  const [restoring, setRestoring] = useState(Boolean(initialSession.current));
+
+  useEffect(() => {
+    const stored = initialSession.current;
+    if (!stored) return;
+    let active = true;
+    import('./lib/firebase.js')
+      .then(({ getAuthenticatedIdentity }) => getAuthenticatedIdentity())
+      .then((identity) => {
+        if (!active) return;
+        const matches = identity?.role === stored.role && (
+          stored.role !== 'navigator' || identity.navigatorId === stored.navigatorId
+        );
+        if (matches) setSessionState(stored);
+        else clearSession();
+      })
+      .catch(() => { if (active) clearSession(); })
+      .finally(() => { if (active) setRestoring(false); });
+    return () => { active = false; };
+  }, []);
 
   const enterNavigator = (navigatorId, name) => {
     setSession('navigator', name, navigatorId);
@@ -48,9 +69,12 @@ export default function App() {
     // Clear the server-issued supervisor session cookie (best-effort; failure
     // must not block signing out), then clear the local session as before.
     fetch('/api/logout', { method: 'POST', credentials: 'same-origin' }).catch(() => {});
+    import('./lib/firebase.js').then(({ signOutFirebase }) => signOutFirebase()).catch(() => {});
     clearSession();
     setSessionState(null);
   };
+
+  if (restoring) return <AppLoading />;
 
   if (!session) {
     return (

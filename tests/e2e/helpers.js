@@ -11,16 +11,17 @@ import { expect } from '@playwright/test';
 //     (e.g. a build with no Firebase config): use `rosterIsPopulated()` to skip
 //     rather than fail.
 //
-// Credentials below are the same pilot-grade, public, in-repo values the
-// original e2e suite uses. They are NOT secrets.
+// Local defaults match the non-production demo setup. Remote/deployed runs must
+// supply dedicated E2E credentials through environment variables.
 // ─────────────────────────────────────────────────────────────────────────────
 
 // Pilot-grade test navigator credential (present in the seeded roster).
 export const NAV_NAME = /turki khan/i;
-export const NAV_PIN = '1223';
+export const NAV_PIN = process.env.E2E_NAV_PIN || '1223';
 
-// Pilot-grade supervisor passcode (src/data/config.js — public, dev fallback).
-export const SUPERVISOR_PASSCODE = '0200';
+export const SUPERVISOR_PASSCODE = process.env.E2E_SUPERVISOR_PASSCODE
+  || process.env.SUPERVISOR_PASSCODE_SERVER
+  || '0200';
 
 // True if the locator becomes visible within `timeout`. Unlike locator.isVisible()
 // (which samples the CURRENT state and never polls), this waits — use it to tell

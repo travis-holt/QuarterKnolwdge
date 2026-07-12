@@ -60,7 +60,10 @@ if (!navigator.mediaDevices) {
 
 // ── Shared mocks ─────────────────────────────────────────────────────────────
 
-vi.mock('../lib/firebase.js', () => ({ isFirebaseConfigured: true }));
+vi.mock('../lib/firebase.js', () => ({
+  isFirebaseConfigured: true,
+  getFirebaseIdToken: vi.fn().mockResolvedValue('firebase-id-token'),
+}));
 
 const sessionMocks = vi.hoisted(() => ({
   getSession: vi.fn(() => null),
@@ -98,6 +101,7 @@ const dbMocks = vi.hoisted(() => {
   const resolveNull = ['getResult'];
   const resolveVoid = [
     'seedQuestionsIfEmpty', 'runContentQualityFixesMigration', 'updateRosterEntry',
+    'runMcqV2OperatingModelMigration',
     'addToRoster', 'setRosterStatus', 'clearResult', 'saveDraftQuestions', 'activateQuestion',
     'archiveQuestion', 'deleteQuestion', 'updateQuestion', 'saveDraftAudits', 'activateAudit',
     'archiveAudit', 'deleteAudit', 'savePairing', 'updatePairingStatus', 'saveSupervisorFeedback',
@@ -289,8 +293,8 @@ describe('NavigatorApp — flow behavior', () => {
     await deptHeading();
     fireEvent.click(screen.getByText('Pediatrics').closest('button'));
 
-    // Dashboard shows the latest QA card (PASS) + the assessment bar.
-    expect(await screen.findByText('PASS')).toBeInTheDocument();
+    // An AI result remains visibly pending until a supervisor records the final verdict.
+    expect(await screen.findByText('AI PASS · PENDING REVIEW')).toBeInTheDocument();
   });
 
   it('dashboard renders mocked domain score data', async () => {
@@ -330,7 +334,7 @@ describe('NavigatorApp — flow behavior', () => {
     renderNav();
     await deptHeading();
     fireEvent.click(screen.getByText('Pediatrics').closest('button'));
-    await screen.findByText('PASS');
+    await screen.findByText('AI PASS · PENDING REVIEW');
 
     fireEvent.click(screen.getByRole('button', { name: 'My training' }));
     // The training view mounts (a stored result → a plan, not the empty state).

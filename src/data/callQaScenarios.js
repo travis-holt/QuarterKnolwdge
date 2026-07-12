@@ -1,4 +1,5 @@
 import { ASSESSED_DEPTS } from './departments.js';
+import { compareTimestampValues } from '../lib/time.js';
 
 // Curated Call QA Test scenarios. These are assessment prompts, so keep them
 // stable, department-tagged, and free of real names, phone numbers, or PII.
@@ -471,7 +472,7 @@ export function selectCallQaScenario({ department, priorAttempts = [] } = {}) {
         iv?.qa &&
         !iv?.qaArchived
       )
-      .sort((a, b) => (b.endedAt?.seconds ?? 0) - (a.endedAt?.seconds ?? 0))
+      .sort((a, b) => compareTimestampValues(b.endedAt, a.endedAt))
       .slice(0, 3)
       .map((iv) => iv.qaScenarioId)
       .filter(Boolean)

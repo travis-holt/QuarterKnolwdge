@@ -18,7 +18,7 @@ import { test, expect } from '@playwright/test';
 // ─────────────────────────────────────────────────────────────────────────────
 
 const NAV_NAME = /turki khan/i;
-const NAV_PIN = '1223';
+const NAV_PIN = process.env.E2E_NAV_PIN || '1223';
 
 async function signInAsNavigator(page) {
   await page.goto('/');

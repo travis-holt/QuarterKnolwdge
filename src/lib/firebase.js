@@ -13,7 +13,13 @@
 
 import { initializeApp } from 'firebase/app';
 import { getFirestore } from 'firebase/firestore';
-import { getAuth, signInAnonymously } from 'firebase/auth';
+import {
+  getAuth,
+  getIdTokenResult,
+  onAuthStateChanged,
+  signInWithCustomToken,
+  signOut,
+} from 'firebase/auth';
 
 const firebaseConfig = {
   apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
@@ -38,18 +44,9 @@ export const isFirebaseConfigured = Boolean(
 let db = null;
 let auth = null;
 
-// authReady resolves once an anonymous sign-in attempt has SETTLED (success or
-// failure). It NEVER rejects — that is deliberate. db.js awaits it before every
-// Firestore read/write/listen so that, once the hardened firestore.rules
-// (`request.auth != null`) are deployed, requests carry an auth token.
-//
-// Why it must never block on failure: if the Firebase console's Anonymous auth
-// provider is not yet enabled, signInAnonymously throws. If that rejection
-// blocked db access, the live app (which still runs the current OPEN rules until
-// the owner deploys the new ones) would break. So a failed sign-in logs and
-// resolves `false`, and Firestore calls proceed unauthenticated — which still
-// works under the open rules. The safe rollout order is documented in
-// firestore.rules: enable Anonymous auth FIRST, ship this code, THEN tighten rules.
+// authReady resolves after Firebase restores (or fails to restore) the persisted
+// server-issued identity. There is no anonymous fallback: without a valid custom
+// token, Firestore rules intentionally deny application data.
 let authReady = Promise.resolve(false);
 
 if (isFirebaseConfigured) {
@@ -57,19 +54,48 @@ if (isFirebaseConfigured) {
     const app = initializeApp(firebaseConfig);
     db = getFirestore(app);
     auth = getAuth(app);
-    authReady = signInAnonymously(auth)
-      .then(() => true)
-      .catch((err) => {
-        console.warn(
-          'Anonymous sign-in failed — Firestore will proceed unauthenticated ' +
-          '(fine under open rules; enable Anonymous auth before tightening them):',
-          err?.code || err
-        );
-        return false;
+    authReady = new Promise((resolve) => {
+      let unsubscribe = () => {};
+      unsubscribe = onAuthStateChanged(auth, (user) => {
+        unsubscribe();
+        resolve(Boolean(user));
+      }, (err) => {
+        unsubscribe();
+        console.warn('Firebase identity restore failed:', err?.code || err);
+        resolve(false);
       });
+    });
   } catch (err) {
     console.error('Firebase init failed:', err);
   }
+}
+
+export async function signInWithAppToken(customToken) {
+  if (!auth || !customToken) throw new Error('Secure sign-in is not configured.');
+  const credential = await signInWithCustomToken(auth, customToken);
+  return getIdTokenResult(credential.user);
+}
+
+export async function getFirebaseIdToken(forceRefresh = false) {
+  if (!auth) return null;
+  await authReady;
+  return auth.currentUser?.getIdToken(forceRefresh) ?? null;
+}
+
+export async function getAuthenticatedIdentity() {
+  if (!auth) return null;
+  await authReady;
+  if (!auth.currentUser) return null;
+  const token = await getIdTokenResult(auth.currentUser);
+  return {
+    uid: auth.currentUser.uid,
+    role: token.claims.role ?? null,
+    navigatorId: token.claims.navigatorId ?? null,
+  };
+}
+
+export async function signOutFirebase() {
+  if (auth) await signOut(auth);
 }
 
 export { db, auth, authReady };

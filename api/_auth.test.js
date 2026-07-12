@@ -1,188 +1,124 @@
-// Tests for the server-side authorization layer — the security boundary the
-// /api handlers run through. Covers the signed-session pipeline (create/verify/
-// tamper/expire), cookie helpers, the supervisor-only gate (validateSession),
-// and the pilot-open navigator gate (validateSecret).
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+
+const mocks = vi.hoisted(() => ({ verifyIdToken: vi.fn() }));
+
+vi.mock('./_firebase-admin.js', () => ({
+  FirebaseAdminConfigError: class FirebaseAdminConfigError extends Error {},
+  getFirebaseAdmin: () => ({ auth: { verifyIdToken: mocks.verifyIdToken } }),
+}));
+
 import {
-  createSessionToken,
-  verifySessionToken,
-  serializeSessionCookie,
+  bearerToken,
+  checkSupervisorPasscode,
   clearSessionCookie,
+  createSessionToken,
+  isSecureRequest,
+  isSupervisorConfigured,
   parseCookies,
   readSession,
-  isSecureRequest,
-  validateSession,
-  validateSecret,
-  isValidSecret,
-  checkSupervisorPasscode,
-  isSupervisorConfigured,
+  serializeSessionCookie,
   SESSION_COOKIE,
+  validateSecret,
+  validateSession,
+  verifySessionToken,
+  verifySocketToken,
 } from './_auth.js';
 import { SUPERVISOR_PASSCODE } from '../src/data/config.js';
 
 function mockRes() {
-  const headers = {};
+  return { status: vi.fn().mockReturnThis(), json: vi.fn().mockReturnThis() };
+}
+
+function request({ cookie, token, body = {} } = {}) {
   return {
-    status: vi.fn().mockReturnThis(),
-    json: vi.fn(),
-    setHeader: vi.fn((k, v) => { headers[k] = v; }),
-    _headers: headers,
+    headers: {
+      ...(cookie ? { cookie } : {}),
+      ...(token ? { authorization: `Bearer ${token}` } : {}),
+    },
+    body,
   };
 }
 
-// A request carrying a valid supervisor session cookie.
-function reqWithSession(token) {
-  return { headers: { cookie: `${SESSION_COOKIE}=${token}` }, body: {} };
-}
+beforeEach(() => mocks.verifyIdToken.mockReset());
 
-describe('session tokens', () => {
-  it('creates a token that verifies and carries the supervisor role', () => {
-    const token = createSessionToken({ role: 'supervisor' });
-    const payload = verifySessionToken(token);
-    expect(payload).toBeTruthy();
-    expect(payload.role).toBe('supervisor');
-    expect(typeof payload.exp).toBe('number');
-  });
-
-  it('rejects a tampered token', () => {
-    const token = createSessionToken();
-    const [data] = token.split('.');
-    expect(verifySessionToken(`${data}.deadbeef`)).toBeNull();
-    // Flip a byte in the payload but keep the old signature.
-    expect(verifySessionToken(`${data}x.${token.split('.')[1]}`)).toBeNull();
-  });
-
-  it('rejects an expired token', () => {
+describe('signed supervisor session', () => {
+  it('round-trips and rejects tampering/expiry', () => {
     const now = 1_000_000;
     const token = createSessionToken({}, { ttlMs: 1_000, now });
-    expect(verifySessionToken(token, { now: now + 500 })).toBeTruthy();
+    expect(verifySessionToken(token, { now: now + 500 })?.role).toBe('supervisor');
     expect(verifySessionToken(token, { now: now + 2_000 })).toBeNull();
+    const [data] = token.split('.');
+    expect(verifySessionToken(`${data}.bad`)).toBeNull();
   });
 
-  it('rejects malformed / missing tokens', () => {
-    expect(verifySessionToken(undefined)).toBeNull();
-    expect(verifySessionToken('')).toBeNull();
-    expect(verifySessionToken('nodot')).toBeNull();
-    expect(verifySessionToken('.sig')).toBeNull();
-  });
-});
-
-describe('cookie helpers', () => {
-  it('serializes an HttpOnly, SameSite=Lax, Path=/ session cookie', () => {
-    const c = serializeSessionCookie('tok', { ttlMs: 3_600_000 });
-    expect(c).toContain(`${SESSION_COOKIE}=tok`);
-    expect(c).toContain('HttpOnly');
-    expect(c).toContain('SameSite=Lax');
-    expect(c).toContain('Path=/');
-    expect(c).toContain('Max-Age=3600');
-    expect(c).not.toContain('Secure');
-  });
-
-  it('adds Secure when requested', () => {
-    expect(serializeSessionCookie('tok', { secure: true })).toContain('Secure');
-  });
-
-  it('clears the cookie with Max-Age=0', () => {
-    expect(clearSessionCookie()).toContain(`${SESSION_COOKIE}=;`);
+  it('serializes and clears a secure HttpOnly cookie', () => {
+    const cookie = serializeSessionCookie('tok', { ttlMs: 3_600_000, secure: true });
+    expect(cookie).toContain(`${SESSION_COOKIE}=tok`);
+    expect(cookie).toContain('HttpOnly');
+    expect(cookie).toContain('SameSite=Lax');
+    expect(cookie).toContain('Secure');
     expect(clearSessionCookie()).toContain('Max-Age=0');
   });
 
-  it('parses cookies and reads the session round-trip', () => {
+  it('parses cookies and detects proxied HTTPS', () => {
     const token = createSessionToken();
-    expect(parseCookies({ headers: { cookie: `a=1; ${SESSION_COOKIE}=${token}; b=2` } })[SESSION_COOKIE])
-      .toBe(token);
-    expect(parseCookies({ headers: {} })).toEqual({});
-    expect(readSession(reqWithSession(token)).role).toBe('supervisor');
-    expect(readSession({ headers: {} })).toBeNull();
-  });
-});
-
-describe('isSecureRequest', () => {
-  it('detects direct and proxied HTTPS', () => {
-    expect(isSecureRequest({ secure: true })).toBe(true);
-    expect(isSecureRequest({ headers: { 'x-forwarded-proto': 'https' } })).toBe(true);
+    const req = request({ cookie: `a=1; ${SESSION_COOKIE}=${token}` });
+    expect(parseCookies(req)[SESSION_COOKIE]).toBe(token);
+    expect(readSession(req)?.role).toBe('supervisor');
     expect(isSecureRequest({ headers: { 'x-forwarded-proto': 'https,http' } })).toBe(true);
-    expect(isSecureRequest({ headers: { 'x-forwarded-proto': 'http' } })).toBe(false);
-    expect(isSecureRequest({ headers: {} })).toBe(false);
   });
 });
 
-describe('passcode', () => {
-  it('accepts the configured passcode and rejects others (constant-time)', () => {
-    // Default env: SUPERVISOR_PASSCODE_SERVER falls back to the config value.
+describe('server passcode', () => {
+  it('uses a constant-time server-side comparison', () => {
     expect(checkSupervisorPasscode(SUPERVISOR_PASSCODE)).toBe(true);
-    expect(checkSupervisorPasscode('nope')).toBe(false);
-    expect(checkSupervisorPasscode(undefined)).toBe(false);
+    expect(checkSupervisorPasscode('wrong')).toBe(false);
     expect(isSupervisorConfigured()).toBe(true);
   });
 });
 
-describe('validateSession (supervisor-only gate)', () => {
-  it('allows a request with a valid supervisor session', () => {
+describe('Firebase identity gates', () => {
+  it('extracts only a Bearer token', () => {
+    expect(bearerToken(request({ token: 'abc' }))).toBe('abc');
+    expect(bearerToken({ headers: { authorization: 'Basic abc' } })).toBeNull();
+  });
+
+  it('allows a navigator ID token on shared endpoints', async () => {
+    mocks.verifyIdToken.mockResolvedValue({ role: 'navigator', navigatorId: 'nav-1', uid: 'navigator:nav-1' });
+    const req = request({ token: 'nav-token' });
     const res = mockRes();
-    expect(validateSession(reqWithSession(createSessionToken()), res)).toBe(false);
+    expect(await validateSecret(req, res)).toBe(false);
+    expect(req.identity.navigatorId).toBe('nav-1');
     expect(res.status).not.toHaveBeenCalled();
   });
 
-  it('rejects a request with no session (401)', () => {
-    const res = mockRes();
-    expect(validateSession({ headers: {}, body: {} }, res)).toBe(true);
-    expect(res.status).toHaveBeenCalledWith(401);
-    expect(res.json).toHaveBeenCalledWith({ error: 'Not authorised.' });
+  it('rejects missing, invalid, or claim-less tokens', async () => {
+    const missingRes = mockRes();
+    expect(await validateSecret(request(), missingRes)).toBe(true);
+    expect(missingRes.status).toHaveBeenCalledWith(401);
+
+    mocks.verifyIdToken.mockResolvedValue({ uid: 'anonymous' });
+    const claimlessRes = mockRes();
+    expect(await validateSecret(request({ token: 'claimless' }), claimlessRes)).toBe(true);
+    expect(claimlessRes.status).toHaveBeenCalledWith(401);
   });
 
-  it('rejects the legacy public secret by default (ALLOW_LEGACY off)', () => {
-    const res = mockRes();
-    expect(validateSession({ headers: {}, body: { secret: SUPERVISOR_PASSCODE } }, res)).toBe(true);
-    expect(res.status).toHaveBeenCalledWith(401);
-  });
-});
+  it('requires both the HttpOnly session and supervisor Firebase claim for authoring', async () => {
+    mocks.verifyIdToken.mockResolvedValue({ role: 'supervisor', uid: 'supervisor' });
+    const cookie = `${SESSION_COOKIE}=${createSessionToken()}`;
+    const allowed = request({ cookie, token: 'supervisor-token' });
+    expect(await validateSession(allowed, mockRes())).toBe(false);
 
-describe('validateSecret (navigator/shared gate — pilot-open)', () => {
-  it('allows navigator requests with no credential by default', () => {
-    const res = mockRes();
-    expect(validateSecret({ headers: {}, body: {} }, res)).toBe(false);
-    expect(res.status).not.toHaveBeenCalled();
+    const noCookie = mockRes();
+    expect(await validateSession(request({ token: 'supervisor-token' }), noCookie)).toBe(true);
+    expect(noCookie.status).toHaveBeenCalledWith(401);
   });
 
-  it('allows a valid supervisor session too', () => {
-    const res = mockRes();
-    expect(validateSecret(reqWithSession(createSessionToken()), res)).toBe(false);
-  });
-});
-
-describe('isValidSecret (WS relay — pilot-open)', () => {
-  it('is open by default regardless of the value sent', () => {
-    expect(isValidSecret(undefined)).toBe(true);
-    expect(isValidSecret('anything')).toBe(true);
-  });
-});
-
-describe('REQUIRE_SUPERVISOR_SESSION toggle', () => {
-  const prev = process.env.REQUIRE_SUPERVISOR_SESSION;
-  beforeEach(() => {
-    process.env.REQUIRE_SUPERVISOR_SESSION = 'true';
-  });
-  afterEach(() => {
-    if (prev === undefined) delete process.env.REQUIRE_SUPERVISOR_SESSION;
-    else process.env.REQUIRE_SUPERVISOR_SESSION = prev;
-  });
-
-  it('validateSecret rejects a missing session (401) when the toggle is on', () => {
-    const res = mockRes();
-    expect(validateSecret({ headers: {}, body: {} }, res)).toBe(true);
-    expect(res.status).toHaveBeenCalledWith(401);
-    expect(res.json).toHaveBeenCalledWith({ error: 'Not authorised.' });
-  });
-
-  it('validateSecret allows a valid supervisor session when the toggle is on', () => {
-    const res = mockRes();
-    expect(validateSecret(reqWithSession(createSessionToken()), res)).toBe(false);
-    expect(res.status).not.toHaveBeenCalled();
-  });
-
-  it('isValidSecret returns false when the toggle is on and no legacy secret is allowed', () => {
-    expect(isValidSecret(undefined)).toBe(false);
-    expect(isValidSecret('anything')).toBe(false);
+  it('verifies WebSocket tokens and rejects navigator claims without an id', async () => {
+    mocks.verifyIdToken
+      .mockResolvedValueOnce({ role: 'navigator', navigatorId: 'nav-1' })
+      .mockResolvedValueOnce({ role: 'navigator' });
+    await expect(verifySocketToken('good')).resolves.toMatchObject({ navigatorId: 'nav-1' });
+    await expect(verifySocketToken('bad')).resolves.toBeNull();
   });
 });

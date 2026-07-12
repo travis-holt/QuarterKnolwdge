@@ -27,10 +27,11 @@ const mocks = vi.hoisted(() => {
   const query       = vi.fn((ref) => ref);
   const where       = vi.fn();
   const writeBatch  = vi.fn();
+  const runTransaction = vi.fn();
   const serverTimestamp = vi.fn(() => '__ts__');
   const db = {};
   return { addDoc, setDoc, getDoc, getDocs, updateDoc, deleteDoc, onSnapshot,
-    collection, doc, query, where, writeBatch, serverTimestamp, db };
+    collection, doc, query, where, writeBatch, runTransaction, serverTimestamp, db };
 });
 
 vi.mock('firebase/firestore', () => ({
@@ -45,6 +46,7 @@ vi.mock('firebase/firestore', () => ({
   query:           mocks.query,
   where:           mocks.where,
   writeBatch:      mocks.writeBatch,
+  runTransaction:  mocks.runTransaction,
   updateDoc:       mocks.updateDoc,
   deleteDoc:       mocks.deleteDoc,
 }));
@@ -88,6 +90,8 @@ import {
   activateAudit,
   runContentQualityFixesMigration,
   runMcqV2OperatingModelMigration,
+  activateSop,
+  archiveSop,
 } from './db.js';
 import { ALL_V2_QUESTIONS } from '../data/questions-v2.js';
 
@@ -96,22 +100,24 @@ beforeEach(() => vi.clearAllMocks());
 // ── addToRoster ───────────────────────────────────────────────────────────────
 
 describe('addToRoster', () => {
-  it('calls addDoc with trimmed name and pin and a server timestamp', async () => {
+  it('stores a trimmed name and PIN status without persisting PIN material', async () => {
     mocks.addDoc.mockResolvedValue({ id: 'new-uuid' });
     const id = await addToRoster('  Ada  ', '  1234  ');
     expect(mocks.addDoc).toHaveBeenCalledOnce();
     const [, data] = mocks.addDoc.mock.calls[0];
     expect(data.name).toBe('Ada');
-    expect(data.pin).toBe('1234');
+    expect(data.pinSet).toBe(false);
+    expect(data).not.toHaveProperty('pin');
     expect(data.createdAt).toBe('__ts__');
     expect(id).toBe('new-uuid');
   });
 
-  it('allows a blank pin so the navigator can create one later', async () => {
+  it('marks a new navigator as needing server-side PIN setup', async () => {
     mocks.addDoc.mockResolvedValue({ id: 'new-uuid' });
     await addToRoster('Ada');
     const [, data] = mocks.addDoc.mock.calls[0];
-    expect(data.pin).toBe('');
+    expect(data.pinSet).toBe(false);
+    expect(data).not.toHaveProperty('pin');
   });
 });
 
@@ -126,12 +132,12 @@ describe('updateRosterEntry', () => {
     expect(data).not.toHaveProperty('pin');
   });
 
-  it('trims name and coerces pin to string', async () => {
+  it('trims names and ignores client-supplied PIN fields', async () => {
     mocks.updateDoc.mockResolvedValue();
     await updateRosterEntry('uuid-1', { name: '  Cyd  ', pin: 5678 });
     const [, data] = mocks.updateDoc.mock.calls[0];
     expect(data.name).toBe('Cyd');
-    expect(data.pin).toBe('5678');
+    expect(data).not.toHaveProperty('pin');
   });
 
   it('targets the roster collection doc by id', async () => {
@@ -186,7 +192,32 @@ describe('saveResult', () => {
     expect(data).toMatchObject({ navigatorId: 'nav-id', name: 'Ada', department: 'pediatrics',
       scores, competencyScores: cScores, answers });
     expect(data.submittedAt).toBe('__ts__');
-    expect(batch.set.mock.calls[1][1]).toMatchObject({ navigatorId: 'nav-id', department: 'pediatrics', scores });
+    expect(batch.set.mock.calls[1][1]).toMatchObject({ navigatorId: 'nav-id', department: 'pediatrics', scores, answers });
+    expect(batch.commit).toHaveBeenCalledOnce();
+  });
+
+  it('atomically stores a passed mini-check completion with the updated result', async () => {
+    const batch = { set: vi.fn(), commit: vi.fn().mockResolvedValue() };
+    mocks.writeBatch.mockReturnValue(batch);
+    await saveResult(
+      'nav-id',
+      'Ada',
+      { routing: 75 },
+      {},
+      'pediatrics',
+      { q1: 'a' },
+      'mcq',
+      { domainId: 'routing', kind: 'minicheck', passed: true, score: 75 },
+    );
+
+    expect(batch.set).toHaveBeenCalledTimes(3);
+    expect(batch.set.mock.calls[2][1]).toMatchObject({
+      navigatorId: 'nav-id',
+      domainId: 'routing',
+      kind: 'minicheck',
+      passed: true,
+      score: 75,
+    });
     expect(batch.commit).toHaveBeenCalledOnce();
   });
 });
@@ -411,6 +442,58 @@ describe('department-scoped helpers', () => {
     expect(seeded).toBe(true);
     expect(batch.set).toHaveBeenCalledOnce();
     expect(batch.set.mock.calls[0][1]).toMatchObject({ department: 'obgyn', status: 'active' });
+  });
+});
+
+describe('activateSop', () => {
+  it('uses a transactionally contested department pointer and archives the previous active SOP', async () => {
+    mocks.getDocs.mockResolvedValue({ docs: [{ id: 'legacy', data: () => ({ status: 'active' }) }] });
+    const transaction = {
+      get: vi.fn(async (ref) => {
+        if (ref.col === 'sops') {
+          return { exists: () => true, data: () => ({ department: 'pediatrics', title: 'New', body: 'Body', version: 2 }) };
+        }
+        return { exists: () => true, data: () => ({ sopId: 'previous' }) };
+      }),
+      update: vi.fn(),
+      set: vi.fn(),
+    };
+    mocks.runTransaction.mockImplementation(async (_db, fn) => fn(transaction));
+
+    await activateSop('next', 'pediatrics');
+
+    expect(mocks.runTransaction).toHaveBeenCalledOnce();
+    const archivedIds = transaction.update.mock.calls
+      .filter(([, patch]) => patch.status === 'archived')
+      .map(([ref]) => ref.id);
+    expect(archivedIds).toEqual(expect.arrayContaining(['previous', 'legacy']));
+    expect(transaction.set).toHaveBeenCalledWith(
+      expect.objectContaining({ col: 'activeSops', id: 'pediatrics' }),
+      expect.objectContaining({ sopId: 'next', body: 'Body' }),
+    );
+  });
+
+  it('clears the live pointer atomically when the active SOP is archived', async () => {
+    const transaction = {
+      get: vi.fn(async (ref) => (
+        ref.col === 'sops'
+          ? { exists: () => true, data: () => ({ department: 'obgyn' }) }
+          : { exists: () => true, data: () => ({ sopId: 'live-sop' }) }
+      )),
+      update: vi.fn(),
+      delete: vi.fn(),
+    };
+    mocks.runTransaction.mockImplementation(async (_db, fn) => fn(transaction));
+
+    await archiveSop('live-sop');
+
+    expect(transaction.update).toHaveBeenCalledWith(
+      expect.objectContaining({ col: 'sops', id: 'live-sop' }),
+      { status: 'archived' },
+    );
+    expect(transaction.delete).toHaveBeenCalledWith(
+      expect.objectContaining({ col: 'activeSops', id: 'obgyn' }),
+    );
   });
 });
 

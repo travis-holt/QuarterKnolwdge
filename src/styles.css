@@ -5206,6 +5206,7 @@ textarea:focus-visible {
 }
 .qa-latest--pass { border-left-color: var(--level-canteach); }
 .qa-latest--fail { border-left-color: var(--level-learning); }
+.qa-latest--review { border-left-color: var(--level-solid); }
 .qa-latest__eyebrow {
   margin: 0 0 0.2rem;
   color: var(--ink-soft);
@@ -5221,6 +5222,7 @@ textarea:focus-visible {
 }
 .qa-latest--pass .qa-latest__title { color: var(--level-canteach); }
 .qa-latest--fail .qa-latest__title { color: var(--level-learning); }
+.qa-latest--review .qa-latest__title { color: var(--level-solid); }
 .qa-latest__meta {
   margin: 0.2rem 0 0;
   color: var(--ink-soft);

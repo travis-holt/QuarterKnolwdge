@@ -1,4 +1,6 @@
 // ─────────────────────────────────────────────────────────────────────────────
+
+import { compareTimestampValues } from './time.js';
 // 3-phase assessment flow — pure helpers (no React, no Firestore).
 //
 // The department assessment is a fixed sequence of three phases:
@@ -40,10 +42,6 @@ export const PHASE_META = {
   },
 };
 
-function qaTs(interview) {
-  return interview?.endedAt?.seconds ?? 0;
-}
-
 export function isActiveQaInterview(interview, department = 'pediatrics') {
   return Boolean(interview?.qa) &&
     !interview?.qaArchived &&
@@ -53,7 +51,7 @@ export function isActiveQaInterview(interview, department = 'pediatrics') {
 export function latestQaForDept(interviews = [], department = 'pediatrics') {
   return [...interviews]
     .filter((interview) => isActiveQaInterview(interview, department))
-    .sort((a, b) => qaTs(b) - qaTs(a))[0] ?? null;
+    .sort((a, b) => compareTimestampValues(b.endedAt, a.endedAt))[0] ?? null;
 }
 
 /**

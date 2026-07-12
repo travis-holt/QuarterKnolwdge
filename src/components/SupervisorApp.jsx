@@ -16,7 +16,7 @@ import LearningLoop from './LearningLoop.jsx';
 import EmptyState from './EmptyState.jsx';
 import Footer from './Footer.jsx';
 import { chooseBalancedWorkflowTypes } from '../data/auditWorkflows.js';
-import { buildMatrixRows, departmentMatrix } from '../lib/scoring.js';
+import { buildMatrixRows, departmentMatrix, findRow } from '../lib/scoring.js';
 import {
   subscribeResults,
   subscribeRoster,
@@ -61,6 +61,7 @@ import { isFirebaseConfigured } from '../lib/firebase.js';
 import { ALL_SEED_QUESTIONS } from '../data/questions.js';
 import { DEFAULT_DEPT, isAssessed as deptIsAssessed, departmentName } from '../data/departments.js';
 import { apiFetch, runPooled } from '../lib/apiFetch.js';
+import { compareTimestampValues } from '../lib/time.js';
 
 // Views where the DeptBar appears. The Navigators tab is intentionally NOT here:
 // roster management is global (not department-scoped), so it always shows the
@@ -174,7 +175,12 @@ export default function SupervisorApp({ onSignOut }) {
   const activeRosterIds = new Set(
     roster.filter((m) => m.status !== 'inactive').map((m) => m.id)
   );
-  const rawActiveResults = results.filter((r) => activeRosterIds.has(r.navigatorId));
+  const rosterNameById = new Map(roster.map((member) => [member.id, member.name]));
+  const rawActiveResults = results
+    .filter((r) => activeRosterIds.has(r.navigatorId))
+    // Names are display data, not identity. Rehydrate the current roster name so
+    // renaming a navigator cannot orphan their existing result or reset action.
+    .map((r) => ({ ...r, name: rosterNameById.get(r.navigatorId) ?? r.name }));
 
   // A navigator can now hold BOTH an MCQ and a Spot the Error result per
   // department. Collapse to one canonical result per navigator+department —
@@ -183,7 +189,7 @@ export default function SupervisorApp({ onSignOut }) {
     rawActiveResults.reduce((acc, r) => {
       const key = `${r.navigatorId}__${r.department ?? 'pediatrics'}`;
       const prev = acc[key];
-      if (!prev || (r.submittedAt?.seconds ?? 0) >= (prev.submittedAt?.seconds ?? 0)) acc[key] = r;
+      if (!prev || compareTimestampValues(r.submittedAt, prev.submittedAt) >= 0) acc[key] = r;
       return acc;
     }, {})
   );
@@ -203,7 +209,7 @@ export default function SupervisorApp({ onSignOut }) {
   const deptMatrix = departmentMatrix(
     Object.values(
       activeResults.reduce((acc, r) => {
-        const sample = (acc[r.navigatorId] ??= { name: r.name, departments: {} });
+        const sample = (acc[r.navigatorId] ??= { navigatorId: r.navigatorId, name: r.name, departments: {} });
         sample.departments[r.department ?? 'pediatrics'] = r.scores;
         return acc;
       }, {})
@@ -211,13 +217,23 @@ export default function SupervisorApp({ onSignOut }) {
     null
   );
 
-  const openNavigator = (name) => {
-    setSelected(name);
+  const openNavigator = (identifier) => {
+    const row = findRow(deptRows, identifier);
+    const member = roster.find((m) => m.id === identifier)
+      ?? roster.find((m) => m.id === row?.navigatorId)
+      ?? roster.find((m) => m.name === identifier);
+    setSelected(member?.id ?? row?.navigatorId ?? identifier);
     setView('navigator');
   };
 
-  // Roster UUID for the currently selected navigator (used to fetch interviews).
-  const selectedNavigatorId = roster.find((m) => m.name === selected)?.id ?? null;
+  // Resolve selection by stable roster UUID; name fallback keeps legacy deep
+  // links/tests working while avoiding name-based joins for live data.
+  const selectedMember = roster.find((m) => m.id === selected)
+    ?? roster.find((m) => m.name === selected)
+    ?? null;
+  const selectedRow = findRow(rows, selectedMember?.id ?? selected);
+  const selectedNavigatorId = selectedMember?.id ?? selectedRow?.navigatorId ?? null;
+  const selectedName = selectedMember?.name ?? selectedRow?.name ?? selected;
 
   const openModule = (domainId, returnTo = 'training') => {
     setModuleDomain(domainId);
@@ -225,8 +241,17 @@ export default function SupervisorApp({ onSignOut }) {
     setView('module');
   };
 
-  const handleAddNavigator = (name, pin) => addToRoster(name, pin);
-  const handleUpdateNavigator = (id, patch) => updateRosterEntry(id, patch);
+  const handleAddNavigator = async (name, pin) => {
+    const id = await addToRoster(name);
+    if (pin) await apiFetch('/api/set-navigator-pin', { navigatorId: id, pin }, 15_000);
+    return id;
+  };
+  const handleUpdateNavigator = async (id, patch) => {
+    if (patch.name !== undefined) await updateRosterEntry(id, { name: patch.name });
+    if (patch.pin !== undefined) {
+      await apiFetch('/api/set-navigator-pin', { navigatorId: id, pin: patch.pin }, 15_000);
+    }
+  };
   const handleDeactivateNavigator = (id) => setRosterStatus(id, 'inactive');
   const handleReactivateNavigator = (id) => setRosterStatus(id, 'active');
   const handleResetResult = async (id) => {
@@ -313,10 +338,26 @@ export default function SupervisorApp({ onSignOut }) {
 
   // Find the selected navigator's result doc (for answers + dossier)
   const selectedResult = selected
-    ? deptResults.find((r) => r.name === selected)
+    ? deptResults.find((r) => (
+      selectedNavigatorId ? r.navigatorId === selectedNavigatorId : r.name === selectedName
+    ))
     : null;
   // Dept-filtered history for the trend/action center
   const deptHistory = resultHistory.filter((h) => (h.department ?? 'pediatrics') === selectedDept);
+  // Question health must use every answer-bearing retake, not only each
+  // navigator's overwritten current result. Fall back to a current result only
+  // for legacy users with no answer-bearing history at all for that instrument.
+  const answerHistory = deptHistory.filter((h) => h.answers && Object.keys(h.answers).length > 0);
+  const questionAttempts = [
+    ...answerHistory,
+    ...deptResults.filter((r) => (
+      r.answers && Object.keys(r.answers).length > 0 &&
+      !answerHistory.some((h) => (
+        h.navigatorId === r.navigatorId &&
+        (h.assessmentType ?? 'mcq') === (r.assessmentType ?? 'mcq')
+      ))
+    )),
+  ];
 
   return (
     <div className="app">
@@ -384,7 +425,7 @@ export default function SupervisorApp({ onSignOut }) {
             {view === 'navigator' && (
               <NavigatorDetail
                 rows={rows}
-                name={selected}
+                name={selectedName}
                 deptName={deptName}
                 dept={selectedDept}
                 deptMatrix={deptMatrix}
@@ -394,7 +435,7 @@ export default function SupervisorApp({ onSignOut }) {
                 navigatorId={selectedNavigatorId}
                 completedDomains={selectedNavigatorId ? (completionMap[selectedNavigatorId] ?? new Set()) : new Set()}
                 completions={deptCompletions.filter((c) => (
-                  selectedNavigatorId ? c.navigatorId === selectedNavigatorId : c.name === selected
+                  selectedNavigatorId ? c.navigatorId === selectedNavigatorId : c.name === selectedName
                 ))}
                 answers={selectedResult?.answers}
                 questions={questions.filter((q) => q.status === 'active')}
@@ -435,6 +476,7 @@ export default function SupervisorApp({ onSignOut }) {
               <LearningLoop
                 rows={rows}
                 results={deptResults}
+                questionAttempts={questionAttempts}
                 questions={questions.filter((q) => (q.department ?? 'pediatrics') === selectedDept)}
                 completions={deptCompletions}
                 interviews={allInterviews.filter((iv) => (iv.department ?? 'pediatrics') === selectedDept)}
@@ -466,7 +508,7 @@ export default function SupervisorApp({ onSignOut }) {
               <>
                 <QuestionBank
                   questions={questions}
-                  results={deptResults}
+                  results={questionAttempts}
                   selectedDept={selectedDept}
                   onActivate={activateQuestion}
                   onArchive={archiveQuestion}

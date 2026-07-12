@@ -10,16 +10,33 @@ import { navigatorContextBlock } from './_navigator-operating-model.js';
 
 const VALID_KINDS = ['coaching', 'practice', 'interview', 'module', 'minicheck'];
 
-export function validateSequenceResponse(parsed) {
+export function validateSequenceResponse(parsed, requestedDomainIds = null) {
   if (!Array.isArray(parsed?.paths)) return { error: 'missing paths array' };
+  const expectedDomains = requestedDomainIds ? new Set(requestedDomainIds) : null;
+  const seenDomains = new Set();
   for (const path of parsed.paths) {
     if (typeof path.domainId !== 'string') return { error: 'path missing domainId' };
+    if (seenDomains.has(path.domainId)) return { error: `duplicate domain path: ${path.domainId}` };
+    if (expectedDomains && !expectedDomains.has(path.domainId)) return { error: `unrequested domain: ${path.domainId}` };
+    seenDomains.add(path.domainId);
     if (!Array.isArray(path.steps) || path.steps.length === 0) return { error: 'path missing steps' };
+    const seenKinds = new Set();
     for (const step of path.steps) {
       if (!VALID_KINDS.includes(step.kind)) return { error: `invalid step kind: ${step.kind}` };
+      if (seenKinds.has(step.kind)) return { error: `duplicate step kind: ${step.kind}` };
+      seenKinds.add(step.kind);
       if (typeof step.rationale !== 'string' || step.rationale.length < 5) {
         return { error: 'step missing rationale' };
       }
+    }
+    if (path.steps.length !== VALID_KINDS.length) {
+      return { error: `path must contain exactly ${VALID_KINDS.length} steps` };
+    }
+  }
+  if (expectedDomains) {
+    if (seenDomains.size !== expectedDomains.size) return { error: 'missing requested domain path' };
+    for (const domainId of expectedDomains) {
+      if (!seenDomains.has(domainId)) return { error: `missing requested domain: ${domainId}` };
     }
   }
   return { data: parsed };
@@ -27,7 +44,7 @@ export function validateSequenceResponse(parsed) {
 
 export default async function handler(req, res) {
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
-  if (validateSecret(req, res)) return;
+  if (await validateSecret(req, res)) return;
 
   const { weakDomains = [], department = 'pediatrics', name = 'the navigator', completions = [], interviews = [] } = req.body ?? {};
   if (!weakDomains.length) return res.status(400).json({ error: 'weakDomains required' });
@@ -109,7 +126,7 @@ Respond ONLY with valid JSON matching this schema exactly:
     return res.status(502).json({ error: 'Invalid AI response — use default path order' });
   }
 
-  const { data, error } = validateSequenceResponse(parsed);
+  const { data, error } = validateSequenceResponse(parsed, weakDomains.map((d) => d.domainId));
   if (error) return res.status(502).json({ error: `AI response invalid (${error}) — use default path order` });
 
   res.json(data);

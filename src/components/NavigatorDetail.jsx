@@ -6,6 +6,7 @@ import { LEVELS, interviewScoreColor } from '../data/config.js';
 import { findRow, mentorSuggestions, trainingForRow, buildTrend, trainingImpact, buildDossier } from '../lib/scoring.js';
 import { getInterviews, getResultHistory, updateInterviewGradeOverride, updateQaFinalReview } from '../lib/db.js';
 import { qaFinalReviewLabel, qaFinalVerdict } from '../lib/qaFinalReview.js';
+import { compareTimestampValues, timestampMillis } from '../lib/time.js';
 import Sparkline from './Sparkline.jsx';
 import FeedbackControls from './FeedbackControls.jsx';
 
@@ -19,7 +20,7 @@ function formatWorkflow(type) {
 
 function formatDate(ts) {
   if (!ts) return '—';
-  const date = typeof ts.toDate === 'function' ? ts.toDate() : new Date((ts.seconds ?? 0) * 1000);
+  const date = new Date(timestampMillis(ts));
   return date.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
 }
 
@@ -40,8 +41,9 @@ function qaSignalLabel(detail) {
 // answers: the navigator's raw answers map {questionId: optionId} (for dossier).
 // questions: the active question bank (for dossier).
 export default function NavigatorDetail({ rows, name, deptName, dept, deptMatrix, onBack, onOpenNavigator, onPreviewModule, navigatorId, completedDomains = new Set(), completions = [], onChangeDept, answers, questions, onSaveFeedback }) {
-  const row = findRow(rows, name);
-  const deptRow = deptMatrix?.find((r) => r.name === name);
+  const row = (navigatorId ? findRow(rows, navigatorId) : null) ?? findRow(rows, name);
+  const deptRow = deptMatrix?.find((r) => navigatorId && r.navigatorId === navigatorId)
+    ?? deptMatrix?.find((r) => r.name === name);
 
   // Practice interview sessions — only fetched when navigatorId is provided.
   const [interviews, setInterviews] = useState(null); // null = loading
@@ -70,9 +72,7 @@ export default function NavigatorDetail({ rows, name, deptName, dept, deptMatrix
       .then((list) =>
         setInterviews(
           [...list].sort((a, b) => {
-            const aT = a.endedAt?.seconds ?? 0;
-            const bT = b.endedAt?.seconds ?? 0;
-            return bT - aT; // newest first
+            return compareTimestampValues(b.endedAt, a.endedAt); // newest first
           })
         )
       )
@@ -546,7 +546,7 @@ export default function NavigatorDetail({ rows, name, deptName, dept, deptMatrix
             <p className="readoff__empty">No practice sessions recorded yet.</p>
           ) : (
             <ul className="interview-log">
-              {interviews.map((session) => {
+              {interviews.map((session, sessionIndex) => {
                 const isOpen = expandedId === session.id;
                 const navTurns = session.transcript.filter((t) => t.role === 'navigator').length;
                 const g = session.grade ?? null;
@@ -564,7 +564,7 @@ export default function NavigatorDetail({ rows, name, deptName, dept, deptMatrix
                 const isQaReviewEditing = qaReviewEditId === session.id;
                 const qaReviewed = Boolean(session.qaFinalReview);
                 return (
-                  <li key={session.id} className={`interview-log__item ${isOpen ? 'is-open' : ''}`}>
+                  <li key={session.id ?? `${session.domainId ?? 'session'}-${timestampMillis(session.endedAt)}-${sessionIndex}`} className={`interview-log__item ${isOpen ? 'is-open' : ''}`}>
                     <button
                       className="interview-log__header"
                       onClick={() => toggleExpand(session.id)}
@@ -669,8 +669,8 @@ export default function NavigatorDetail({ rows, name, deptName, dept, deptMatrix
                                   Supervisor review flags · confidence: {session.qa.review.confidence} · safety risk: {session.qa.review.safetyRisk}
                                 </p>
                                 <ul>
-                                  {session.qa.review.reviewFlags.map((f) => (
-                                    <li key={f.id}><strong>{f.label}:</strong> {f.detail}</li>
+                                  {session.qa.review.reviewFlags.map((f, flagIndex) => (
+                                    <li key={f.id ?? `${f.label ?? 'flag'}-${flagIndex}`}><strong>{f.label}:</strong> {f.detail}</li>
                                   ))}
                                 </ul>
                               </div>

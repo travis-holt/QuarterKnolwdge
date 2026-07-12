@@ -81,6 +81,19 @@ export function selectAuditItems(plan, bankByDomain) {
   return { fromBank, toGenerate };
 }
 
+export function auditPlanComplete(plan, items) {
+  if (!Array.isArray(plan) || !Array.isArray(items) || plan.length !== items.length) return false;
+  const counts = (list) => list.reduce((acc, item) => {
+    const domainId = typeof item === 'string' ? item : item?.domainId;
+    if (domainId) acc[domainId] = (acc[domainId] ?? 0) + 1;
+    return acc;
+  }, {});
+  const expected = counts(plan);
+  const actual = counts(items);
+  return Object.keys(expected).every((domainId) => expected[domainId] === actual[domainId]) &&
+    Object.keys(actual).every((domainId) => actual[domainId] === expected[domainId]);
+}
+
 export default function SpotTheError({
   navigatorId, // eslint-disable-line no-unused-vars
   name,        // eslint-disable-line no-unused-vars
@@ -98,6 +111,7 @@ export default function SpotTheError({
   const [current, setCurrent] = useState(0);    // index of the item being answered
   const [picks,   setPicks]   = useState([]);   // [{ picked:number, correct:boolean }] aligned to items
   const [genError, setGenError] = useState('');
+  const [saveError, setSaveError] = useState('');
 
   const finishTo = onFinish ?? onBack;
   const isFull = mode === 'full';
@@ -116,6 +130,7 @@ export default function SpotTheError({
   const generate = async () => {
     setPhase('loading');
     setGenError('');
+    setSaveError('');
     setItems([]);
     setPicks([]);
     setCurrent(0);
@@ -159,6 +174,15 @@ export default function SpotTheError({
         setGenError('Could not generate the assessment — check your connection and try again.');
         return;
       }
+      // Assessment fairness: never turn infrastructure failure into a navigator
+      // zero. The run starts only when every requested slot/domain exists.
+      if (!auditPlanComplete(plan, got)) {
+        setGenError(
+          `Only ${got.length} of ${plan.length} assessment items were available. ` +
+          'Nothing has been scored — try again when the remaining items can load.'
+        );
+        return;
+      }
       setItems(got);
       setPhase('active');
     } catch (err) {
@@ -188,21 +212,27 @@ export default function SpotTheError({
 
   const overallScore = scoreSpotTheError(picks);
 
-  // Per-domain scores. In full mode, backfill any domain that failed to generate
-  // an item with 0 so the saved profile is complete.
+  // Per-domain scores. Generation is all-or-nothing, so missing domains can never
+  // be silently backfilled as navigator zeroes.
   const graded = items.map((it, i) => ({ domainId: it.domainId, correct: !!picks[i]?.correct }));
   const byDomain = scoreSpotTheErrorByDomain(graded);
-  const domainScores = isFull
-    ? Object.fromEntries((domains ?? []).map((d) => [d, byDomain[d] ?? 0]))
-    : byDomain;
+  const domainScores = byDomain;
 
   const finish = async () => {
     setPhase('saving');
+    setSaveError('');
     try {
-      await onComplete?.(domainScores, mode);
+      const saved = await onComplete?.(domainScores, mode);
+      if (saved === false) {
+        setSaveError('Your score is ready, but it has not saved to the server. Retry before leaving this assessment.');
+        setPhase('review');
+        return;
+      }
     } catch (err) {
       console.error('Failed to save assessment result:', err);
-      // Non-blocking — the navigator still sees their score locally.
+      setSaveError('Your score is ready, but it has not saved to the server. Check the connection and retry.');
+      setPhase('review');
+      return;
     }
     setPhase('done');
   };
@@ -330,6 +360,7 @@ export default function SpotTheError({
         </ol>
 
         <div className="spot-error__done-actions">
+          {saveError && <p className="gate__error" role="alert">{saveError}</p>}
           <button className="btn btn--primary" onClick={finish} disabled={phase === 'saving'}>
             {phase === 'saving' ? 'Saving…' : 'Save & finish'}
           </button>

@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { domainName } from '../data/questions.js';
 import { LEVELS, MINICHECK_SIZE } from '../data/config.js';
-import { trainingForRow, buildDevPath } from '../lib/scoring.js';
+import { trainingForRow, buildDevPath, sequenceDevSteps } from '../lib/scoring.js';
 import { apiFetch } from '../lib/apiFetch.js';
 
 const STEP_LABELS = {
@@ -83,17 +83,17 @@ export default function MyTraining({
     const aiOrder = aiPaths?.[path.domainId];
     if (!aiOrder) return path.steps;
     const statusByKind = Object.fromEntries(path.steps.map((s) => [s.kind, s]));
-    return aiOrder.map((aiStep) => ({
+    return sequenceDevSteps(aiOrder.map((aiStep) => ({
       ...(statusByKind[aiStep.kind] ?? { kind: aiStep.kind, status: 'todo' }),
       rationale: aiStep.rationale,
-    }));
+    })));
   };
 
   const handleStepAction = (path, kind) => {
     if (kind === 'practice') onStartAudit(path.domainId);
     else if (kind === 'interview') onStartInterview?.(path.domainId);
     else if (kind === 'minicheck') onStartMiniCheck?.(path.domainId);
-    else onPreviewModule(path.domainId); // coaching + module both open the module
+    else onPreviewModule(path.domainId, kind); // coaching + module share the learning content, tracked separately
   };
 
   return (

@@ -1,5 +1,50 @@
 # Development History - Knowledge Check
 
+### 2026-07-12 - Complete audit remediation and production trust boundary (PR #25)
+- **Scope:** PR #25 is based on the nine-commit Call QA hardening work from draft PR #24, then
+  closes the separate full-codebase audit findings across scoring fairness, persistence,
+  authorization, concurrency, voice reliability, analytics, identity, timestamps, and tooling.
+- **Authorization / staff-data protection:** replaced anonymous Firebase use and localStorage role
+  trust with server-minted Firebase custom identities. Navigator PIN verification/create/migration
+  now runs transactionally on the server, stores salted scrypt hashes, removes legacy plaintext,
+  and returns no PIN material. Supervisors receive both a role claim and signed HttpOnly cookie;
+  deployed environments fail closed without an explicit server passcode. Every REST/voice gate
+  verifies claims; Firestore rules grant supervisor or stable-UUID owner access only. Public roster
+  and peer-mentor reads are minimized server projections rather than full client collection reads.
+  **Why:** browser roles, anonymous auth, client filtering, and plaintext PINs cannot protect staff
+  scores, transcripts, roster secrets, or management actions.
+- **Assessment fairness / durability:** Spot the Error now starts only with its complete requested
+  plan—generation failures never backfill employee zeroes. Mini-checks score the displayed subset,
+  record mastery only on pass, and remain retakeable on failure. `saveResult` batches the current
+  result, answer-bearing history, and optional completions atomically. A keyed generation-aware
+  retry queue preserves multiple independent failed saves so a later success cannot erase an
+  earlier warning. Empty MCQ banks render safely; progress is question-bank-versioned; submits are
+  single-flight. Text/voice practice now expose save/grade-save retry states and text cannot save
+  while a patient reply is pending.
+- **Development paths / QA display:** coaching and modules require explicit completion; failed or
+  legacy mini-check markers do not imply mastery; exactly one step is `next` after local or AI
+  sequencing. The sequence endpoint rejects duplicate/missing/extra domains and steps. Training
+  practice calls retain the chosen domain instead of becoming random. Navigator QA cards preserve
+  `NEEDS REVIEW` and supervisor final verdicts instead of flattening everything to PASS/FAIL.
+- **Concurrency / availability:** active SOP selection is a transactional per-department pointer;
+  archive clears the pointer atomically; fresh concurrent server reads await one shared refresh.
+  Railway's trusted `X-Real-IP` now keys REST and voice quotas so unrelated users do not share a
+  proxy bucket. Gemini REST calls have a server abort timeout. Voice relay setup rotates every key
+  with authentication/setup deadlines; unexpected closes and all client-side setup errors tear
+  down mic tracks, processors, playback, sockets, and audio contexts.
+- **Analytics / identity correctness:** matrix and analytics rows preserve `navigatorId`; roster
+  renames rehydrate display names without orphaning results or the Reset action. Timestamp ordering
+  uses milliseconds plus Firestore nanoseconds. Training impact and decline alerts compare only the
+  same assessment instrument; supervisor grade overrides are the effective practice score; question
+  health consumes answer-bearing retake history instead of only the overwritten latest result.
+- **Toolchain / deployment:** upgraded the single top-level graph to Vite 8.1 + plugin-react 6,
+  aligned Node engines to `^20.19 || >=22.12`, added Firebase Admin, changed Railway to `npm ci`,
+  overrode Firebase Admin's vulnerable transitive `uuid@9` with compatible fixed `uuid@11.1.1`,
+  and documented the safe identity-before-rules rollout plus required server variables.
+- **Verification:** **804/804 Vitest tests across 41 files**, production build clean, all API files
+  parse, `npm ls --all` exits cleanly, clean `npm ci` reproduces, and production/full audits report
+  zero vulnerabilities. Browser microphone/live Firebase/Gemini behavior remains an explicit post-deploy smoke.
+
 ### 2026-07-10 - Call QA conflict labeling and literal-TE detail guard
 - Deterministic over-promise/clinical-advice findings now represent an actual model-positive
   conflict only when `know-rule` was marked `MET`; model-detected safety misses remain in the
