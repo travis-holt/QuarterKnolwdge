@@ -16,6 +16,10 @@ blob-report/
 skills/
 gemini-extension.json
 
+# Local agent workspace/config — machine-specific, never commit
+.codex-worktrees/
+.mcp.json
+
 # Generic secret patterns — a future .env or key/credential file must never
 # land in this public repo (only .env.local was covered before, via *.local)
 .env
