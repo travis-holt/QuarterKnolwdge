@@ -11,7 +11,8 @@
 > [§8 Current System State](#8-current-system-state) and [§15 Current Priorities](#15-current-priorities)
 > accurate at all times.
 >
-> **Last updated:** 2026-07-13 (result document-ID/body ownership binding + navigator own-row identity fix) ·
+> **Last updated:** 2026-07-13 (result document-ID/body ownership binding + navigator own-row
+> identity fix; supervisor Question Bank redesigned as a collapsible review workspace) ·
 > **Doc maintainer:** Claude (AI agent) + repo owner. Assumptions are explicitly marked **[ASSUMPTION]**.
 
 ---
@@ -769,6 +770,53 @@ training assignments.
   **active** questions appear in the check; AI drafts require human activation.
 - **Status:** Complete. Owner sets `GEMINI_API_KEYS`/`GEMINI_API_KEY` + `GENERATION_SECRET` in
   Railway for deployed AI features.
+- **Collapsible review workspace redesign (2026-07-13):** the supervisor Question Bank was a
+  permanently-fully-expanded long page (every question always showed all options, points,
+  rationale, health, tags, and actions at once). Rebuilt as a compact, tabbed, filterable
+  workspace with the same underlying data/callbacks:
+  - **Header + summary:** a compact header (title + "Generate questions" primary button) above
+    four department-scoped summary pills — Awaiting review / Active / Archived / Needs review.
+  - **Generation moved to a modal:** [QuestionBankGenerateDialog.jsx](src/components/QuestionBankGenerateDialog.jsx)
+    — an accessible `role="dialog"` (Escape closes, focus moves in on open and returns to the
+    "Generate questions" button on close) replaces the permanently-visible inline form. A
+    successful generation switches the workspace to the Review Queue tab and keeps the success
+    message visible both in the dialog and as a persistent banner in that tab.
+  - **Status tabs:** real `role="tablist"`/`"tab"`/`"tabpanel"` — Review Queue / Active / Archived,
+    each showing its count. Defaults to Review Queue when drafts exist, else Active; switching
+    tabs clears the expanded/editing state.
+  - **Search/filter/sort toolbar:** [QuestionBankToolbar.jsx](src/components/QuestionBankToolbar.jsx)
+    — case-insensitive search across scenario/ID/option text; domain, competency, and health
+    filters (health filter reports `notLive` rather than mislabeling drafts/archived items as
+    healthy); 7 sort modes with health-based sorts always placing questions with no health data
+    after ones that have it; a "N of M questions" count and a "Clear filters" action.
+  - **Collapsed-by-default rows, single-open accordion:** [QuestionBankItem.jsx](src/components/QuestionBankItem.jsx)
+    — each row collapses to status/domain/competency tags, a 2-line CSS-clamped scenario preview,
+    question ID (secondary), and a health summary; expanding shows the full options/rationale/
+    health detail/content-warning/action panel. Only one question is expanded per tab; opening
+    another collapses the previous; action buttons inside the panel `stopPropagation` so they
+    never toggle the accordion; the expanded id is cleared whenever it scrolls out of the
+    filtered/visible list.
+  - **Review Queue workflow:** a small progress readout ("Question N of M" / "M questions
+    awaiting review") plus Previous/Next controls scoped to the current filtered queue (disabled
+    at the ends); activating or discarding the currently-expanded draft auto-advances to the next
+    remaining one. No bulk activation was added — each question still requires individual review.
+  - **Pure, independently-tested view logic:** [src/lib/questionBankView.js](src/lib/questionBankView.js)
+    holds all filtering/sorting/status-count/navigation helpers as framework-free functions
+    (`filterQuestions`, `sortQuestions` — never mutates its input — `statusCounts`,
+    `defaultStatusTab`, `nextExpandedId`, `adjacentQuestionId`, …), covered by
+    `src/lib/questionBankView.test.js` independent of any rendering.
+  - **All prior behavior preserved exactly:** generation, editing (`QuestionEditor` unchanged,
+    now shown inline in the expanded row; save failures keep the editor open and show an inline
+    error instead of silently closing), activation/restore, archive, delete/discard, content-guard
+    blocking (`validateQuestionContent`/`hasBlockingFlags` — disables Activate/Restore and shows
+    the blocking reason), question health (`computeQuestionHealth`), supervisor `FeedbackControls`,
+    and Learning Loop revision queueing all call the exact same props/callbacks as before.
+  - **Tests:** [src/components/questionBank.test.jsx](src/components/questionBank.test.jsx) — 26
+    behavior/accessibility-focused tests (tab defaults/isolation, collapse-by-default, single-open
+    accordion, action-click vs. accordion-toggle isolation, search/filter/sort incl.
+    no-mutation, generation → Review Queue switch, activate/restore/archive/discard/delete wiring,
+    blocked-content gating, edit-opens-correct-question, empty/filtered-empty states, tab/accordion
+    aria attributes). No snapshots.
 - **MCQ v2 operating-model bank (2026-07-09):** the active MCQ bank was replaced with an
   operating-model-driven v2 bank ([src/data/questions-v2.js](src/data/questions-v2.js)) — 48
   scenario-based MCQs (**24 Pediatrics + 24 OB/GYN, 4 per domain per department**) that test real
@@ -1284,7 +1332,9 @@ of this file on 2026-07-07 to cut per-session context cost (it was ~55% of the f
 - **Experimental / mockup:**
   - Training **content** is mockup (flagged in UI). Logic is real.
   - **Adult Medicine and Behavioural Health** are not assessed; **Pediatrics and OB/GYN** are live.
-- **Test coverage:** **815 tests** across **42 test files** (adds `src/lib/navigatorResultMerge.test.js`
+- **Test coverage:** **854 tests** across **44 test files** (adds
+  `src/components/questionBank.test.jsx` and `src/lib/questionBankView.test.js` from the
+  2026-07-13 Question Bank collapsible-workspace redesign — see F14). Also adds `src/lib/navigatorResultMerge.test.js`
   — the stable-identity floor/own merge helper — and one NavigatorApp behavioral regression test in
   `roleApps.behavior.test.jsx`, both from the 2026-07-13 result-document-integrity fix; see below).
   Also includes `api/_qa-grading-corpus.test.js` —
@@ -1379,7 +1429,7 @@ of this file on 2026-07-07 to cut per-session context cost (it was ~55% of the f
   OB/GYN = **37** seed questions (offline fallback) + the **48-item MCQ v2 operating-model bank**
   (24 Pediatrics + 24 OB/GYN) that replaces the weak active bank via a marker-gated
   archive-and-replace migration (bank grows in Firestore per dept) · 4 departments (**Pediatrics
-  + OB/GYN live**, 2 mockup) · **815** unit tests (42 test files) + a committed **51-assertion**
+  + OB/GYN live**, 2 mockup) · **854** unit tests (44 test files) + a committed **51-assertion**
   Firestore Rules emulator suite (`npm run test:rules`, not part of the unit-test count) ·
   **13** Firestore collections
   (`roster`, `results`, `resultHistory`, `questions`, `audits`, `interviews`, `completions`,
@@ -1602,7 +1652,7 @@ npm run test:e2e     # run the Playwright browser tests (auto-builds + starts th
 - Heatmap intensity toggle (show % inside matrix cells).
 
 ### Technical Debt
-- **815 tests** across 42 test files as of 2026-07-13 (plus a committed 51-assertion Firestore
+- **854 tests** across 44 test files as of 2026-07-13 (plus a committed 51-assertion Firestore
   Rules emulator suite, `npm run test:rules`, run separately from the unit-test gate). **Role-app
   coverage** (`App`, `Start`,
   `SupervisorApp`, `NavigatorApp`) now includes both shell smoke tests (mount + gate/session routing)
@@ -1941,6 +1991,9 @@ npm run test:e2e     # run the Playwright browser tests (auto-builds + starts th
   client-computed — see §12/§15 for the separate future server-authoritative scoring migration.
   A **read-only pre-publish integrity scan of the existing `results` collection** (trusted Admin
   access only) is a rollout prerequisite before the tightened rules are published — see §12/§15.
+- ✅ Supervisor Question Bank redesigned as a collapsible review workspace — done 2026-07-13
+  (854 tests, 44 test files; see F14). Draft branch: `redesign/question-bank-workspace`.
+
 
 ---
 

@@ -1,6 +1,66 @@
 # Development History - Knowledge Check
 
 
+### 2026-07-13 - Redesign supervisor Question Bank as a collapsible review workspace
+- **Problem:** the Question Bank (F14) rendered every question permanently fully expanded — all
+  answer options, point values, rationale, health detail, tags, and the full action row, for every
+  question, in every one of the stacked Review Queue / Active / Archived sections at once. On a
+  bank of any real size this was a very long, hard-to-scan page with no way to focus on one
+  question at a time.
+- **Redesign (branch `redesign/question-bank-workspace`, draft PR, not merged):**
+  - Compact header (title + "Generate questions" primary button) + 4 department-scoped summary
+    pills (Awaiting review / Active / Archived / Needs review), replacing the old always-open
+    "Generate from the SOP" panel and 2-3 stacked full-list sections.
+  - Generation moved into an accessible modal, `QuestionBankGenerateDialog.jsx` — `role="dialog"`,
+    focuses in on open, Escape closes it, focus returns to the trigger button on close. A
+    successful generation switches the workspace to the Review Queue tab and the success message
+    stays visible (in the dialog and as a banner in that tab) so new drafts are easy to find.
+  - Real semantic status tabs (`role="tablist"/"tab"/"tabpanel"`, `aria-selected`): Review Queue /
+    Active / Archived, each with a live count. Defaults to Review Queue when there are drafts,
+    otherwise Active.
+  - Search/filter/sort toolbar (`QuestionBankToolbar.jsx`): case-insensitive search over
+    scenario/ID/option text; domain, competency, and health filters (a "Not live" health state for
+    drafts/archived items instead of ever mislabeling them healthy); 7 sort modes, with
+    health-based sorts always placing no-health-data questions after ones with health data; a
+    "N of M questions" count; a "Clear filters" action that only appears when a filter is active.
+  - Collapsed-by-default, single-open accordion rows (`QuestionBankItem.jsx`): collapsed shows
+    only status/domain/competency tags, a 2-line CSS-clamped scenario preview, the (secondary)
+    question ID, and a health summary; expanding reveals the full options/rationale/health-detail/
+    content-warning/action panel. Clicking an action button inside the expanded panel never
+    toggles the accordion (`stopPropagation`); opening a second question collapses the first;
+    switching tabs or filtering the expanded question out of view clears the expanded state.
+  - Review Queue workflow polish: a small progress readout ("Question N of M" while one is
+    expanded, otherwise "M questions awaiting review") plus Previous/Next controls scoped to the
+    current filtered queue (correctly disabled at the ends); activating or discarding the
+    currently-expanded draft auto-advances to the next remaining one. Deliberately **no bulk
+    activation** — every question still requires individual review, per the review-gate model.
+  - New pure helper module `src/lib/questionBankView.js` (statusCounts, defaultStatusTab,
+    filterQuestions, sortQuestions — never mutates its input, matchesSearch, hasActiveFilters,
+    nextExpandedId, adjacentQuestionId, indexOfQuestion) so all filtering/sorting/navigation logic
+    is unit-testable without rendering React.
+  - **All existing behavior preserved exactly** — generation, editing (`QuestionEditor.jsx`
+    unchanged; save failures now keep the editor open with an inline error instead of silently
+    closing on rejection), activation/restore, archive, delete/discard, content-guard blocking
+    (`hasBlockingFlags`/`validateQuestionContent` still disable Activate/Restore and show the
+    blocking reason), question health (`computeQuestionHealth`), supervisor `FeedbackControls`,
+    and Learning Loop revision queueing — same props/callbacks (`onActivate`, `onArchive`,
+    `onDelete`, `onSaveEdit`, `onGenerate`, `onSaveFeedback`, `onSaveProposal`), same Firestore
+    document shape, no scoring/activation/validation logic changes.
+- **Tests:** new `src/components/questionBank.test.jsx` (26 tests: tab defaults/isolation,
+  collapsed-by-default rendering, single-open accordion, action-click-does-not-toggle-accordion,
+  search/domain/competency/health filters, clear-filters, sort-does-not-mutate-input,
+  generate-opens-dialog, successful-generation-switches-tab, activate/restore/archive/discard/
+  delete callback wiring, blocked-content gating, edit-opens-correct-question, empty and
+  filtered-empty states, tab/accordion aria attributes) and new `src/lib/questionBankView.test.js`
+  (13 tests for the pure helpers). Full suite: **854 tests across 44 files** (was 815/42),
+  `npm run build` clean, `npm audit --omit=dev` 0 vulnerabilities.
+- **Not done in this change (explicit non-goals):** no question content rewrites, no scoring/point
+  changes, no Firestore document-shape changes, no data migration, no bulk activation, no
+  pagination, no AI-generation prompt changes, no auth/Firestore-rules changes, no deploy, no merge.
+- **Verification gap:** built and self-reviewed in a non-browser sandbox — no manual browser
+  click-through, no screenshots. A human should click through the redesigned workspace (desktop/
+  tablet/mobile) before merging.
+
 ### 2026-07-13 - Bind result document IDs to navigator identity (path + body ownership)
 - **Follow-up to the same day's "incomplete-navigator result reads" fix (below):** that fix's
   `isOwnResultDocId(docId)` direct-read exception recognized a navigator's own deterministic result

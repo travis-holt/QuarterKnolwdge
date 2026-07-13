@@ -3991,6 +3991,344 @@ textarea:focus-visible {
   max-width: var(--maxw);
   margin: 0 auto;
 }
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* ── Redesigned 2026-07-13: compact header + summary pills ───────────────── */
+.qbank__head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+  flex-wrap: wrap;
+  margin-bottom: 0.9rem;
+}
+
+.qbank__summary {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 0.6rem;
+  margin-bottom: 1.1rem;
+}
+.qbank__pill {
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  padding: 0.6rem 0.85rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+}
+.qbank__pill-value {
+  font-size: 1.3rem;
+  font-weight: 800;
+  color: var(--accent-deep);
+  font-variant-numeric: tabular-nums;
+}
+.qbank__pill-label {
+  font-size: 0.76rem;
+  color: var(--ink-soft);
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+.qbank__pill--warn .qbank__pill-value {
+  color: var(--level-learning);
+}
+
+/* ── Generate dialog ──────────────────────────────────────────────────────── */
+.qbank-dialog__overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(35, 32, 27, 0.42);
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding: 4rem 1rem;
+  z-index: 60;
+}
+.qbank-dialog {
+  width: 100%;
+  max-width: 560px;
+}
+.qbank-dialog__head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+.qbank-dialog__close {
+  border: 1px solid var(--line);
+  background: var(--surface);
+  border-radius: 999px;
+  width: 2rem;
+  height: 2rem;
+  line-height: 1;
+  font-size: 1.1rem;
+  color: var(--ink-soft);
+  cursor: pointer;
+  flex-shrink: 0;
+}
+.qbank-dialog__close:hover {
+  color: var(--ink);
+  border-color: var(--accent-soft);
+}
+.qbank-dialog__foot {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 0.75rem;
+}
+
+/* ── Status tabs ──────────────────────────────────────────────────────────── */
+.qbank-tabs {
+  display: flex;
+  gap: 0.4rem;
+  flex-wrap: wrap;
+  margin-bottom: 0.75rem;
+  border-bottom: 1px solid var(--line);
+  overflow-x: auto;
+}
+.qbank-tabs__tab {
+  border: 1px solid transparent;
+  border-bottom: none;
+  background: transparent;
+  padding: 0.55rem 0.9rem;
+  font-size: 0.9rem;
+  font-weight: 650;
+  color: var(--ink-soft);
+  border-radius: var(--radius-sm) var(--radius-sm) 0 0;
+  cursor: pointer;
+  white-space: nowrap;
+  transform: translateY(1px);
+}
+.qbank-tabs__tab:hover {
+  color: var(--ink);
+}
+.qbank-tabs__tab:focus-visible {
+  outline: none;
+  box-shadow: var(--ring);
+}
+.qbank-tabs__tab.is-active {
+  color: var(--accent-deep);
+  background: var(--surface);
+  border-color: var(--line);
+  border-bottom-color: var(--surface);
+}
+.qbank-tabs__count {
+  display: inline-block;
+  margin-left: 0.3rem;
+  font-size: 0.76rem;
+  color: var(--ink-faint);
+  font-variant-numeric: tabular-nums;
+}
+.qbank-tabs__tab.is-active .qbank-tabs__count {
+  color: var(--accent);
+}
+
+.qbank__panel-wrap {
+  padding: 20px;
+}
+
+/* ── Search / filter / sort toolbar ──────────────────────────────────────── */
+.qbank-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 0.6rem;
+  margin-bottom: 0.9rem;
+  padding-bottom: 0.9rem;
+  border-bottom: 1px dashed var(--line);
+}
+.qbank-toolbar__search {
+  flex: 1 1 220px;
+  min-width: 180px;
+}
+.qbank-toolbar__input {
+  width: 100%;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 0.5rem 0.9rem;
+  font: inherit;
+  color: var(--ink);
+  background: #fff;
+}
+.qbank-toolbar__field {
+  display: grid;
+  gap: 0.2rem;
+  min-width: 9rem;
+}
+.qbank-toolbar__label {
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--ink-soft);
+}
+.qbank-toolbar__select {
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 0.4rem 0.5rem;
+  font: inherit;
+  color: var(--ink);
+  background: #fff;
+}
+.qbank-toolbar__meta {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  margin-left: auto;
+  flex-wrap: wrap;
+}
+.qbank-toolbar__count {
+  font-size: 0.82rem;
+  color: var(--ink-soft);
+  white-space: nowrap;
+}
+
+/* ── Review queue workflow ────────────────────────────────────────────────── */
+.qbank__queue-progress {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+  margin-bottom: 0.75rem;
+  font-size: 0.85rem;
+  color: var(--ink-soft);
+}
+.qbank__queue-nav {
+  display: flex;
+  gap: 0.4rem;
+}
+
+.qbank__empty-filtered {
+  display: grid;
+  gap: 0.6rem;
+  justify-items: start;
+}
+
+/* ── Collapsible question row ─────────────────────────────────────────────── */
+.qbank__row {
+  width: 100%;
+  display: flex;
+  align-items: flex-start;
+  gap: 0.6rem;
+  text-align: left;
+  border: none;
+  background: transparent;
+  padding: 0;
+  cursor: pointer;
+  font: inherit;
+  color: inherit;
+}
+.qbank__row:focus-visible {
+  outline: none;
+  box-shadow: var(--ring);
+  border-radius: 6px;
+}
+.qbank__row-main {
+  flex: 1;
+  min-width: 0;
+  display: grid;
+  gap: 0.3rem;
+}
+.qbank__row-tags {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  flex-wrap: wrap;
+}
+.qbank__warn {
+  font-size: 0.72rem;
+  font-weight: 700;
+  color: var(--level-learning);
+}
+.qbank__preview {
+  color: var(--ink);
+  line-height: 1.4;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.qbank__row-sub {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+}
+.qbank__id {
+  font-size: 0.72rem;
+  color: var(--ink-faint);
+  font-variant-numeric: tabular-nums;
+}
+.qbank__chevron {
+  flex: none;
+  color: var(--ink-faint);
+  font-size: 0.9rem;
+  margin-top: 0.15rem;
+}
+.qbank__item.is-expanded {
+  border-color: var(--accent-soft);
+}
+.qbank__panel {
+  margin-top: 0.75rem;
+  padding-top: 0.75rem;
+  border-top: 1px solid var(--line);
+}
+.qbank__opt-flag {
+  margin-left: auto;
+  font-size: 0.68rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  color: var(--level-canteach);
+}
+.qbank__health-detail {
+  margin-bottom: 0.5rem;
+}
+.qbank__flags {
+  margin-bottom: 0.5rem;
+}
+.qbank__destructive {
+  color: var(--ink-soft);
+}
+.qbank__edit-error {
+  margin-top: 0.75rem;
+}
+
+@media (max-width: 760px) {
+  .qbank__head {
+    flex-direction: column;
+    align-items: stretch;
+  }
+  .qbank__head .btn {
+    width: 100%;
+  }
+  .qbank__summary {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .qbank-toolbar {
+    flex-direction: column;
+    align-items: stretch;
+  }
+  .qbank-toolbar__meta {
+    margin-left: 0;
+    justify-content: space-between;
+  }
+  .qbank-dialog__overlay {
+    padding: 1.5rem 0.75rem;
+  }
+}
+
 .qbank__gen-row {
   display: flex;
   align-items: flex-end;
