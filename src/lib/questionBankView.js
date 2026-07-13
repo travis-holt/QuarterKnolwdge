@@ -81,9 +81,12 @@ export function filterQuestions(questions = [], filters = {}, health = {}) {
   });
 }
 
+// Labels say "created" (not "updated") because sorting uses `createdAt` — questions
+// have no maintained `updatedAt` field. Don't rename the ids (existing state/urls/
+// tests key on them); just keep the label honest about what's actually sorted.
 export const SORT_OPTIONS = [
-  { id: 'updatedDesc', label: 'Recently updated' },
-  { id: 'updatedAsc', label: 'Oldest updated' },
+  { id: 'updatedDesc', label: 'Newest created' },
+  { id: 'updatedAsc', label: 'Oldest created' },
   { id: 'domain', label: 'Domain' },
   { id: 'id', label: 'Question ID' },
   { id: 'correctRateAsc', label: 'Lowest correct rate' },

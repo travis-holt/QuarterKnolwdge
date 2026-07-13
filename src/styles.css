@@ -4320,6 +4320,14 @@ textarea:focus-visible {
     flex-direction: column;
     align-items: stretch;
   }
+  .qbank-toolbar__search {
+    /* flex-basis is a HEIGHT basis once the toolbar switches to a column
+       direction — without resetting it, the search field's 220px basis
+       (meant for its width in the row layout) inflates its height instead,
+       leaving a large empty gap below the input on narrow viewports. */
+    flex: none;
+    min-width: 0;
+  }
   .qbank-toolbar__meta {
     margin-left: 0;
     justify-content: space-between;

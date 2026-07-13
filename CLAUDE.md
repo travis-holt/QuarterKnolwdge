@@ -11,8 +11,9 @@
 > [§8 Current System State](#8-current-system-state) and [§15 Current Priorities](#15-current-priorities)
 > accurate at all times.
 >
-> **Last updated:** 2026-07-13 (result document-ID/body ownership binding + navigator own-row
-> identity fix; supervisor Question Bank redesigned as a collapsible review workspace) ·
+> **Last updated:** 2026-07-14 (result document-ID/body ownership binding + navigator own-row
+> identity fix; supervisor Question Bank redesigned as a collapsible review workspace, with an
+> async-load-aware initial-tab fix and a sort-label wording correction) ·
 > **Doc maintainer:** Claude (AI agent) + repo owner. Assumptions are explicitly marked **[ASSUMPTION]**.
 
 ---
@@ -811,12 +812,46 @@ training assignments.
     blocking (`validateQuestionContent`/`hasBlockingFlags` — disables Activate/Restore and shows
     the blocking reason), question health (`computeQuestionHealth`), supervisor `FeedbackControls`,
     and Learning Loop revision queueing all call the exact same props/callbacks as before.
-  - **Tests:** [src/components/questionBank.test.jsx](src/components/questionBank.test.jsx) — 26
+  - **Tests:** [src/components/questionBank.test.jsx](src/components/questionBank.test.jsx) — 30
     behavior/accessibility-focused tests (tab defaults/isolation, collapse-by-default, single-open
     accordion, action-click vs. accordion-toggle isolation, search/filter/sort incl.
     no-mutation, generation → Review Queue switch, activate/restore/archive/discard/delete wiring,
     blocked-content gating, edit-opens-correct-question, empty/filtered-empty states, tab/accordion
-    aria attributes). No snapshots.
+    aria attributes, and the 4 async-load-aware tab-resolution regression tests below). No snapshots.
+  - **Async-load-aware initial tab resolution (2026-07-14 fix):** `SupervisorApp` passes
+    `questions=[]` on mount and fills it in asynchronously via `subscribeQuestions`. The first cut
+    of this redesign picked the default tab (Review Queue if drafts exist, else Active) once,
+    against whatever `questions` happened to be at first render — against a still-empty array that
+    meant the tab could get stuck on Active even when the department's first real Firestore
+    snapshot turned out to contain drafts. Fixed: `QuestionBank` now defers the auto-default
+    decision until the current department's first **non-empty** snapshot arrives (tracked per
+    department in a `resolvedDeptsRef` map so a decision made for one department can never leak
+    into another), resolves **at most once per department-visit**, and never overrides a tab the
+    supervisor has clicked manually (`manualDeptsRef`, set by `changeTab(tab, {manual:true})`) —
+    manual selection always wins for the rest of that department's session. A successful generation
+    still force-switches to Review Queue (an intentional, separate, action-driven override — see
+    `handleGenerated`). Switching departments (including revisiting one already seen this session)
+    always re-arms the auto-default logic for the newly selected department, so a department that
+    resolved to Active is not "sticky" when you return to it. A department that legitimately has
+    zero questions is never stuck waiting: `defaultStatusTab()` on all-zero counts already returns
+    `'active'`, which is both the correct final answer and the initial guess, so there is no visible
+    loading limbo — the empty-state message renders immediately regardless of resolution status.
+    4 new regression tests cover: async empty→drafts (Review Queue), async empty→active-only
+    (Active), manual selection surviving a later async load, and department-switch re-resolution.
+  - **Sort-label wording fix (2026-07-14):** the "Recently updated"/"Oldest updated" sort labels
+    were misleading — questions have no maintained `updatedAt` field, sorting uses `createdAt`.
+    Relabeled to **"Newest created"/"Oldest created"** in
+    [src/lib/questionBankView.js](src/lib/questionBankView.js) `SORT_OPTIONS` (ids unchanged:
+    `updatedDesc`/`updatedAsc`, kept stable since nothing besides the label needed to change). No
+    `updatedAt` field was added.
+  - **Real-browser-verified (2026-07-14):** a headless Chromium (Playwright's bundled browser, a
+    real engine, not jsdom) walkthrough against a throwaway harness mounting the real
+    `QuestionBank.jsx` + `styles.css` with realistic async-load mock data confirmed all of the
+    above end to end (21/21 scripted checks, screenshots captured), and additionally caught a real
+    mobile-layout bug: `.qbank-toolbar__search`'s `flex: 1 1 220px` flex-basis (meant to size its
+    width in the row layout) was inflating its **height** once the `max-width: 760px` media query
+    switches the toolbar to `flex-direction: column`, leaving a large empty gap under the search
+    box on phone-width viewports. Fixed with a mobile-only `flex: none; min-width: 0;` override.
 - **MCQ v2 operating-model bank (2026-07-09):** the active MCQ bank was replaced with an
   operating-model-driven v2 bank ([src/data/questions-v2.js](src/data/questions-v2.js)) — 48
   scenario-based MCQs (**24 Pediatrics + 24 OB/GYN, 4 per domain per department**) that test real
@@ -1332,7 +1367,7 @@ of this file on 2026-07-07 to cut per-session context cost (it was ~55% of the f
 - **Experimental / mockup:**
   - Training **content** is mockup (flagged in UI). Logic is real.
   - **Adult Medicine and Behavioural Health** are not assessed; **Pediatrics and OB/GYN** are live.
-- **Test coverage:** **854 tests** across **44 test files** (adds
+- **Test coverage:** **858 tests** across **44 test files** (adds
   `src/components/questionBank.test.jsx` and `src/lib/questionBankView.test.js` from the
   2026-07-13 Question Bank collapsible-workspace redesign — see F14). Also adds `src/lib/navigatorResultMerge.test.js`
   — the stable-identity floor/own merge helper — and one NavigatorApp behavioral regression test in
@@ -1429,7 +1464,7 @@ of this file on 2026-07-07 to cut per-session context cost (it was ~55% of the f
   OB/GYN = **37** seed questions (offline fallback) + the **48-item MCQ v2 operating-model bank**
   (24 Pediatrics + 24 OB/GYN) that replaces the weak active bank via a marker-gated
   archive-and-replace migration (bank grows in Firestore per dept) · 4 departments (**Pediatrics
-  + OB/GYN live**, 2 mockup) · **854** unit tests (44 test files) + a committed **51-assertion**
+  + OB/GYN live**, 2 mockup) · **858** unit tests (44 test files) + a committed **51-assertion**
   Firestore Rules emulator suite (`npm run test:rules`, not part of the unit-test count) ·
   **13** Firestore collections
   (`roster`, `results`, `resultHistory`, `questions`, `audits`, `interviews`, `completions`,
@@ -1652,7 +1687,7 @@ npm run test:e2e     # run the Playwright browser tests (auto-builds + starts th
 - Heatmap intensity toggle (show % inside matrix cells).
 
 ### Technical Debt
-- **854 tests** across 44 test files as of 2026-07-13 (plus a committed 51-assertion Firestore
+- **858 tests** across 44 test files as of 2026-07-13 (plus a committed 51-assertion Firestore
   Rules emulator suite, `npm run test:rules`, run separately from the unit-test gate). **Role-app
   coverage** (`App`, `Start`,
   `SupervisorApp`, `NavigatorApp`) now includes both shell smoke tests (mount + gate/session routing)
@@ -1991,8 +2026,11 @@ npm run test:e2e     # run the Playwright browser tests (auto-builds + starts th
   client-computed — see §12/§15 for the separate future server-authoritative scoring migration.
   A **read-only pre-publish integrity scan of the existing `results` collection** (trusted Admin
   access only) is a rollout prerequisite before the tightened rules are published — see §12/§15.
-- ✅ Supervisor Question Bank redesigned as a collapsible review workspace — done 2026-07-13
-  (854 tests, 44 test files; see F14). Draft branch: `redesign/question-bank-workspace`.
+- ✅ Supervisor Question Bank redesigned as a collapsible review workspace — done 2026-07-13,
+  hardened 2026-07-14 (async-load-aware initial-tab default fix + "Newest/Oldest created" sort
+  label wording fix; see F14) (858 tests, 44 test files; a committed 51-assertion Firestore Rules
+  emulator suite verified live against a real JDK — see [§15](#15-current-priorities)). Draft
+  branch: `redesign/question-bank-workspace`.
 
 
 ---

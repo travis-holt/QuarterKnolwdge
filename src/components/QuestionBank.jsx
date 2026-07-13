@@ -57,14 +57,45 @@ export default function QuestionBank({ questions, results = [], selectedDept = '
   const [queueMessage, setQueueMessage] = useState(null);
   const generateBtnRef = useRef(null);
 
-  // Re-pick a sensible default tab whenever the department scope changes.
+  // ── Initial-tab auto-default, async-load aware ──────────────────────────
+  // `questions` starts as [] and is filled in asynchronously by a Firestore
+  // subscription (SupervisorApp passes questions=[] on mount). Picking the
+  // default tab (Review Queue if drafts exist, else Active) against that
+  // still-empty array would wrongly stick on Active even when the first real
+  // snapshot turns out to contain drafts. So the auto-default is deferred
+  // until the department's first NON-EMPTY snapshot arrives (a real signal
+  // that data has actually loaded, not just "nothing yet"), and is resolved
+  // at most once per department-visit. A department that legitimately has
+  // zero questions never gets an explicit "loaded" signal this way, but that
+  // is fine: defaultStatusTab() on all-zero counts already returns 'active',
+  // which is the correct final answer and matches the initial guess — there
+  // is no visible "loading limbo", we just keep watching in case real
+  // questions show up later. Manual tab selection (changeTab with
+  // `manual: true`) marks the department resolved immediately so a later
+  // snapshot can never override the supervisor's own choice; a successful
+  // generation is a separate, intentional override (see handleGenerated).
+  const resolvedDeptsRef = useRef(new Map()); // deptId -> resolved this visit
+  const manualDeptsRef = useRef(new Set());   // deptIds the supervisor manually picked a tab for
+
+  // Switching departments (including revisiting one) always re-arms the
+  // auto-default logic for the newly selected department.
   useEffect(() => {
-    setActiveTab(defaultStatusTab(counts));
+    resolvedDeptsRef.current.delete(selectedDept);
+    manualDeptsRef.current.delete(selectedDept);
     setExpandedQuestionId(null);
     setEditingId(null);
     // Only re-derive on a genuinely new department scope, not every render.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedDept]);
+
+  // Resolve the default tab once real (non-empty) data is available for the
+  // current department, unless the supervisor already picked one manually.
+  useEffect(() => {
+    if (resolvedDeptsRef.current.get(selectedDept) || manualDeptsRef.current.has(selectedDept)) return;
+    if (deptQuestions.length === 0) return; // still waiting for a first meaningful snapshot
+    resolvedDeptsRef.current.set(selectedDept, true);
+    setActiveTab(defaultStatusTab(counts));
+  }, [selectedDept, deptQuestions, counts]);
 
   const tabQuestions = useMemo(
     () => deptQuestions.filter((q) => questionStatus(q) === activeTab),
@@ -82,7 +113,12 @@ export default function QuestionBank({ questions, results = [], selectedDept = '
     setExpandedQuestionId((cur) => nextExpandedId(visibleQuestions, cur));
   }, [visibleQuestions]);
 
-  const changeTab = (tab) => {
+  const changeTab = (tab, { manual = false } = {}) => {
+    // A manual pick always wins over the auto-default logic for the rest of
+    // this department-visit — mark it resolved so a later async snapshot
+    // (e.g. more questions loading in) can never switch the tab out from
+    // under the supervisor.
+    if (manual) manualDeptsRef.current.add(selectedDept);
     setActiveTab(tab);
     setExpandedQuestionId(null);
     setEditingId(null);
@@ -100,6 +136,11 @@ export default function QuestionBank({ questions, results = [], selectedDept = '
   const openGenerateDialog = () => setGenerationDialogOpen(true);
   const closeGenerateDialog = () => setGenerationDialogOpen(false);
   const handleGenerated = (text) => {
+    // Generation success is an explicit, action-driven override — distinct
+    // from "don't override a manual tab pick". It still needs to stick, so
+    // mark the department resolved (not "manual") so a later snapshot can't
+    // undo it, without conflating it with an actual supervisor tab click.
+    resolvedDeptsRef.current.set(selectedDept, true);
     changeTab('draft');
     setGenMessage({ kind: 'ok', text });
   };
@@ -230,7 +271,7 @@ export default function QuestionBank({ questions, results = [], selectedDept = '
             aria-selected={activeTab === tab}
             aria-controls={`qbank-tabpanel-${tab}`}
             className={`qbank-tabs__tab${activeTab === tab ? ' is-active' : ''}`}
-            onClick={() => changeTab(tab)}
+            onClick={() => changeTab(tab, { manual: true })}
           >
             {TAB_LABELS[tab]} <span className="qbank-tabs__count">{counts[tab]}</span>
           </button>

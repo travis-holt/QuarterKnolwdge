@@ -1,6 +1,99 @@
 # Development History - Knowledge Check
 
 
+### 2026-07-14 - Question Bank workspace: async-load-aware tab default fix + sort-label wording fix
+- **Follow-up to the 2026-07-13 Question Bank redesign** (same branch,
+  `redesign/question-bank-workspace`), addressing coordinator review feedback before the PR ships.
+- **Bug fixed — initial-tab resolution against async Firestore data:** `SupervisorApp` renders
+  `QuestionBank` with `questions=[]` on mount, then fills that array in asynchronously via
+  `subscribeQuestions`. The first cut of the redesign picked the default status tab (Review Queue
+  if drafts exist, else Active) exactly once, against whatever `questions` happened to be at first
+  render — i.e. against the still-empty array — so in real usage the tab could get permanently
+  stuck on Active even when the department's actual first Firestore snapshot contained drafts.
+  - **Fix:** `QuestionBank` now defers the auto-default decision until the current department's
+    first **non-empty** snapshot arrives, tracked per department in a `resolvedDeptsRef` map (not a
+    single shared boolean) so a resolution made while viewing one department can never leak into
+    another. The decision resolves **at most once per department-visit**. A tab the supervisor
+    clicks manually (`changeTab(tab, {manual:true})`, recorded in `manualDeptsRef`) always wins over
+    the auto-default for the rest of that department's session — a later async load can never snap
+    the tab back. A successful generation still force-switches to Review Queue; that is treated as a
+    separate, intentional, action-driven override (not the "don't override manual" rule), implemented
+    by marking the department resolved (not manual) in `handleGenerated`. Switching departments —
+    including revisiting one already seen this session — always re-arms the auto-default logic for
+    the newly selected department, so a department that previously resolved to Active is not
+    "sticky" on return. A department that legitimately has zero questions is never stuck in a
+    loading limbo: `defaultStatusTab()` on all-zero counts already returns `'active'`, which is both
+    the correct final answer and the initial guess, and the empty-state message renders immediately
+    regardless of resolution status — no additional "questions loaded" signal from `SupervisorApp`
+    was needed for correctness.
+  - **Tests:** 4 new regression tests in `src/components/questionBank.test.jsx` — async
+    empty→(active+draft) resolves to Review Queue; async empty→active-only resolves to Active; a
+    manual tab selection survives a later async load (does not snap back); and a department switch
+    re-resolves fresh even when the previous department had resolved to Active.
+- **Wording fixed — misleading sort labels:** "Recently updated"/"Oldest updated" implied an
+  `updatedAt` field that questions do not have and do not maintain; sorting has always used
+  `createdAt`. Relabeled to **"Newest created"/"Oldest created"** in
+  `src/lib/questionBankView.js` `SORT_OPTIONS`. Sort mode ids (`updatedDesc`/`updatedAsc`) were left
+  unchanged — only the label text changed. No `updatedAt` field was added to the question document
+  shape (explicitly out of scope).
+- **Verification (this pass, in the actual agent worktree, not an ambient/shared node_modules):**
+  - `npm ci` — clean install, 864 packages, into the worktree's own `node_modules` (previously this
+    worktree had no local `node_modules` of its own and was silently resolving packages from
+    elsewhere, which made `npm ls --all` report false "UNMET DEPENDENCY" errors for core packages).
+  - `npm test -- src/components` — **115 passed** (8 test files; was 111/8 before this pass).
+  - `npm test` (full suite) — **858 passed** (44 test files; was 854/44 before this pass).
+  - `npm run test:rules` — **actually executed this time** against a real Firestore Rules emulator.
+    A JDK is not installed in this sandbox by default; a portable Eclipse Temurin 21 JDK zip was
+    downloaded and extracted into the session scratch directory (no admin/install required — a
+    `winget`-driven MSI install failed with exit 1602, "user cancelled", consistent with no
+    interactive UAC in this sandbox; the portable zip sidesteps that) and prepended to `PATH` for
+    the command. Result: **51 passed, 0 failed** against the real emulator (`firebase
+    emulators:exec --only firestore`), covering the full own-ID matrix, cross-navigator denial,
+    squatted-document protection, arbitrary-ID denial, ownership-mutation denial, and
+    list/query/supervisor behavior — unchanged from the 2026-07-13 rules-hardening PR, since this
+    pass touched no Firestore rules.
+  - `npm run build` — clean (`✓ 92 modules transformed`, built in ~580ms).
+  - `npm audit --omit=dev` — `found 0 vulnerabilities`.
+  - `npm ls --all` — now genuinely clean: exit code 0, no `ELSPROBLEMS`, no `npm error`, no
+    required-dependency "missing"/"UNMET DEPENDENCY" lines. The only remaining "UNMET OPTIONAL
+    DEPENDENCY" entries (68 of them) are legitimately optional, platform-specific, or
+    ecosystem-adjacent packages (darwin/linux native binaries, React Native/TypeScript peer
+    optionals, etc.) that npm correctly reports as informational without erroring — a normal
+    pattern for a project this size, not a defect.
+  - `git diff --check` — clean (exit 0; only benign LF→CRLF conversion notices, not diff errors).
+  - `git status --short` — clean after committing this pass's changes.
+- **Real browser walkthrough — actually performed this time:** Playwright's bundled Chromium
+  (already installed at `~/AppData/Local/ms-playwright`, a real browser engine, not jsdom) was
+  driven headlessly against a temporary, throwaway harness page (`harness.html`/`harness.jsx`,
+  created outside `src/`, served by a plain `vite` dev server on a scratch port, and deleted — never
+  committed) that mounts the real `QuestionBank.jsx` + the real `styles.css` with mock data that
+  mimics `SupervisorApp`'s actual async-load shape (`questions=[]` on mount, then a snapshot with
+  drafts + active + archived items arrives ~400ms later). All 21 scripted checks passed against the
+  real rendered DOM/CSS: (1) the initial pre-load guess is Active, (2) **the exact bug being fixed**
+  — after the async snapshot lands with drafts, the tab switches to Review Queue — verified true in
+  a real browser, not just jsdom; (3) questions render collapsed with no option text visible; (4)
+  only one row expands at a time; (5) the generation dialog opens, Escape closes it, and focus
+  returns to the "Generate questions" button; (6) the renamed sort labels ("Newest created"/"Oldest
+  created") appear and the old ones do not; (7) search and domain filters narrow the visible count;
+  (8) Edit opens `QuestionEditor` and Cancel restores the expanded view; (9) Archive/Restore actions
+  are present and clickable without crashing; (10) switching departments re-resolves the tab fresh
+  (OB/GYN with no drafts → Active; back to Pediatrics with drafts → Review Queue); (11) tablet
+  (820px) and mobile (390px) viewports have no horizontal overflow. Screenshots were captured at
+  each step for visual review.
+  - **Real bug found and fixed by this walkthrough:** the mobile toolbar screenshot showed a large
+    empty gap under the search box. Root cause: `.qbank-toolbar__search { flex: 1 1 220px; }` sets a
+    220px **flex-basis**, which the row layout treats as a width — but the `max-width: 760px` media
+    query switches `.qbank-toolbar` to `flex-direction: column`, at which point that same 220px basis
+    is applied to the **height** dimension instead, inflating the search field's box. Fixed with a
+    mobile-only override (`flex: none; min-width: 0;` on `.qbank-toolbar__search`). Re-verified with
+    the same Playwright harness after the fix — gap gone, all 21 checks still passing, screenshots
+    re-captured.
+- **Files:** edited `src/components/QuestionBank.jsx` (async-load-aware tab resolution + manual/
+  generation override tracking), `src/components/questionBank.test.jsx` (+4 tests),
+  `src/lib/questionBankView.js` (sort label wording only), `src/styles.css` (mobile toolbar
+  flex-basis fix found during the browser walkthrough), `CLAUDE.md`, `docs/HISTORY.md`. No
+  Firestore rules, scoring, question content, or document-shape changes.
+
 ### 2026-07-13 - Redesign supervisor Question Bank as a collapsible review workspace
 - **Problem:** the Question Bank (F14) rendered every question permanently fully expanded — all
   answer options, point values, rationale, health detail, tags, and the full action row, for every

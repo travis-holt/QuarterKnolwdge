@@ -70,6 +70,57 @@ describe('QuestionBank — status tabs', () => {
   });
 });
 
+describe('QuestionBank — async-load-aware initial tab resolution', () => {
+  it('waits past an initial empty snapshot: rerendering with an active question + a draft selects Review Queue', () => {
+    const { rerender } = render(<QuestionBank {...baseProps({ questions: [] })} />);
+    // Nothing has loaded yet — the best available guess is Active.
+    expect(tab('Active').getAttribute('aria-selected')).toBe('true');
+
+    const questions = [makeQuestion({ id: 'a', status: 'active' }), makeQuestion({ id: 'd', status: 'draft' })];
+    rerender(<QuestionBank {...baseProps({ questions })} />);
+
+    expect(tab('Review Queue').getAttribute('aria-selected')).toBe('true');
+  });
+
+  it('waits past an initial empty snapshot: rerendering with active-only questions selects Active', () => {
+    const { rerender } = render(<QuestionBank {...baseProps({ questions: [] })} />);
+    expect(tab('Active').getAttribute('aria-selected')).toBe('true');
+
+    const questions = [makeQuestion({ id: 'a', status: 'active' }), makeQuestion({ id: 'b', status: 'active' })];
+    rerender(<QuestionBank {...baseProps({ questions })} />);
+
+    expect(tab('Active').getAttribute('aria-selected')).toBe('true');
+  });
+
+  it('does not override a manual tab selection when more questions load in later', () => {
+    const questions = [makeQuestion({ id: 'a', status: 'active' }), makeQuestion({ id: 'd', status: 'draft' })];
+    const { rerender } = render(<QuestionBank {...baseProps({ questions })} />);
+    // Auto-default picked Review Queue because a draft exists.
+    expect(tab('Review Queue').getAttribute('aria-selected')).toBe('true');
+
+    // Supervisor manually switches to Active.
+    fireEvent.click(tab('Active'));
+    expect(tab('Active').getAttribute('aria-selected')).toBe('true');
+
+    // More questions arrive (another draft loads in) — must NOT snap back to Review Queue.
+    const moreQuestions = [...questions, makeQuestion({ id: 'd2', status: 'draft' })];
+    rerender(<QuestionBank {...baseProps({ questions: moreQuestions })} />);
+    expect(tab('Active').getAttribute('aria-selected')).toBe('true');
+  });
+
+  it('re-resolves the default tab after switching departments, even if the previous department resolved to Active', () => {
+    const pedsActive = [makeQuestion({ id: 'p1', status: 'active', department: 'pediatrics' })];
+    const { rerender } = render(<QuestionBank {...baseProps({ questions: pedsActive, selectedDept: 'pediatrics' })} />);
+    expect(tab('Active').getAttribute('aria-selected')).toBe('true');
+
+    // Switch to obgyn, whose first available snapshot already contains a draft.
+    const withObgynDraft = [...pedsActive, makeQuestion({ id: 'o1', status: 'draft', department: 'obgyn' })];
+    rerender(<QuestionBank {...baseProps({ questions: withObgynDraft, selectedDept: 'obgyn' })} />);
+
+    expect(tab('Review Queue').getAttribute('aria-selected')).toBe('true');
+  });
+});
+
 describe('QuestionBank — collapsible rows', () => {
   it('renders questions collapsed by default (no options/rationale visible)', () => {
     const questions = [makeQuestion({ id: 'a' })];
