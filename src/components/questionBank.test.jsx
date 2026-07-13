@@ -5,9 +5,15 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, fireEvent, within } from '@testing-library/react';
+import { render, screen, fireEvent, within, waitFor } from '@testing-library/react';
 
 import QuestionBank from './QuestionBank.jsx';
+
+function deferred() {
+  let resolve, reject;
+  const promise = new Promise((res, rej) => { resolve = res; reject = rej; });
+  return { promise, resolve, reject };
+}
 
 function makeQuestion(overrides = {}) {
   return {
@@ -348,5 +354,185 @@ describe('QuestionBank — accessibility', () => {
     expect(row).toHaveAttribute('aria-controls');
     fireEvent.click(row);
     expect(within(screen.getByRole('tabpanel')).getByRole('button', { expanded: true })).toHaveAttribute('aria-controls');
+  });
+
+  it('implements roving-tabindex keyboard navigation (arrows/Home/End) across the tablist', () => {
+    const questions = [makeQuestion({ id: 'a', status: 'active' }), makeQuestion({ id: 'd', status: 'draft' })];
+    render(<QuestionBank {...baseProps({ questions })} />);
+    // Drafts exist -> Review Queue is selected/focusable; others are -1.
+    expect(tab('Review Queue')).toHaveAttribute('tabindex', '0');
+    expect(tab('Active')).toHaveAttribute('tabindex', '-1');
+    expect(tab('Archived')).toHaveAttribute('tabindex', '-1');
+
+    fireEvent.keyDown(tab('Review Queue'), { key: 'ArrowRight' });
+    expect(tab('Active').getAttribute('aria-selected')).toBe('true');
+    expect(tab('Active')).toHaveAttribute('tabindex', '0');
+    expect(tab('Review Queue')).toHaveAttribute('tabindex', '-1');
+    expect(document.activeElement).toBe(tab('Active'));
+
+    fireEvent.keyDown(tab('Active'), { key: 'ArrowRight' });
+    expect(tab('Archived').getAttribute('aria-selected')).toBe('true');
+    expect(document.activeElement).toBe(tab('Archived'));
+
+    // Wraps around from the last tab back to the first.
+    fireEvent.keyDown(tab('Archived'), { key: 'ArrowRight' });
+    expect(tab('Review Queue').getAttribute('aria-selected')).toBe('true');
+
+    fireEvent.keyDown(tab('Review Queue'), { key: 'ArrowLeft' });
+    expect(tab('Archived').getAttribute('aria-selected')).toBe('true');
+
+    fireEvent.keyDown(tab('Archived'), { key: 'Home' });
+    expect(tab('Review Queue').getAttribute('aria-selected')).toBe('true');
+    expect(document.activeElement).toBe(tab('Review Queue'));
+
+    fireEvent.keyDown(tab('Review Queue'), { key: 'End' });
+    expect(tab('Archived').getAttribute('aria-selected')).toBe('true');
+    expect(document.activeElement).toBe(tab('Archived'));
+  });
+});
+
+describe('QuestionBank — failure-safe persistence actions', () => {
+  it('activation failure keeps the question expanded, shows an accessible error, and does not auto-advance', async () => {
+    const { promise, reject } = deferred();
+    const onActivate = vi.fn().mockReturnValue(promise);
+    const questions = [makeQuestion({ id: 'd1', status: 'draft' }), makeQuestion({ id: 'd2', status: 'draft' })];
+    render(<QuestionBank {...baseProps({ questions, onActivate })} />);
+    const rows = screen.getAllByRole('button', { expanded: false });
+    fireEvent.click(rows[0]); // expand d1
+    const activateBtn = screen.getByRole('button', { name: 'Activate' });
+    fireEvent.click(activateBtn);
+    expect(activateBtn).toBeDisabled();
+
+    reject(new Error('network down'));
+    const alert = await screen.findByRole('alert');
+    expect(alert).toHaveTextContent('network down');
+    // Still expanded on the SAME question (d1) — no auto-advance to d2.
+    expect(screen.getByRole('button', { expanded: true })).toHaveAttribute('id', 'qbank-head-d1');
+  });
+
+  it('duplicate clicks on Activate while pending do not trigger duplicate writes', async () => {
+    const { promise, resolve } = deferred();
+    const onActivate = vi.fn().mockReturnValue(promise);
+    const questions = [makeQuestion({ id: 'd1', status: 'draft' })];
+    render(<QuestionBank {...baseProps({ questions, onActivate })} />);
+    fireEvent.click(screen.getByRole('button', { expanded: false }));
+    const activateBtn = screen.getByRole('button', { name: 'Activate' });
+    fireEvent.click(activateBtn);
+    fireEvent.click(activateBtn);
+    fireEvent.click(activateBtn);
+    resolve();
+    await waitFor(() => expect(screen.queryByRole('alert')).not.toBeInTheDocument());
+    expect(onActivate).toHaveBeenCalledTimes(1);
+  });
+
+  it('a successful activation still auto-advances to the next remaining draft once the list updates', async () => {
+    const onActivate = vi.fn().mockResolvedValue(undefined);
+    const questions = [makeQuestion({ id: 'd1', status: 'draft' }), makeQuestion({ id: 'd2', status: 'draft' })];
+    const { rerender } = render(<QuestionBank {...baseProps({ questions, onActivate })} />);
+    const rows = screen.getAllByRole('button', { expanded: false });
+    fireEvent.click(rows[0]); // expand d1
+    fireEvent.click(screen.getByRole('button', { name: 'Activate' }));
+    await waitFor(() => expect(onActivate).toHaveBeenCalledWith('d1'));
+
+    // Simulate the real Firestore round-trip: d1 is now active, d2 still a draft.
+    const updated = [makeQuestion({ id: 'd1', status: 'active' }), makeQuestion({ id: 'd2', status: 'draft' })];
+    rerender(<QuestionBank {...baseProps({ questions: updated, onActivate })} />);
+    expect(screen.getByRole('button', { expanded: true })).toHaveAttribute('id', 'qbank-head-d2');
+  });
+
+  it('archive failure shows a pending state then an accessible error (equivalent handling)', async () => {
+    const { promise, reject } = deferred();
+    const onArchive = vi.fn().mockReturnValue(promise);
+    const questions = [makeQuestion({ id: 'x1', status: 'active' })];
+    render(<QuestionBank {...baseProps({ questions, onArchive })} />);
+    fireEvent.click(screen.getByRole('button', { expanded: false }));
+    const archiveBtn = screen.getByRole('button', { name: 'Archive' });
+    fireEvent.click(archiveBtn);
+    expect(archiveBtn).toBeDisabled();
+    reject(new Error('archive failed'));
+    await screen.findByRole('alert');
+    expect(screen.getByRole('alert')).toHaveTextContent('archive failed');
+  });
+
+  it('restore (archived tab) failure shows a pending state then an accessible error (equivalent handling)', async () => {
+    const { promise, reject } = deferred();
+    const onActivate = vi.fn().mockReturnValue(promise);
+    const questions = [makeQuestion({ id: 'z1', status: 'archived' })];
+    render(<QuestionBank {...baseProps({ questions, onActivate })} />);
+    fireEvent.click(tab('Archived'));
+    fireEvent.click(screen.getByRole('button', { expanded: false }));
+    const restoreBtn = screen.getByRole('button', { name: 'Restore' });
+    fireEvent.click(restoreBtn);
+    expect(restoreBtn).toBeDisabled();
+    reject(new Error('restore failed'));
+    await screen.findByRole('alert');
+    expect(screen.getByRole('alert')).toHaveTextContent('restore failed');
+  });
+
+  it('archived delete failure shows a pending state then an accessible error (equivalent handling)', async () => {
+    const { promise, reject } = deferred();
+    const onDelete = vi.fn().mockReturnValue(promise);
+    const questions = [makeQuestion({ id: 'z2', status: 'archived' })];
+    render(<QuestionBank {...baseProps({ questions, onDelete })} />);
+    fireEvent.click(tab('Archived'));
+    fireEvent.click(screen.getByRole('button', { expanded: false }));
+    const deleteBtn = screen.getByRole('button', { name: 'Delete' });
+    fireEvent.click(deleteBtn);
+    expect(deleteBtn).toBeDisabled();
+    reject(new Error('delete failed'));
+    await screen.findByRole('alert');
+    expect(screen.getByRole('alert')).toHaveTextContent('delete failed');
+  });
+});
+
+describe('QuestionBank — generation stale-completion guard', () => {
+  it('ignores a Pediatrics generation completion after the supervisor switches to OB/GYN', async () => {
+    const { promise, resolve } = deferred();
+    const onGenerate = vi.fn().mockReturnValue(promise);
+    const { rerender } = render(<QuestionBank {...baseProps({ questions: [], selectedDept: 'pediatrics', onGenerate })} />);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Generate questions' }));
+    fireEvent.click(screen.getByRole('button', { name: /generate scenarios/i }));
+    expect(onGenerate).toHaveBeenCalledTimes(1);
+
+    // Supervisor switches to OB/GYN while the Pediatrics request is still in flight.
+    rerender(<QuestionBank {...baseProps({ questions: [], selectedDept: 'obgyn', onGenerate })} />);
+    expect(tab('Active').getAttribute('aria-selected')).toBe('true'); // obgyn's own (empty) default
+
+    resolve(3); // the STALE pediatrics generation now completes
+    // The (still-mounted) dialog shows its own transient completion text...
+    await within(screen.getByRole('dialog')).findByText(/added to the Review Queue/i);
+    // ...but the current department's (OB/GYN's) tab/messaging must be unaffected.
+    expect(tab('Active').getAttribute('aria-selected')).toBe('true');
+    expect(screen.getByRole('tabpanel')).not.toHaveTextContent(/added to the Review Queue/i);
+  });
+});
+
+describe('QuestionBank — empty-department tab state', () => {
+  it('resets to Active immediately when switching to a department with no questions, even if the previous department had resolved to Review Queue', () => {
+    const pedsWithDraft = [makeQuestion({ id: 'p1', status: 'draft', department: 'pediatrics' })];
+    const { rerender } = render(<QuestionBank {...baseProps({ questions: pedsWithDraft, selectedDept: 'pediatrics' })} />);
+    expect(tab('Review Queue').getAttribute('aria-selected')).toBe('true');
+
+    // OB/GYN has zero questions in this data set.
+    rerender(<QuestionBank {...baseProps({ questions: pedsWithDraft, selectedDept: 'obgyn' })} />);
+    expect(tab('Active').getAttribute('aria-selected')).toBe('true');
+  });
+});
+
+describe('QuestionBank — edit-save error placement', () => {
+  it('renders the edit-save error beside the active editor with an accessible alert', async () => {
+    const onSaveEdit = vi.fn().mockRejectedValue(new Error('save failed'));
+    const questions = [makeQuestion({ id: 'a', scenario: 'Scenario A' })];
+    render(<QuestionBank {...baseProps({ questions, onSaveEdit })} />);
+    fireEvent.click(screen.getByRole('button', { expanded: false }));
+    fireEvent.click(screen.getByRole('button', { name: 'Edit' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Save question' }));
+
+    const alert = await screen.findByRole('alert');
+    expect(alert).toHaveTextContent('save failed');
+    // The error sits inside the SAME editing <li> as the editor, not after the whole list.
+    expect(alert.closest('li.is-editing')).not.toBeNull();
+    expect(screen.getByDisplayValue('Scenario A')).toBeInTheDocument(); // editor still open
   });
 });

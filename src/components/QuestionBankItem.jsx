@@ -7,6 +7,12 @@ import FeedbackControls from './FeedbackControls.jsx';
 
 const MAX_VISIBLE_COMPETENCY_TAGS = 3;
 
+const ACTION_LABELS = {
+  activate: { draft: 'Activate', archived: 'Restore' },
+  pending: { activate: { draft: 'Activating…', archived: 'Restoring…' }, archive: 'Archiving…', delete: { draft: 'Discarding…', archived: 'Deleting…' } },
+  delete: { draft: 'Discard', archived: 'Delete' },
+};
+
 function HealthSummary({ health }) {
   if (!health) return null;
   const pct = Math.round(health.correctRate * 100);
@@ -30,6 +36,13 @@ function HealthSummary({ health }) {
  * health summary, warning indicator). Expands in place to the full detail
  * view (options, rationale, health detail, content warnings, actions) when
  * `isExpanded`. Editing swaps the expanded body for <QuestionEditor>.
+ *
+ * Persistence actions (activate/archive/delete/restore) are failure-safe:
+ * `pendingAction` disables the in-flight button and prevents re-entrancy
+ * (guarded again at the QuestionBank level via a ref); `actionError` renders
+ * an accessible (`role="alert"`) inline error beside the actions if the
+ * write rejects, and the row is left exactly as it was — no auto-advance,
+ * no collapse.
  */
 export default function QuestionBankItem({
   question: q,
@@ -37,6 +50,9 @@ export default function QuestionBankItem({
   health,
   isExpanded,
   isEditing,
+  editError,
+  pendingAction, // 'activate' | 'archive' | 'delete' | null
+  actionError,
   onToggleExpand,
   onEdit,
   onCancelEdit,
@@ -56,6 +72,7 @@ export default function QuestionBankItem({
   const extraCompCount = compTags.length - visibleComps.length;
   const panelId = `qbank-panel-${q.id}`;
   const headId = `qbank-head-${q.id}`;
+  const anyPending = Boolean(pendingAction);
 
   const stop = (fn) => (e) => {
     e.stopPropagation();
@@ -66,9 +83,20 @@ export default function QuestionBankItem({
     return (
       <li className="qbank__item is-editing">
         <QuestionEditor question={q} onSave={onSaveEdit} onCancel={onCancelEdit} />
+        {editError && (
+          <p role="alert" className="qedit__error qbank__edit-error">{editError}</p>
+        )}
       </li>
     );
   }
+
+  const activateLabel = pendingAction === 'activate'
+    ? ACTION_LABELS.pending.activate[status]
+    : ACTION_LABELS.activate[status];
+  const deleteLabel = pendingAction === 'delete'
+    ? ACTION_LABELS.pending.delete[status]
+    : ACTION_LABELS.delete[status];
+  const archiveLabel = pendingAction === 'archive' ? ACTION_LABELS.pending.archive : 'Archive';
 
   return (
     <li className={`qbank__item${health?.status === 'review' ? ' is-flagged' : ''}${isExpanded ? ' is-expanded' : ''}`}>
@@ -151,21 +179,25 @@ export default function QuestionBankItem({
             </div>
           )}
 
+          {actionError && (
+            <p role="alert" className="qbank__action-error">{actionError}</p>
+          )}
+
           <div className="qbank__actions">
             <button className="btn btn--ghost btn--sm" type="button" onClick={stop(onEdit)}>Edit</button>
             {status === 'draft' && (
               <>
-                <button className="btn btn--primary btn--sm" type="button" disabled={blocked} onClick={stop(() => onActivate(q.id))}>Activate</button>
-                <button className="btn btn--ghost btn--sm qbank__destructive" type="button" onClick={stop(() => onDelete(q.id))}>Discard</button>
+                <button className="btn btn--primary btn--sm" type="button" disabled={blocked || anyPending} onClick={stop(() => onActivate(q.id))}>{activateLabel}</button>
+                <button className="btn btn--ghost btn--sm qbank__destructive" type="button" disabled={anyPending} onClick={stop(() => onDelete(q.id))}>{deleteLabel}</button>
               </>
             )}
             {status === 'active' && (
-              <button className="btn btn--ghost btn--sm qbank__destructive" type="button" onClick={stop(() => onArchive(q.id))}>Archive</button>
+              <button className="btn btn--ghost btn--sm qbank__destructive" type="button" disabled={anyPending} onClick={stop(() => onArchive(q.id))}>{archiveLabel}</button>
             )}
             {status === 'archived' && (
               <>
-                <button className="btn btn--primary btn--sm" type="button" disabled={blocked} onClick={stop(() => onActivate(q.id))}>Restore</button>
-                <button className="btn btn--ghost btn--sm qbank__destructive" type="button" onClick={stop(() => onDelete(q.id))}>Delete</button>
+                <button className="btn btn--primary btn--sm" type="button" disabled={blocked || anyPending} onClick={stop(() => onActivate(q.id))}>{activateLabel}</button>
+                <button className="btn btn--ghost btn--sm qbank__destructive" type="button" disabled={anyPending} onClick={stop(() => onDelete(q.id))}>{deleteLabel}</button>
               </>
             )}
           </div>

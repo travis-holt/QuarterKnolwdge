@@ -27,6 +27,15 @@ import QuestionBankGenerateDialog from './QuestionBankGenerateDialog.jsx';
 // description. All existing behavior (generation, activation, archive/
 // restore, delete, editing, content guards, question health, feedback,
 // revision queueing) is unchanged; only the presentation changed.
+//
+// Hardened 2026-07-14 (second pass): activate/archive/delete/restore are now
+// failure-safe (pending + inline accessible error + re-entrancy guard, no
+// auto-advance on failure); the generate dialog is truly modal (portal +
+// inert background + manual focus trap) and immune to a stale-completion
+// race across department switches; empty departments resolve to Active
+// immediately instead of showing a stale tab; edit-save errors render beside
+// the active editor; and the status tabs implement full roving-tabindex
+// keyboard semantics.
 // ─────────────────────────────────────────────────────────────────────────────
 
 const DEFAULT_FILTERS = { search: '', domainId: 'all', competencyId: 'all', healthFilter: 'all' };
@@ -55,7 +64,13 @@ export default function QuestionBank({ questions, results = [], selectedDept = '
   const [genMessage, setGenMessage] = useState(null);
   const [queueingId, setQueueingId] = useState(null);
   const [queueMessage, setQueueMessage] = useState(null);
+  // Per-question persistence state (activate/archive/delete/restore). Keyed
+  // by question id so multiple rows could in principle be mid-write at once
+  // (only one is ever expanded, but state isn't lost when a row collapses).
+  const [pendingActions, setPendingActions] = useState({}); // { [id]: 'activate'|'archive'|'delete' }
+  const [actionErrors, setActionErrors] = useState({}); // { [id]: string }
   const generateBtnRef = useRef(null);
+  const tabRefs = useRef({});
 
   // ── Initial-tab auto-default, async-load aware ──────────────────────────
   // `questions` starts as [] and is filled in asynchronously by a Firestore
@@ -65,12 +80,7 @@ export default function QuestionBank({ questions, results = [], selectedDept = '
   // snapshot turns out to contain drafts. So the auto-default is deferred
   // until the department's first NON-EMPTY snapshot arrives (a real signal
   // that data has actually loaded, not just "nothing yet"), and is resolved
-  // at most once per department-visit. A department that legitimately has
-  // zero questions never gets an explicit "loaded" signal this way, but that
-  // is fine: defaultStatusTab() on all-zero counts already returns 'active',
-  // which is the correct final answer and matches the initial guess — there
-  // is no visible "loading limbo", we just keep watching in case real
-  // questions show up later. Manual tab selection (changeTab with
+  // at most once per department-visit. Manual tab selection (changeTab with
   // `manual: true`) marks the department resolved immediately so a later
   // snapshot can never override the supervisor's own choice; a successful
   // generation is a separate, intentional override (see handleGenerated).
@@ -78,24 +88,40 @@ export default function QuestionBank({ questions, results = [], selectedDept = '
   const manualDeptsRef = useRef(new Set());   // deptIds the supervisor manually picked a tab for
 
   // Switching departments (including revisiting one) always re-arms the
-  // auto-default logic for the newly selected department.
+  // auto-default logic for the newly selected department, AND immediately
+  // shows Active as the temporary tab rather than leaving the PREVIOUS
+  // department's tab on screen — important for a department with zero
+  // questions, which never gets a "non-empty snapshot" signal to resolve on
+  // its own (see the resolve effect below).
   useEffect(() => {
     resolvedDeptsRef.current.delete(selectedDept);
     manualDeptsRef.current.delete(selectedDept);
+    setActiveTab('active');
     setExpandedQuestionId(null);
     setEditingId(null);
+    setEditError('');
     // Only re-derive on a genuinely new department scope, not every render.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedDept]);
 
   // Resolve the default tab once real (non-empty) data is available for the
   // current department, unless the supervisor already picked one manually.
+  // A department that legitimately never has any questions simply keeps the
+  // 'active' default set above — there is no signal to wait on, and that's
+  // the correct final answer anyway.
   useEffect(() => {
     if (resolvedDeptsRef.current.get(selectedDept) || manualDeptsRef.current.has(selectedDept)) return;
     if (deptQuestions.length === 0) return; // still waiting for a first meaningful snapshot
     resolvedDeptsRef.current.set(selectedDept, true);
     setActiveTab(defaultStatusTab(counts));
   }, [selectedDept, deptQuestions, counts]);
+
+  // Always-current department, readable from stale closures (see
+  // handleGenerated) — updated on every render, no dependency array.
+  const selectedDeptRef = useRef(selectedDept);
+  useEffect(() => {
+    selectedDeptRef.current = selectedDept;
+  });
 
   const tabQuestions = useMemo(
     () => deptQuestions.filter((q) => questionStatus(q) === activeTab),
@@ -125,6 +151,23 @@ export default function QuestionBank({ questions, results = [], selectedDept = '
     setEditError('');
   };
 
+  // Roving-tabindex keyboard navigation for the tablist (WAI-ARIA APG tabs
+  // pattern, automatic activation): Left/Right move focus AND selection
+  // between tabs (wrapping), Home/End jump to the first/last tab. Enter/
+  // Space need no extra handling — these are native <button>s.
+  const handleTabKeyDown = (e, index) => {
+    let nextIndex = null;
+    if (e.key === 'ArrowRight') nextIndex = (index + 1) % STATUS_TABS.length;
+    else if (e.key === 'ArrowLeft') nextIndex = (index - 1 + STATUS_TABS.length) % STATUS_TABS.length;
+    else if (e.key === 'Home') nextIndex = 0;
+    else if (e.key === 'End') nextIndex = STATUS_TABS.length - 1;
+    if (nextIndex === null) return;
+    e.preventDefault();
+    const nextTab = STATUS_TABS[nextIndex];
+    changeTab(nextTab, { manual: true });
+    tabRefs.current[nextTab]?.focus();
+  };
+
   const toggleExpand = (id) => {
     setExpandedQuestionId((cur) => (cur === id ? null : id));
     setEditingId((cur) => (cur === id ? cur : null));
@@ -135,7 +178,30 @@ export default function QuestionBank({ questions, results = [], selectedDept = '
 
   const openGenerateDialog = () => setGenerationDialogOpen(true);
   const closeGenerateDialog = () => setGenerationDialogOpen(false);
+
+  // ── Generation stale-completion guard ───────────────────────────────────
+  // `handleGenerated`/`wrappedOnGenerate` are recreated fresh on every render
+  // (ordinary JS closures), so whichever instance is actually invoked when a
+  // Gemini call resolves has `selectedDept` fixed to whatever department was
+  // active when the dialog's "Generate scenarios" click captured it. If the
+  // supervisor has since switched departments, `selectedDeptRef.current`
+  // (always current) will no longer match — the stale completion is
+  // dropped: no tab switch, no success banner leaking into the department
+  // the supervisor is now looking at. `generationSeqRef` adds a second,
+  // independent guard against a newer request superseding an older one.
+  const generationSeqRef = useRef(0);
+  const requestTagRef = useRef(null);
+
+  const wrappedOnGenerate = async (args) => {
+    generationSeqRef.current += 1;
+    requestTagRef.current = { dept: selectedDept, seq: generationSeqRef.current };
+    return onGenerate(args);
+  };
+
   const handleGenerated = (text) => {
+    const tag = requestTagRef.current;
+    const isStale = !tag || tag.dept !== selectedDeptRef.current || tag.seq !== generationSeqRef.current;
+    if (isStale) return;
     // Generation success is an explicit, action-driven override — distinct
     // from "don't override a manual tab pick". It still needs to stick, so
     // mark the department resolved (not "manual") so a later snapshot can't
@@ -145,21 +211,52 @@ export default function QuestionBank({ questions, results = [], selectedDept = '
     setGenMessage({ kind: 'ok', text });
   };
 
+  // ── Failure-safe persistence actions ────────────────────────────────────
+  // Guards re-entrancy with a ref (synchronous, so back-to-back clicks
+  // before React re-renders still only trigger one write), disables the
+  // relevant button while pending, and on rejection leaves the question
+  // expanded with an inline accessible error instead of silently advancing.
+  const pendingRef = useRef(new Set());
+
+  const runAction = async (id, actionKey, fn, advanceOnSuccess) => {
+    if (pendingRef.current.has(id)) return; // duplicate-submission guard
+    pendingRef.current.add(id);
+    setPendingActions((prev) => ({ ...prev, [id]: actionKey }));
+    setActionErrors((prev) => {
+      if (!(id in prev)) return prev;
+      const next = { ...prev };
+      delete next[id];
+      return next;
+    });
+    try {
+      await Promise.resolve(fn(id));
+      pendingRef.current.delete(id);
+      setPendingActions((prev) => {
+        const next = { ...prev };
+        delete next[id];
+        return next;
+      });
+      if (advanceOnSuccess) advanceAfterRemoval(id);
+    } catch (err) {
+      pendingRef.current.delete(id);
+      setPendingActions((prev) => {
+        const next = { ...prev };
+        delete next[id];
+        return next;
+      });
+      setActionErrors((prev) => ({ ...prev, [id]: err?.message || 'Could not save this change. Try again.' }));
+    }
+  };
+
   const advanceAfterRemoval = (id) => {
     if (activeTab !== 'draft' || expandedQuestionId !== id) return;
     const next = adjacentQuestionId(visibleQuestions, id, 1) ?? adjacentQuestionId(visibleQuestions, id, -1);
     setExpandedQuestionId(next);
   };
 
-  const handleActivate = (id) => {
-    advanceAfterRemoval(id);
-    onActivate(id);
-  };
-
-  const handleDelete = (id) => {
-    advanceAfterRemoval(id);
-    onDelete(id);
-  };
+  const handleActivate = (id) => runAction(id, 'activate', onActivate, true);
+  const handleDelete = (id) => runAction(id, 'delete', onDelete, true);
+  const handleArchive = (id) => runAction(id, 'archive', onArchive, false);
 
   const saveEdit = async (edited) => {
     try {
@@ -254,7 +351,7 @@ export default function QuestionBank({ questions, results = [], selectedDept = '
 
       {generationDialogOpen && (
         <QuestionBankGenerateDialog
-          onGenerate={onGenerate}
+          onGenerate={wrappedOnGenerate}
           onGenerated={handleGenerated}
           onClose={closeGenerateDialog}
           returnFocusRef={generateBtnRef}
@@ -262,16 +359,19 @@ export default function QuestionBank({ questions, results = [], selectedDept = '
       )}
 
       <div className="qbank-tabs" role="tablist" aria-label="Question status">
-        {STATUS_TABS.map((tab) => (
+        {STATUS_TABS.map((tab, index) => (
           <button
             key={tab}
+            ref={(el) => { tabRefs.current[tab] = el; }}
             type="button"
             role="tab"
             id={`qbank-tab-${tab}`}
             aria-selected={activeTab === tab}
             aria-controls={`qbank-tabpanel-${tab}`}
+            tabIndex={activeTab === tab ? 0 : -1}
             className={`qbank-tabs__tab${activeTab === tab ? ' is-active' : ''}`}
             onClick={() => changeTab(tab, { manual: true })}
+            onKeyDown={(e) => handleTabKeyDown(e, index)}
           >
             {TAB_LABELS[tab]} <span className="qbank-tabs__count">{counts[tab]}</span>
           </button>
@@ -362,12 +462,15 @@ export default function QuestionBank({ questions, results = [], selectedDept = '
                 health={health[q.id]}
                 isExpanded={expandedQuestionId === q.id}
                 isEditing={editingId === q.id}
+                editError={editingId === q.id ? editError : ''}
+                pendingAction={pendingActions[q.id] ?? null}
+                actionError={actionErrors[q.id] ?? ''}
                 onToggleExpand={() => toggleExpand(q.id)}
                 onEdit={() => { setEditingId(q.id); setEditError(''); }}
                 onCancelEdit={() => { setEditingId(null); setEditError(''); }}
                 onSaveEdit={saveEdit}
                 onActivate={handleActivate}
-                onArchive={onArchive}
+                onArchive={handleArchive}
                 onDelete={handleDelete}
                 onSaveFeedback={onSaveFeedback}
                 onQueueRevision={() => queueRevision(q, health[q.id])}
@@ -376,7 +479,6 @@ export default function QuestionBank({ questions, results = [], selectedDept = '
             ))}
           </ul>
         )}
-        {editError && editingId && <p className="qedit__error qbank__edit-error">{editError}</p>}
       </div>
     </section>
   );

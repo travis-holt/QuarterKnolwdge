@@ -1,5 +1,103 @@
 # Development History - Knowledge Check
 
+### 2026-07-14 (part 2) - Question Bank: failure-safe actions, true modality, keyboard/empty-dept fixes
+- **Follow-up to the same day's async-load-tab-default + sort-label pass** (same branch,
+  `redesign/question-bank-workspace`), addressing a second round of coordinator review feedback.
+- **1. Failure-safe persistence actions.** Activate, Delete (draft discard AND archived delete),
+  Archive, and Restore (which also goes through `onActivate`) are real async Firestore operations
+  that can reject — the prior implementation assumed success (auto-advancing the Review Queue
+  unconditionally). Fixed with a shared `runAction(id, actionKey, fn, advanceOnSuccess)` helper in
+  `QuestionBank.jsx`:
+  - A synchronous `pendingRef` `Set` guards re-entrancy — duplicate/rapid clicks before React even
+    re-renders still only trigger one write (verified directly in a real browser with 3
+    back-to-back forced clicks).
+  - `pendingActions`/`actionErrors` state (keyed by question id) disables the in-flight button and
+    swaps its label to a pending state ("Activating…"/"Restoring…"/"Archiving…"/"Discarding…"/
+    "Deleting…"), rendered in `QuestionBankItem.jsx`.
+  - On rejection, a `role="alert"` inline error renders beside that specific question's actions —
+    the question stays expanded, and (for Review Queue activate/discard) auto-advance to the next
+    draft does **not** fire; the write must resolve successfully first.
+  - Archive/Restore/archived-Delete get the identical pending+error treatment (auto-advance was
+    never part of their contract, so nothing else changes for them).
+  - Tests: rejected-promise scenarios for no-auto-advance-on-failure, expansion retention, the
+    accessible error, duplicate-click de-duplication, and a genuine successful-write auto-advance
+    (simulated via a follow-up rerender with updated data, matching how the real Firestore
+    subscription round-trip would present it).
+- **2. Generation-dialog stale-completion race eliminated.** Previously, if the supervisor closed
+  the dialog or switched departments while a generation was still in flight, the eventual
+  completion could still call `setActiveTab('draft')` / show a success banner against whatever
+  department the supervisor was *now* looking at — a stale Pediatrics generation could silently
+  switch OB/GYN's tab. Fixed with two independent layers (both implemented, not just one):
+  - The dialog is now truly modal (see #3) — Escape/backdrop-click/×-button/Cancel are all
+    suppressed while `generating` is true, so the dialog cannot be dismissed mid-request, and the
+    background (including the department switcher) becomes `inert` while it's open — the race is
+    unreachable through the UI at all once both fixes are combined.
+  - Independently, `QuestionBank.jsx` tags every generation with the department + a monotonic
+    sequence number the instant it starts (`wrappedOnGenerate` sets `requestTagRef.current =
+    {dept: selectedDept, seq}`, relying on ordinary JS closures — each render creates fresh
+    closures, so whichever one is actually invoked when the request resolves is bound to whatever
+    department was selected at click time). `handleGenerated` compares that tag against a
+    continuously-updated ref (`selectedDeptRef`, synced every render via a no-deps effect) and a
+    live `generationSeqRef`; a mismatch means the completion is dropped — no tab switch, no
+    banner. This logical guard is unit-tested by forcing a re-render with a different
+    `selectedDept` mid-flight (via a deferred/controllable promise), independent of whether the UI
+    would also prevent the switch — defense in depth, and resilient to any future change to the
+    modal's dismiss-prevention behavior.
+- **3. Generation dialog made truly modal.** Replaced the plain `role="dialog"` div with:
+  a `createPortal` render directly under `document.body` (so the dialog is NOT a descendant of
+  `#root`, meaning marking `#root` `inert` doesn't also disable the dialog itself); `#root` gets
+  `inert` + `aria-hidden="true"` while the dialog is open, restored on close; a manual Tab/
+  Shift+Tab keydown handler loops focus within the dialog's own focusable elements (a native
+  `<dialog>` was considered per the task brief, but jsdom's `showModal()`/`close()` support is
+  inconsistent across versions — the manual approach behaves identically in unit tests and real
+  browsers); and Escape/backdrop-click/×-button/footer-Cancel are all suppressed while generating
+  (see #2). Focus still returns to the "Generate questions" trigger button on close.
+- **4. Empty-department tab-state fix.** Switching departments previously left whatever tab the
+  *previous* department had been on displayed for the newly-selected one, because the "auto-
+  resolve" effect only fires once the new department's `deptQuestions` becomes non-empty — a
+  department with zero questions never gets that signal and would otherwise show a stale tab
+  forever. Fixed: the department-switch effect now immediately resets the tab to Active (a
+  correct temporary default for any department, empty or not); the resolve effect still upgrades
+  it to Review Queue as soon as the new department's first non-empty snapshot contains drafts, and
+  manual tab choices still are never overridden (both existing rules preserved).
+- **5. Edit-save errors moved beside the active editor.** The error paragraph previously rendered
+  once, after the whole question list — not obviously tied to the specific editor above it in a
+  filtered/sorted list. Now rendered as a `role="alert"` paragraph inside the very same
+  `<li class="is-editing">` as the open `QuestionEditor`, immediately below it.
+- **6. Full roving-tabindex keyboard semantics for the status tabs** (WAI-ARIA Authoring Practices
+  tabs pattern, automatic activation): only the selected tab has `tabIndex={0}`; the other two are
+  `-1`. Left/Right arrows move focus AND selection between tabs, wrapping at the ends; Home/End
+  jump to the first/last tab. Enter/Space needed no new code — these are native `<button>`s.
+- **Tests:** 10 new Vitest tests in `src/components/questionBank.test.jsx` (40 total, up from 30):
+  activation-failure (no-advance/stays-expanded/accessible-error), duplicate-click guard,
+  successful-activation-still-advances, archive/restore/archived-delete failure-handling parity,
+  the stale-generation-completion guard, the empty-department reset, edit-error placement, and
+  roving-tabindex arrow/Home/End navigation (with wraparound). Full suite: **868 tests across 44
+  files** (was 858/44). `npm run test:rules`: **51/51** against a real Firestore Rules emulator
+  (reused the portable Temurin 21 JDK from the previous pass — extracted into the session scratch
+  dir, prepended to `PATH`, no admin/install required). `npm run build`: clean. `npm audit
+  --omit=dev`: 0 vulnerabilities. `npm ci` was re-run first to get a clean worktree-local
+  `node_modules`; `npm ls --all` now exits 0 with no `ELSPROBLEMS`/required-dependency errors (only
+  68 informational `UNMET OPTIONAL DEPENDENCY` entries for platform-specific/ecosystem-adjacent
+  packages, same as the prior pass). `git diff --check`: clean.
+- **Real-browser (headless Chromium) walkthrough, second round:** a richer throwaway harness
+  (never committed — created outside `src/`, deleted before finalizing) exposed a `window.__qb`
+  control surface (`failNextActivate`/`failNextArchive`/`failNextDelete`, call-count arrays,
+  `setQuestions`/`setDept`) so failure/retry/duplicate-click/department-switch scenarios could be
+  driven deterministically. All 20 scripted checks passed in a real browser, including several
+  that are NOT meaningfully testable in jsdom: 15× Tab and 15× Shift+Tab presses confirming focus
+  never left the open dialog, `#root.inert === true` while open (and cleared after close), the ×
+  and footer buttons genuinely disabled while generating, and Escape/backdrop-click confirmed
+  inert while generating. Screenshots captured (activation-failure state with the accessible error
+  visible, and the generation dialog mid-flow with the dimmed/inert background). One real bug was
+  found and fixed *while building the harness test itself* (not a product bug): Playwright text-
+  based button locators stopped matching once the button's label switched from "Activate" to
+  "Activating…" mid-test — fixed in the test script by using a class-based locator instead; noted
+  here for completeness even though it was a test-authoring issue, not an app defect.
+- **Files:** edited `src/components/{QuestionBank,QuestionBankGenerateDialog,QuestionBankItem,
+  questionBank.test}.jsx`, `src/styles.css` (new `.qbank__action-error` rule), `CLAUDE.md`,
+  `docs/HISTORY.md`. No Firestore rules, scoring, question content, or document-shape changes.
+
 
 ### 2026-07-14 - Question Bank workspace: async-load-aware tab default fix + sort-label wording fix
 - **Follow-up to the 2026-07-13 Question Bank redesign** (same branch,
