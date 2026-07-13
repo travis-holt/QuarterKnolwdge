@@ -121,6 +121,7 @@ vi.mock('../lib/db.js', () => dbMocks);
 // Imported AFTER the mocks are registered.
 import SupervisorApp from './SupervisorApp.jsx';
 import NavigatorApp from './NavigatorApp.jsx';
+import { apiFetch } from '../lib/apiFetch.js';
 
 // A full six-domain result the dashboard/training views can render from.
 const DOMAIN_SCORES = {
@@ -152,6 +153,9 @@ beforeEach(() => {
   dbMocks.getFloorScores.mockResolvedValue([]);
   dbMocks.getResultHistory.mockResolvedValue([]);
   sessionMocks.getSession.mockReturnValue(null);
+  // Restore the inert (never-resolving) default in case a prior test overrode
+  // apiFetch's implementation to simulate a resolved /api call.
+  apiFetch.mockImplementation(() => new Promise(() => {}));
 });
 
 // ═════════════════════════════════════════════════════════════════════════════
@@ -387,5 +391,49 @@ describe('NavigatorApp — flow behavior', () => {
     const switchPill = screen.getByRole('button', { name: /Pediatrics/i });
     fireEvent.click(switchPill);
     expect(await deptHeading()).toBeInTheDocument();
+  });
+
+  it('uses the fresh own score when the mentor projection contains a stale copy of the current navigator', async () => {
+    // Own stored MCQ result: fresh, intake = 92 (a value not otherwise used
+    // by any domain in the shared DOMAIN_SCORES fixture, so it can't collide).
+    dbMocks.getResult.mockImplementation((_id, dept, type) => {
+      if (type === 'mcq') return Promise.resolve(makeResult({ scores: { ...DOMAIN_SCORES, intake: 92 } }));
+      if (type === 'spot') return Promise.resolve(makeResult({ assessmentType: 'spot' }));
+      return Promise.resolve(null);
+    });
+    dbMocks.getInterviews.mockResolvedValue([
+      { navigatorId: 'nav-1', department: 'pediatrics', endedAt: { seconds: 1 }, transcript: [], qa: { pass: true, score: 90 } },
+    ]);
+    // /api/mentor-scores projects a STALE copy of the current navigator
+    // (same navigatorId, old score) alongside an unrelated colleague. 15 is
+    // not used by any domain in DOMAIN_SCORES, so it can't false-positive
+    // match a genuine (unrelated) domain score.
+    apiFetch.mockImplementation((url) => {
+      if (url === '/api/mentor-scores') {
+        return Promise.resolve({
+          results: [
+            { navigatorId: 'nav-1', name: 'Nav One', scores: { ...DOMAIN_SCORES, intake: 15 } },
+            { navigatorId: 'nav-2', name: 'Colleague', scores: DOMAIN_SCORES },
+          ],
+        });
+      }
+      return new Promise(() => {});
+    });
+
+    renderNav();
+    await deptHeading();
+    fireEvent.click(screen.getByText('Pediatrics').closest('button'));
+    await screen.findByText('AI PASS · PENDING REVIEW'); // on the dashboard
+
+    // NavigatorApp resolves the current navigator from the fresh own result,
+    // not the stale floor projection: the fresh score (92) renders and the
+    // stale one (15) does not. This proves score freshness in the rendered
+    // app; exact same-ID row collapse is proven directly (with an inspectable
+    // merged array) by mergeNavigatorFloorAndOwnResult's own unit tests in
+    // navigatorResultMerge.test.js — this test cannot assert "exactly one
+    // row" itself, since the navigator's name legitimately appears elsewhere
+    // on the dashboard (headings, nav, etc.) regardless of the merge outcome.
+    await waitFor(() => expect(screen.getByText('92% in this domain')).toBeInTheDocument());
+    expect(screen.queryByText('15% in this domain')).not.toBeInTheDocument();
   });
 });

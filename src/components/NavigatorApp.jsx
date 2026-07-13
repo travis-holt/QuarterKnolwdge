@@ -19,6 +19,7 @@ import {
   departmentMatrix,
   findRow,
 } from '../lib/scoring.js';
+import { mergeNavigatorFloorAndOwnResult } from '../lib/navigatorResultMerge.js';
 import { getResult, saveResult, getActiveQuestions, getCompletions, getInterviews, saveCompletion } from '../lib/db.js';
 import { apiFetch } from '../lib/apiFetch.js';
 import { MINICHECK_SIZE, MINICHECK_PASS } from '../data/config.js';
@@ -354,18 +355,16 @@ export default function NavigatorApp({ navigatorId, name, onSignOut }) {
   };
 
   // Merge own result into the floor results for mentor suggestions. Floor rows
-  // come from the minimized projection (name + scores only, keyed by name); the
-  // navigator's own row is keyed by name too so it replaces any floor copy.
-  const merged = new Map();
-  for (const r of results) merged.set(r.navigatorId ?? r.name, r);
-  if (ownResult)
-    merged.set(name, {
-      name,
-      navigatorId,
-      scores: ownResult.scores,
-      competencyScores: ownResult.competencyScores,
-    });
-  const rows = buildMatrixRows([...merged.values()], null);
+  // come from the minimized projection (name + navigatorId? + scores only).
+  // navigatorId is the primary identity — a stale floor copy keyed by the
+  // navigator's own navigatorId must not survive alongside a freshly loaded/
+  // submitted own result, and a legacy no-ID floor row sharing the display
+  // name must not duplicate it either. See lib/navigatorResultMerge.js.
+  const ownProjection = ownResult
+    ? { scores: ownResult.scores, competencyScores: ownResult.competencyScores }
+    : null;
+  const mergedResults = mergeNavigatorFloorAndOwnResult(results, ownProjection, { navigatorId, name });
+  const rows = buildMatrixRows(mergedResults, null);
 
   const dept = activeDept ?? 'pediatrics';
   const deptName = departmentName(dept);
@@ -385,7 +384,7 @@ export default function NavigatorApp({ navigatorId, name, onSignOut }) {
   const deptMatrix = Object.keys(deptScoresMap).length > 0
     ? departmentMatrix([{ name, departments: deptScoresMap }], null)
     : [];
-  const myRow = findRow(rows, name);
+  const myRow = findRow(rows, navigatorId ?? name);
 
   if (view === 'loading') {
     return (
