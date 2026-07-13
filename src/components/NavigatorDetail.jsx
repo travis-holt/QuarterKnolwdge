@@ -6,6 +6,7 @@ import { LEVELS, interviewScoreColor } from '../data/config.js';
 import { findRow, mentorSuggestions, trainingForRow, buildTrend, trainingImpact, buildDossier } from '../lib/scoring.js';
 import { getInterviews, getResultHistory, updateInterviewGradeOverride, updateQaFinalReview } from '../lib/db.js';
 import { qaFinalReviewLabel, qaFinalVerdict } from '../lib/qaFinalReview.js';
+import { compareTimestampValues, timestampMillis } from '../lib/time.js';
 import Sparkline from './Sparkline.jsx';
 import FeedbackControls from './FeedbackControls.jsx';
 
@@ -19,7 +20,7 @@ function formatWorkflow(type) {
 
 function formatDate(ts) {
   if (!ts) return '—';
-  const date = typeof ts.toDate === 'function' ? ts.toDate() : new Date((ts.seconds ?? 0) * 1000);
+  const date = new Date(timestampMillis(ts));
   return date.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
 }
 
@@ -40,8 +41,9 @@ function qaSignalLabel(detail) {
 // answers: the navigator's raw answers map {questionId: optionId} (for dossier).
 // questions: the active question bank (for dossier).
 export default function NavigatorDetail({ rows, name, deptName, dept, deptMatrix, onBack, onOpenNavigator, onPreviewModule, navigatorId, completedDomains = new Set(), completions = [], onChangeDept, answers, questions, onSaveFeedback }) {
-  const row = findRow(rows, name);
-  const deptRow = deptMatrix?.find((r) => r.name === name);
+  const row = (navigatorId ? findRow(rows, navigatorId) : null) ?? findRow(rows, name);
+  const deptRow = deptMatrix?.find((r) => navigatorId && r.navigatorId === navigatorId)
+    ?? deptMatrix?.find((r) => r.name === name);
 
   // Practice interview sessions — only fetched when navigatorId is provided.
   const [interviews, setInterviews] = useState(null); // null = loading
@@ -70,9 +72,7 @@ export default function NavigatorDetail({ rows, name, deptName, dept, deptMatrix
       .then((list) =>
         setInterviews(
           [...list].sort((a, b) => {
-            const aT = a.endedAt?.seconds ?? 0;
-            const bT = b.endedAt?.seconds ?? 0;
-            return bT - aT; // newest first
+            return compareTimestampValues(b.endedAt, a.endedAt); // newest first
           })
         )
       )
@@ -546,7 +546,7 @@ export default function NavigatorDetail({ rows, name, deptName, dept, deptMatrix
             <p className="readoff__empty">No practice sessions recorded yet.</p>
           ) : (
             <ul className="interview-log">
-              {interviews.map((session) => {
+              {interviews.map((session, sessionIndex) => {
                 const isOpen = expandedId === session.id;
                 const navTurns = session.transcript.filter((t) => t.role === 'navigator').length;
                 const g = session.grade ?? null;
@@ -564,7 +564,7 @@ export default function NavigatorDetail({ rows, name, deptName, dept, deptMatrix
                 const isQaReviewEditing = qaReviewEditId === session.id;
                 const qaReviewed = Boolean(session.qaFinalReview);
                 return (
-                  <li key={session.id} className={`interview-log__item ${isOpen ? 'is-open' : ''}`}>
+                  <li key={session.id ?? `${session.domainId ?? 'session'}-${timestampMillis(session.endedAt)}-${sessionIndex}`} className={`interview-log__item ${isOpen ? 'is-open' : ''}`}>
                     <button
                       className="interview-log__header"
                       onClick={() => toggleExpand(session.id)}
@@ -669,10 +669,44 @@ export default function NavigatorDetail({ rows, name, deptName, dept, deptMatrix
                                   Supervisor review flags · confidence: {session.qa.review.confidence} · safety risk: {session.qa.review.safetyRisk}
                                 </p>
                                 <ul>
-                                  {session.qa.review.reviewFlags.map((f) => (
-                                    <li key={f.id}><strong>{f.label}:</strong> {f.detail}</li>
+                                  {session.qa.review.reviewFlags.map((f, flagIndex) => (
+                                    <li key={f.id ?? `${f.label ?? 'flag'}-${flagIndex}`}><strong>{f.label}:</strong> {f.detail}</li>
                                   ))}
                                 </ul>
+                              </div>
+                            )}
+                            {session.qa?.repairs?.length > 0 && (
+                              <div className="interview-log__grade-section">
+                                <p className="interview-log__grade-heading">Fairness guardrails applied</p>
+                                <p>These deterministic checks corrected likely false-negative rubric verdicts before scoring. The grader&rsquo;s original output is preserved below each repair.</p>
+                                <ul>{session.qa.repairs.map((repair, index) => (
+                                  <li key={`${repair.criterionId}-${index}`} className="qa-repair">
+                                    <strong>Criterion:</strong> {repair.criterionId} · <strong>Rule:</strong> {repair.rule}
+                                    <div className="qa-repair__replacement">
+                                      <strong>Replacement reason:</strong> {repair.reason} · <strong>Replacement evidence:</strong> &ldquo;{repair.evidence}&rdquo;
+                                    </div>
+                                    <details className="qa-repair__original">
+                                      <summary>Original AI grader output</summary>
+                                      <div><strong>Original AI verdict:</strong> {repair.originalVerdict ?? repair.from ?? 'NOT_MET'}</div>
+                                      <div><strong>Original AI reason:</strong> {repair.originalNote?.trim() ? repair.originalNote : 'No reason supplied'}</div>
+                                      <div><strong>Original AI evidence:</strong> {repair.originalEvidence?.trim() ? <>&ldquo;{repair.originalEvidence}&rdquo;</> : 'No evidence supplied'}</div>
+                                    </details>
+                                  </li>
+                                ))}</ul>
+                              </div>
+                            )}
+                            {session.qa?.deterministicFindings?.length > 0 && (
+                              <div className="interview-log__grade-section interview-log__grade-section--flags">
+                                <p className="interview-log__grade-heading">Deterministic grading conflicts</p>
+                                <p>Deterministic checks disagreed with the AI grader&rsquo;s positive verdicts. These findings never change the score; they require supervisor review.</p>
+                                <ul>{session.qa.deterministicFindings.map((finding, index) => (
+                                  <li key={`${finding.id}-${index}`}>
+                                    <strong>Type:</strong> {finding.type} · <strong>Reason:</strong> {finding.reason}
+                                    {finding.destinationId && <> · <strong>Routing destination:</strong> {finding.destinationId}</>}
+                                    {finding.affectedCriteria?.length > 0 && <> · <strong>Affected criteria:</strong> {finding.affectedCriteria.join(', ')}</>}
+                                    {finding.evidence && <div><strong>Evidence:</strong> &ldquo;{finding.evidence}&rdquo;</div>}
+                                  </li>
+                                ))}</ul>
                               </div>
                             )}
                             {session.qa && (

@@ -73,7 +73,7 @@ export default function Navigators({
   };
 
   const renderCard = (member) => {
-    const row = findRow(rows, member.name);
+    const row = findRow(rows, member.id) ?? findRow(rows, member.name);
     const isInactive = member.status === 'inactive';
     const isManaging = managingId === member.id;
     const isEditing = editingId === member.id;
@@ -132,7 +132,9 @@ export default function Navigators({
           <p className="nav-card__pending-note">Waiting on this navigator to complete the check.</p>
         )}
         {!row && !isInactive && (
-          <p className="nav-card__pin">PIN: {member.pin || 'Not set yet'}</p>
+          <p className="nav-card__pin">
+            PIN: {member.pinSet || member.pinHash || member.pin ? 'Set securely' : 'Not set yet'}
+          </p>
         )}
 
         {/* ── Management panel ──────────────────────────────────────── */}
@@ -215,7 +217,7 @@ export default function Navigators({
             {row && !isInactive && (
               <button
                 className="btn btn--ghost btn--sm"
-                onClick={() => onOpenNavigator(row.name)}
+                onClick={() => onOpenNavigator(row.navigatorId ?? row.name)}
               >
                 View dashboard →
               </button>
@@ -315,7 +317,8 @@ function ConfirmPrompt({ label, busy, onConfirm, onCancel }) {
 // ── Inline edit form ───────────────────────────────────────────────────────────
 function EditForm({ member, roster, hasResult, onSave, onCancel }) {
   const [name, setName] = useState(member.name);
-  const [pin, setPin] = useState(member.pin ?? '');
+  const [pin, setPin] = useState('');
+  const [changePin, setChangePin] = useState(false);
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
 
@@ -325,7 +328,7 @@ function EditForm({ member, roster, hasResult, onSave, onCancel }) {
     const trimmedName = name.trim();
     const trimmedPin = pin.trim();
     if (!trimmedName) { setError('Name cannot be empty.'); return; }
-    if (trimmedPin && !/^\d{4}$/.test(trimmedPin)) { setError('PIN must be blank or exactly 4 digits.'); return; }
+    if (changePin && trimmedPin && !/^\d{4}$/.test(trimmedPin)) { setError('PIN must be blank or exactly 4 digits.'); return; }
     // Dup check: exclude the current member
     const dup = roster.some(
       (r) => r.id !== member.id && r.name.toLowerCase() === trimmedName.toLowerCase()
@@ -333,7 +336,7 @@ function EditForm({ member, roster, hasResult, onSave, onCancel }) {
     if (dup) { setError('Another navigator already has that name.'); return; }
     setBusy(true);
     try {
-      await onSave({ name: trimmedName, pin: trimmedPin });
+      await onSave({ name: trimmedName, ...(changePin ? { pin: trimmedPin } : {}) });
     } catch {
       setError("Couldn't save. Check the database connection and try again.");
       setBusy(false);
@@ -353,21 +356,25 @@ function EditForm({ member, roster, hasResult, onSave, onCancel }) {
       </label>
       <label className="gate__field">
         <span className="gate__label">PIN</span>
-        <input
-          className="gate__input gate__input--sm"
-          type="text"
-          inputMode="numeric"
-          maxLength={4}
-          value={pin}
-          onChange={(e) => { setPin(e.target.value.replace(/\D/g, '')); setError(''); }}
-        />
+        {!changePin ? (
+          <button className="btn btn--ghost btn--sm" type="button" onClick={() => setChangePin(true)}>
+            {member.pinSet || member.pinHash || member.pin ? 'Set a new PIN' : 'Set a PIN'}
+          </button>
+        ) : (
+          <>
+            <input
+              className="gate__input gate__input--sm"
+              type="password"
+              inputMode="numeric"
+              maxLength={4}
+              value={pin}
+              onChange={(e) => { setPin(e.target.value.replace(/\D/g, '')); setError(''); }}
+              placeholder="4 digits; blank clears it"
+            />
+            <span className="readoff__sub">The existing PIN is never displayed. Leave blank to let the navigator create a new one.</span>
+          </>
+        )}
       </label>
-      {hasResult && name !== member.name && (
-        <p className="nav-card__edit-note">
-          Renaming won't update their existing result — it will still appear under the old name.
-          Reset their result after saving if needed.
-        </p>
-      )}
       {error && <p className="gate__error">{error}</p>}
       <div className="nav-card__manage-actions">
         <button className="btn btn--primary btn--sm" type="submit" disabled={busy}>

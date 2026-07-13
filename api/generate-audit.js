@@ -150,7 +150,7 @@ export function validateAuditResponse(parsed, requestedWorkflowType = null) {
 export default async function handler(req, res) {
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
 
-  if (validateSecret(req, res)) return;
+  if (await validateSecret(req, res)) return;
 
   const keys = getApiKeys();
   if (!keys.length) return res.status(500).json({ error: 'Gemini not configured on the server.' });

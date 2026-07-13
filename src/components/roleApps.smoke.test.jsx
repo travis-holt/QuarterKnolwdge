@@ -23,8 +23,18 @@ import { SUPERVISOR_PASSCODE } from '../data/config.js';
 
 // ── Shared mocks ─────────────────────────────────────────────────────────────
 
+const firebaseMocks = vi.hoisted(() => ({
+  signInWithAppToken: vi.fn(),
+  getAuthenticatedIdentity: vi.fn(),
+  signOutFirebase: vi.fn(),
+  getFirebaseIdToken: vi.fn(),
+}));
+
 // Firebase reports as configured so the apps take their normal (non-error) path.
-vi.mock('../lib/firebase.js', () => ({ isFirebaseConfigured: true }));
+vi.mock('../lib/firebase.js', () => ({
+  isFirebaseConfigured: true,
+  ...firebaseMocks,
+}));
 
 // Session is mocked so App tests can control what getSession() returns on mount.
 const sessionMocks = vi.hoisted(() => ({
@@ -54,6 +64,7 @@ const dbMocks = vi.hoisted(() => {
   const resolveNull = ['getResult'];
   const resolveVoid = [
     'seedQuestionsIfEmpty', 'runContentQualityFixesMigration', 'updateRosterEntry',
+    'runMcqV2OperatingModelMigration',
     'addToRoster', 'setRosterStatus', 'clearResult', 'saveDraftQuestions', 'activateQuestion',
     'archiveQuestion', 'deleteQuestion', 'updateQuestion', 'saveDraftAudits', 'activateAudit',
     'archiveAudit', 'deleteAudit', 'savePairing', 'updatePairingStatus', 'saveSupervisorFeedback',
@@ -79,6 +90,9 @@ import NavigatorApp from './NavigatorApp.jsx';
 beforeEach(() => {
   vi.clearAllMocks();
   sessionMocks.getSession.mockReturnValue(null);
+  firebaseMocks.signInWithAppToken.mockResolvedValue({});
+  firebaseMocks.getAuthenticatedIdentity.mockResolvedValue(null);
+  firebaseMocks.getFirebaseIdToken.mockResolvedValue('firebase-id-token');
 });
 
 // ── Start gate ───────────────────────────────────────────────────────────────
@@ -95,7 +109,7 @@ describe('Start (gate)', () => {
   });
 
   it('calls the login endpoint on a correct passcode and enters supervisor mode', async () => {
-    const fetchMock = vi.fn().mockResolvedValue({ ok: true, json: async () => ({ ok: true }) });
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true, json: async () => ({ ok: true, customToken: 'supervisor-token' }) });
     vi.stubGlobal('fetch', fetchMock);
     const onSupervisorEntry = vi.fn();
     render(<Start onNavigatorEntry={vi.fn()} onSupervisorEntry={onSupervisorEntry} />);
@@ -105,6 +119,7 @@ describe('Start (gate)', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Continue' }));
 
     await waitFor(() => expect(onSupervisorEntry).toHaveBeenCalledTimes(1));
+    expect(firebaseMocks.signInWithAppToken).toHaveBeenCalledWith('supervisor-token');
     expect(fetchMock).toHaveBeenCalledWith('/api/supervisor-login', expect.objectContaining({ method: 'POST' }));
   });
 
@@ -121,7 +136,7 @@ describe('Start (gate)', () => {
     expect(onSupervisorEntry).not.toHaveBeenCalled();
   });
 
-  it('falls back to the bundled passcode when /api is unreachable (dev mode)', async () => {
+  it('does not bypass server authentication when /api is unreachable', async () => {
     vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('Failed to fetch')));
     const onSupervisorEntry = vi.fn();
     render(<Start onNavigatorEntry={vi.fn()} onSupervisorEntry={onSupervisorEntry} />);
@@ -130,7 +145,8 @@ describe('Start (gate)', () => {
     fireEvent.change(screen.getByLabelText('Passcode'), { target: { value: SUPERVISOR_PASSCODE } });
     fireEvent.click(screen.getByRole('button', { name: 'Continue' }));
 
-    await waitFor(() => expect(onSupervisorEntry).toHaveBeenCalledTimes(1));
+    expect(await screen.findByText('Failed to fetch')).toBeInTheDocument();
+    expect(onSupervisorEntry).not.toHaveBeenCalled();
   });
 });
 
@@ -173,6 +189,7 @@ describe('App (session routing)', () => {
 
   it('restores a supervisor session and renders the supervisor shell', async () => {
     sessionMocks.getSession.mockReturnValue({ role: 'supervisor', name: 'Supervisor', navigatorId: null });
+    firebaseMocks.getAuthenticatedIdentity.mockResolvedValue({ role: 'supervisor', navigatorId: null });
     render(<App />);
     // SupervisorApp is lazy-loaded behind Suspense — wait for its shell to appear.
     expect(await screen.findByRole('button', { name: 'Overview' })).toBeInTheDocument();
@@ -180,6 +197,7 @@ describe('App (session routing)', () => {
 
   it('restores a navigator session and renders the navigator shell', async () => {
     sessionMocks.getSession.mockReturnValue({ role: 'navigator', name: 'Nav One', navigatorId: 'nav-1' });
+    firebaseMocks.getAuthenticatedIdentity.mockResolvedValue({ role: 'navigator', navigatorId: 'nav-1' });
     render(<App />);
     expect(
       await screen.findByText('Which department are you taking the check for?')

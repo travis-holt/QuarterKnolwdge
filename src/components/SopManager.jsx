@@ -19,6 +19,7 @@
 // traceable to the source (inventions) — shown on the draft until activated.
 import { useRef, useState } from 'react';
 import { apiFetch, fetchErrorMessage } from '../lib/apiFetch.js';
+import { timestampMillis } from '../lib/time.js';
 
 const CHANGE_LABELS = {
   contradiction: 'Contradiction',
@@ -32,8 +33,8 @@ const SOURCE_LABELS = { manual: 'manual', 'ai-build': 'AI build', 'ai-refine': '
 const MAX_PDF_BYTES = 10 * 1024 * 1024;
 
 const fmtDate = (ts) =>
-  ts?.seconds
-    ? new Date(ts.seconds * 1000).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })
+  timestampMillis(ts)
+    ? new Date(timestampMillis(ts)).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })
     : '—';
 
 const wordCount = (body) => (body ?? '').trim().split(/\s+/).filter(Boolean).length;

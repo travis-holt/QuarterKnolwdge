@@ -10,7 +10,6 @@ vi.mock('../lib/db.js', () => ({
 vi.mock('../lib/apiFetch.js', () => ({ apiFetch: vi.fn() }));
 
 const {
-  buildCallQaGradingScenario,
   callQaScenarioMetadata,
   gradeSavedAttempt,
 } = await import('./VoiceCall.jsx');
@@ -24,26 +23,22 @@ const curated = {
   competencyIds: ['sopKnowledge'],
   expectedActions: ['Confirm medication name and preferred pharmacy', 'Mark HIGH PRIORITY (out of med)'],
   criticalMisses: ['Promised the refill would be sent today'],
+  scoringNotes: ['Do not require PE-status verification unless the caller makes that the governing issue.'],
 };
 
-describe('buildCallQaGradingScenario', () => {
-  it('returns the base scenario unchanged when there is no curated metadata', () => {
-    expect(buildCallQaGradingScenario('plain scenario', {})).toBe('plain scenario');
-  });
-
-  it('embeds expected actions and critical misses from curated metadata', () => {
-    const meta = callQaScenarioMetadata(curated);
-    const out = buildCallQaGradingScenario('base scenario', meta);
-    expect(out).toContain('Expected navigator behaviors:');
-    expect(out).toContain('Confirm medication name and preferred pharmacy');
-    expect(out).toContain('Critical misses');
-    expect(out).toContain('Promised the refill would be sent today');
-    expect(out).toContain('Workflow type: prescription_refill');
+describe('callQaScenarioMetadata', () => {
+  it('keeps compact curated metadata for the saved supervisor record', () => {
+    expect(callQaScenarioMetadata(curated)).toMatchObject({
+      qaScenarioId: curated.id,
+      workflowType: 'prescription_refill',
+      expectedActions: curated.expectedActions,
+      criticalMisses: curated.criticalMisses,
+    });
   });
 });
 
-describe('gradeSavedAttempt forwards curated metadata into the grading scenario', () => {
-  it('passes expectedActions/criticalMisses through to the grader (the retry-path contract)', async () => {
+describe('gradeSavedAttempt sends only the trusted scenario id as grading authority', () => {
+  it('does not embed browser metadata into the grader scenario', async () => {
     const gradeQaFn = vi.fn().mockResolvedValue({ grade: { score: 90 }, qa: { pass: true } });
     const saveGradeFn = vi.fn().mockResolvedValue();
     const metadata = callQaScenarioMetadata(curated);
@@ -54,8 +49,10 @@ describe('gradeSavedAttempt forwards curated metadata into the grading scenario'
     );
 
     expect(gradeQaFn).toHaveBeenCalledTimes(1);
-    const sentScenario = gradeQaFn.mock.calls[0][0].scenario;
-    expect(sentScenario).toContain('Confirm medication name and preferred pharmacy');
-    expect(sentScenario).toContain('Promised the refill would be sent today');
+    expect(gradeQaFn).toHaveBeenCalledWith(expect.objectContaining({
+      scenario: 'base scenario',
+      qaScenarioId: curated.id,
+    }));
+    expect(gradeQaFn.mock.calls[0][0]).not.toHaveProperty('metadata');
   });
 });

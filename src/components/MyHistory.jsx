@@ -4,6 +4,7 @@ import { LEVELS } from '../data/config.js';
 import { scoreToLevel, optionPoints } from '../lib/scoring.js';
 import { getResultHistory } from '../lib/db.js';
 import { isFirebaseConfigured } from '../lib/firebase.js';
+import { timestampMillis } from '../lib/time.js';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // MyHistory — the navigator's own attempt history + answer review (pilot
@@ -29,8 +30,9 @@ function toneFor(points) {
 }
 
 function formatDate(takenAt) {
-  if (!takenAt?.seconds) return '—';
-  return new Date(takenAt.seconds * 1000).toLocaleDateString(undefined, {
+  const millis = timestampMillis(takenAt);
+  if (!millis) return '—';
+  return new Date(millis).toLocaleDateString(undefined, {
     year: 'numeric', month: 'short', day: 'numeric',
   });
 }

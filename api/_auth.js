@@ -9,26 +9,28 @@
 // Two gates now exist:
 //   • validateSession(req, res)  — supervisor-ONLY authoring/admin endpoints
 //     (generate-scenarios, refine-sop). Requires a valid signed session cookie.
-//   • validateSecret(req, res)   — navigator/practice + shared endpoints. These
-//     are PILOT-GRADE OPEN (rate-limited): navigators authenticate with a PIN
-//     against Firestore client-side and have no server credential, so requiring
-//     a session here would break practice/coaching/Call-QA flows. A valid
-//     supervisor session also passes. Set REQUIRE_SUPERVISOR_SESSION=true to
-//     lock these behind a session too (will block navigators — pilot toggle only).
+//   • validateSecret(req, res)   — navigator/practice + shared endpoints. Requires
+//     a server-issued Firebase ID token carrying role/navigatorId claims.
 //
-// This is NOT full production auth. There is still no per-navigator server-side
-// identity; that requires real Firebase Auth (out of scope for this pass).
+// The localStorage role remains only a UI convenience. It cannot authorize an
+// API or Firestore request; server verification + Firestore claims are the trust
+// boundary.
 // ─────────────────────────────────────────────────────────────────────────────
 
 import crypto from 'node:crypto';
 import { SUPERVISOR_PASSCODE } from '../src/data/config.js';
+import { FirebaseAdminConfigError, getFirebaseAdmin } from './_firebase-admin.js';
 
-// Server-side supervisor passcode. Prefer an explicit server env var; fall back
-// to the public config value so localhost / `npm run dev` keeps working without
-// any setup. In production, set SUPERVISOR_PASSCODE_SERVER to a value that is
-// NOT the bundled config passcode.
+// Server-side supervisor passcode. The bundled demo value is allowed only in a
+// local/test process. Railway/Vercel/production must provide an explicit secret;
+// otherwise the login endpoint fails closed instead of promoting a public value
+// from the JavaScript bundle into an administrator credential.
+const IS_DEPLOYED = process.env.NODE_ENV === 'production'
+  || Boolean(process.env.RAILWAY_ENVIRONMENT || process.env.RAILWAY_PROJECT_ID || process.env.VERCEL);
 const SUPERVISOR_PASSCODE_SERVER =
-  process.env.SUPERVISOR_PASSCODE_SERVER || process.env.SUPERVISOR_PASSCODE || SUPERVISOR_PASSCODE;
+  process.env.SUPERVISOR_PASSCODE_SERVER
+  || process.env.SUPERVISOR_PASSCODE
+  || (IS_DEPLOYED ? '' : SUPERVISOR_PASSCODE);
 
 // HMAC signing key for session tokens. A dedicated secret is strongly preferred;
 // the passcode-derived fallback keeps the pilot working out of the box but means
@@ -144,6 +146,28 @@ export function readSession(req) {
   return token ? verifySessionToken(token) : null;
 }
 
+export function bearerToken(req) {
+  const header = req?.headers?.authorization;
+  if (typeof header !== 'string') return null;
+  const match = header.match(/^Bearer\s+(.+)$/i);
+  return match?.[1]?.trim() || null;
+}
+
+/** Verify and cache the Firebase identity carried by an HTTP request. */
+export async function readFirebaseIdentity(req) {
+  if (Object.prototype.hasOwnProperty.call(req ?? {}, '_firebaseIdentity')) {
+    return req._firebaseIdentity;
+  }
+  const token = bearerToken(req);
+  if (!token) {
+    if (req) req._firebaseIdentity = null;
+    return null;
+  }
+  const identity = await getFirebaseAdmin().auth.verifyIdToken(token, true);
+  if (req) req._firebaseIdentity = identity;
+  return identity;
+}
+
 /** True when the request is (or is proxied as) HTTPS — used to gate Secure. */
 export function isSecureRequest(req) {
   if (req?.secure) return true;
@@ -158,37 +182,76 @@ export function isSecureRequest(req) {
  * Falls back to the legacy body.secret ONLY when ALLOW_LEGACY_API_SECRET=true.
  * Sends a 401 and returns true if unauthorised; returns false if allowed.
  */
-export function validateSession(req, res) {
-  if (readSession(req)?.role === 'supervisor') return false;
+export async function validateSession(req, res) {
   if (ALLOW_LEGACY_API_SECRET && req?.body?.secret === LEGACY_SECRET) return false;
+  try {
+    const [session, identity] = await Promise.all([
+      Promise.resolve(readSession(req)),
+      readFirebaseIdentity(req),
+    ]);
+    if (session?.role === 'supervisor' && identity?.role === 'supervisor') {
+      req.identity = identity;
+      return false;
+    }
+  } catch (err) {
+    if (err instanceof FirebaseAdminConfigError || err?.code === 'firebase-admin-not-configured') {
+      res.status(503).json({ error: 'Server authentication is not configured.' });
+      return true;
+    }
+  }
   res.status(401).json({ error: 'Not authorised.' });
   return true;
 }
 
 /**
- * Navigator/shared gate — PILOT-GRADE OPEN. Navigators have no server credential,
- * so these endpoints stay open (protected by per-IP rate limiting). A valid
- * supervisor session or the legacy secret (when enabled) also passes. When
- * REQUIRE_SUPERVISOR_SESSION=true, behaves like validateSession (pilot toggle;
- * will block navigator flows). Returns false = allowed, true = 401 sent.
+ * Navigator/shared gate. Requires a verified server-issued Firebase identity;
+ * rate limiting is an additional abuse control, never the authorization layer.
+ * Returns false = allowed, true = response already sent.
  */
-export function validateSecret(req, res) {
-  if (readSession(req)?.role === 'supervisor') return false;
+export async function validateSecret(req, res) {
   if (ALLOW_LEGACY_API_SECRET && req?.body?.secret === LEGACY_SECRET) return false;
-  if (process.env.REQUIRE_SUPERVISOR_SESSION === 'true') {
-    res.status(401).json({ error: 'Not authorised.' });
+  try {
+    const identity = await readFirebaseIdentity(req);
+    if (identity?.role === 'supervisor' || (
+      identity?.role === 'navigator' &&
+      typeof identity.navigatorId === 'string' &&
+      identity.navigatorId.length > 0
+    )) {
+      req.identity = identity;
+      return false;
+    }
+  } catch (err) {
+    if (err instanceof FirebaseAdminConfigError || err?.code === 'firebase-admin-not-configured') {
+      res.status(503).json({ error: 'Server authentication is not configured.' });
+      return true;
+    }
+  }
+  res.status(401).json({ error: 'Not authorised.' });
+  return true;
+}
+
+/** Role-constrained Firebase gate for protected projection/data endpoints. */
+export async function validateAppUser(req, res, roles = ['navigator', 'supervisor']) {
+  if (await validateSecret(req, res)) return true;
+  if (!roles.includes(req.identity?.role)) {
+    res.status(403).json({ error: 'Insufficient permission.' });
     return true;
   }
-  return false; // open pilot access (rate-limited elsewhere)
+  return false;
 }
 
 /**
- * Plain access check for non-Express callers (the WebSocket live relay). Voice
- * practice is a navigator flow, so this mirrors validateSecret's open-pilot
- * policy: allowed unless REQUIRE_SUPERVISOR_SESSION is set. The legacy secret is
- * accepted when enabled. No session cookie is available at the WS message layer.
+ * Plain access check for non-Express callers (the WebSocket live relay). The
+ * first WS message must carry a verified server-issued Firebase ID token.
  */
-export function isValidSecret(secret) {
-  if (ALLOW_LEGACY_API_SECRET && secret === LEGACY_SECRET) return true;
-  return process.env.REQUIRE_SUPERVISOR_SESSION !== 'true';
+export async function verifySocketToken(idToken) {
+  if (!idToken || typeof idToken !== 'string') return null;
+  try {
+    const identity = await getFirebaseAdmin().auth.verifyIdToken(idToken, true);
+    if (identity?.role === 'supervisor') return identity;
+    if (identity?.role === 'navigator' && identity.navigatorId) return identity;
+    return null;
+  } catch {
+    return null;
+  }
 }

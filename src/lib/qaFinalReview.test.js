@@ -25,6 +25,17 @@ describe('qaFinalReview helpers', () => {
     expect(qaFinalVerdict(session).label).toBe('AI FAIL - Pending supervisor review');
   });
 
+  it('preserves an AI needs-review verdict while supervisor review is pending', () => {
+    const session = {
+      qa: { pass: true, review: { recommendation: 'needs_review' } },
+    };
+    expect(qaFinalVerdict(session)).toMatchObject({
+      finalPass: null,
+      needsSupervisorReview: true,
+      label: 'AI NEEDS REVIEW - Pending supervisor review',
+    });
+  });
+
   it('confirmed pass', () => {
     const session = {
       qa: { pass: true },

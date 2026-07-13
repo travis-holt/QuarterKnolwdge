@@ -1,6 +1,5 @@
 import { useState, useEffect } from 'react';
 import { DOMAINS } from '../data/questions.js';
-import { SUPERVISOR_PASSCODE } from '../data/config.js';
 
 // Firebase is imported DYNAMICALLY (inside NavigatorGate) so the whole SDK —
 // by far the heaviest dependency — stays out of the welcome page's chunk.
@@ -130,21 +129,14 @@ function NavigatorGate({ onBack, onEnter }) {
     let active = true;
     (async () => {
       try {
-        const { isFirebaseConfigured } = await import('../lib/firebase.js');
-        if (!isFirebaseConfigured) {
-          if (active) {
-            setLoadError(true);
-            setRoster([]);
-          }
-          return;
-        }
-        const { getRoster } = await import('../lib/db.js');
-        const list = await getRoster();
+        const res = await fetch('/api/navigator-roster');
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(data.error || 'Could not load roster.');
+        const list = data.roster ?? [];
         if (!active) return;
         // Only active navigators can sign in; sort alphabetically.
         setRoster(
           [...list]
-            .filter((r) => r.status !== 'inactive')
             .sort((a, b) => a.name.localeCompare(b.name))
         );
       } catch {
@@ -165,31 +157,32 @@ function NavigatorGate({ onBack, onEnter }) {
       return;
     }
     const trimmedPin = pin.trim();
-    const hasPin = Boolean(String(entry.pin ?? '').trim());
+    const hasPin = Boolean(entry.pinSet);
     if (!/^\d{4}$/.test(trimmedPin)) {
       setError(hasPin ? 'Enter your 4-digit PIN.' : 'Create a 4-digit PIN.');
       return;
     }
-    if (hasPin && String(entry.pin) !== trimmedPin) {
-      setError('That PIN doesn’t match. Check with your supervisor.');
-      return;
+    setBusy(true);
+    try {
+      const res = await fetch('/api/navigator-login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ navigatorId: entry.id, pin: trimmedPin }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || 'Navigator sign-in failed.');
+      const { signInWithAppToken } = await import('../lib/firebase.js');
+      await signInWithAppToken(data.customToken);
+      onEnter(data.navigator.id, data.navigator.name);
+    } catch (err) {
+      setError(err?.message || 'Navigator sign-in failed.');
+    } finally {
+      setBusy(false);
     }
-    if (!hasPin) {
-      setBusy(true);
-      try {
-        const { updateRosterEntry } = await import('../lib/db.js');
-        await updateRosterEntry(entry.id, { pin: trimmedPin });
-      } catch {
-        setError("Couldn't save your PIN. Check the connection and try again.");
-        setBusy(false);
-        return;
-      }
-    }
-    onEnter(entry.id, entry.name);
   };
 
   const selectedEntry = roster?.find((r) => r.id === selectedId);
-  const needsPin = selectedEntry && !String(selectedEntry.pin ?? '').trim();
+  const needsPin = selectedEntry && !selectedEntry.pinSet;
 
   return (
     <div className="gate">
@@ -263,9 +256,8 @@ function NavigatorGate({ onBack, onEnter }) {
 
 // ── Supervisor gate: passcode ──────────────────────────────────────────────────
 // The passcode is now validated server-side: POST /api/supervisor-login exchanges
-// it for an HttpOnly session cookie (see api/_auth.js). If that endpoint is not
-// reachable — e.g. `npm run dev` (Vite only, no /api) — we fall back to the
-// bundled pilot passcode check so local development keeps working.
+// it for an HttpOnly session cookie plus a Firebase custom token. There is no
+// public client-side passcode fallback.
 function SupervisorGate({ onBack, onEnter }) {
   const [passcode, setPasscode] = useState('');
   const [error, setError] = useState('');
@@ -283,19 +275,16 @@ function SupervisorGate({ onBack, onEnter }) {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ passcode: value }),
       });
+      const data = await res.json().catch(() => ({}));
       if (res.ok) {
+        const { signInWithAppToken } = await import('../lib/firebase.js');
+        await signInWithAppToken(data.customToken);
         onEnter();
         return;
       }
-      // 401 (and other JSON errors) → treat as an incorrect passcode.
-      setError('Incorrect passcode.');
-    } catch {
-      // Endpoint unreachable (no /api in Vite dev): pilot-grade client fallback.
-      if (value === SUPERVISOR_PASSCODE) {
-        onEnter();
-        return;
-      }
-      setError('Incorrect passcode.');
+      setError(data.error || 'Incorrect passcode.');
+    } catch (err) {
+      setError(err?.message || 'Secure supervisor sign-in is unavailable. Run the full server and try again.');
     } finally {
       setBusy(false);
     }

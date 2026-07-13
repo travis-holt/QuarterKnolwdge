@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import { domainName } from '../data/questions.js';
 import { moduleForDomain } from '../data/training.js';
 import { trainingByDomain } from '../lib/scoring.js';
@@ -12,7 +13,12 @@ export default function TrainingModule({
   onOpenNavigator,
   showCohort = true,
   backLabel = '← Back to training',
+  completionKind = null,
+  completed = false,
+  onComplete = null,
 }) {
+  const [saving, setSaving] = useState(false);
+  const [completeError, setCompleteError] = useState('');
   const mod = moduleForDomain(domainId);
   const cohort = trainingByDomain(rows).find((d) => d.domainId === domainId);
 
@@ -67,6 +73,36 @@ export default function TrainingModule({
           ))}
         </ul>
       </div>
+
+      {!showCohort && completionKind && onComplete && (
+        <div className="card module__assigned">
+          <h2 className="overview__panel-title">
+            {completionKind === 'coaching' ? 'Finish coaching review' : 'Finish this module'}
+          </h2>
+          <p className="readoff__sub">
+            Mark this step complete only after you have reviewed the lesson and key takeaways.
+          </p>
+          {completeError && <p className="gate__error" role="alert">{completeError}</p>}
+          <button
+            className="btn btn--primary btn--sm"
+            type="button"
+            disabled={saving || completed}
+            onClick={async () => {
+              setSaving(true);
+              setCompleteError('');
+              try {
+                await onComplete(completionKind);
+              } catch (err) {
+                setCompleteError(err?.message || 'Could not save this step. Try again.');
+              } finally {
+                setSaving(false);
+              }
+            }}
+          >
+            {completed ? '✓ Completed' : saving ? 'Saving…' : completionKind === 'coaching' ? 'Mark coaching reviewed' : 'Mark module complete'}
+          </button>
+        </div>
+      )}
 
       {/* ── Auto-assigned cohort (supervisor only) ────────────────────── */}
       {showCohort && (

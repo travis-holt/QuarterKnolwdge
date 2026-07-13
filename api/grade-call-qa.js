@@ -24,12 +24,69 @@ import { getApiKeys, geminiWithRotation, rotationFailure, MODEL, STABLE_MODEL, L
 import { validateSecret } from './_auth.js';
 import {
   QA_RUBRIC, QA_AUTO_FAILS, rubricCriteria,
-  validateQaResponse, scoreQa, assessQa, buildGradeProjection,
+  validateQaResponse, repairQaVerdictsForScenario, scoreQa, assessQa, buildGradeProjection,
+  evaluateQaDeterministicFindings,
 } from './_qa-rubric.js';
 import { qaDomainScoreSummary } from '../src/lib/qaDomainScoring.js';
+import { getCallQaScenarioById } from '../src/data/callQaScenarios.js';
 
 const MAX_TURNS = 60;
 const MAX_TURN_CHARS = 2000;
+
+function trustedScenarioMetadata(scenario) {
+  return {
+    qaScenarioId: scenario.id,
+    workflowType: scenario.workflowType,
+    difficulty: scenario.difficulty,
+    expectedActions: scenario.expectedActions,
+    criticalMisses: scenario.criticalMisses,
+    scoringNotes: scenario.scoringNotes ?? [],
+  };
+}
+
+export function buildTrustedGradingScenario(scenario) {
+  const lines = [
+    scenario.scenario,
+    '',
+    'GRADING CONTEXT (server-authoritative curated scenario):',
+    `Scenario: ${scenario.title} · Workflow type: ${scenario.workflowType} · Difficulty: ${scenario.difficulty}`,
+    'Expected navigator behaviors:',
+    ...scenario.expectedActions.map((item) => `- ${item}`),
+    'Critical misses (fail the relevant criteria if these occur):',
+    ...scenario.criticalMisses.map((item) => `- ${item}`),
+  ];
+  if (scenario.scoringNotes?.length) {
+    lines.push('Scenario-specific grading notes:', ...scenario.scoringNotes.map((item) => `- ${item}`));
+  }
+  return lines.join('\n');
+}
+
+export function resolveQaScenarioContext({ scenario = '', department = 'pediatrics', qaScenarioId, metadata = {} } = {}) {
+  const requestedId = String(qaScenarioId ?? metadata?.qaScenarioId ?? '').trim();
+  const trusted = requestedId ? getCallQaScenarioById(requestedId) : null;
+  let status = 'verified';
+  if (!requestedId) status = 'missing-scenario-id';
+  else if (!trusted) status = 'unknown-scenario-id';
+  else if (trusted.department !== department) status = 'department-mismatch';
+  else if (normalizeScenario(scenario) !== normalizeScenario(trusted.scenario)) status = 'scenario-mismatch';
+
+  return {
+    verified: status === 'verified',
+    status,
+    qaScenarioId: requestedId || null,
+    department: trusted?.department ?? department,
+    gradingScenario: trusted ? buildTrustedGradingScenario(trusted) : String(scenario),
+    repairContext: {
+      scenario: trusted?.scenario ?? String(scenario),
+      department: trusted?.department ?? department,
+      metadata: trusted ? trustedScenarioMetadata(trusted) : {},
+    },
+  };
+}
+
+function normalizeScenario(value) {
+  return String(value ?? '').toLowerCase().replace(/[^\p{L}\p{N}\s]/gu, ' ').replace(/\s+/g, ' ').trim();
+}
 
 const RESPONSE_SCHEMA = {
   type: 'OBJECT',
@@ -130,8 +187,11 @@ place, or term looks mis-transcribed or was said as a valid synonym (see the voc
 enough. If the caller has already said thanks or goodbye and the navigator responds in kind, or \
 the navigator gives any polite sign-off, treat the closing pleasantry as MET even without the \
 exact scripted phrase. Do not require rote wording.
-These two carve-outs apply ONLY to closing pleasantries and mis-transcribed / synonymous terms. \
-Verification, privacy/scope, routing, scheduling, and SOP-knowledge criteria stay strict.
+- WORKFLOW FAIRNESS RULES: For a standard medication refill, do not require PE / Physical Exam / physical status verification unless the scenario makes it the governing issue. Require medication name, preferred pharmacy, callback details when needed, out-of-medication urgency, a correct message/routing step, no promised approval, and no medication advice. Do not fail Knowledge solely because PE was not asked.
+- System-visible facts: do not penalize a navigator for not asking about facts normally checked in the ECW/system/chart unless the scenario requires caller confirmation. Do not invent a missing caller question as a failure.
+- Natural routing wording: exact TE or Telephone Encounter wording is not required. "send the request," "send a message," "send this over," "route this," "put in a note," or sending it to the nurse, provider, refill team, or clinical team counts when the workflow and destination are correct.
+- Still strict: these fairness rules never excuse a wrong queue/destination, no next step, missing medication/pharmacy/callback details when required, missed urgency, promised approval or unsupported same-day completion, medication/dosing or clinical advice, result interpretation, or privacy/verification failure.
+Fairness rules never weaken verification, privacy/scope, routing, scheduling, or real SOP-knowledge failures.
 
 Separately, check the auto-fail conditions. Set "triggered": true ONLY if the transcript \
 contains an explicit violation, and quote the offending navigator line verbatim in "evidence". \
@@ -174,14 +234,66 @@ function buildBody(systemInstruction, userMessage) {
   };
 }
 
-export function finalizeQaResult(scored, transcript, correctedTurns = 0) {
-  const review = assessQa(scored, transcript, { correctedTurns });
+export function finalizeQaResult(scored, transcript, correctedTurns = 0, repairs = [], metadataIntegrity = { verified: true, status: 'verified' }, forcedReviewReasons = [], deterministicFindings = []) {
+  const review = assessQa(scored, transcript, { correctedTurns, repairs, deterministicFindings });
+  // Deterministic conflict layer (NOT repairs): a model-positive verdict that
+  // contradicts the authoritative routing policy, or a deterministic unsafe-
+  // language signal, must never become a confident unreviewed PASS. Findings
+  // never change verdicts or scores — they are persisted for supervisors and
+  // force review only when the result would otherwise pass confidently.
+  if (deterministicFindings.length > 0) {
+    if (deterministicFindings.some((finding) => finding.type === 'routing')) {
+      review.reviewFlags.push({
+        id: 'model-routing-conflict',
+        label: 'Grader verdict conflicts with deterministic routing policy',
+        detail: 'The grader marked routing/knowledge criteria MET, but the deterministic routing policy found the committed route wrong, contradictory, ambiguous, or missing. A supervisor must review this result.',
+      });
+    }
+    if (deterministicFindings.some((finding) => finding.type === 'safety')) {
+      review.reviewFlags.push({
+        id: 'deterministic-safety-conflict',
+        label: 'Deterministic unsafe-language signal detected',
+        detail: `Deterministic checks detected ${deterministicFindings.filter((f) => f.type === 'safety').map((f) => f.reason).join(', ')} in the navigator's wording. The result cannot pass without supervisor review.`,
+      });
+    }
+    if (review.recommendation === 'pass') review.recommendation = 'needs_review';
+  }
+  if (forcedReviewReasons.includes('routing-policy-review-only')) {
+    review.reviewFlags.push({
+      id: 'routing-policy-review-only',
+      label: 'Routing destination requires supervisor review',
+      detail: 'The repository sources do not establish one exact destination for this department/workflow, so deterministic routing repair is disabled.',
+    });
+    const applicable = scored.categories.reduce((sum, category) => sum + category.applicablePoints, 0);
+    const earned = scored.categories.reduce((sum, category) => sum + category.earned, 0);
+    const uncertainRoutingPoints = scored.criteria
+      .filter((criterion) => ['know-rule', 'doc-te'].includes(criterion.id) && criterion.verdict === 'NOT_MET')
+      .reduce((sum, criterion) => sum + criterion.points, 0);
+    const bestCaseScore = applicable > 0 ? Math.round(((earned + uncertainRoutingPoints) / applicable) * 100) : 0;
+    if (scored.pass || bestCaseScore >= scored.passThreshold) review.recommendation = 'needs_review';
+  }
+  if (!metadataIntegrity.verified) {
+    review.reviewFlags.push({
+      id: 'unverified-scenario-metadata',
+      label: 'Scenario metadata could not be verified',
+      detail: `Server verification status: ${metadataIntegrity.status}. No outcome-improving repair was allowed; a supervisor must review this result.`,
+    });
+    review.recommendation = 'needs_review';
+  }
   const qa = {
     ...scored,
     ...qaDomainScoreSummary(scored),
     domainScoreVersion: '2026-07-09-v1',
     review,
     correctedTurns,
+    repairs,
+    repairCount: repairs.length,
+    deterministicFindings,
+    metadataIntegrity: {
+      verified: metadataIntegrity.verified,
+      status: metadataIntegrity.status,
+      qaScenarioId: metadataIntegrity.qaScenarioId ?? null,
+    },
   };
   const grade = buildGradeProjection(qa);
   return { qa, grade };
@@ -190,24 +302,31 @@ export function finalizeQaResult(scored, transcript, correctedTurns = 0) {
 export default async function handler(req, res) {
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
 
-  if (validateSecret(req, res)) return;
+  if (await validateSecret(req, res)) return;
 
   const keys = getApiKeys();
   if (!keys.length) return res.status(500).json({ error: 'Grading is not configured on the server.' });
 
-  const { scenario, transcript: rawTranscript, department = 'pediatrics' } = req.body ?? {};
+  const { scenario, transcript: rawTranscript, department = 'pediatrics', qaScenarioId, metadata = {} } = req.body ?? {};
 
   if (!scenario || !Array.isArray(rawTranscript) || rawTranscript.length === 0) {
     return res.status(400).json({ error: 'Missing required fields.' });
   }
 
+  const scenarioContext = resolveQaScenarioContext({ scenario, department, qaScenarioId, metadata });
+
   // Snap mis-transcribed SOP proper nouns/terms to their canonical form BEFORE
   // grading, so both the model's judgment and the evidence-verification gate see
   // what the navigator actually said (bounded to the glossary — never invents).
   // The correction count doubles as a transcript-quality signal for the review layer.
-  const { transcript, correctedTurns } = correctTranscriptWithStats(rawTranscript, department);
+  const { transcript, correctedTurns } = correctTranscriptWithStats(rawTranscript, scenarioContext.department);
 
-  const { systemInstruction, userMessage } = buildMessages(scenario, transcript, department, await sopContextForFresh(department));
+  const { systemInstruction, userMessage } = buildMessages(
+    scenarioContext.gradingScenario,
+    transcript,
+    scenarioContext.department,
+    await sopContextForFresh(scenarioContext.department),
+  );
   const body = buildBody(systemInstruction, userMessage);
 
   // One retry on malformed output: temp-0 structured JSON is almost always
@@ -236,8 +355,18 @@ export default async function handler(req, res) {
   const boundedTranscript = transcript
     .slice(0, MAX_TURNS)
     .map((t) => ({ role: t.role, text: String(t.text ?? '').slice(0, MAX_TURN_CHARS) }));
-  const scored = scoreQa(validated.criteria, validated.autoFails, boundedTranscript);
-  const { qa, grade } = finalizeQaResult(scored, boundedTranscript, correctedTurns);
+  const repaired = scenarioContext.verified
+    ? repairQaVerdictsForScenario(validated, boundedTranscript, scenarioContext.repairContext)
+    : { criteria: validated.criteria, autoFails: validated.autoFails, repairs: [], reviewReasons: [] };
+  const scored = scoreQa(repaired.criteria, repaired.autoFails, boundedTranscript);
+  // Post-trust-gate criteria: model-positive verdicts that survive evidence
+  // verification are checked against the deterministic routing/safety layer.
+  const deterministicFindings = evaluateQaDeterministicFindings(
+    scored.criteria, boundedTranscript, scenarioContext.repairContext,
+  );
+  const { qa, grade } = finalizeQaResult(
+    scored, boundedTranscript, correctedTurns, repaired.repairs, scenarioContext, repaired.reviewReasons, deterministicFindings,
+  );
 
   return res.status(200).json({ qa, grade });
 }

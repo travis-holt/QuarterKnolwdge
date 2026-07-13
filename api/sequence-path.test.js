@@ -16,8 +16,8 @@ describe('validateSequenceResponse', () => {
   });
 
   it('accepts multiple paths', () => {
-    const parsed = { paths: [makeValidPath('d1'), makeValidPath('d2', ['coaching', 'practice'])] };
-    const { data } = validateSequenceResponse(parsed);
+    const parsed = { paths: [makeValidPath('d1'), makeValidPath('d2')] };
+    const { data } = validateSequenceResponse(parsed, ['d1', 'd2']);
     expect(data.paths).toHaveLength(2);
   });
 
@@ -36,7 +36,7 @@ describe('validateSequenceResponse', () => {
     expect(error).toMatch(/domainId/);
   });
 
-  it('rejects when steps array is empty', () => {
+  it('rejects when the complete five-step set is missing', () => {
     const { error } = validateSequenceResponse({ paths: [{ domainId: 'd1', steps: [] }] });
     expect(error).toMatch(/steps/);
   });
@@ -60,5 +60,26 @@ describe('validateSequenceResponse', () => {
       paths: [{ domainId: 'd1', steps: [{ kind: 'coaching' }] }],
     });
     expect(error).toMatch(/rationale/);
+  });
+
+  it('rejects duplicate step kinds', () => {
+    const path = makeValidPath('d1');
+    path.steps[4].kind = 'coaching';
+    expect(validateSequenceResponse({ paths: [path] }).error).toMatch(/duplicate step/);
+  });
+
+  it('rejects duplicate, missing, and unrequested domain paths', () => {
+    expect(validateSequenceResponse(
+      { paths: [makeValidPath('d1'), makeValidPath('d1')] },
+      ['d1', 'd2'],
+    ).error).toMatch(/duplicate domain/);
+    expect(validateSequenceResponse(
+      { paths: [makeValidPath('d1')] },
+      ['d1', 'd2'],
+    ).error).toMatch(/missing requested/);
+    expect(validateSequenceResponse(
+      { paths: [makeValidPath('d1'), makeValidPath('d3')] },
+      ['d1', 'd2'],
+    ).error).toMatch(/unrequested/);
   });
 });

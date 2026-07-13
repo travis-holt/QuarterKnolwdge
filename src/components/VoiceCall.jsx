@@ -4,6 +4,8 @@ import { interviewScoreColor } from '../data/config.js';
 import { selectCallQaScenario } from '../data/callQaScenarios.js';
 import { saveInterview, updateInterviewGrade } from '../lib/db.js';
 import { apiFetch } from '../lib/apiFetch.js';
+import { selectPracticeDomain } from '../lib/practiceDomain.js';
+import { getFirebaseIdToken } from '../lib/firebase.js';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // VoiceCall — real-time voice practice call (Gemini Live API via /api/live).
@@ -34,41 +36,8 @@ class VoiceCallPersistenceError extends Error {
   }
 }
 
-async function gradeQaRequest({ scenario, transcript, department }) {
-  return apiFetch('/api/grade-call-qa', { scenario, transcript, department }, QA_GRADE_TIMEOUT_MS);
-}
-
-// Enrich the plain-text scenario passed to /api/grade-call-qa with the curated
-// scenario's expectations, so the deterministic grader knows what "good" looks like
-// for this specific call. The endpoint already accepts a scenario string, so this
-// stays plain text. When no curated metadata exists (generated calls), the original
-// scenario is returned unchanged.
-export function buildCallQaGradingScenario(scenario, metadata = {}) {
-  const base = String(scenario || '').trim();
-  const meta = metadata || {};
-  const expected = Array.isArray(meta.expectedActions) ? meta.expectedActions.filter(Boolean) : [];
-  const misses = Array.isArray(meta.criticalMisses) ? meta.criticalMisses.filter(Boolean) : [];
-  const header = [];
-  if (meta.qaScenarioTitle) header.push(`Scenario: ${meta.qaScenarioTitle}`);
-  if (meta.workflowType) header.push(`Workflow type: ${meta.workflowType}`);
-  if (meta.difficulty) header.push(`Difficulty: ${meta.difficulty}`);
-
-  if (!header.length && !expected.length && !misses.length) return base;
-
-  const parts = [];
-  if (base) parts.push(base);
-  const context = ['GRADING CONTEXT (curated scenario expectations):'];
-  if (header.length) context.push(header.join(' · '));
-  if (expected.length) {
-    context.push('Expected navigator behaviors:');
-    expected.forEach((a) => context.push(`- ${a}`));
-  }
-  if (misses.length) {
-    context.push('Critical misses (fail the relevant criteria if these occur):');
-    misses.forEach((m) => context.push(`- ${m}`));
-  }
-  parts.push(context.join('\n'));
-  return parts.join('\n\n');
+async function gradeQaRequest({ scenario, transcript, department, qaScenarioId }) {
+  return apiFetch('/api/grade-call-qa', { scenario, transcript, department, qaScenarioId }, QA_GRADE_TIMEOUT_MS);
 }
 
 export function callQaScenarioMetadata(selectedScenario) {
@@ -83,6 +52,7 @@ export function callQaScenarioMetadata(selectedScenario) {
     competencyIds: selectedScenario.competencyIds,
     expectedActions: selectedScenario.expectedActions,
     criticalMisses: selectedScenario.criticalMisses,
+    scoringNotes: selectedScenario.scoringNotes ?? [],
   };
 }
 
@@ -131,9 +101,10 @@ export async function gradeSavedAttempt(
   let data;
   try {
     data = await gradeQaFn({
-      scenario: buildCallQaGradingScenario(scenario, metadata),
+      scenario,
       transcript,
       department,
+      qaScenarioId: metadata?.qaScenarioId,
     });
   } catch (cause) {
     throw new VoiceCallPersistenceError(
@@ -210,7 +181,7 @@ function appendTranscriptFragment(existing, fragment) {
 
 // mode: 'practice' (advisory holistic review) | 'test' (hard rubric-based QA
 // test graded criterion-by-criterion against the call quality guide).
-export default function VoiceCall({ navigatorId, name, department = 'pediatrics', onExit, onDone, onQaResult, mode = 'practice', priorQaAttempts = [] }) {
+export default function VoiceCall({ navigatorId, name, department = 'pediatrics', preferredDomain = null, onExit, onDone, onQaResult, mode = 'practice', priorQaAttempts = [] }) {
   const isTest = mode === 'test';
   // phases: setup | connecting | active | grading | reviewed | discarded |
   //         saveError | gradeError | gradeSaveError
@@ -265,12 +236,16 @@ export default function VoiceCall({ navigatorId, name, department = 'pediatrics'
 
   // ── Teardown ────────────────────────────────────────────────────────────────
   function teardown() {
-    try { wsRef.current?.close(); } catch {}
+    const ws = wsRef.current;
+    wsRef.current = null;
+    try { ws?.close(); } catch {}
+    if (processorRef.current) processorRef.current.onaudioprocess = null;
     try { processorRef.current?.disconnect(); } catch {}
     streamRef.current?.getTracks().forEach((t) => t.stop());
+    sourcesRef.current.forEach((source) => { try { source.stop(); } catch {} });
     try { inCtxRef.current?.close(); } catch {}
     try { outCtxRef.current?.close(); } catch {}
-    wsRef.current = streamRef.current = inCtxRef.current = outCtxRef.current = processorRef.current = null;
+    streamRef.current = inCtxRef.current = outCtxRef.current = processorRef.current = null;
     sourcesRef.current = [];
   }
 
@@ -327,7 +302,7 @@ export default function VoiceCall({ navigatorId, name, department = 'pediatrics'
     caseFileRef.current = null;
 
     // 1) Set up the scenario + caller. Test mode uses the curated bank; practice stays generated.
-    const pick = DOMAINS[Math.floor(Math.random() * DOMAINS.length)].id;
+    const pick = selectPracticeDomain(preferredDomain);
     setDomainId(pick);
     let scen, caller, opener = '';
     if (isTest) {
@@ -358,6 +333,12 @@ export default function VoiceCall({ navigatorId, name, department = 'pediatrics'
       }
     }
 
+    const idToken = await getFirebaseIdToken().catch(() => null);
+    if (!idToken) {
+      setError('Your secure session has expired. Sign in again before starting a voice call.');
+      return setPhase('setup');
+    }
+
     // 2) Mic access.
     let stream;
     try {
@@ -370,53 +351,57 @@ export default function VoiceCall({ navigatorId, name, department = 'pediatrics'
     }
     streamRef.current = stream;
 
-    // 3) Audio graph.
-    const inCtx = new AudioContext();
-    const outCtx = new AudioContext({ sampleRate: OUT_RATE });
+    // 3) Audio graph + relay. Any constructor/setup failure after mic permission
+    // must tear the stream down; otherwise the browser can keep recording while
+    // the UI has already returned to setup.
+    try {
+      const inCtx = new AudioContext();
+      const outCtx = new AudioContext({ sampleRate: OUT_RATE });
     // By now we've awaited a network round-trip + the mic permission prompt, so
     // Chrome's autoplay policy may have started both contexts 'suspended' (no
     // audio renders at all in that state — silent mic AND silent playback).
     // resume() still succeeds because we're inside the gesture chain from the
     // "Start voice call" click, even with awaits in between.
-    inCtxRef.current = inCtx;
-    outCtxRef.current = outCtx;
-    await Promise.all([inCtx.resume(), outCtx.resume()]).catch(() => {});
-    if (inCtx.state !== 'running' || outCtx.state !== 'running') {
-      setError('Audio is blocked by the browser — click "Start voice call" again to allow it.');
-      teardown();
-      return setPhase('setup');
-    }
-    playheadRef.current = outCtx.currentTime;
-    const source = inCtx.createMediaStreamSource(stream);
+      inCtxRef.current = inCtx;
+      outCtxRef.current = outCtx;
+      await Promise.all([inCtx.resume(), outCtx.resume()]).catch(() => {});
+      if (inCtx.state !== 'running' || outCtx.state !== 'running') {
+        setError('Audio is blocked by the browser — click "Start voice call" again to allow it.');
+        teardown();
+        return setPhase('setup');
+      }
+      playheadRef.current = outCtx.currentTime;
+      const source = inCtx.createMediaStreamSource(stream);
     // ponytail: ScriptProcessorNode is deprecated but zero-setup; upgrade to an
     // AudioWorklet if capture proves choppy on the demo machine.
-    const processor = inCtx.createScriptProcessor(4096, 1, 1);
-    processorRef.current = processor;
-    const mute = inCtx.createGain();         // route processor → muted node so it runs without echoing
-    mute.gain.value = 0;
-    source.connect(processor);
-    processor.connect(mute);
-    mute.connect(inCtx.destination);
+      const processor = inCtx.createScriptProcessor(4096, 1, 1);
+      processorRef.current = processor;
+      const mute = inCtx.createGain();         // route processor → muted node so it runs without echoing
+      mute.gain.value = 0;
+      source.connect(processor);
+      processor.connect(mute);
+      mute.connect(inCtx.destination);
 
     // 4) Open the relay socket.
-    const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const ws = new WebSocket(`${proto}//${window.location.host}/api/live`);
-    wsRef.current = ws;
+      const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+      const ws = new WebSocket(`${proto}//${window.location.host}/api/live`);
+      wsRef.current = ws;
 
-    ws.onopen = () => {
-      ws.send(JSON.stringify({
-        // Voice practice is a navigator flow — the relay is pilot-grade open
-        // (rate-limited), so no supervisor secret is sent from the client.
-        type: 'start',
-        callerName: caller,
-        scenario: scen,
-        department,
-        openingLine: opener,
-        caseFile: caseFileRef.current,
-      }));
-    };
-    ws.onmessage = (ev) => {
-      const m = JSON.parse(ev.data);
+      ws.onopen = () => {
+        ws.send(JSON.stringify({
+          type: 'start',
+          idToken,
+          navigatorId,
+          callerName: caller,
+          scenario: scen,
+          department,
+          openingLine: opener,
+          caseFile: caseFileRef.current,
+        }));
+      };
+      ws.onmessage = (ev) => {
+        let m;
+        try { m = JSON.parse(ev.data); } catch { return; }
       if (m.type === 'ready') {
         setPhase('active');
         processor.onaudioprocess = (e) => {
@@ -435,12 +420,26 @@ export default function VoiceCall({ navigatorId, name, department = 'pediatrics'
         teardown();
         setPhase('setup');
       }
-    };
-    ws.onerror = () => {
-      setError('Connection to the voice service failed.');
+      };
+      ws.onerror = () => {
+        setError('Connection to the voice service failed.');
+        teardown();
+        setPhase('setup');
+      };
+      ws.onclose = () => {
+      // Intentional teardown clears wsRef before the close event arrives. If the
+      // live service closes first, stop the mic/audio graph and tell the user.
+        if (wsRef.current !== ws) return;
+        setError('The voice service closed the connection. Your microphone has been stopped.');
+        teardown();
+        setPhase('setup');
+      };
+    } catch (err) {
+      console.error('Voice call audio setup failed:', err);
+      setError('Could not start the browser audio connection. Your microphone has been stopped.');
       teardown();
       setPhase('setup');
-    };
+    }
   };
 
   // ── End + grade ───────────────────────────────────────────────────────────
@@ -496,15 +495,19 @@ export default function VoiceCall({ navigatorId, name, department = 'pediatrics'
     }
 
     setPhase('grading');
+    setPendingTranscript(transcript);
     let docId = null;
     try {
       docId = await saveInterview(navigatorId, name, domainId, scenario, callerName, transcript, department);
     } catch (err) {
       console.error('Failed to save voice call:', err);
+      setSaveError('We could not save this practice call. Nothing has been recorded yet.');
+      setPhase('saveError');
+      return;
     }
     finalRef.current = { transcript, docId };
-    await runGrading();
-    setPhase('reviewed');
+    const gradeDurable = await runGrading();
+    setPhase(gradeDurable ? 'reviewed' : 'gradeSaveError');
   };
 
   // Grades the saved transcript; also used to retry from the reviewed screen when
@@ -513,16 +516,23 @@ export default function VoiceCall({ navigatorId, name, department = 'pediatrics'
   // keeps the advisory holistic review.
   const runGrading = async () => {
     const { transcript, docId } = finalRef.current ?? {};
-    if (!transcript) return;
+    if (!transcript) return true;
     try {
       if (isTest) {
-        const data = await apiFetch('/api/grade-call-qa', { scenario, transcript, department }, QA_GRADE_TIMEOUT_MS);
+        const data = await apiFetch('/api/grade-call-qa', {
+          scenario, transcript, department, qaScenarioId: qaScenarioMetadataRef.current.qaScenarioId,
+        }, QA_GRADE_TIMEOUT_MS);
         if (data.qa && data.grade) {
           setQa(data.qa);
           setGrade(data.grade);
           if (docId) {
             try { await updateInterviewGrade(docId, data.grade, data.qa); }
-            catch (e) { console.error('grade save failed:', e); }
+            catch (e) {
+              console.error('grade save failed:', e);
+              setPendingGradePayload({ docId, grade: data.grade, qa: data.qa });
+              setGradeSaveError('The call was graded, but the grade could not be saved. Retry saving the grade.');
+              return false;
+            }
           }
           await onQaResult?.(data.qa, qaScenarioMetadataRef.current);
         }
@@ -534,12 +544,22 @@ export default function VoiceCall({ navigatorId, name, department = 'pediatrics'
         );
         if (data.grade) {
           setGrade(data.grade);
-          if (docId) updateInterviewGrade(docId, data.grade).catch((e) => console.error('grade save failed:', e));
+          if (docId) {
+            try {
+              await updateInterviewGrade(docId, data.grade);
+            } catch (e) {
+              console.error('grade save failed:', e);
+              setPendingGradePayload({ docId, grade: data.grade, qa: null });
+              setGradeSaveError('Your feedback was generated, but it could not be saved for your supervisor.');
+              return false;
+            }
+          }
         }
       }
     } catch (err) {
       console.error('Failed to grade voice call:', err);
     }
+    return true;
   };
 
   const retryGrading = async () => {
@@ -573,7 +593,8 @@ export default function VoiceCall({ navigatorId, name, department = 'pediatrics'
         }
       }
     } else {
-      await runGrading();
+      const gradeDurable = await runGrading();
+      setPhase(gradeDurable ? 'reviewed' : 'gradeSaveError');
     }
     setGradeBusy(false);
   };
@@ -581,6 +602,30 @@ export default function VoiceCall({ navigatorId, name, department = 'pediatrics'
   const retrySaving = async () => {
     if (!pendingTranscript) return;
     setGradeBusy(true);
+    if (!isTest) {
+      try {
+        const docId = await saveInterview(
+          navigatorId,
+          name,
+          domainId,
+          scenario,
+          callerName,
+          pendingTranscript,
+          department,
+        );
+        finalRef.current = { transcript: pendingTranscript, docId };
+        setSaveError('');
+        setPhase('grading');
+        const gradeDurable = await runGrading();
+        setPhase(gradeDurable ? 'reviewed' : 'gradeSaveError');
+      } catch {
+        setSaveError('We still could not save this practice call. Check the connection and try again.');
+        setPhase('saveError');
+      } finally {
+        setGradeBusy(false);
+      }
+      return;
+    }
     try {
       const result = await runQaPersistenceSequence({
         navigatorId,
@@ -620,16 +665,21 @@ export default function VoiceCall({ navigatorId, name, department = 'pediatrics'
   };
 
   const retrySavingGrade = async () => {
-    if (!pendingGradePayload?.docId || !pendingGradePayload?.grade || !pendingGradePayload?.qa) return;
+    if (!pendingGradePayload?.docId || !pendingGradePayload?.grade) return;
+    if (isTest && !pendingGradePayload.qa) return;
     setGradeBusy(true);
     try {
-      await saveGradeToAttempt(
-        pendingGradePayload.docId,
-        pendingGradePayload.grade,
-        pendingGradePayload.qa
-      );
+      if (isTest) {
+        await saveGradeToAttempt(
+          pendingGradePayload.docId,
+          pendingGradePayload.grade,
+          pendingGradePayload.qa
+        );
+      } else {
+        await updateInterviewGrade(pendingGradePayload.docId, pendingGradePayload.grade);
+      }
       setGradeSaveError('');
-      await onQaResult?.(pendingGradePayload.qa, qaScenarioMetadataRef.current);
+      if (isTest) await onQaResult?.(pendingGradePayload.qa, qaScenarioMetadataRef.current);
       setPhase('reviewed');
     } catch {
       setGradeSaveError('The call was graded, but the grade could not be saved. Retry saving the grade.');
@@ -678,7 +728,7 @@ export default function VoiceCall({ navigatorId, name, department = 'pediatrics'
     return (
       <section className="interview view-enter">
         <div className="card interview__done">
-          <h2 className="overview__panel-title">Call QA not saved</h2>
+          <h2 className="overview__panel-title">{isTest ? 'Call QA not saved' : 'Practice call not saved'}</h2>
           <p className="readoff__sub">{saveError}</p>
           <div className="interview__end-actions" style={{ justifyContent: 'center' }}>
             <button className="btn btn--primary btn--sm" disabled={gradeBusy} onClick={retrySaving} type="button">
@@ -766,6 +816,10 @@ export default function VoiceCall({ navigatorId, name, department = 'pediatrics'
               </>
             )}
           </div>
+
+          {qa?.repairs?.length > 0 && (
+            <p className="readoff__sub">Some rubric wording was normalized for fair scoring.</p>
+          )}
 
           {qa?.review?.reviewFlags?.length > 0 && (
             <div className="card qa-reviewflags">

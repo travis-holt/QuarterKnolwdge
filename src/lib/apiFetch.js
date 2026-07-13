@@ -9,8 +9,9 @@
 // SECURITY (2026-07-08): this no longer injects the public SUPERVISOR_PASSCODE as
 // `body.secret`. Supervisor-only endpoints now authorize via the server-issued
 // HttpOnly session cookie (set by /api/supervisor-login), sent automatically with
-// `credentials: 'same-origin'`. Navigator/practice endpoints are pilot-grade open
-// (rate-limited server-side). See api/_auth.js.
+// `credentials: 'same-origin'`. Every protected request also carries the current
+// Firebase ID token in Authorization; rate limiting is defense-in-depth. See
+// api/_auth.js.
 //
 // Usage:
 //   const data = await apiFetch('/api/generate-audit', { domain, department }, 25_000);
@@ -31,11 +32,16 @@ export async function apiFetch(endpoint, body, timeoutMs = 30_000) {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), timeoutMs);
   try {
+    const { getFirebaseIdToken } = await import('./firebase.js');
+    const idToken = await getFirebaseIdToken();
     const res = await fetch(endpoint, {
       method: 'POST',
       signal: controller.signal,
       credentials: 'same-origin',
-      headers: { 'Content-Type': 'application/json' },
+      headers: {
+        'Content-Type': 'application/json',
+        ...(idToken ? { Authorization: `Bearer ${idToken}` } : {}),
+      },
       body: JSON.stringify(body ?? {}),
     });
     if (!res.ok) {

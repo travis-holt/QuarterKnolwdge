@@ -19,11 +19,15 @@ import {
   departmentMatrix,
   findRow,
 } from '../lib/scoring.js';
-import { getResult, saveResult, getFloorScores, getActiveQuestions, getCompletions, getInterviews, saveCompletion } from '../lib/db.js';
+import { getResult, saveResult, getActiveQuestions, getCompletions, getInterviews, saveCompletion } from '../lib/db.js';
+import { apiFetch } from '../lib/apiFetch.js';
 import { MINICHECK_SIZE, MINICHECK_PASS } from '../data/config.js';
 import { phasesComplete, completedCount, latestQaForDept } from '../lib/phases.js';
+import { ResultSaveQueue } from '../lib/resultSaveQueue.js';
+import { clientTimestamp, compareTimestampValues, timestampMillis } from '../lib/time.js';
+import { qaFinalVerdict } from '../lib/qaFinalReview.js';
 import { isFirebaseConfigured } from '../lib/firebase.js';
-import { SEED_QUESTIONS, SEED_QUESTIONS_OBGYN, DOMAINS } from '../data/questions.js';
+import { SEED_QUESTIONS, SEED_QUESTIONS_OBGYN, DOMAINS, domainName } from '../data/questions.js';
 import { ASSESSED_DEPTS, departmentName } from '../data/departments.js';
 
 // Seed fallbacks keyed by department so offline mode works for both.
@@ -52,9 +56,12 @@ export default function NavigatorApp({ navigatorId, name, onSignOut }) {
   const [questions, setQuestions] = useState(SEED_QUESTIONS); // active bank (seed fallback)
   const [results, setResults] = useState([]); // whole floor (for mentor data)
   const [moduleDomain, setModuleDomain] = useState(null);
+  const [moduleCompletionKind, setModuleCompletionKind] = useState(null);
   const [auditDomain, setAuditDomain] = useState(null);
   const [miniCheckDomain, setMiniCheckDomain] = useState(null);
+  const [miniCheckOutcome, setMiniCheckOutcome] = useState(null); // { domainId, score, passed, pending? }
   const [practiceMode, setPracticeMode] = useState(null); // null (chooser) · 'voice' · 'chat'
+  const [practiceDomain, setPracticeDomain] = useState(null); // targeted dev-path domain; null = random practice
   const [completedDomains, setCompletedDomains] = useState(new Set());
   const [completions, setCompletions] = useState([]);
   const [interviews, setInterviews] = useState([]);
@@ -63,9 +70,10 @@ export default function NavigatorApp({ navigatorId, name, onSignOut }) {
   // them. When a save to Firestore fails, the navigator's dashboard still renders
   // from local state, but the supervisor never sees the result — so we must tell
   // the navigator and let them retry rather than leaving them falsely "done".
-  const [saveError, setSaveError] = useState(false);
+  const [pendingSaveCount, setPendingSaveCount] = useState(0);
   const [retrying, setRetrying] = useState(false);
-  const pendingSaveRef = useRef(null); // { args:[...saveResult args], onSuccess? }
+  const resultSaveQueueRef = useRef(null);
+  resultSaveQueueRef.current ??= new ResultSaveQueue(saveResult);
   // Cross-dept scores keyed by deptId — populated on mount + updated after each check.
   // Feeds deptMatrix so the "Strength across departments" strip shows real data for
   // every dept the navigator has taken, not just the currently active one.
@@ -81,7 +89,7 @@ export default function NavigatorApp({ navigatorId, name, onSignOut }) {
     return ['mcq', 'spot', 'qa']
       .filter((type) => type !== 'qa')
       .filter((type) => byType[type])
-      .sort((a, b) => (byType[b].submittedAt?.seconds ?? -1) - (byType[a].submittedAt?.seconds ?? -1))[0] ?? null;
+      .sort((a, b) => compareTimestampValues(byType[b].submittedAt, byType[a].submittedAt))[0] ?? null;
   };
 
   // On mount: skip straight to deptselect so the navigator picks their department.
@@ -158,9 +166,9 @@ export default function NavigatorApp({ navigatorId, name, onSignOut }) {
     if (!isFirebaseConfigured) return undefined;
     let active = true;
     if (!activeDept) return undefined;
-    getFloorScores(activeDept)
-      .then((list) => { if (active) setResults(list); })
-      .catch((err) => console.error('getFloorScores (navigator):', err));
+    apiFetch('/api/mentor-scores', { department: activeDept }, 15_000)
+      .then((data) => { if (active) setResults(data.results ?? []); })
+      .catch((err) => console.error('mentor-scores (navigator):', err));
     return () => { active = false; };
   }, [activeDept]);
 
@@ -197,46 +205,35 @@ export default function NavigatorApp({ navigatorId, name, onSignOut }) {
 
   // Reset the practice-type chooser whenever the navigator leaves the Practice tab.
   // (Must live with the other hooks, above the early returns — never after them.)
-  useEffect(() => { if (view !== 'interview') setPracticeMode(null); }, [view]);
+  useEffect(() => {
+    if (view !== 'interview') {
+      setPracticeMode(null);
+      setPracticeDomain(null);
+    }
+  }, [view]);
 
   // Persist a result to Firestore, surfacing failures for retry. Local UI state
   // is updated by the callers BEFORE this runs, so the navigator always sees
   // their score; this only governs whether the supervisor's copy is written.
   const persistResult = async (args, onSuccess) => {
-    try {
-      await saveResult(...args);
-      setSaveError(false);
-      pendingSaveRef.current = null;
-      onSuccess?.();
-      return true;
-    } catch {
-      pendingSaveRef.current = { args, onSuccess };
-      setSaveError(true);
-      return false;
-    }
+    const saved = await resultSaveQueueRef.current.save(args, onSuccess);
+    setPendingSaveCount(resultSaveQueueRef.current.size);
+    return saved;
   };
 
   const retrySave = async () => {
-    const pending = pendingSaveRef.current;
-    if (!pending || retrying) return;
+    if (resultSaveQueueRef.current.size === 0 || retrying) return;
     setRetrying(true);
-    try {
-      await saveResult(...pending.args);
-      setSaveError(false);
-      pendingSaveRef.current = null;
-      pending.onSuccess?.();
-    } catch {
-      setSaveError(true);
-    } finally {
-      setRetrying(false);
-    }
+    await resultSaveQueueRef.current.retryAll();
+    setPendingSaveCount(resultSaveQueueRef.current.size);
+    setRetrying(false);
   };
 
   const handleSubmit = async (_ignoredName, answers) => {
     const dept = activeDept ?? 'pediatrics';
     const scores = scorePerDomain(answers, questions);
     const competencyScores = scorePerCompetency(answers, questions);
-    const now = { seconds: Math.floor(Date.now() / 1000) };
+    const now = clientTimestamp();
     const result = { name, navigatorId, scores, competencyScores, answers, department: dept, assessmentType: 'mcq', submittedAt: now };
     setResultsByType((prev) => ({ ...prev, mcq: result }));
     setActiveType('mcq');
@@ -262,9 +259,28 @@ export default function NavigatorApp({ navigatorId, name, onSignOut }) {
     if (resultsByType[type]) setActiveType(type);
   };
 
-  const openModule = (domainId) => {
+  const openModule = (domainId, completionKind = null) => {
     setModuleDomain(domainId);
+    setModuleCompletionKind(completionKind === 'coaching' || completionKind === 'module' ? completionKind : null);
     setView('module');
+  };
+
+  const completeLearningStep = async (kind) => {
+    if (!moduleDomain || (kind !== 'coaching' && kind !== 'module')) return;
+    await saveCompletion(navigatorId, name, moduleDomain, kind, dept);
+    setCompletions((prev) => [
+      ...prev,
+      {
+        navigatorId,
+        name,
+        department: dept,
+        domainId: moduleDomain,
+        kind,
+        completedAt: clientTimestamp(),
+      },
+    ]);
+    setModuleCompletionKind(null);
+    setView('training');
   };
 
   const startAudit = (domainId) => {
@@ -272,13 +288,15 @@ export default function NavigatorApp({ navigatorId, name, onSignOut }) {
     setView('audit');
   };
 
-  const startInterview = () => {
+  const startInterview = (domainId = null) => {
+    setPracticeDomain(DOMAINS.some((domain) => domain.id === domainId) ? domainId : null);
     setPracticeMode(null);
     setView('interview');
   };
 
   const startMiniCheck = (domainId) => {
     setMiniCheckDomain(domainId);
+    setMiniCheckOutcome(null);
     setView('minicheck');
   };
 
@@ -291,15 +309,7 @@ export default function NavigatorApp({ navigatorId, name, onSignOut }) {
   //                   (the training plan is derived from the active result).
   const handleSpotComplete = async (domainScores, mode) => {
     const domainIds = Object.keys(domainScores);
-    const now = { seconds: Math.floor(Date.now() / 1000) };
-    setCompletedDomains((prev) => new Set([...prev, ...domainIds]));
-    setCompletions((prev) => [
-      ...prev,
-      ...domainIds.map((domainId) => ({ navigatorId, name, department: dept, domainId, kind: 'practice', completedAt: now })),
-    ]);
-    for (const domainId of domainIds) {
-      try { await saveCompletion(navigatorId, name, domainId, 'practice', dept); } catch (err) { console.error('saveCompletion (practice):', err); }
-    }
+    const now = clientTimestamp();
 
     const targetType = mode === 'full' ? 'spot' : (activeType ?? 'spot');
     const target = resultsByType[targetType];
@@ -311,13 +321,35 @@ export default function NavigatorApp({ navigatorId, name, onSignOut }) {
     setResultsByType((prev) => ({ ...prev, [targetType]: result }));
     setActiveType(targetType);
     setAllDeptResults((prev) => ({ ...prev, [dept]: allScores }));
-    await persistResult([navigatorId, name, allScores, competencyScores, dept, answers, targetType]);
+    const localCompletions = domainIds.map((domainId) => ({
+      navigatorId,
+      name,
+      department: dept,
+      domainId,
+      kind: 'practice',
+      passed: true,
+      completedAt: now,
+    }));
+    const markComplete = () => {
+      setCompletedDomains((prev) => new Set([...prev, ...domainIds]));
+      setCompletions((prev) => [...prev, ...localCompletions]);
+    };
+    return persistResult([
+      navigatorId,
+      name,
+      allScores,
+      competencyScores,
+      dept,
+      answers,
+      targetType,
+      domainIds.map((domainId) => ({ domainId, kind: 'practice', passed: true, score: domainScores[domainId] })),
+    ], markComplete);
   };
 
   const handleQaComplete = async (qa, metadata = {}) => {
     setInterviews((prev) => [
       ...prev,
-      { name, navigatorId, department: dept, endedAt: { seconds: Math.floor(Date.now() / 1000) }, qa, ...metadata },
+      { name, navigatorId, department: dept, endedAt: clientTimestamp(), qa, ...metadata },
     ]);
   };
 
@@ -409,12 +441,13 @@ export default function NavigatorApp({ navigatorId, name, onSignOut }) {
       activeDeptName={showDeptSwitcher ? deptName : null}
       onChangeDept={handleChangeDept}
     >
-      {saveError && (
+      {pendingSaveCount > 0 && (
         <div className="subscribe-error" role="alert">
-          ⚠ Your latest result hasn’t saved to the server yet — your supervisor can’t see it. Stay
+          ⚠ {pendingSaveCount === 1 ? 'One result has' : `${pendingSaveCount} results have`} not
+          saved to the server yet — your supervisor can’t see {pendingSaveCount === 1 ? 'it' : 'them'}. Stay
           on this page and{' '}
           <button className="linkbtn" onClick={retrySave} disabled={retrying}>
-            {retrying ? 'retrying…' : 'retry now'}
+            {retrying ? 'retrying…' : 'retry all now'}
           </button>
           .
         </div>
@@ -488,7 +521,7 @@ export default function NavigatorApp({ navigatorId, name, onSignOut }) {
       {view === 'dashboard' && (
         <>
           {latestQa && (
-            <QaLatestCard qa={latestQa.qa} endedAt={latestQa.endedAt} onRetake={() => setView('qatest')} />
+            <QaLatestCard attempt={latestQa} onRetake={() => setView('qatest')} />
           )}
           {myRow ? (
             <>
@@ -536,17 +569,28 @@ export default function NavigatorApp({ navigatorId, name, onSignOut }) {
 
       {view === 'training' &&
         (myRow ? (
-          <MyTraining
-            row={myRow}
-            onPreviewModule={openModule}
-            onStartAudit={startAudit}
-            onStartInterview={startInterview}
-            onStartMiniCheck={startMiniCheck}
-            completedDomains={completedDomains}
-            completions={completions}
-            interviews={practiceInterviews}
-            department={activeDept ?? 'pediatrics'}
-          />
+          <>
+            {miniCheckOutcome && (
+              <div className={`subscribe-error ${miniCheckOutcome.passed ? '' : 'is-warning'}`} role="status">
+                {miniCheckOutcome.passed
+                  ? miniCheckOutcome.pending
+                    ? `You passed ${domainName(miniCheckOutcome.domainId)} at ${miniCheckOutcome.score}%, but the result is waiting to save before the path advances.`
+                    : `Mini re-check passed: ${miniCheckOutcome.score}%. Your path has advanced.`
+                  : `Mini re-check score: ${miniCheckOutcome.score}%. You need ${MINICHECK_PASS}% to validate this step, so it remains available to retake.`}
+              </div>
+            )}
+            <MyTraining
+              row={myRow}
+              onPreviewModule={openModule}
+              onStartAudit={startAudit}
+              onStartInterview={startInterview}
+              onStartMiniCheck={startMiniCheck}
+              completedDomains={completedDomains}
+              completions={completions}
+              interviews={practiceInterviews}
+              department={activeDept ?? 'pediatrics'}
+            />
+          </>
         ) : (
           <EmptyState title="No training yet">
             Take the check first and your training plan will appear here.
@@ -561,6 +605,9 @@ export default function NavigatorApp({ navigatorId, name, onSignOut }) {
           onOpenNavigator={null}
           showCohort={false}
           backLabel="← Back to my training"
+          completionKind={moduleCompletionKind}
+          completed={completions.some((c) => c.domainId === moduleDomain && c.kind === moduleCompletionKind)}
+          onComplete={completeLearningStep}
         />
       )}
 
@@ -568,12 +615,18 @@ export default function NavigatorApp({ navigatorId, name, onSignOut }) {
         <PracticeChooser onPick={setPracticeMode} />
       )}
       {view === 'interview' && practiceMode === 'voice' && (
-        <VoiceCall navigatorId={navigatorId} name={name} department={dept} onExit={() => setPracticeMode(null)} />
+        <VoiceCall
+          navigatorId={navigatorId}
+          name={name}
+          department={dept}
+          preferredDomain={practiceDomain}
+          onExit={() => setPracticeMode(null)}
+        />
       )}
       {view === 'interview' && practiceMode === 'chat' && (
         <>
           <button className="linkbtn" onClick={() => setPracticeMode(null)} style={{ marginBottom: '1rem' }}>← Call type</button>
-          <Interview navigatorId={navigatorId} name={name} department={dept} />
+          <Interview navigatorId={navigatorId} name={name} department={dept} preferredDomain={practiceDomain} />
         </>
       )}
 
@@ -592,14 +645,10 @@ export default function NavigatorApp({ navigatorId, name, onSignOut }) {
 
       {view === 'minicheck' && miniCheckDomain && (
         <Check
-          onSubmit={async (_n, answers) => {
-            const scores = scorePerDomain(answers, questions);
+          onSubmit={async (_n, answers, miniQuestions) => {
+            const scores = scorePerDomain(answers, miniQuestions);
             const domainScore = scores[miniCheckDomain] ?? 0;
             const passed = domainScore >= MINICHECK_PASS;
-            // Always record the minicheck completion regardless of pass/fail
-            try {
-              await saveCompletion(navigatorId, name, miniCheckDomain, 'minicheck', dept);
-            } catch (err) { console.error('saveCompletion (minicheck):', err); }
             if (passed) {
               // Re-save the active profile with the updated domain so the trend chart gains a point.
               const targetType = activeType ?? 'mcq';
@@ -629,12 +678,36 @@ export default function NavigatorApp({ navigatorId, name, onSignOut }) {
                 },
               }));
               setAllDeptResults((prev) => ({ ...prev, [dept]: allScores }));
-              await persistResult([navigatorId, name, allScores, competencyScores, dept, savedAnswers, targetType]);
+              const localCompletion = {
+                navigatorId,
+                name,
+                department: dept,
+                domainId: miniCheckDomain,
+                kind: 'minicheck',
+                passed: true,
+                score: domainScore,
+                completedAt: clientTimestamp(),
+              };
+              const markComplete = () => {
+                setCompletions((prev) => [...prev, localCompletion]);
+                setMiniCheckOutcome({ domainId: miniCheckDomain, score: domainScore, passed: true, pending: false });
+              };
+              const saved = await persistResult([
+                navigatorId,
+                name,
+                allScores,
+                competencyScores,
+                dept,
+                savedAnswers,
+                targetType,
+                { domainId: miniCheckDomain, kind: 'minicheck', passed: true, score: domainScore },
+              ], markComplete);
+              if (!saved) {
+                setMiniCheckOutcome({ domainId: miniCheckDomain, score: domainScore, passed: true, pending: true });
+              }
+            } else {
+              setMiniCheckOutcome({ domainId: miniCheckDomain, score: domainScore, passed: false, pending: false });
             }
-            setCompletions((prev) => [
-              ...prev,
-              { navigatorId, name, department: dept, domainId: miniCheckDomain, kind: 'minicheck', completedAt: { seconds: Math.floor(Date.now() / 1000) } },
-            ]);
             setView('training');
           }}
           onCancel={() => setView('training')}
@@ -654,8 +727,9 @@ export default function NavigatorApp({ navigatorId, name, onSignOut }) {
 const TYPE_LABEL = { mcq: 'Multiple choice', spot: 'Spot the Error', qa: 'Call QA Test' };
 
 function formatQaDate(ts) {
-  if (!ts?.seconds) return 'Date pending';
-  return new Date(ts.seconds * 1000).toLocaleDateString(undefined, {
+  const millis = timestampMillis(ts);
+  if (!millis) return 'Date pending';
+  return new Date(millis).toLocaleDateString(undefined, {
     month: 'short',
     day: 'numeric',
     year: 'numeric',
@@ -694,13 +768,22 @@ function AssessmentBar({ activeType, resultsByType, onSwitch, onTakeAnother, pha
   );
 }
 
-function QaLatestCard({ qa, endedAt, onRetake }) {
+function QaLatestCard({ attempt, onRetake }) {
+  const qa = attempt?.qa ?? {};
+  const verdict = qaFinalVerdict(attempt);
+  const needsReview = verdict.needsSupervisorReview || qa.review?.recommendation === 'needs_review';
+  const displayPass = verdict.finalPass ?? verdict.aiPass;
+  const label = verdict.finalPass == null
+    ? qa.review?.recommendation === 'needs_review'
+      ? 'NEEDS REVIEW'
+      : `${displayPass ? 'AI PASS' : 'AI FAIL'} · PENDING REVIEW`
+    : verdict.label;
   return (
-    <div className={`card qa-latest ${qa.pass ? 'qa-latest--pass' : 'qa-latest--fail'}`}>
+    <div className={`card qa-latest ${needsReview ? 'qa-latest--review' : displayPass ? 'qa-latest--pass' : 'qa-latest--fail'}`}>
       <div>
         <p className="qa-latest__eyebrow">Latest Call QA Test</p>
-        <h2 className="qa-latest__title">{qa.pass ? 'PASS' : 'FAIL'}</h2>
-        <p className="qa-latest__meta">{qa.score}/100 - {formatQaDate(endedAt)}</p>
+        <h2 className="qa-latest__title">{label}</h2>
+        <p className="qa-latest__meta">{qa.score}/100 - {formatQaDate(attempt?.endedAt)}</p>
       </div>
       <button className="btn btn--ghost btn--sm" onClick={onRetake} type="button">
         Retake

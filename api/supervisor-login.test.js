@@ -1,5 +1,12 @@
 // Tests for the /api/supervisor-login + /api/logout endpoints.
 import { describe, it, expect, vi } from 'vitest';
+
+const adminMocks = vi.hoisted(() => ({ createCustomToken: vi.fn().mockResolvedValue('firebase-custom-token') }));
+vi.mock('./_firebase-admin.js', () => ({
+  FirebaseAdminConfigError: class FirebaseAdminConfigError extends Error {},
+  getFirebaseAdmin: () => ({ auth: { createCustomToken: adminMocks.createCustomToken } }),
+}));
+
 import login from './supervisor-login.js';
 import logout from './logout.js';
 import { verifySessionToken, SESSION_COOKIE } from './_auth.js';
@@ -21,11 +28,12 @@ function cookieToken(setCookie) {
 }
 
 describe('POST /api/supervisor-login', () => {
-  it('sets an HttpOnly session cookie for the correct passcode', () => {
+  it('sets an HttpOnly session cookie and returns a Firebase custom token for the correct passcode', async () => {
     const res = mockRes();
-    login({ method: 'POST', body: { passcode: SUPERVISOR_PASSCODE }, headers: {} }, res);
+    await login({ method: 'POST', body: { passcode: SUPERVISOR_PASSCODE }, headers: {} }, res);
     expect(res._state.code).toBe(200);
-    expect(res._state.body).toEqual({ ok: true });
+    expect(res._state.body).toEqual({ ok: true, customToken: 'firebase-custom-token' });
+    expect(adminMocks.createCustomToken).toHaveBeenCalledWith('knowledge-check-supervisor', { role: 'supervisor' });
     const setCookie = res._state.headers['Set-Cookie'];
     expect(setCookie).toContain(`${SESSION_COOKIE}=`);
     expect(setCookie).toContain('HttpOnly');
@@ -34,23 +42,23 @@ describe('POST /api/supervisor-login', () => {
     expect(payload.role).toBe('supervisor');
   });
 
-  it('returns 401 for a wrong passcode and sets no cookie', () => {
+  it('returns 401 for a wrong passcode and sets no cookie', async () => {
     const res = mockRes();
-    login({ method: 'POST', body: { passcode: 'wrong' }, headers: {} }, res);
+    await login({ method: 'POST', body: { passcode: 'wrong' }, headers: {} }, res);
     expect(res._state.code).toBe(401);
     expect(res._state.body).toEqual({ error: 'Incorrect passcode.' });
     expect(res._state.headers['Set-Cookie']).toBeUndefined();
   });
 
-  it('rejects non-POST methods with 405', () => {
+  it('rejects non-POST methods with 405', async () => {
     const res = mockRes();
-    login({ method: 'GET', body: {}, headers: {} }, res);
+    await login({ method: 'GET', body: {}, headers: {} }, res);
     expect(res._state.code).toBe(405);
   });
 
-  it('marks the cookie Secure behind an HTTPS proxy', () => {
+  it('marks the cookie Secure behind an HTTPS proxy', async () => {
     const res = mockRes();
-    login(
+    await login(
       { method: 'POST', body: { passcode: SUPERVISOR_PASSCODE }, headers: { 'x-forwarded-proto': 'https' } },
       res
     );

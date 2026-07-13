@@ -36,7 +36,7 @@ export const QA_RUBRIC = [
       { id: 'doc-reason', points: 6, core: false, domainIds: ['documentation', 'classification'], competencyIds: ['sopApplication', 'communication'],
         text: 'Stated or confirmed an accurate, specific visit/documentation reason matching SOP conventions (e.g., "Shots PE UTD", "GS" for Good Samaritan newborns).' },
       { id: 'doc-te', points: 4, core: false, domainIds: ['routing', 'documentation'], competencyIds: ['escalation', 'sopApplication'],
-        text: 'Routed or logged a Telephone Encounter to the correct queue or contact when the scenario called for one (per the escalation matrix).' },
+        text: 'Communicated and/or completed the correct message/routing next step when the scenario called for one. Natural patient-facing language such as "send the request," "send a message," "route this," or "put in a note" counts when the intended destination/workflow is correct; exact "TE" or "Telephone Encounter" wording is not required.' },
     ],
   },
   {
@@ -60,7 +60,7 @@ export const QA_RUBRIC = [
   {
     id: 'knowledge', name: 'Knowledge', criteria: [
       { id: 'know-rule', points: 9, core: true, domainIds: ['classification', 'routing', 'boundaries'], competencyIds: ['sopKnowledge', 'sopApplication', 'riskManagement'],
-        text: 'Applied the correct SOP rule for this scenario (PE frequency, newborn scheduling, provider constraints, escalation-matrix routing, queue selection...).' },
+        text: 'Applied the correct SOP rule for this scenario based on the caller\'s actual request and department context. Do not require unrelated SOP checks, exact policy wording, or caller-facing confirmation of system-visible facts unless the scenario makes them the governing issue.' },
       { id: 'know-details', points: 6, core: false, domainIds: ['classification', 'routing', 'scheduling'], competencyIds: ['sopKnowledge', 'sopApplication', 'compliance'],
         text: 'Every concrete detail given (facility, address, provider, process step) was accurate per the SOP - nothing invented.' },
     ],

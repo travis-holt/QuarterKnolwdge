@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { selectAuditItems } from './SpotTheError.jsx';
+import { auditPlanComplete, selectAuditItems } from './SpotTheError.jsx';
 
 describe('selectAuditItems', () => {
   it('avoids repeated workflow types in single-domain mode when alternatives exist', () => {
@@ -17,5 +17,30 @@ describe('selectAuditItems', () => {
 
     expect(toGenerate).toEqual([]);
     expect(fromBank.map((a) => a.modelExplanation)).toEqual(['a', 'c', 'd']);
+  });
+});
+
+describe('auditPlanComplete', () => {
+  it('requires every full-profile domain before scoring', () => {
+    const plan = ['intake', 'routing', 'scheduling'];
+    expect(auditPlanComplete(plan, [
+      { domainId: 'intake' },
+      { domainId: 'routing' },
+      { domainId: 'scheduling' },
+    ])).toBe(true);
+    expect(auditPlanComplete(plan, [
+      { domainId: 'intake' },
+      { domainId: 'routing' },
+    ])).toBe(false);
+  });
+
+  it('validates repeated-domain assessment counts, not just unique ids', () => {
+    const plan = ['routing', 'routing', 'routing'];
+    expect(auditPlanComplete(plan, [{ domainId: 'routing' }, { domainId: 'routing' }])).toBe(false);
+    expect(auditPlanComplete(plan, [
+      { domainId: 'routing' },
+      { domainId: 'routing' },
+      { domainId: 'routing' },
+    ])).toBe(true);
   });
 });

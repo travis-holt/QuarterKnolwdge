@@ -2,6 +2,9 @@
 // pure logic in src/lib (runPooled's bounded fan-out is branch-heavy and load-bearing
 // for SpotTheError + the audit bank).
 import { describe, it, expect, vi, afterEach } from 'vitest';
+
+vi.mock('./firebase.js', () => ({ getFirebaseIdToken: vi.fn().mockResolvedValue('firebase-id-token') }));
+
 import { apiFetch, fetchErrorMessage, runPooled } from './apiFetch.js';
 
 afterEach(() => {
@@ -39,6 +42,7 @@ describe('apiFetch', () => {
     expect(url).toBe('/api/x');
     expect(opts.method).toBe('POST');
     expect(opts.credentials).toBe('same-origin');
+    expect(opts.headers.Authorization).toBe('Bearer firebase-id-token');
     // Body is exactly the payload — the public passcode is no longer attached.
     const sent = JSON.parse(opts.body);
     expect(sent).toEqual({ a: 1 });

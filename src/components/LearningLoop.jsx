@@ -11,6 +11,7 @@ import FeedbackControls from './FeedbackControls.jsx';
 export default function LearningLoop({
   rows,
   results = [],
+  questionAttempts = results,
   questions = [],
   completions = [],
   interviews = [],
@@ -27,17 +28,23 @@ export default function LearningLoop({
   const [message, setMessage] = useState(null);
   const activeQuestions = questions.filter((q) => (q.status ?? 'active') === 'active');
   const signals = buildLearningSignals({ rows, results, questions: activeQuestions, completions, interviews, history, feedback });
-  const questionSuggestions = buildQuestionImprovementSuggestions(activeQuestions, results, feedback);
+  const questionSuggestions = buildQuestionImprovementSuggestions(activeQuestions, questionAttempts, feedback);
   const feedbackSummary = feedbackInsights(feedback);
-  const resultByName = Object.fromEntries(results.map((r) => [r.name, r]));
+  const resultById = new Map(results.filter((r) => r.navigatorId).map((r) => [r.navigatorId, r]));
+  const resultByName = new Map(results.map((r) => [r.name, r]));
+  const matchesRow = (item, row) => (
+    item.navigatorId && row.navigatorId
+      ? item.navigatorId === row.navigatorId
+      : item.name === row.name
+  );
 
   const recommendations = rows.flatMap((row) =>
     adaptiveTrainingRecommendations(row, {
       questions: activeQuestions,
-      result: resultByName[row.name],
-      history: history.filter((h) => h.name === row.name),
-      completions: completions.filter((c) => c.name === row.name),
-      interviews: interviews.filter((iv) => iv.name === row.name),
+      result: resultById.get(row.navigatorId) ?? resultByName.get(row.name),
+      history: history.filter((h) => matchesRow(h, row)),
+      completions: completions.filter((c) => matchesRow(c, row)),
+      interviews: interviews.filter((iv) => matchesRow(iv, row)),
       feedback,
     })
   );

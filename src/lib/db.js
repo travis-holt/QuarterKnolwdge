@@ -52,6 +52,7 @@ import { db, authReady } from './firebase.js';
 import { ALL_SEED_QUESTIONS } from '../data/questions.js';
 import { ALL_V2_QUESTIONS, V2_DEPARTMENTS, V2_VERSION } from '../data/questions-v2.js';
 import { validateQuestionContent, validateAuditContent } from './contentGuards.js';
+import { compareTimestampValues } from './time.js';
 import {
   collection,
   doc,
@@ -64,6 +65,7 @@ import {
   query,
   where,
   writeBatch,
+  runTransaction as fbRunTransaction,
   updateDoc as fbUpdateDoc,
   deleteDoc as fbDeleteDoc,
 } from 'firebase/firestore';
@@ -85,6 +87,7 @@ const setDoc     = async (...a) => { await authReady; return fbSetDoc(...a); };
 const addDoc     = async (...a) => { await authReady; return fbAddDoc(...a); };
 const updateDoc  = async (...a) => { await authReady; return fbUpdateDoc(...a); };
 const deleteDoc  = async (...a) => { await authReady; return fbDeleteDoc(...a); };
+const runTransaction = async (...a) => { await authReady; return fbRunTransaction(...a); };
 
 const mapDocs = (snap) => snap.docs.map((d) => ({ id: d.id, ...d.data() }));
 const deptOf = (x) => x?.department ?? 'pediatrics';
@@ -137,7 +140,7 @@ const SOPS = 'sops';
 export async function addToRoster(name, pin = '') {
   const ref = await addDoc(collection(db, ROSTER), {
     name: name.trim(),
-    pin: String(pin).trim(),
+    pinSet: false,
     createdAt: serverTimestamp(),
   });
   return ref.id;
@@ -151,7 +154,6 @@ export async function addToRoster(name, pin = '') {
 export async function updateRosterEntry(id, patch) {
   const update = {};
   if (patch.name !== undefined) update.name = patch.name.trim();
-  if (patch.pin !== undefined) update.pin = String(patch.pin).trim();
   await updateDoc(doc(db, ROSTER, id), update);
 }
 
@@ -287,7 +289,16 @@ export async function getResult(navigatorId, department = 'pediatrics', assessme
  * @param {Record<string,string>} [answers]  questionId -> optionId (for question health)
  * @param {'mcq'|'spot'|'qa'} [assessmentType='mcq']
  */
-export async function saveResult(navigatorId, name, scores, competencyScores = {}, department = 'pediatrics', answers = {}, assessmentType = 'mcq') {
+export async function saveResult(
+  navigatorId,
+  name,
+  scores,
+  competencyScores = {},
+  department = 'pediatrics',
+  answers = {},
+  assessmentType = 'mcq',
+  completion = null,
+) {
   const batch = writeBatch(db);
   batch.set(doc(db, RESULTS, resultDocId(navigatorId, department, assessmentType)), {
     name,
@@ -307,9 +318,25 @@ export async function saveResult(navigatorId, name, scores, competencyScores = {
     assessmentType,
     scores,
     competencyScores,
+    answers,
     takenAt: serverTimestamp(),
     simulated: false,
   });
+  // Mini-check mastery must advance the path only when its updated score is
+  // durable. Put the completion in the same atomic batch so neither half can
+  // succeed alone. Other result saves leave this null.
+  for (const item of completion ? (Array.isArray(completion) ? completion : [completion]) : []) {
+    batch.set(doc(collection(db, COMPLETIONS)), {
+      navigatorId,
+      name,
+      department,
+      domainId: item.domainId,
+      kind: item.kind ?? 'minicheck',
+      passed: item.passed ?? true,
+      score: item.score ?? null,
+      completedAt: serverTimestamp(),
+    });
+  }
   await authReady;
   await batch.commit();
 }
@@ -349,7 +376,7 @@ export async function getFloorScores(department = 'pediatrics') {
     const data = d.data();
     if (deptOf(data) !== department || !data.navigatorId) continue;
     const prev = latest[data.navigatorId];
-    if (!prev || (data.submittedAt?.seconds ?? 0) >= (prev.submittedAt?.seconds ?? 0)) {
+    if (!prev || compareTimestampValues(data.submittedAt, prev.submittedAt) >= 0) {
       latest[data.navigatorId] = {
         navigatorId: data.navigatorId,
         name: data.name,
@@ -381,7 +408,7 @@ export async function getResultHistory(navigatorId, department = 'pediatrics') {
   );
   return snap.docs
     .map((d) => ({ id: d.id, ...d.data() }))
-    .sort((a, b) => (a.takenAt?.seconds ?? 0) - (b.takenAt?.seconds ?? 0));
+    .sort((a, b) => compareTimestampValues(a.takenAt, b.takenAt));
 }
 
 /**
@@ -1097,20 +1124,61 @@ export async function updateSop(id, patch) {
  * @param {string} department  the doc's department (guards the archive query)
  */
 export async function activateSop(id, department) {
-  const activeSnap = await getDocs(
+  const legacyActiveSnap = await getDocs(
     query(collection(db, SOPS), where('department', '==', department), where('status', '==', 'active'))
   );
-  const batch = writeBatch(db);
-  for (const d of activeSnap.docs) {
-    if (d.id !== id) batch.update(doc(db, SOPS, d.id), { status: 'archived' });
-  }
-  batch.update(doc(db, SOPS, id), { status: 'active', activatedAt: serverTimestamp() });
-  await batch.commit();
+  const targetRef = doc(db, SOPS, id);
+  const pointerRef = doc(db, 'activeSops', department);
+  await runTransaction(db, async (transaction) => {
+    const [targetSnap, pointerSnap] = await Promise.all([
+      transaction.get(targetRef),
+      transaction.get(pointerRef),
+    ]);
+    if (!targetSnap.exists()) throw new Error('SOP version not found.');
+    const target = targetSnap.data();
+    if ((target.department ?? 'pediatrics') !== department) {
+      throw new Error('SOP department does not match the activation target.');
+    }
+
+    const previousId = pointerSnap.exists() ? pointerSnap.data()?.sopId : null;
+    if (previousId && previousId !== id) {
+      transaction.update(doc(db, SOPS, previousId), { status: 'archived' });
+    }
+    for (const active of legacyActiveSnap.docs) {
+      if (active.id !== id && active.id !== previousId) {
+        transaction.update(doc(db, SOPS, active.id), { status: 'archived' });
+      }
+    }
+    transaction.update(targetRef, { status: 'active', activatedAt: serverTimestamp() });
+    transaction.set(pointerRef, {
+      sopId: id,
+      department,
+      title: target.title ?? 'Untitled SOP',
+      body: target.body,
+      version: target.version ?? null,
+      updatedAt: serverTimestamp(),
+    });
+  });
 }
 
-/** Supervisor: retire an SOP version (kept for history). */
+/**
+ * Supervisor: retire an SOP version (kept for history). If it is the live
+ * version, clear the active pointer in the same transaction so AI requests fall
+ * back immediately instead of continuing to use an archived body.
+ */
 export async function archiveSop(id) {
-  await updateDoc(doc(db, SOPS, id), { status: 'archived' });
+  const sopRef = doc(db, SOPS, id);
+  await runTransaction(db, async (transaction) => {
+    const sopSnap = await transaction.get(sopRef);
+    if (!sopSnap.exists()) throw new Error('SOP version not found.');
+    const department = sopSnap.data()?.department ?? 'pediatrics';
+    const pointerRef = doc(db, 'activeSops', department);
+    const pointerSnap = await transaction.get(pointerRef);
+    transaction.update(sopRef, { status: 'archived' });
+    if (pointerSnap.exists() && pointerSnap.data()?.sopId === id) {
+      transaction.delete(pointerRef);
+    }
+  });
 }
 
 /** Supervisor: permanently delete an SOP version (drafts only — UI-enforced). */

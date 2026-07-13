@@ -1,9 +1,9 @@
 import { test, expect } from '@playwright/test';
 
-// Signs in as supervisor with the real (public, pilot-grade) passcode from
-// src/data/config.js and confirms the management shell loads — which exercises
-// the live Firebase subscriptions end to end.
-const SUPERVISOR_PASSCODE = '0200';
+// Use a dedicated deployment credential; local runs retain the demo fallback.
+const SUPERVISOR_PASSCODE = process.env.E2E_SUPERVISOR_PASSCODE
+  || process.env.SUPERVISOR_PASSCODE_SERVER
+  || '0200';
 
 test('supervisor can sign in and reach the management shell', async ({ page }) => {
   await page.goto('/');

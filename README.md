@@ -14,14 +14,14 @@ through the Express API server in this repo, so the API key never reaches the br
 ## Run it locally
 
 ```bash
-npm install
+npm ci
 npm run dev
 ```
 
 Then open the printed local URL (default http://localhost:5173).
 
-Without Firebase config the app boots to a friendly "not connected" state — see setup below. For
-AI/API features locally, run a production build and start the Express server:
+Without Firebase config the app boots to a friendly "not connected" state — see setup below.
+Secure sign-in and every AI/API feature require the Express server:
 
 ```bash
 npm run build
@@ -32,16 +32,18 @@ npm start
 
 1. Create a project at [console.firebase.google.com](https://console.firebase.google.com).
 2. Add a **Web App** (the `</>` icon) — no Firebase Hosting needed.
-3. Enable **Firestore Database** (Build → Firestore Database → Create).
+3. Enable **Firestore Database** and initialize **Firebase Authentication**. No public sign-in
+   provider is needed; the app uses server-minted custom tokens.
 4. Copy `.env.local.example` → `.env.local` and fill in the `VITE_FIREBASE_*` values from
    Project Settings → Your apps → SDK setup. (`.env.local` is gitignored.)
-5. Apply the security rules in [`firestore.rules`](firestore.rules) (paste into Firestore → Rules).
-6. Change `SUPERVISOR_PASSCODE` in [src/data/config.js](src/data/config.js) from the placeholder.
-7. Restart `npm run dev`.
+5. Create Firebase Admin credentials (Project Settings → Service Accounts) and set the downloaded
+   JSON as the server-only `FIREBASE_SERVICE_ACCOUNT_JSON` value. Never commit that JSON.
+6. Set server-only `SUPERVISOR_PASSCODE_SERVER` and `SESSION_SIGNING_SECRET`.
+7. Run `npm run build && npm start` and verify both navigator and supervisor sign-in.
+8. Apply [`firestore.rules`](firestore.rules) only after the identity-enabled server is live.
 
-> The pilot has **no real authentication** (name + PIN for navigators, a passcode for supervisors).
-> That's acceptable for a small trusted pilot with no sensitive data; replace with Firebase Auth
-> before any production use.
+Navigator PINs are verified server-side and stored only as salted scrypt hashes. Firebase role and
+ownership claims—not the browser's local session—authorize APIs, WebSockets, and Firestore.
 
 ## Gemini scenario generation (optional — for the Question Bank)
 
@@ -50,9 +52,9 @@ calls, audits, voice relay, and path personalization also call Gemini through th
 the API key stays server-side.
 
 1. Get a free key at [aistudio.google.com/apikey](https://aistudio.google.com/apikey).
-2. Set two **server-only** env vars (NOT `VITE_`-prefixed): `GEMINI_API_KEYS` (one or more keys,
-   comma-separated — the function rotates to the next on rate-limit) and `GENERATION_SECRET`
-   (set the secret equal to your `SUPERVISOR_PASSCODE`). See [`.env.local.example`](.env.local.example).
+2. Set the **server-only** `GEMINI_API_KEYS` env var (one or more keys, comma-separated; requests
+   rotate across keys/models). `GEMINI_REQUEST_TIMEOUT_MS` optionally changes the 25-second
+   per-upstream-call timeout. See [`.env.local.example`](.env.local.example).
 3. `npm run dev` serves the Vite frontend only. Run `npm run build && npm start` when you need the
    local Express `/api` routes, or use the Railway deployment.
 
@@ -95,7 +97,7 @@ site, or prior-quarter data are invented.
 
 | What | File |
 | --- | --- |
-| Supervisor passcode | [src/data/config.js](src/data/config.js) (`SUPERVISOR_PASSCODE`) |
+| Production supervisor passcode | Server env `SUPERVISOR_PASSCODE_SERVER` |
 | Level thresholds, level labels/colors, palette | [src/data/config.js](src/data/config.js) |
 | Domains + seed scenario questions (derived from the SOP) | [src/data/questions.js](src/data/questions.js) |
 | Competency taxonomy (the 9 competencies) | [src/data/competencies.js](src/data/competencies.js) |
@@ -118,7 +120,8 @@ npm test            # Vitest unit tests for the scoring logic (both axes)
 npm run build       # production build to dist/
 # deploy: Railway uses railway.toml/nixpacks.toml.
 # Set env vars in Railway: VITE_FIREBASE_* (client build) and
-# GEMINI_API_KEYS/GEMINI_API_KEY + GENERATION_SECRET (server-only).
+# FIREBASE_SERVICE_ACCOUNT_JSON + SUPERVISOR_PASSCODE_SERVER +
+# SESSION_SIGNING_SECRET + GEMINI_API_KEYS/GEMINI_API_KEY (server-only).
 ```
 
 ## Browser end-to-end tests (Playwright)
@@ -153,8 +156,8 @@ PLAYWRIGHT_BASE_URL=https://quarterknolwdge-production.up.railway.app npm run te
 > `test:e2e:all`) against a shared deployment — it submits assessments and calls Gemini.
 
 Failures retain a **screenshot, video, and trace** (`playwright-report/` + `test-results/`); open
-the last run with `npx playwright show-report`. The credentials used are the same pilot-grade,
-public, in-repo values (test navigator + supervisor passcode) — no secrets.
+the last run with `npx playwright show-report`. Remote runs should set `E2E_NAV_PIN` and
+`E2E_SUPERVISOR_PASSCODE` to dedicated test credentials; do not commit production secrets.
 
 The live check currently assesses **Pediatrics** and **OB/GYN**; Adult Medicine and Behavioral
 Health remain placeholders until they get their own SOP-backed question sets. All navigator data is

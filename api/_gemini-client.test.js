@@ -6,7 +6,18 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { getApiKeys, geminiWithRotation, resetCooldowns, rotationFailure, redactKeys, MODEL, STABLE_MODEL, LITE_MODEL } from './_gemini-client.js';
+import {
+  callGemini,
+  geminiTimeoutMs,
+  getApiKeys,
+  geminiWithRotation,
+  resetCooldowns,
+  rotationFailure,
+  redactKeys,
+  MODEL,
+  STABLE_MODEL,
+  LITE_MODEL,
+} from './_gemini-client.js';
 
 // ── getApiKeys ────────────────────────────────────────────────────────────────
 
@@ -56,6 +67,31 @@ describe('getApiKeys', () => {
   it('ignores empty segments in the comma list', () => {
     process.env.GEMINI_API_KEYS = 'key-a,,key-b,';
     expect(getApiKeys()).toEqual(['key-a', 'key-b']);
+  });
+});
+
+describe('server-side request timeout', () => {
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+  });
+
+  it('uses a bounded configurable timeout', () => {
+    expect(geminiTimeoutMs({})).toBe(25_000);
+    expect(geminiTimeoutMs({ GEMINI_REQUEST_TIMEOUT_MS: '500' })).toBe(1_000);
+    expect(geminiTimeoutMs({ GEMINI_REQUEST_TIMEOUT_MS: '999999' })).toBe(120_000);
+  });
+
+  it('aborts a stalled upstream fetch', async () => {
+    vi.useFakeTimers();
+    vi.stubGlobal('fetch', vi.fn((_url, options) => new Promise((_resolve, reject) => {
+      options.signal.addEventListener('abort', () => reject(options.signal.reason), { once: true });
+    })));
+    const assertion = expect(callGemini('secret-key', {}, MODEL, 1_000))
+      .rejects.toMatchObject({ name: 'AbortError' });
+    await vi.advanceTimersByTimeAsync(1_000);
+    await assertion;
+    expect(fetch.mock.calls[0][1].signal.aborted).toBe(true);
   });
 });
 

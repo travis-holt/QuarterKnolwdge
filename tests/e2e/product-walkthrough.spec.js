@@ -7,6 +7,7 @@ import {
   openSupervisorTab,
   visibleWithin,
   NAV_NAME,
+  NAV_PIN,
 } from './helpers.js';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -49,7 +50,7 @@ test.describe('Navigator journey (read-only)', () => {
     // Sign in with the seeded test credential.
     const value = await select.locator('option', { hasText: NAV_NAME }).first().getAttribute('value');
     await select.selectOption(value);
-    await page.getByPlaceholder(/PIN/i).fill('1223');
+    await page.getByPlaceholder(/PIN/i).fill(NAV_PIN);
     await page.getByRole('button', { name: /^Continue$/i }).click();
 
     // Department select.
@@ -75,7 +76,7 @@ test.describe('Navigator journey (read-only)', () => {
 
     const value = await select.locator('option', { hasText: NAV_NAME }).first().getAttribute('value');
     await select.selectOption(value);
-    await page.getByPlaceholder(/PIN/i).fill('1223');
+    await page.getByPlaceholder(/PIN/i).fill(NAV_PIN);
     await page.getByRole('button', { name: /^Continue$/i }).click();
     await page.getByRole('button', { name: /Pediatrics/i }).click();
 
@@ -108,7 +109,7 @@ test.describe('Navigator journey (read-only)', () => {
 
     const value = await select.locator('option', { hasText: NAV_NAME }).first().getAttribute('value');
     await select.selectOption(value);
-    await page.getByPlaceholder(/PIN/i).fill('1223');
+    await page.getByPlaceholder(/PIN/i).fill(NAV_PIN);
     await page.getByRole('button', { name: /^Continue$/i }).click();
     await page.getByRole('button', { name: /Pediatrics/i }).click();
 

@@ -1,4 +1,5 @@
 import { ASSESSED_DEPTS } from './departments.js';
+import { compareTimestampValues } from '../lib/time.js';
 
 // Curated Call QA Test scenarios. These are assessment prompts, so keep them
 // stable, department-tagged, and free of real names, phone numbers, or PII.
@@ -107,7 +108,7 @@ export const CALL_QA_SCENARIOS = [
       'Identify the correct patient using the department-appropriate lookup flow.',
       'Clarify whether this is referral status, a new referral request, or records issue.',
       'Avoid promising referral approval or medical outcome.',
-      'Route to the Pediatrics referral coordinator or correct referral destination.',
+      'Route to Anisa, the Pediatrics referral owner.',
       'Document concise details and callback information.',
     ],
     criticalMisses: [
@@ -132,7 +133,7 @@ export const CALL_QA_SCENARIOS = [
     expectedActions: [
       'Clarify medication name and whether the patient is out.',
       'Confirm preferred pharmacy and callback details.',
-      'Route the refill request to the correct Pediatrics clinical destination.',
+      'Route the refill request to PEDS Encounters / the Pediatrics Telephone Encounter queue.',
       'Flag urgency appropriately if the patient is out.',
       'Avoid promising approval, timing, or medication guidance.',
     ],
@@ -264,7 +265,7 @@ export const CALL_QA_SCENARIOS = [
     expectedActions: [
       'Confirm caller identity and basic scheduling need.',
       'Classify as a new GYN visit, not pregnancy care.',
-      'Use the correct OB/GYN scheduling path.',
+      'Route to PSS OB (Patient Scheduling Services for OB/GYN).',
       'Document visit reason and callback details.',
     ],
     criticalMisses: [
@@ -288,7 +289,7 @@ export const CALL_QA_SCENARIOS = [
     expectedActions: [
       'Classify as pregnancy-related OB scheduling.',
       'Collect required scheduling context without probing beyond role.',
-      'Route or schedule through the correct OB/GYN path.',
+      'Route pregnancy-related scheduling through OB Portal.',
       'Avoid giving medical advice or interpreting symptoms.',
       'Document the pregnancy-related request and next step.',
     ],
@@ -313,7 +314,7 @@ export const CALL_QA_SCENARIOS = [
     expectedActions: [
       'Recognize the request is MFM-related.',
       'Clarify whether this is scheduling, referral status, or records needed for MFM.',
-      'Route to the MFM coordinator or correct OB destination.',
+      'Route to Rebecca, the MFM owner.',
       'Avoid promising approval, timing, or clinical outcome.',
       'Document handoff details.',
     ],
@@ -364,7 +365,7 @@ export const CALL_QA_SCENARIOS = [
     expectedActions: [
       'Recognize the request is medical interpretation.',
       'Explain that results and medical advice must come from clinical staff.',
-      'Route to the clinical team or OB Portal workflow.',
+      'Route to OB Portal or the trusted clinical TE/message path.',
       'Document caller concern and callback details.',
     ],
     criticalMisses: [
@@ -471,7 +472,7 @@ export function selectCallQaScenario({ department, priorAttempts = [] } = {}) {
         iv?.qa &&
         !iv?.qaArchived
       )
-      .sort((a, b) => (b.endedAt?.seconds ?? 0) - (a.endedAt?.seconds ?? 0))
+      .sort((a, b) => compareTimestampValues(b.endedAt, a.endedAt))
       .slice(0, 3)
       .map((iv) => iv.qaScenarioId)
       .filter(Boolean)

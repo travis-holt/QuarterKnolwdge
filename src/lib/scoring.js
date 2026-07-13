@@ -15,6 +15,19 @@ import { DOMAINS, SEED_QUESTIONS } from '../data/questions.js';
 import { COMPETENCIES } from '../data/competencies.js';
 import { moduleForDomain } from '../data/training.js';
 import { DEPARTMENTS } from '../data/departments.js';
+import { compareTimestampValues, timestampMillis } from './time.js';
+
+function sameNavigator(record, row) {
+  if (record?.navigatorId && row?.navigatorId) return record.navigatorId === row.navigatorId;
+  return record?.name === row?.name;
+}
+
+export function effectiveInterviewScore(interview) {
+  const score = interview?.gradeOverride?.score ?? interview?.grade?.score;
+  return Number.isFinite(score) ? score : null;
+}
+
+const assessmentTypeOf = (item) => item?.assessmentType ?? 'mcq';
 
 /**
  * Points earned for one question given the chosen option — THE canonical
@@ -177,8 +190,10 @@ export function buildMatrixRows(samples, liveResult) {
     const scores = nav.scores ?? {};
     const competencyScores = nav.competencyScores ?? {};
     return {
+      navigatorId: nav.navigatorId ?? null,
       name: nav.name,
       isLive,
+      assessmentType: nav.assessmentType ?? 'mcq',
       scores,
       levels: Object.fromEntries(
         DOMAINS.map((d) => [d.id, scoreToLevel(scores[d.id] ?? 0)])
@@ -203,7 +218,11 @@ export function buildMatrixRows(samples, liveResult) {
  * returning the flat { name, scores } shape the rest of the app expects.
  */
 export function deptSamples(samples, deptId) {
-  return samples.map((n) => ({ name: n.name, scores: n.departments[deptId] ?? {} }));
+  return samples.map((n) => ({
+    ...(n.navigatorId ? { navigatorId: n.navigatorId } : {}),
+    name: n.name,
+    scores: n.departments[deptId] ?? {},
+  }));
 }
 
 /** Overall score for a department = mean of its domain scores (or null if none). */
@@ -230,6 +249,7 @@ export function departmentMatrix(samples, liveResult) {
     );
 
   const rows = samples.map((n) => ({
+    navigatorId: n.navigatorId ?? null,
     name: n.name,
     isLive: false,
     depts: cellsFor((deptId) => n.departments[deptId]),
@@ -240,6 +260,7 @@ export function departmentMatrix(samples, liveResult) {
     // liveResult.department defaults to 'pediatrics' for legacy callers.
     const takerDept = liveResult.department ?? 'pediatrics';
     rows.push({
+      navigatorId: liveResult.navigatorId ?? null,
       name: liveResult.name,
       isLive: true,
       depts: cellsFor((deptId) => (deptId === takerDept ? liveResult.scores : null)),
@@ -287,6 +308,7 @@ export function canTeachRoster(rows) {
 export function readinessTally(rows) {
   return rows
     .map((r) => ({
+      navigatorId: r.navigatorId ?? null,
       name: r.name,
       isLive: r.isLive,
       canTeachCount: Object.values(r.levels).filter((lvl) => lvl === 'canTeach').length,
@@ -358,9 +380,11 @@ export function competencyDistribution(rows) {
   }).filter((x) => x.total > 0);
 }
 
-/** Find a single built row by navigator name (or null). */
-export function findRow(rows, name) {
-  return rows.find((r) => r.name === name) ?? null;
+/** Find a single built row by stable navigator id, with a legacy name fallback. */
+export function findRow(rows, identifier) {
+  return rows.find((r) => r.navigatorId && r.navigatorId === identifier)
+    ?? rows.find((r) => r.name === identifier)
+    ?? null;
 }
 
 /**
@@ -502,15 +526,8 @@ export function computeQuestionHealth(questions, results) {
   return health;
 }
 
-function tsSeconds(value) {
-  if (!value) return 0;
-  if (typeof value === 'number') return value;
-  if (typeof value.toDate === 'function') return Math.floor(value.toDate().getTime() / 1000);
-  return value.seconds ?? 0;
-}
-
 function latestBy(items, getTs) {
-  return [...items].sort((a, b) => getTs(b) - getTs(a))[0] ?? null;
+  return [...items].sort((a, b) => compareTimestampValues(getTs(b), getTs(a)))[0] ?? null;
 }
 
 const isDomainInterview = (iv) => !iv?.qa;
@@ -549,7 +566,11 @@ export function buildLearningSignals({
   feedback = [],
 } = {}) {
   const questionById = Object.fromEntries(questions.map((q) => [q.id, q]));
-  const resultByName = Object.fromEntries(results.map((r) => [r.name, r]));
+  const resultByIdentity = new Map();
+  for (const result of results) {
+    if (result.navigatorId) resultByIdentity.set(`id:${result.navigatorId}`, result);
+    if (result.name) resultByIdentity.set(`name:${result.name}`, result);
+  }
 
   const weakDomains = [];
   const weakCompetencies = [];
@@ -558,12 +579,13 @@ export function buildLearningSignals({
   const interviewRisks = [];
 
   for (const row of rows) {
-    const result = resultByName[row.name];
+    const result = (row.navigatorId && resultByIdentity.get(`id:${row.navigatorId}`))
+      ?? resultByIdentity.get(`name:${row.name}`);
     for (const d of DOMAINS) {
       const level = row.levels?.[d.id] ?? scoreToLevel(row.scores?.[d.id] ?? 0);
       if (level !== 'canTeach') {
-        const navCompletions = completions.filter((c) => c.name === row.name && c.domainId === d.id);
-        const navInterviews = interviews.filter((iv) => isDomainInterview(iv) && iv.name === row.name && iv.domainId === d.id);
+        const navCompletions = completions.filter((c) => sameNavigator(c, row) && c.domainId === d.id);
+        const navInterviews = interviews.filter((iv) => isDomainInterview(iv) && sameNavigator(iv, row) && iv.domainId === d.id);
         weakDomains.push({
           name: row.name,
           domainId: d.id,
@@ -571,7 +593,7 @@ export function buildLearningSignals({
           level,
           practiceCount: navCompletions.filter((c) => !c.kind || c.kind === 'practice').length,
           miniCheckCount: navCompletions.filter((c) => c.kind === 'minicheck').length,
-          interviewCount: navInterviews.filter((iv) => iv.grade?.score != null).length,
+          interviewCount: navInterviews.filter((iv) => effectiveInterviewScore(iv) != null).length,
           evidence: [
             `${level} in ${d.id}`,
             `${navCompletions.length} completed exercise${navCompletions.length === 1 ? '' : 's'}`,
@@ -613,7 +635,7 @@ export function buildLearningSignals({
 
     const rowTraining = trainingForRow(row);
     for (const assignment of rowTraining) {
-      const practiced = completions.some((c) => c.name === row.name && c.domainId === assignment.domainId && (!c.kind || c.kind === 'practice'));
+      const practiced = completions.some((c) => sameNavigator(c, row) && c.domainId === assignment.domainId && (!c.kind || c.kind === 'practice'));
       if (assignment.priority === 'Required' && !practiced) {
         trainingGaps.push({
           name: row.name,
@@ -628,13 +650,14 @@ export function buildLearningSignals({
 
   for (const iv of interviews) {
     if (!isDomainInterview(iv)) continue;
-    if (iv.grade?.score != null && iv.grade.score < INTERVIEW_SCORE_BANDS.fair) {
+    const score = effectiveInterviewScore(iv);
+    if (score != null && score < INTERVIEW_SCORE_BANDS.fair) {
       interviewRisks.push({
         name: iv.name,
         domainId: iv.domainId,
         interviewId: iv.id,
-        score: iv.grade.score,
-        reason: `Practice call scored ${iv.grade.score}/100`,
+        score,
+        reason: `Practice call scored ${score}/100`,
       });
     }
   }
@@ -750,8 +773,8 @@ export function adaptiveTrainingRecommendations(row, {
     const hasPractice = domainCompletions.some((c) => !c.kind || c.kind === 'practice');
     const hasMiniCheck = domainCompletions.some((c) => c.kind === 'minicheck');
     const latestInterview = latestBy(
-      interviews.filter((iv) => isDomainInterview(iv) && iv.domainId === domainId && iv.grade?.score != null),
-      (iv) => tsSeconds(iv.endedAt)
+      interviews.filter((iv) => isDomainInterview(iv) && iv.domainId === domainId && effectiveInterviewScore(iv) != null),
+      (iv) => iv.endedAt
     );
     const impact = trainingImpact(history, domainCompletions, domainId);
     const misses = missedByDomain[domainId] ?? [];
@@ -764,10 +787,10 @@ export function adaptiveTrainingRecommendations(row, {
       kind = 'practice';
       label = 'Complete a Spot the Error practice scenario';
       reasons.push('No completed practice scenario is recorded for this domain.');
-    } else if (!latestInterview || latestInterview.grade.score < INTERVIEW_SCORE_BANDS.strong) {
+    } else if (!latestInterview || effectiveInterviewScore(latestInterview) < INTERVIEW_SCORE_BANDS.strong) {
       kind = 'interview';
       label = 'Complete a practice call';
-      reasons.push(latestInterview ? `Latest practice call was ${latestInterview.grade.score}/100.` : 'No graded practice call is recorded.');
+      reasons.push(latestInterview ? `Latest practice call was ${effectiveInterviewScore(latestInterview)}/100.` : 'No graded practice call is recorded.');
     } else if (!hasMiniCheck) {
       kind = 'minicheck';
       label = 'Take the mini re-check';
@@ -795,7 +818,7 @@ export function adaptiveTrainingRecommendations(row, {
         level: assignment.level,
         missedQuestions: misses,
         completionCount: domainCompletions.length,
-        latestInterviewScore: latestInterview?.grade?.score ?? null,
+        latestInterviewScore: effectiveInterviewScore(latestInterview),
         trainingImpact: impact,
       },
     };
@@ -885,7 +908,7 @@ function computeOverall(scores) {
 
 function formatTrendLabel(ts) {
   if (!ts) return '—';
-  const date = typeof ts.toDate === 'function' ? ts.toDate() : new Date((ts.seconds ?? 0) * 1000);
+  const date = new Date(timestampMillis(ts));
   return date.toLocaleDateString(undefined, { month: 'short', year: 'numeric' });
 }
 
@@ -951,19 +974,39 @@ export function buildTrend(history, { synthesize = true } = {}) {
 export function trainingImpact(history, completions, domainId) {
   const firstTs = completions
     .filter((c) => c.domainId === domainId)
-    .map((c) => c.completedAt?.seconds ?? 0)
+    .map((c) => timestampMillis(c.completedAt))
+    .filter((ts) => ts > 0)
     .sort((a, b) => a - b)[0];
 
   if (firstTs == null) return { before: null, after: null, delta: null };
 
-  const realHistory = history.filter((h) => !h.simulated);
-  const before = [...realHistory].filter((h) => (h.takenAt?.seconds ?? 0) <= firstTs).pop();
-  const after = realHistory.find((h) => (h.takenAt?.seconds ?? 0) > firstTs);
+  const byType = new Map();
+  for (const snapshot of history.filter((h) => !h.simulated)) {
+    const type = assessmentTypeOf(snapshot);
+    if (!byType.has(type)) byType.set(type, []);
+    byType.get(type).push(snapshot);
+  }
 
-  const b = before?.scores?.[domainId] ?? null;
-  const a = after?.scores?.[domainId] ?? null;
-  if (b === null || a === null) return { before: null, after: null, delta: null };
-  return { before: b, after: a, delta: a - b };
+  const candidates = [];
+  for (const [assessmentType, snapshots] of byType) {
+    const ordered = [...snapshots].sort((a, b) => timestampMillis(a.takenAt) - timestampMillis(b.takenAt));
+    const before = [...ordered].filter((h) => timestampMillis(h.takenAt) <= firstTs).pop();
+    const after = ordered.find((h) => timestampMillis(h.takenAt) > firstTs);
+    const b = before?.scores?.[domainId];
+    const a = after?.scores?.[domainId];
+    if (!Number.isFinite(b) || !Number.isFinite(a)) continue;
+    candidates.push({
+      before: b,
+      after: a,
+      delta: a - b,
+      assessmentType,
+      distance: (firstTs - timestampMillis(before.takenAt)) + (timestampMillis(after.takenAt) - firstTs),
+    });
+  }
+  const best = candidates.sort((a, b) => a.distance - b.distance)[0];
+  return best
+    ? { before: best.before, after: best.after, delta: best.delta, assessmentType: best.assessmentType }
+    : { before: null, after: null, delta: null };
 }
 
 /**
@@ -976,15 +1019,26 @@ export function trainingImpact(history, completions, domainId) {
  */
 export function teamTrend(allHistory) {
   if (allHistory.length === 0) return [];
-  const timePoints = [...new Set(allHistory.map((h) => h.takenAt?.seconds ?? 0))].sort((a, b) => a - b);
-  const navIds = [...new Set(allHistory.map((h) => h.navigatorId))];
+  // A person's MCQ and Spot snapshots are different instruments. Anchor each
+  // navigator to their most recently used assessment type so the trend never
+  // manufactures movement by switching instruments mid-series.
+  const preferredType = new Map();
+  for (const item of allHistory) {
+    const current = preferredType.get(item.navigatorId);
+    if (!current || timestampMillis(item.takenAt) > current.ts) {
+      preferredType.set(item.navigatorId, { type: assessmentTypeOf(item), ts: timestampMillis(item.takenAt) });
+    }
+  }
+  const comparable = allHistory.filter((h) => assessmentTypeOf(h) === preferredType.get(h.navigatorId)?.type);
+  const timePoints = [...new Set(comparable.map((h) => timestampMillis(h.takenAt)))].sort((a, b) => a - b);
+  const navIds = [...new Set(comparable.map((h) => h.navigatorId))];
 
   return timePoints.map((ts) => {
     const snapshots = navIds
       .map((navId) =>
-        allHistory
-          .filter((h) => h.navigatorId === navId && (h.takenAt?.seconds ?? 0) <= ts)
-          .sort((a, b) => (b.takenAt?.seconds ?? 0) - (a.takenAt?.seconds ?? 0))[0]
+        comparable
+          .filter((h) => h.navigatorId === navId && timestampMillis(h.takenAt) <= ts)
+          .sort((a, b) => timestampMillis(b.takenAt) - timestampMillis(a.takenAt))[0]
       )
       .filter(Boolean);
 
@@ -1000,7 +1054,7 @@ export function teamTrend(allHistory) {
     const stats = floorStats(rows);
     return {
       ts,
-      label: formatTrendLabel({ seconds: ts }),
+      label: formatTrendLabel(ts),
       solidPlusRate: stats.solidPlusRate,
       avgReadiness: parseFloat(stats.avgReadiness.toFixed(1)),
       assessed: stats.assessed,
@@ -1110,45 +1164,59 @@ export function buildActionCenter(rows, { history = [], interviews = [], complet
   for (const row of rows) {
     for (const d of DOMAINS) {
       if (row.levels[d.id] === 'learning') {
-        criticalGaps.push({ name: row.name, reason: `Learning in ${d.id}`, domainId: d.id, severity: 'high' });
+        criticalGaps.push({ navigatorId: row.navigatorId ?? null, name: row.name, reason: `Learning in ${d.id}`, domainId: d.id, severity: 'high' });
       }
     }
 
     const training = trainingForRow(row);
     const navCompleted = new Set(
       completions
-        .filter((c) => c.name === row.name && (!c.kind || c.kind === 'practice'))
+        .filter((c) => sameNavigator(c, row) && (!c.kind || c.kind === 'practice'))
         .map((c) => c.domainId)
     );
     for (const a of training) {
       if (a.priority === 'Required' && !navCompleted.has(a.domainId)) {
-        trainingOverdue.push({ name: row.name, reason: `Required training pending: ${a.domainId}`, domainId: a.domainId, severity: 'medium' });
+        trainingOverdue.push({ navigatorId: row.navigatorId ?? null, name: row.name, reason: `Required training pending: ${a.domainId}`, domainId: a.domainId, severity: 'medium' });
       }
     }
 
-    const navHistory = history
-      .filter((h) => h.name === row.name && !h.simulated)
-      .sort((a, b) => (a.takenAt?.seconds ?? 0) - (b.takenAt?.seconds ?? 0));
-    if (navHistory.length >= 2) {
-      const prev = computeOverall(navHistory[navHistory.length - 2].scores);
-      const curr = computeOverall(navHistory[navHistory.length - 1].scores);
-      if (curr < prev - 5) {
-        decliningTrends.push({ name: row.name, reason: `Overall dropped ${prev - curr} points`, delta: curr - prev, severity: 'medium' });
-      }
+    const navHistory = history.filter((h) => sameNavigator(h, row) && !h.simulated);
+    const grouped = Object.groupBy
+      ? Object.groupBy(navHistory, assessmentTypeOf)
+      : navHistory.reduce((acc, item) => ((acc[assessmentTypeOf(item)] ??= []).push(item), acc), {});
+    const declines = Object.entries(grouped).flatMap(([assessmentType, snapshots]) => {
+      const ordered = [...snapshots].sort((a, b) => timestampMillis(a.takenAt) - timestampMillis(b.takenAt));
+      if (ordered.length < 2) return [];
+      const prev = computeOverall(ordered.at(-2).scores);
+      const curr = computeOverall(ordered.at(-1).scores);
+      return curr < prev - 5 ? [{ assessmentType, prev, curr, ts: timestampMillis(ordered.at(-1).takenAt) }] : [];
+    }).sort((a, b) => b.ts - a.ts);
+    if (declines.length) {
+      const { assessmentType, prev, curr } = declines[0];
+      decliningTrends.push({
+        navigatorId: row.navigatorId ?? null,
+        name: row.name,
+        reason: `${assessmentType.toUpperCase()} overall dropped ${prev - curr} points`,
+        delta: curr - prev,
+        assessmentType,
+        severity: 'medium',
+      });
     }
   }
 
   for (const iv of interviews) {
     if (!isDomainInterview(iv)) continue;
-    if (iv.grade?.score != null && iv.grade.score < INTERVIEW_SCORE_BANDS.fair) {
-      const row = rows.find((r) => r.name === iv.name);
+    const score = effectiveInterviewScore(iv);
+    if (score != null && score < INTERVIEW_SCORE_BANDS.fair) {
+      const row = rows.find((r) => sameNavigator(iv, r));
       if (row) {
         failedPractice.push({
-          name: iv.name,
-          reason: `Practice score ${iv.grade.score}/100`,
+          navigatorId: row.navigatorId ?? null,
+          name: row.name,
+          reason: `Practice score ${score}/100`,
           domainId: iv.domainId,
-          score: iv.grade.score,
-          interviewId: iv.id ?? `${iv.name}-${iv.domainId}-${iv.endedAt?.seconds ?? 'practice'}`,
+          score,
+          interviewId: iv.id ?? `${row.navigatorId ?? row.name}-${iv.domainId}-${timestampMillis(iv.endedAt) || 'practice'}`,
           severity: 'medium',
         });
       }
@@ -1159,6 +1227,7 @@ export function buildActionCenter(rows, { history = [], interviews = [], complet
   for (const t of tally) {
     if (t.canTeachCount >= Math.ceil(avgCanTeach) + 1 && t.canTeachCount >= 3) {
       readyForMore.push({
+        navigatorId: t.navigatorId ?? null,
         name: t.name,
         reason: `Can-Teach in ${t.canTeachCount} of ${DOMAINS.length} domains`,
         canTeachCount: t.canTeachCount,
@@ -1189,17 +1258,23 @@ export function buildActionCenter(rows, { history = [], interviews = [], complet
  */
 export function buildDevPath(row, completions = [], interviews = []) {
   return trainingForRow(row).map(({ domainId, level, priority }) => {
+    const hasCoaching = completions.some((c) => c.domainId === domainId && c.kind === 'coaching');
     const hasPractice = completions.some((c) => c.domainId === domainId && (!c.kind || c.kind === 'practice'));
-    const hasInterview = interviews.some((iv) => isDomainInterview(iv) && iv.domainId === domainId && iv.grade?.score != null);
-    const hasMiniCheck = completions.some((c) => c.domainId === domainId && c.kind === 'minicheck');
+    const hasInterview = interviews.some((iv) => isDomainInterview(iv) && iv.domainId === domainId && effectiveInterviewScore(iv) != null);
+    const hasModule = completions.some((c) => c.domainId === domainId && c.kind === 'module');
+    // Legacy mini-check completions did not record pass/fail and included failed
+    // attempts. Only explicit mastery evidence may close validation now.
+    const hasMiniCheck = completions.some((c) => (
+      c.domainId === domainId && c.kind === 'minicheck' && c.passed === true
+    ));
 
-    const steps = [
-      { kind: 'coaching',   label: 'Review coaching notes',     status: 'done' },
-      { kind: 'practice',   label: 'Spot the Error scenario',   status: hasPractice ? 'done' : 'next' },
-      { kind: 'interview',  label: 'Practice call',             status: hasInterview ? 'done' : hasPractice ? 'next' : 'todo' },
-      { kind: 'module',     label: 'Training module',           status: hasMiniCheck ? 'done' : (hasPractice || hasInterview) ? 'next' : 'todo' },
-      { kind: 'minicheck',  label: 'Mini domain check',         status: hasMiniCheck ? 'done' : (hasPractice || hasInterview) ? 'next' : 'todo' },
-    ];
+    const steps = sequenceDevSteps([
+      { kind: 'coaching',   label: 'Review coaching notes',   status: hasCoaching ? 'done' : 'todo' },
+      { kind: 'practice',   label: 'Spot the Error scenario', status: hasPractice ? 'done' : 'todo' },
+      { kind: 'interview',  label: 'Practice call',           status: hasInterview ? 'done' : 'todo' },
+      { kind: 'module',     label: 'Training module',         status: hasModule ? 'done' : 'todo' },
+      { kind: 'minicheck',  label: 'Mini domain check',       status: hasMiniCheck ? 'done' : 'todo' },
+    ]);
 
     return {
       domainId,
@@ -1208,6 +1283,22 @@ export function buildDevPath(row, completions = [], interviews = []) {
       steps,
       percentComplete: Math.round((steps.filter((s) => s.status === 'done').length / steps.length) * 100),
     };
+  });
+}
+
+/**
+ * Preserve completed steps while making exactly the first incomplete step
+ * actionable. Works for both the deterministic order and an AI-reordered path.
+ */
+export function sequenceDevSteps(steps = []) {
+  let assignedNext = false;
+  return steps.map((step) => {
+    if (step.status === 'done') return { ...step, status: 'done' };
+    if (!assignedNext) {
+      assignedNext = true;
+      return { ...step, status: 'next' };
+    }
+    return { ...step, status: 'todo' };
   });
 }
 

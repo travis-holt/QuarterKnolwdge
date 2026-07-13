@@ -47,6 +47,7 @@ import {
   buildDossier,
   buildActionCenter,
   buildDevPath,
+  sequenceDevSteps,
   buildMentorMatches,
   pairingOutcomes,
   optionPoints,
@@ -260,6 +261,12 @@ describe('buildMatrixRows', () => {
     expect(rows.every((r) => r.isLive === false)).toBe(true);
     expect(rows[0].levels[D0]).toBe('learning'); // Ada's sites = LEARN
     expect(rows[3].levels[D0]).toBe('canTeach'); // Dot's sites = TEACH
+  });
+
+  it('preserves the stable navigator id for downstream joins', () => {
+    const [row] = buildMatrixRows([{ navigatorId: 'nav-1', name: 'Ada', scores: makeScores({}, SOLID) }], null);
+    expect(row.navigatorId).toBe('nav-1');
+    expect(findRow([row], 'nav-1')).toBe(row);
   });
 
   it('appends the live taker as a highlighted (isLive) final row', () => {
@@ -973,6 +980,13 @@ describe('trainingImpact', () => {
     // synth is filtered out, only h2 exists — no before → all null
     expect(result.before).toBeNull();
   });
+
+  it('never compares different assessment instruments across training', () => {
+    const beforeMcq = { ...h1, assessmentType: 'mcq' };
+    const afterSpot = { ...h2, assessmentType: 'spot' };
+    expect(trainingImpact([beforeMcq, afterSpot], [completionBetween], D0))
+      .toEqual({ before: null, after: null, delta: null });
+  });
 });
 
 describe('teamTrend', () => {
@@ -1103,6 +1117,16 @@ describe('buildActionCenter', () => {
     expect(ac.decliningTrends.some((d) => d.name === 'Ada')).toBe(true);
   });
 
+  it('does not manufacture a decline by comparing MCQ with Spot', () => {
+    const rows = buildMatrixRows([{ navigatorId: 'nav-1', name: 'Ada', scores: makeScores({}, SOLID) }], null);
+    const now = Math.floor(Date.now() / 1000);
+    const history = [
+      { navigatorId: 'nav-1', name: 'Old name', assessmentType: 'mcq', scores: makeScores({}, TEACH), takenAt: { seconds: now - 200 } },
+      { navigatorId: 'nav-1', name: 'Old name', assessmentType: 'spot', scores: makeScores({}, LEARN), takenAt: { seconds: now - 100 } },
+    ];
+    expect(buildActionCenter(rows, { history }).decliningTrends).toHaveLength(0);
+  });
+
   it('flags failed practice for interview scores below the fair threshold', () => {
     const rows = buildMatrixRows([{ name: 'Ada', scores: makeScores({}, SOLID) }], null);
     const interviews = [{ id: 'iv1', name: 'Ada', domainId: D0, grade: { score: 40 } }];
@@ -1120,6 +1144,15 @@ describe('buildActionCenter', () => {
     const interviews = [{ name: 'Ada', domainId: D0, grade: { score: 70 } }];
     const ac = buildActionCenter(rows, { interviews });
     expect(ac.failedPractice.some((f) => f.name === 'Ada')).toBe(false);
+  });
+
+  it('uses the supervisor override as the effective practice score', () => {
+    const rows = buildMatrixRows([{ navigatorId: 'nav-1', name: 'Ada renamed', scores: makeScores({}, SOLID) }], null);
+    const interviews = [{
+      navigatorId: 'nav-1', name: 'Ada', domainId: D0,
+      grade: { score: 40 }, gradeOverride: { score: 85 },
+    }];
+    expect(buildActionCenter(rows, { interviews }).failedPractice).toHaveLength(0);
   });
 
   it('ignores Call QA Test grades for domain practice flags', () => {
@@ -1157,25 +1190,31 @@ describe('buildDevPath', () => {
     }
   });
 
-  it('starts with coaching=done and practice=next (no completions)', () => {
+  it('starts with coaching as the only next step when no evidence exists', () => {
     const paths = buildDevPath(row);
     const path = paths.find((p) => p.domainId === D0);
-    expect(path.steps.find((s) => s.kind === 'coaching').status).toBe('done');
-    expect(path.steps.find((s) => s.kind === 'practice').status).toBe('next');
+    expect(path.steps.find((s) => s.kind === 'coaching').status).toBe('next');
+    expect(path.steps.filter((s) => s.status === 'next')).toHaveLength(1);
   });
 
-  it('marks practice done and interview=next once a practice completion exists', () => {
-    const completions = [{ domainId: D0, kind: 'practice' }];
+  it('marks coaching and practice done, then exposes only interview', () => {
+    const completions = [
+      { domainId: D0, kind: 'coaching' },
+      { domainId: D0, kind: 'practice' },
+    ];
     const paths = buildDevPath(row, completions);
     const path = paths.find((p) => p.domainId === D0);
     expect(path.steps.find((s) => s.kind === 'practice').status).toBe('done');
     expect(path.steps.find((s) => s.kind === 'interview').status).toBe('next');
+    expect(path.steps.filter((s) => s.status === 'next')).toHaveLength(1);
   });
 
   it('marks minicheck done and raises percentComplete to 100 when all steps complete', () => {
     const completions = [
+      { domainId: D0, kind: 'coaching' },
       { domainId: D0, kind: 'practice' },
-      { domainId: D0, kind: 'minicheck' },
+      { domainId: D0, kind: 'module' },
+      { domainId: D0, kind: 'minicheck', passed: true },
     ];
     const interviews = [{ domainId: D0, grade: { score: 80 } }];
     const paths = buildDevPath(row, completions, interviews);
@@ -1185,16 +1224,51 @@ describe('buildDevPath', () => {
   });
 
   it('does not count a Call QA Test as the domain practice-call step', () => {
-    const completions = [{ domainId: D0, kind: 'practice' }];
+    const completions = [
+      { domainId: D0, kind: 'coaching' },
+      { domainId: D0, kind: 'practice' },
+    ];
     const interviews = [{ domainId: D0, grade: { score: 100 }, qa: { pass: true } }];
     const paths = buildDevPath(row, completions, interviews);
     const path = paths.find((p) => p.domainId === D0);
     expect(path.steps.find((s) => s.kind === 'interview').status).toBe('next');
   });
 
+  it('does not accept a legacy or failed mini-check as mastery', () => {
+    const base = [
+      { domainId: D0, kind: 'coaching' },
+      { domainId: D0, kind: 'practice' },
+      { domainId: D0, kind: 'module' },
+    ];
+    const interviews = [{ domainId: D0, grade: { score: 80 } }];
+    for (const completion of [
+      { domainId: D0, kind: 'minicheck' },
+      { domainId: D0, kind: 'minicheck', passed: false },
+    ]) {
+      const path = buildDevPath(row, [...base, completion], interviews).find((p) => p.domainId === D0);
+      expect(path.steps.find((s) => s.kind === 'minicheck').status).toBe('next');
+    }
+  });
+
   it('returns empty array for a Can-Teach-across-the-board navigator', () => {
     const ctRow = buildMatrixRows([{ name: 'Star', scores: makeScores({}, TEACH) }], null)[0];
     expect(buildDevPath(ctRow)).toHaveLength(0);
+  });
+});
+
+describe('sequenceDevSteps', () => {
+  it('recomputes a single actionable step after AI reordering', () => {
+    const reordered = sequenceDevSteps([
+      { kind: 'module', status: 'todo' },
+      { kind: 'practice', status: 'done' },
+      { kind: 'minicheck', status: 'todo' },
+      { kind: 'coaching', status: 'done' },
+      { kind: 'interview', status: 'todo' },
+    ]);
+    expect(reordered.filter((step) => step.status === 'next')).toEqual([
+      expect.objectContaining({ kind: 'module' }),
+    ]);
+    expect(reordered.find((step) => step.kind === 'minicheck').status).toBe('todo');
   });
 });
 

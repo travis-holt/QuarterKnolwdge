@@ -1,5 +1,203 @@
 # Development History - Knowledge Check
 
+### 2026-07-12 - Complete audit remediation and production trust boundary (PR #25)
+- **Scope:** PR #25 is based on the nine-commit Call QA hardening work from draft PR #24, then
+  closes the separate full-codebase audit findings across scoring fairness, persistence,
+  authorization, concurrency, voice reliability, analytics, identity, timestamps, and tooling.
+- **Authorization / staff-data protection:** replaced anonymous Firebase use and localStorage role
+  trust with server-minted Firebase custom identities. Navigator PIN verification/create/migration
+  now runs transactionally on the server, stores salted scrypt hashes, removes legacy plaintext,
+  and returns no PIN material. Supervisors receive both a role claim and signed HttpOnly cookie;
+  deployed environments fail closed without an explicit server passcode. Every REST/voice gate
+  verifies claims; Firestore rules grant supervisor or stable-UUID owner access only. Public roster
+  and peer-mentor reads are minimized server projections rather than full client collection reads.
+  **Why:** browser roles, anonymous auth, client filtering, and plaintext PINs cannot protect staff
+  scores, transcripts, roster secrets, or management actions.
+- **Assessment fairness / durability:** Spot the Error now starts only with its complete requested
+  plan—generation failures never backfill employee zeroes. Mini-checks score the displayed subset,
+  record mastery only on pass, and remain retakeable on failure. `saveResult` batches the current
+  result, answer-bearing history, and optional completions atomically. A keyed generation-aware
+  retry queue preserves multiple independent failed saves so a later success cannot erase an
+  earlier warning. Empty MCQ banks render safely; progress is question-bank-versioned; submits are
+  single-flight. Text/voice practice now expose save/grade-save retry states and text cannot save
+  while a patient reply is pending.
+- **Development paths / QA display:** coaching and modules require explicit completion; failed or
+  legacy mini-check markers do not imply mastery; exactly one step is `next` after local or AI
+  sequencing. The sequence endpoint rejects duplicate/missing/extra domains and steps. Training
+  practice calls retain the chosen domain instead of becoming random. Navigator QA cards preserve
+  `NEEDS REVIEW` and supervisor final verdicts instead of flattening everything to PASS/FAIL.
+- **Concurrency / availability:** active SOP selection is a transactional per-department pointer;
+  archive clears the pointer atomically; fresh concurrent server reads await one shared refresh.
+  Railway's trusted `X-Real-IP` now keys REST and voice quotas so unrelated users do not share a
+  proxy bucket. Gemini REST calls have a server abort timeout. Voice relay setup rotates every key
+  with authentication/setup deadlines; unexpected closes and all client-side setup errors tear
+  down mic tracks, processors, playback, sockets, and audio contexts.
+- **Analytics / identity correctness:** matrix and analytics rows preserve `navigatorId`; roster
+  renames rehydrate display names without orphaning results or the Reset action. Timestamp ordering
+  uses milliseconds plus Firestore nanoseconds. Training impact and decline alerts compare only the
+  same assessment instrument; supervisor grade overrides are the effective practice score; question
+  health consumes answer-bearing retake history instead of only the overwritten latest result.
+- **Toolchain / deployment:** upgraded the single top-level graph to Vite 8.1 + plugin-react 6,
+  aligned Node engines to `^20.19 || >=22.12`, added Firebase Admin, changed Railway to `npm ci`,
+  overrode Firebase Admin's vulnerable transitive `uuid@9` with compatible fixed `uuid@11.1.1`,
+  and documented the safe identity-before-rules rollout plus required server variables.
+- **Verification:** **804/804 Vitest tests across 41 files**, production build clean, all API files
+  parse, `npm ls --all` exits cleanly, clean `npm ci` reproduces, and production/full audits report
+  zero vulnerabilities. Browser microphone/live Firebase/Gemini behavior remains an explicit post-deploy smoke.
+
+### 2026-07-10 - Call QA conflict labeling and literal-TE detail guard
+- Deterministic over-promise/clinical-advice findings now represent an actual model-positive
+  conflict only when `know-rule` was marked `MET`; model-detected safety misses remain in the
+  original criterion instead of being mislabeled as conflicts. Literal-TE repair now rejects a
+  routing/message wording complaint that also says details or information are missing.
+- Added adversarial regressions for both cases. Focused Call QA: **188**; corpus: **54**;
+  invariants: **17**; full suite: **764/30 files**; production build clean.
+
+### 2026-07-10 - Centralize deterministic Call QA review gating
+- `assessQa` now accepts persisted deterministic findings and independently forces
+  `needs_review` for model-positive routing or safety conflicts; `finalizeQaResult`
+  passes findings into that shared contract. Added regression coverage proving the
+  score and criteria remain unchanged. Focused Call QA: **186**; full suite:
+  **762/30 files**.
+
+### 2026-07-10 - Call QA loophole-closure pass (final pre-merge reliability gate, PR #24)
+- **Deterministic conflict layer (model-positive protection):** new
+  `evaluateQaDeterministicFindings(criteria, transcript, context)` in `api/_qa-rubric.js` detects
+  the OPPOSITE model error from the repair layer — know-rule/doc-te marked MET (with a verifiable
+  quote) on a call whose committed route the routing policy knows is wrong, contradictory,
+  ambiguous, or missing, plus deterministic over-promise/clinical-advice signals. Findings are
+  stored on `qa.deterministicFindings` (`type`, `reason`, `evidence`, `destinationId`,
+  `affectedCriteria`), never touch verdicts/scores/repairs, and force `needs_review` (flags
+  `model-routing-conflict` / `deterministic-safety-conflict`) whenever the result would otherwise
+  pass confidently. Findings are NOT fairness repairs — the R1–R10 repair invariants are unchanged.
+- **Clause-aware safety detection:** over-promise and clinical-advice detection now splits each
+  navigator turn into clauses (sentence boundaries, semicolons, em dashes, but/however/although/
+  meanwhile). A safe disclaimer/deferral clause exempts only itself: "I can't promise timing, but I
+  guarantee approval today" is an over-promise; "that's for the nurse, but take twice the dose
+  tonight" is clinical advice. New `findOverPromiseLine` / `findClinicalAdviceLine` return the
+  offending line as finding evidence.
+- **Routing hedging guard:** `isUncertainRoutingLanguage` rejects hedged wording ("I think…",
+  "I'm not sure whether…", "maybe/perhaps/probably/possibly/may/might/could/whether/supposed to")
+  as a routing commitment — uncertainty can never support a repair and, when the model calls it
+  MET, becomes a deterministic conflict. Confident valid commitments (incl. "Actually, PEDS
+  Encounters is the correct queue") remain accepted.
+- **Strict PE-only repair gate:** `isStrictPeOnlyFailure` replaces the expanding blacklist with a
+  positive token check — after normalization every note token must be a PE term or generic failure
+  scaffolding; any substantive residue (urgency, "out", callback, pharmacy, queue…) blocks the
+  repair. The PE repair also now requires a COMPLETE standard refill: medication + pharmacy +
+  callback + out/urgency + safe accepted routing.
+- **Positively scoped literal-TE gate:** `isLiteralTeWordingFailure` replaces the generic
+  "did not say / not documented" matcher — the note must reference the routing/message action
+  (TE/route/send/message/log/forward) and contain no wrongness, missing-detail, urgency,
+  destination, or incompleteness complaint.
+- **Supervisor UI:** each repair in `NavigatorDetail.jsx` now shows the grader's ORIGINAL verdict,
+  reason, and evidence (with an explicit "No evidence supplied" state) alongside the applied rule
+  and replacement evidence, plus a new "Deterministic grading conflicts" section rendering
+  `qa.deterministicFindings`.
+- **Corpus + invariants:** added the `lenient` (routing-blind, false-positive-prone) simulated
+  grader profile and new cases (wrong route/contradiction/generic-team/missing-route marked MET,
+  hedged routing, mixed disclaimer+guarantee, mixed deferral+advice, PE+urgency mixed note, generic
+  doc-te complaint); aggregate false-pass/false-fail/review-miss/silent-pass counts remain zero and
+  findings never coexist with a confident pass. `docs/GRADING_INVARIANTS.md` gains §3a (C1–C4) and
+  R6a/R6b/R7/R8 updates; `gradingInvariants.test.js` gains the I-CONFLICT block. Counts: focused
+  Call QA 203 (grade-call-qa 185 + glossary 18), corpus 54, invariants 17, full suite 761/30 files.
+
+### 2026-07-10 - Call QA owner-confirmed routing reliability review
+- **Authority:** routing now prioritizes owner-confirmed floor operations over conflicting sanitized
+  SOP text, then explicit SOP rules, trusted curated scenarios, and only then generic language.
+  The server policy accepts PEDS Encounters for pediatric refills, Anisa for referrals, PSS OB for
+  non-pregnant GYN, OB Portal for pregnancy, Rebecca for MFM, and OB Portal or the scenario's
+  explicit clinical TE/message path for OB/GYN results. Named owners use stable destination IDs and
+  the approved minimum public label.
+- **Final decision:** deterministic routing separates commitments, mentions, corrections,
+  questions/offers/history, and negations. A clear correction inherits the prior action without its
+  verb; unresolved later ownership/destination contradictions cannot repair.
+- **Limits:** pediatric records/forms (except trusted subtype rules), urgent symptoms, unclear
+  requests, and unknown/conflicting OB workflows remain review-only. The deterministic
+  grading-pipeline regression corpus, simulated grader profiles, and captured-response replay fixture
+  do not prove live Gemini accuracy. TODO: calibrate with de-identified captured real-model outputs.
+
+### 2026-07-10 - Call QA workflow routing policy + server-authoritative scenario metadata
+- **Routing policy:** replaced the global destination allow/block lists with one destination
+  vocabulary plus department/workflow policies derived from `_sop-context.js` and the curated QA
+  scenarios. Pediatrics refill/referral and OB/GYN PSS/nursing/MFM/records destinations are scoped
+  independently. Pediatrics generic records/forms, urgent symptoms, and unclear requests remain
+  review-only because the repository does not establish one precise destination.
+- **Contradictions:** call-level validation now uses the final committed routing decision. A later
+  wrong route defeats an earlier correct route; a wrong route can be superseded only by an explicit
+  correction to the policy-correct destination; unexplained conflicts and generic "team" wording
+  cannot support repairs. Line and call checks share the same destination vocabulary.
+- **Grading authority:** `/api/grade-call-qa` now resolves workflow/scoring metadata from the
+  server-owned curated scenario id and builds the grading context server-side. Browser-supplied
+  `workflowType`, `scoringNotes`, `expectedActions`, and `criticalMisses` no longer influence scoring
+  or repairs. Missing, unknown, department-mismatched, or scenario-mismatched authority disables
+  repairs and adds an `unverified-scenario-metadata` supervisor-review flag.
+- **Calibration claims:** renamed the existing corpus as a deterministic grading-pipeline regression
+  corpus using simulated grader verdicts; it does not independently validate Gemini judgment.
+  `api/fixtures/qa-model-capture.example.json` defines a replayable captured-response format and is
+  explicitly labelled as a simulated example until real model responses are captured. Documentation
+  now separates deterministic regression, captured real-model replay, and live model evaluation.
+- **Tests:** added adversarial coverage for final-route contradictions, explicit corrections,
+  generic destinations, Pediatrics/OB-GYN route isolation, review-only workflows, and forged/missing
+  scenario metadata. Focused Call QA: **117/117**; deterministic corpus: **43/43**; full
+  `npm test`: **673/673 across 30 files**; production build and `git diff --check` clean.
+
+### 2026-07-10 - Call QA evidence-model hardening + deterministic grading corpus + grading invariants
+- **Context:** Independent re-review of PR #24's repair layer, reasoning over the whole evidence
+  model (glossary → grader → validation → repairs → trust-gated scoring → review → supervisor
+  verdict) so each fairness fix cannot open a new loophole.
+- **Loopholes found and closed (`api/_qa-rubric.js`):**
+  1. A commitment to an UNLISTED wrong destination ("I'll send this to the billing team") could
+     serve as `doc-te` repair evidence → repairs now require a committed line with a
+     positively-cleared destination (`findCommittedRoutingLineWithDestination`): approved
+     destination named (nurse/provider/doctor/team/queue) AND no known-wrong destination
+     (billing, front desk, records, referral coordinator, scheduling, specialist, OB...).
+     Destination-less "I'll send it" is no longer sufficient to overturn a grader verdict.
+     **Superseded by the entry above:** destination validity is now department/workflow-specific;
+     generic team/person words are not a universal allowlist.
+  2. Offer-questions ("I can send it — do you want me to?") counted as commitments → rejected
+     via a `ROUTING_OFFER` pattern.
+  3. A grader note mixing PE with another real failure (wrong routing, identity, scheduling,
+     promising, missing details, conflation) could still repair `know-rule` → `NON_PE_FAILURE_NOTE`
+     vocabulary now disqualifies mixed notes; only strictly PE-only notes are repairable.
+  4. A `doc-te` note saying the routing was WRONG (vs merely unworded) could match the
+     literal-TE patterns → `ROUTING_WRONGNESS_NOTE` blocks wrongness notes from repair.
+  5. Repairs discarded the grader's original note/evidence → every repair now records
+     `originalVerdict`/`originalNote`/`originalEvidence` (rendered to supervisors).
+  6. A repair could silently flip fail→pass → `assessQa` now recomputes the unrepaired score;
+     an outcome-flipping repair adds the `repair-changed-outcome` flag and forces `needs_review`.
+  7. Over-broad repair BLOCKERS caused retained false negatives: bare `/definitely/` no longer
+     reads "I'll definitely pass this along" as an over-promise, and scope-deferral lines
+     ("I can't tell you if it's safe — that's for the nurse") no longer read as clinical advice.
+- **Deterministic grading-pipeline corpus (`api/_qa-grading-corpus.js` + `_qa-grading-corpus.test.js`):**
+  ~20 full-call cases across good / borderline / unsafe / incomplete / natural-phrasing /
+  question-vs-commitment / ambiguous-intent categories, each with an authored expected outcome and simulated
+  `accurate` + `literalist` grader profiles, plus paraphrase variants and glossary mis-hearing
+  (speech-transcription) variants. The harness runs every case × profile × variant through the
+  REAL pipeline and asserts **zero false passes, zero false fails, zero review misses, zero
+  silent passes** — measuring deterministic pipeline outcomes, not live Gemini judgment. Validated by running
+  the corpus against the pre-hardening repair layer: it correctly failed 11 tests there,
+  including a confident false pass from the wrong-destination loophole.
+- **Grading invariants (`docs/GRADING_INVARIANTS.md` + `src/lib/gradingInvariants.test.js`):**
+  explicit, binding invariants all future grading changes must preserve — shared 0–100 scale and
+  `scoreToLevel` bands, repair whitelist/direction/logging (R1–R10), review-layer guarantees
+  (verified auto-fail zeroes; unverified auto-fail never fails but never vanishes; borderline
+  and safety-miss passes always reviewed), supervisor verdicts stored beside (never over) AI
+  originals, and the cross-system consistency audit of MCQ vs Spot the Error vs Call QA vs QA
+  projections vs supervisor verdicts (intentional differences documented, e.g. Spot's coarse
+  full-profile mode, the 85/85 pass-mark/canTeach alignment, no MCQ/Spot override layer).
+- **Verification:** `npm test` **659 passing / 30 files** (was 588/28), `npm run build` clean,
+  `node --check` on edited handlers. New unit tests cover wrong-destination rejection,
+  destination-less commitments, offer-questions, mixed/wrongness notes, repair-original
+  preservation, deferral/over-promise narrowing, and the outcome-flip review gate.
+
+### 2026-07-10 - Call QA fairness hardening for refill PE status and natural TE wording
+- **Problem:** The QA grader could deduct for missing PE status during a standard pediatric refill or for not saying the internal Telephone Encounter phrase verbatim.
+- **Fix:** Curated scenario scoring notes now reach grading; the prompt accepts natural message/routing wording; a transparent deterministic repair layer corrects only these verified false-negative patterns before scoring.
+- **Safety:** Repairs do not excuse wrong routing, missing medication/pharmacy details, overpromising, clinical advice, or privacy failures. `qa.repairs` is supervisor-visible.
+- **Tests:** Added focused refill, TE wording, no-over-repair, prompt, metadata, and supervisor-transparency coverage. Verified with `npm test -- grade-call-qa` (84 passing), `npm test` (588 passing / 28 files), `npm run build`, and `git diff --check`.
+- **Follow-up:** Routing repair now requires a clear navigator-owned commitment or committed team follow-up. Questions such as "Did you send this request?" or "Can you message the nurse?" are not routing evidence; neither are destination-only mentions, historical checks, or hypotheticals.
+
 ### 2026-07-09 - Gemini REST primary reverted to 2.5 Flash + universal fallback chain + 503 cooldown
 - **Problem:** Practice calls (`interview-turn`) and grading (`grade-interview`/`grade-call-qa`)
   kept failing with `503 — rotating` on `gemini-3.5-flash`. Live probe against all 4 project keys:

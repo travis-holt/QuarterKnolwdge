@@ -12,25 +12,29 @@ import Footer     from './Footer.jsx';
 import Nav        from './Nav.jsx';
 import PhaseHub   from './PhaseHub.jsx';
 import Start      from './Start.jsx';
-import { callQaScenarioMetadata, runQaPersistenceSequence, buildCallQaGradingScenario } from './VoiceCall.jsx';
+import { callQaScenarioMetadata, runQaPersistenceSequence } from './VoiceCall.jsx';
 import { CALL_QA_SCENARIOS } from '../data/callQaScenarios.js';
 
 const startMocks = vi.hoisted(() => ({
-  getRoster: vi.fn(),
-  updateRosterEntry: vi.fn(),
+  signInWithAppToken: vi.fn(),
   saveInterview: vi.fn(),
   updateInterviewGrade: vi.fn(),
 }));
 
-vi.mock('../lib/firebase.js', () => ({ isFirebaseConfigured: true }));
+vi.mock('../lib/firebase.js', () => ({
+  isFirebaseConfigured: true,
+  signInWithAppToken: startMocks.signInWithAppToken,
+  getFirebaseIdToken: vi.fn().mockResolvedValue('firebase-id-token'),
+}));
 vi.mock('../lib/db.js', () => ({
-  getRoster: startMocks.getRoster,
-  updateRosterEntry: startMocks.updateRosterEntry,
   saveInterview: startMocks.saveInterview,
   updateInterviewGrade: startMocks.updateInterviewGrade,
 }));
 
-beforeEach(() => vi.clearAllMocks());
+beforeEach(() => {
+  vi.clearAllMocks();
+  startMocks.signInWithAppToken.mockResolvedValue({});
+});
 
 // ── EmptyState ───────────────────────────────────────────────────────────────
 
@@ -158,8 +162,16 @@ describe('Nav — navigator role', () => {
 
 describe('Start navigator gate', () => {
   it('lets a navigator create a PIN when their roster row has none', async () => {
-    startMocks.getRoster.mockResolvedValue([{ id: 'ada', name: 'Ada', pin: '' }]);
-    startMocks.updateRosterEntry.mockResolvedValue();
+    const fetchMock = vi.fn(async (url) => {
+      if (url === '/api/navigator-roster') {
+        return { ok: true, json: async () => ({ roster: [{ id: 'ada', name: 'Ada', pinSet: false }] }) };
+      }
+      return {
+        ok: true,
+        json: async () => ({ customToken: 'nav-token', navigator: { id: 'ada', name: 'Ada' } }),
+      };
+    });
+    vi.stubGlobal('fetch', fetchMock);
     const onNavigatorEntry = vi.fn();
 
     render(<Start onNavigatorEntry={onNavigatorEntry} onSupervisorEntry={vi.fn()} />);
@@ -169,12 +181,26 @@ describe('Start navigator gate', () => {
     fireEvent.change(screen.getByLabelText('Create your PIN'), { target: { value: '1234' } });
     fireEvent.click(screen.getByRole('button', { name: 'Continue' }));
 
-    await waitFor(() => expect(startMocks.updateRosterEntry).toHaveBeenCalledWith('ada', { pin: '1234' }));
+    await waitFor(() => expect(startMocks.signInWithAppToken).toHaveBeenCalledWith('nav-token'));
+    expect(fetchMock).toHaveBeenCalledWith('/api/navigator-login', expect.objectContaining({
+      method: 'POST',
+      body: JSON.stringify({ navigatorId: 'ada', pin: '1234' }),
+    }));
     expect(onNavigatorEntry).toHaveBeenCalledWith('ada', 'Ada');
+    vi.unstubAllGlobals();
   });
 
-  it('uses an existing PIN without overwriting it', async () => {
-    startMocks.getRoster.mockResolvedValue([{ id: 'bea', name: 'Bea', pin: '2222' }]);
+  it('sends an existing PIN only to the protected login endpoint', async () => {
+    const fetchMock = vi.fn(async (url) => {
+      if (url === '/api/navigator-roster') {
+        return { ok: true, json: async () => ({ roster: [{ id: 'bea', name: 'Bea', pinSet: true }] }) };
+      }
+      return {
+        ok: true,
+        json: async () => ({ customToken: 'nav-token', navigator: { id: 'bea', name: 'Bea' } }),
+      };
+    });
+    vi.stubGlobal('fetch', fetchMock);
     const onNavigatorEntry = vi.fn();
 
     render(<Start onNavigatorEntry={onNavigatorEntry} onSupervisorEntry={vi.fn()} />);
@@ -185,7 +211,11 @@ describe('Start navigator gate', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Continue' }));
 
     await waitFor(() => expect(onNavigatorEntry).toHaveBeenCalledWith('bea', 'Bea'));
-    expect(startMocks.updateRosterEntry).not.toHaveBeenCalled();
+    expect(startMocks.signInWithAppToken).toHaveBeenCalledWith('nav-token');
+    expect(fetchMock).toHaveBeenCalledWith('/api/navigator-login', expect.objectContaining({
+      body: JSON.stringify({ navigatorId: 'bea', pin: '2222' }),
+    }));
+    vi.unstubAllGlobals();
   });
 });
 
@@ -301,7 +331,7 @@ describe('runQaPersistenceSequence', () => {
     );
   });
 
-  it('passes curated expectedActions/criticalMisses into the scenario sent to the grader', async () => {
+  it('sends only the curated scenario id as grading authority', async () => {
     const saveInterviewFn = vi.fn().mockResolvedValue('iv-1');
     const gradeQaFn = vi.fn().mockResolvedValue({
       grade: { score: 90 },
@@ -327,33 +357,10 @@ describe('runQaPersistenceSequence', () => {
     });
 
     expect(gradeQaFn).toHaveBeenCalledTimes(1);
-    const sentScenario = gradeQaFn.mock.calls[0][0].scenario;
-    expect(sentScenario).toContain('Scenario');
-    expect(sentScenario).toContain('GRADING CONTEXT');
-    source.expectedActions.forEach((a) => expect(sentScenario).toContain(a));
-    source.criticalMisses.forEach((m) => expect(sentScenario).toContain(m));
-  });
-});
-
-describe('buildCallQaGradingScenario', () => {
-  it('returns the original scenario unchanged when there is no curated metadata', () => {
-    expect(buildCallQaGradingScenario('Base scenario')).toBe('Base scenario');
-    expect(buildCallQaGradingScenario('Base scenario', {})).toBe('Base scenario');
-  });
-
-  it('appends a plain-text grading context block from curated metadata', () => {
-    const out = buildCallQaGradingScenario('Base scenario', {
-      qaScenarioTitle: 'Refill request',
-      workflowType: 'prescription_refill',
-      difficulty: 'medium',
-      expectedActions: ['Verify identity', 'Route to pharmacy queue'],
-      criticalMisses: ['Gives medical advice'],
-    });
-    expect(out).toContain('Base scenario');
-    expect(out).toContain('Refill request');
-    expect(out).toContain('prescription_refill');
-    expect(out).toContain('Verify identity');
-    expect(out).toContain('Route to pharmacy queue');
-    expect(out).toContain('Gives medical advice');
+    expect(gradeQaFn).toHaveBeenCalledWith(expect.objectContaining({
+      scenario: 'Scenario',
+      qaScenarioId: source.id,
+    }));
+    expect(gradeQaFn.mock.calls[0][0]).not.toHaveProperty('metadata');
   });
 });

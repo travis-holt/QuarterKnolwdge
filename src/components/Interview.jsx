@@ -3,6 +3,7 @@ import { DOMAINS } from '../data/questions.js';
 import { interviewScoreColor } from '../data/config.js';
 import { saveInterview, updateInterviewGrade } from '../lib/db.js';
 import { apiFetch, fetchErrorMessage } from '../lib/apiFetch.js';
+import { selectPracticeDomain } from '../lib/practiceDomain.js';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Interview — AI roleplay practice for navigators.
@@ -21,7 +22,7 @@ const INIT_TIMEOUT_MS  = 20_000;
 const TURN_TIMEOUT_MS  = 20_000;
 const GRADE_TIMEOUT_MS = 30_000;
 
-export default function Interview({ navigatorId, name, department = 'pediatrics' }) {
+export default function Interview({ navigatorId, name, department = 'pediatrics', preferredDomain = null }) {
   // phases: setup | loading | active | saving | grading | reviewed | discarded
   const [phase, setPhase]           = useState('setup');
   const [domainId, setDomainId]     = useState('');
@@ -34,6 +35,8 @@ export default function Interview({ navigatorId, name, department = 'pediatrics'
   const [error, setError]           = useState('');
   const [grade, setGrade]           = useState(null); // { score, summary, strengths[], improvements[] }
   const [gradeBusy, setGradeBusy]   = useState(false); // retrying a failed grade from the reviewed screen
+  const [saveError, setSaveError]   = useState('');
+  const [gradeSaveError, setGradeSaveError] = useState('');
 
   const bottomRef = useRef(null);
   const inputRef  = useRef(null);
@@ -56,8 +59,7 @@ export default function Interview({ navigatorId, name, department = 'pediatrics'
   // ── Start ────────────────────────────────────────────────────────────────────
 
   const startInterview = async () => {
-    // ponytail: random domain just anchors the AI scenario; navigator no longer picks one.
-    const pick = DOMAINS[Math.floor(Math.random() * DOMAINS.length)].id;
+    const pick = selectPracticeDomain(preferredDomain);
     setDomainId(pick);
     setPhase('loading');
     setError('');
@@ -112,9 +114,13 @@ export default function Interview({ navigatorId, name, department = 'pediatrics'
         setGrade(data.grade);
         // Write grade back to the Firestore doc so supervisors can see it too.
         if (docIdRef.current) {
-          updateInterviewGrade(docIdRef.current, data.grade).catch((err) =>
-            console.error('Failed to save grade to Firestore:', err)
-          );
+          try {
+            await updateInterviewGrade(docIdRef.current, data.grade);
+            setGradeSaveError('');
+          } catch (err) {
+            console.error('Failed to save grade to Firestore:', err);
+            setGradeSaveError('Your feedback was generated, but it has not saved for your supervisor yet.');
+          }
         }
       }
     } catch (err) {
@@ -123,13 +129,17 @@ export default function Interview({ navigatorId, name, department = 'pediatrics'
   };
 
   const saveAndGrade = async () => {
+    if (busy) return;
     setPhase('saving');
+    setSaveError('');
     docIdRef.current = null;
     try {
       docIdRef.current = await saveInterview(navigatorId, name, domainId, scenario, callerName, transcript, department);
     } catch (err) {
       console.error('Failed to save interview:', err);
-      // Continue to grading even if save failed — navigator still sees feedback.
+      setSaveError('We could not save this practice call. Nothing has been recorded yet.');
+      setPhase('saveError');
+      return;
     }
 
     setPhase('grading');
@@ -141,6 +151,19 @@ export default function Interview({ navigatorId, name, department = 'pediatrics'
     setGradeBusy(true);
     await runGrading();
     setGradeBusy(false);
+  };
+
+  const retryGradeSave = async () => {
+    if (!docIdRef.current || !grade) return;
+    setGradeBusy(true);
+    try {
+      await updateInterviewGrade(docIdRef.current, grade);
+      setGradeSaveError('');
+    } catch {
+      setGradeSaveError('Your feedback still could not be saved. Check the connection and try again.');
+    } finally {
+      setGradeBusy(false);
+    }
   };
 
   // ── Discard ──────────────────────────────────────────────────────────────────
@@ -161,6 +184,8 @@ export default function Interview({ navigatorId, name, department = 'pediatrics'
     setError('');
     setGrade(null);
     setGradeBusy(false);
+    setSaveError('');
+    setGradeSaveError('');
     docIdRef.current = null;
   };
 
@@ -178,6 +203,25 @@ export default function Interview({ navigatorId, name, department = 'pediatrics'
           <h2 className="overview__panel-title">Session discarded</h2>
           <p className="readoff__sub">Nothing was saved. Start a fresh practice call whenever you&rsquo;re ready.</p>
           <button className="btn btn--primary" onClick={reset}>Start another call</button>
+        </div>
+      </section>
+    );
+  }
+
+  if (phase === 'saveError') {
+    return (
+      <section className="interview view-enter">
+        <div className="card interview__done">
+          <h2 className="overview__panel-title">Practice call not saved</h2>
+          <p className="readoff__sub">{saveError}</p>
+          <div className="interview__end-actions" style={{ justifyContent: 'center' }}>
+            <button className="btn btn--primary btn--sm" onClick={saveAndGrade} type="button">
+              Retry saving
+            </button>
+            <button className="btn btn--ghost btn--sm" onClick={discardInterview} type="button">
+              Discard session
+            </button>
+          </div>
         </div>
       </section>
     );
@@ -222,6 +266,14 @@ export default function Interview({ navigatorId, name, department = 'pediatrics'
                   {gradeBusy ? 'Reviewing…' : 'Try the review again'}
                 </button>
               </>
+            )}
+            {gradeSaveError && (
+              <div role="alert">
+                <p className="gate__error" style={{ marginTop: '0.75rem' }}>{gradeSaveError}</p>
+                <button className="btn btn--ghost btn--sm" disabled={gradeBusy} onClick={retryGradeSave} type="button">
+                  {gradeBusy ? 'Saving…' : 'Retry saving feedback'}
+                </button>
+              </div>
             )}
           </div>
 
@@ -341,9 +393,11 @@ export default function Interview({ navigatorId, name, department = 'pediatrics'
           <button
             className="btn btn--primary btn--sm interview__end-btn"
             onClick={saveAndGrade}
+            disabled={busy}
+            title={busy ? 'Wait for the caller response before saving.' : undefined}
             type="button"
           >
-            Save &amp; get feedback
+            {busy ? 'Caller responding…' : 'Save & get feedback'}
           </button>
         </div>
       </div>
