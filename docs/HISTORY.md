@@ -1,5 +1,19 @@
 # Development History - Knowledge Check
 
+
+### 2026-07-13 - Fix incomplete-navigator result reads under hardened rules
+- **Production regression:** after PR #25's ownership rules were published, navigators missing any
+  one of the MCQ/Spot/QA result documents could reach the generic "Couldn't connect" screen.
+  Firestore evaluates a direct `get` against the rules even when the document does not exist, so
+  `owns(resource.data)` could not authorize the expected "not found" response.
+- **Fix:** `results` now separates `get` from `list`. A navigator may directly fetch only the seven
+  exact legacy/current result IDs derived from their authenticated `navigatorId` across the two
+  live departments; supervisors retain full reads and navigator collection-wide reads remain
+  denied. Existing ownership checks still protect every create/update.
+- **Verification:** Firestore emulator rules compile; an authenticated regression proves own
+  existing and own missing result reads succeed, cross-navigator existing/missing reads fail,
+  navigator collection reads fail, and supervisor collection reads succeed.
+
 ### 2026-07-12 - Complete audit remediation and production trust boundary (PR #25)
 - **Scope:** PR #25 is based on the nine-commit Call QA hardening work from draft PR #24, then
   closes the separate full-codebase audit findings across scoring fairness, persistence,

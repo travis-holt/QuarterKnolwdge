@@ -11,7 +11,7 @@
 > [§8 Current System State](#8-current-system-state) and [§15 Current Priorities](#15-current-priorities)
 > accurate at all times.
 >
-> **Last updated:** 2026-07-12 (full audit remediation, identity boundary, and integrity hardening) ·
+> **Last updated:** 2026-07-13 (navigator empty-result authorization regression fix) ·
 > **Doc maintainer:** Claude (AI agent) + repo owner. Assumptions are explicitly marked **[ASSUMPTION]**.
 
 ---
@@ -859,7 +859,10 @@ QuarterKnolwdge/
 - **Firebase / Firestore.** The app persists roster, assessments, append-only history, practice,
   learning-loop, and SOP data to Cloud Firestore. Browser access uses server-minted Firebase
   identities; [firestore.rules](firestore.rules) grants supervisors management access and
-  navigators ownership-scoped access only. All browser Firestore access remains isolated in
+  navigators ownership-scoped access only. Direct navigator result lookups also authorize the
+  exact document IDs derived from the caller's claim so a not-yet-created assessment returns
+  "not found" instead of `permission-denied`; collection-wide navigator result reads remain denied.
+  All browser Firestore access remains isolated in
   [src/lib/db.js](src/lib/db.js); server projections and identity use Firebase Admin.
 - **Express server + `/api` handlers.** [server.js](server.js) is the Railway entry point: an
   Express 5 app that serves `dist/` as static files (SPA catch-all via `/*splat`) and mounts
