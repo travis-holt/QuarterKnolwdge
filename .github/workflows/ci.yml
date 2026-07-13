@@ -22,11 +22,20 @@ jobs:
           node-version: 24
           cache: npm
 
+      - name: Set up Java (Firestore emulator runtime)
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
       - name: Install dependencies
         run: npm ci
 
       - name: Run tests
         run: npm test
+
+      - name: Run Firestore rules regression suite
+        run: npm run test:rules
 
       - name: Build app
         run: npm run build

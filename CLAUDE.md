@@ -11,7 +11,7 @@
 > [§8 Current System State](#8-current-system-state) and [§15 Current Priorities](#15-current-priorities)
 > accurate at all times.
 >
-> **Last updated:** 2026-07-13 (navigator empty-result authorization regression fix) ·
+> **Last updated:** 2026-07-13 (result document-ID/body ownership binding + navigator own-row identity fix) ·
 > **Doc maintainer:** Claude (AI agent) + repo owner. Assumptions are explicitly marked **[ASSUMPTION]**.
 
 ---
@@ -955,6 +955,34 @@ stateDiagram-v2
 
 ## 6. Technical Decisions Log
 
+### 2026-07-13 — Bind Firestore result document IDs to BOTH path and body ownership
+- **Decision:** `results/{docId}` `get`/`create`/`update` now require the document ID to be one of
+  the authenticated navigator's own deterministic result IDs (`isOwnResultDocId(docId)`) AND the
+  relevant body (`resource.data` and/or `request.resource.data`) to carry that same navigator's
+  `navigatorId`. A new `resultDocExists(docId)` helper lets `get` still return a normal "not found"
+  read for a genuinely missing own document, while denying access to an EXISTING document at that
+  same path whose stored `navigatorId` belongs to someone else.
+- **Reasoning:** the prior rule (`owns(resource.data) || isOwnResultDocId(docId)`, from PR #26)
+  checked path ownership and body ownership as independent alternatives. A navigator could create a
+  document at another navigator's deterministic path with their own `navigatorId` in the body
+  ("squatting"); the body-only branch would then treat that squatted document as legitimately owned
+  by the path's rightful navigator once they tried to read it — enabling result spoofing and blocking
+  the rightful navigator's own future submission at that path (denial of service).
+- **Alternatives considered:** requiring only path ownership for `get` (re-opens the original PR #26
+  "missing document returns permission-denied" regression, since Firestore evaluates rules even for
+  nonexistent documents); requiring only body ownership (the exact hole being closed). Both rejected.
+- **Impact:** `create`/`update` were already body-ownership-gated but not also path-gated;
+  `create`/`update` now also require `isOwnResultDocId(docId)`. `get` now requires both, existence-
+  aware. Legacy Pediatrics IDs, missing-own-document reads, and all pre-existing create/update
+  ownership checks are preserved. A companion NavigatorApp fix (see the 2026-07-13 §7/HISTORY.md
+  entry) closes a related row-identity bug where a stale floor projection of the navigator's own
+  result could outrank their fresh own result on the dashboard. Verified against the real Firestore
+  Rules emulator, not a string match on the rules file — see
+  `tests/firestore-rules/result-authorization.rules.mjs` (`npm run test:rules`, wired into CI).
+  **Not addressed by this decision:** MCQ/Spot scoring remains client-computed; see [§12](#12-bugs--known-issues)
+  and [§15](#15-current-priorities) for the separate server-authoritative scoring migration this does
+  not attempt.
+
 ### 2026-07-12 — Server-issued identities and fail-closed assessment integrity
 - **Decision:** Navigator PIN verification and supervisor passcode verification happen only on the
   Express server. Successful logins mint Firebase custom tokens with `role` and `navigatorId`
@@ -1154,6 +1182,22 @@ of this file on 2026-07-07 to cut per-session context cost (it was ~55% of the f
   UUID joins, nanosecond timestamps, comparable-instrument analytics, and retake-aware question
   health close the remaining audit findings. Vite 8 + plugin-react 6 now form one valid dependency
   tree and Railway installs from the lockfile with `npm ci`.
+- **Result document-ID/body ownership binding (2026-07-13):** PR #26's direct-read exception for a
+  navigator's own missing result documents checked path ownership (`isOwnResultDocId(docId)`) and
+  body ownership (`owns(resource.data)`) as independent ORs, so a document "squatted" at another
+  navigator's deterministic path — created with the attacker's own `navigatorId` in the body —
+  would be treated as legitimately owned. `get`/`create`/`update` now require BOTH the document ID
+  and the stored/requested body to belong to the authenticated navigator; a genuinely missing own
+  document still reads as a normal not-found result. A committed Firestore emulator regression
+  suite (`tests/firestore-rules/result-authorization.rules.mjs`, `npm run test:rules`, wired into
+  CI) exercises the real rules engine — own-ID matrix, cross-navigator denial, squatted-document
+  protection, arbitrary-ID denial, ownership-mutation denial, and list/query/supervisor behavior.
+  The navigator dashboard's own-row merge was also fixed to key on stable `navigatorId` (with a
+  legacy display-name fallback) instead of colliding `navigatorId ?? name` / `name`-only keys, so a
+  stale floor projection of the current navigator can no longer outrank their own fresh result (see
+  `src/lib/navigatorResultMerge.js`). **This PR does not make MCQ/Spot scoring itself
+  server-authoritative** — see the client-authoritative scoring limitation in
+  [§12](#12-bugs--known-issues) and the required migration in [§15](#15-current-priorities).
 - **Working end to end (logic + UI):** supervisor adds navigators / generates+curates questions
   (per department) → navigators sign in → **pick department** (Pediatrics or OB/GYN) → enter the
   **3-phase assessment sequence** (MCQ scenario check → coaching → full-profile Spot the Error →
@@ -1228,7 +1272,10 @@ of this file on 2026-07-07 to cut per-session context cost (it was ~55% of the f
 - **Experimental / mockup:**
   - Training **content** is mockup (flagged in UI). Logic is real.
   - **Adult Medicine and Behavioural Health** are not assessed; **Pediatrics and OB/GYN** are live.
-- **Test coverage:** **804 tests** across **41 test files** (includes `api/_qa-grading-corpus.test.js` —
+- **Test coverage:** **815 tests** across **42 test files** (adds `src/lib/navigatorResultMerge.test.js`
+  — the stable-identity floor/own merge helper — and one NavigatorApp behavioral regression test in
+  `roleApps.behavior.test.jsx`, both from the 2026-07-13 result-document-integrity fix; see below).
+  Also includes `api/_qa-grading-corpus.test.js` —
   the deterministic Call QA grading-pipeline corpus + captured-response replay harness — and `src/lib/gradingInvariants.test.js` — the
   executable cross-system grading invariants, contract in `docs/GRADING_INVARIANTS.md`; plus `api/_navigator-operating-model.test.js`,
   `src/lib/qaDomainScoring.test.js`, `src/components/voiceCall.test.js`; expanded
@@ -1250,10 +1297,11 @@ of this file on 2026-07-07 to cut per-session context cost (it was ~55% of the f
   `src/components/spotTheError.test.js`,
   `src/components/roleApps.smoke.test.jsx` (smoke tests for App / Start / SupervisorApp /
   NavigatorApp — renders-without-crashing + gate/session routing, with Firebase/db/session mocked),
-  `src/components/roleApps.behavior.test.jsx` (16 per-tab behavioural tests: SupervisorApp tab
+  `src/components/roleApps.behavior.test.jsx` (17 per-tab behavioural tests: SupervisorApp tab
   transitions + empty states + navigator-detail open; NavigatorApp dept-select → phase hub /
-  dashboard / My Training / Practice chooser / My History / dept switch — Firebase/db/session/apiFetch
-  mocked, browser APIs stubbed, no audio started),
+  dashboard / My Training / Practice chooser / My History / dept switch / stale-floor-projection
+  own-row regression — Firebase/db/session/apiFetch mocked, browser APIs stubbed, no audio started),
+  `src/lib/navigatorResultMerge.test.js` (7 unit tests for the stable-identity floor/own result merge),
   `src/components/navigatorDetail.override.test.jsx` (supervisor practice overrides, final QA
   review actions, deterministic-conflict transparency — `db.js` mocked, no Firebase).
   The F22 voice call (relay + Web Audio) is verified by live
@@ -1318,7 +1366,9 @@ of this file on 2026-07-07 to cut per-session context cost (it was ~55% of the f
   OB/GYN = **37** seed questions (offline fallback) + the **48-item MCQ v2 operating-model bank**
   (24 Pediatrics + 24 OB/GYN) that replaces the weak active bank via a marker-gated
   archive-and-replace migration (bank grows in Firestore per dept) · 4 departments (**Pediatrics
-  + OB/GYN live**, 2 mockup) · **804** unit tests (41 test files) · **13** Firestore collections
+  + OB/GYN live**, 2 mockup) · **815** unit tests (42 test files) + a committed **51-assertion**
+  Firestore Rules emulator suite (`npm run test:rules`, not part of the unit-test count) ·
+  **13** Firestore collections
   (`roster`, `results`, `resultHistory`, `questions`, `audits`, `interviews`, `completions`,
   `pairings`, `supervisorFeedback`, `learningProposals`, `sops`, `activeSops`, `contentMigrations`) ·
   **16** REST functions (`generate-scenarios`, `generate-coaching`, `interview-turn`,
@@ -1539,7 +1589,9 @@ npm run test:e2e     # run the Playwright browser tests (auto-builds + starts th
 - Heatmap intensity toggle (show % inside matrix cells).
 
 ### Technical Debt
-- **804 tests** across 41 test files as of 2026-07-12. **Role-app coverage** (`App`, `Start`,
+- **815 tests** across 42 test files as of 2026-07-13 (plus a committed 51-assertion Firestore
+  Rules emulator suite, `npm run test:rules`, run separately from the unit-test gate). **Role-app
+  coverage** (`App`, `Start`,
   `SupervisorApp`, `NavigatorApp`) now includes both shell smoke tests (mount + gate/session routing)
   and per-tab behavioural tests (`roleApps.behavior.test.jsx`: tab transitions, empty states,
   dept-select → phase/dashboard flows, navigator-detail open). Deeper per-child-widget interaction
@@ -1599,12 +1651,49 @@ npm run test:e2e     # run the Playwright browser tests (auto-builds + starts th
   `VoiceCall.jsx` now blocks completion unless interview save, grading, and grade-save all succeed;
   supervisor reset archives active QA attempts for that navigator + department so archived QA no
   longer counts as current completion.
+- **~~Result document-ID squatting~~ (resolved 2026-07-13):** PR #26's `isOwnResultDocId(docId)`
+  direct-read exception checked PATH ownership independently of BODY ownership
+  (`owns(resource.data) || isOwnResultDocId(docId)` as separate ORs). A navigator could create a
+  document at ANOTHER navigator's deterministic result path with their own `navigatorId` in the
+  body ("squatting"), which the body-only `owns()` branch would then treat as legitimately theirs —
+  risking result spoofing and a denial-of-service against the victim's own future submission. Fixed:
+  `get`/`create`/`update` now require the doc ID AND the body to both belong to the caller
+  (`isOwnResultDocId(docId) && (!exists(...) || owns(resource.data))` for reads). See
+  [§6](#6-technical-decisions-log) 2026-07-13 entry. Covered by a committed Firestore emulator
+  regression suite (`tests/firestore-rules/result-authorization.rules.mjs`, run via
+  `npm run test:rules`), not just a manual verification note.
+- **~~NavigatorApp own-row duplication/staleness~~ (resolved 2026-07-13):** the navigator dashboard
+  merged the minimized floor projection (keyed by `navigatorId ?? name`) with the navigator's own
+  local/submitted result (keyed by `name` only) into the same `Map`. When both keys existed for the
+  same person (a stale floor copy plus a fresh own result), `findRow(rows, name)` could resolve to
+  whichever row happened to iterate first — sometimes the STALE floor copy — showing an outdated
+  score on the navigator's own dashboard after a fresh submission or a rename. Fixed by
+  `src/lib/navigatorResultMerge.js` (`mergeNavigatorFloorAndOwnResult`), which merges on a stable,
+  prefixed identity key (`navigatorId` primary, display-name fallback only for legacy no-ID rows)
+  and always lets the own result win; `NavigatorApp` now also resolves its own row via
+  `findRow(rows, navigatorId ?? name)` instead of `name` alone.
 - **Deployment prerequisite:** this branch intentionally fails closed without Firebase Admin and
   an explicit production supervisor passcode. Follow the rollout order in `.env.local.example` /
   `README.md`; tightening rules before deploying the identity endpoints would lock users out.
 - **Browser/live-service validation gap:** unit/build/server checks are complete, but microphone
   interoperability and real Firebase/Gemini behavior still require the safe post-deploy smoke and
   a deliberate voice call on the target browser.
+- **Client-authoritative MCQ/Spot scoring (documented limitation, not fixed in this PR):** the
+  2026-07-13 fix closes the result-document-ID/body ownership hole, but it does not make scoring
+  itself server-authoritative. Active questions and scoring data reach the navigator's browser;
+  `scorePerDomain`/`scorePerCompetency` run client-side; a navigator can write their own
+  ownership-scoped result document. Firestore rules now guarantee a navigator can only write AS
+  THEMSELVES (never spoof another navigator, never squat another navigator's document path), but
+  they cannot cryptographically prove a submitted score came from an untampered client run — a
+  technically capable navigator could still manipulate their own browser or hand-craft their own
+  result payload for their OWN document. **Client-submitted MCQ/Spot results should therefore not
+  be treated as tamper-proof, high-stakes employment pass/fail evidence** until a server-authoritative
+  scoring migration ships (see [§15](#15-current-priorities) for the required design: browser
+  submits answers + an assessment/version id → server validates question/option ids against the
+  authoritative active bank → server computes the score → server writes result/history/completion
+  atomically → navigator Firestore permissions become read-only on finalized results). That
+  migration is explicitly **out of scope** for this PR — it is a separate, larger architectural
+  project.
 
 ---
 
@@ -1717,12 +1806,20 @@ npm run test:e2e     # run the Playwright browser tests (auto-builds + starts th
 
 1. **Maintain this CLAUDE.md** on every change (highest standing priority).
 2. **Deploy the identity boundary safely** — add Firebase Admin + supervisor secrets, deploy this
-   code, verify navigator/supervisor token exchange, then publish the tightened Firestore rules.
-   Never reverse that order.
+   code, verify navigator/supervisor token exchange, then publish the **tightened (2026-07-13)**
+   Firestore rules (result document-ID + body ownership binding). Never reverse that order.
 3. **Post-deploy browser smoke** — run the safe Playwright suite and one deliberate microphone call;
    the container cannot prove real browser permission/device or live Firebase/Gemini behavior.
 4. **Deeper role-app tests** — current unit/behavior coverage is broad; editing questions,
    generating SOPs, and a full authenticated assessment remain the next browser-automation targets.
+5. **Server-authoritative MCQ/Spot scoring (future project, not started):** required before treating
+   client-submitted results as tamper-proof high-stakes evidence. Design: (1) browser submits
+   answers + an assessment/version id, not a computed score; (2) server loads/verifies the
+   authoritative active question bank for that id; (3) server validates every submitted question ID
+   and option ID against that bank; (4) server computes the score itself; (5) server writes
+   result/history/qualifying-completion atomically; (6) navigator Firestore permissions become
+   read-only on finalized result documents. Out of scope for the 2026-07-13 result-document-integrity
+   fix — see [§12](#12-bugs--known-issues) "Client-authoritative MCQ/Spot scoring".
 
 **Active work items:**
 - **Pilot-feedback follow-ups (2026-07-03):** after the 2026-07-07 content-quality fix, supervisors
@@ -1795,6 +1892,14 @@ npm run test:e2e     # run the Playwright browser tests (auto-builds + starts th
   learning advisor"; restored the QA final-review action gating in `NavigatorDetail.jsx` (AI PASS →
   Confirm Pass + Override to Fail; AI FAIL → Confirm Fail + Override to Pass; NEEDS REVIEW →
   override-only, reason required); `_qa-rubric.js` pass/fail math + capability matrix unchanged).
+- ✅ Result document-ID/body ownership binding + NavigatorApp own-row identity fix — done
+  2026-07-13 (815 tests, 42 test files, + a new committed 51-assertion Firestore Rules emulator
+  suite run via `npm run test:rules` and wired into CI). Closed the PR #26 result-document
+  "squatting" hole (path-only vs. body-only ownership checked as independent ORs) by requiring
+  both for `get`/`create`/`update`; fixed a related NavigatorApp bug where a stale floor-projection
+  copy of the current navigator could outrank their own fresh result on the dashboard
+  (`src/lib/navigatorResultMerge.js`). Documented, not fixed here: MCQ/Spot scoring remains
+  client-computed — see §12/§15 for the separate future server-authoritative scoring migration.
 
 ---
 

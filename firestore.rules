@@ -48,16 +48,38 @@ service cloud.firestore {
       );
     }
 
+    // isOwnResultDocId only proves the PATH belongs to the navigator; it says
+    // nothing about the BODY already stored there. A navigator could otherwise
+    // create/leave a document at another navigator's deterministic path with
+    // their own navigatorId in the body ("squatting"), which a body-only check
+    // would treat as owned. resultDocExists lets get() distinguish "genuinely
+    // missing" (safe to allow — becomes a normal not-found read) from
+    // "exists but owned by someone else" (must deny, never expose the body).
+    function resultDocExists(docId) {
+      return exists(/databases/$(database)/documents/results/$(docId));
+    }
+
     // PIN hashes and roster metadata never leave the supervisor/server boundary.
     match /roster/{docId} {
       allow read, create, update, delete: if isSupervisor();
     }
 
     match /results/{docId} {
-      allow get: if isSupervisor() || owns(resource.data) || isOwnResultDocId(docId);
+      // Path AND body must both belong to the navigator. A missing own-path
+      // document reads as a normal not-found result; an existing own-path
+      // document is only readable when its stored navigatorId matches.
+      allow get: if isSupervisor() || (
+        isOwnResultDocId(docId) &&
+        (!resultDocExists(docId) || owns(resource.data))
+      );
       allow list: if isSupervisor();
-      allow create: if isSupervisor() || owns(request.resource.data);
-      allow update: if isSupervisor() || (owns(resource.data) && owns(request.resource.data) && ownerUnchanged());
+      allow create: if isSupervisor() || (
+        isOwnResultDocId(docId) && owns(request.resource.data)
+      );
+      allow update: if isSupervisor() || (
+        isOwnResultDocId(docId) &&
+        owns(resource.data) && owns(request.resource.data) && ownerUnchanged()
+      );
       allow delete: if isSupervisor();
     }
 
