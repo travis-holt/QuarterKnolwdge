@@ -30,13 +30,32 @@ service cloud.firestore {
       return request.resource.data.navigatorId == resource.data.navigatorId;
     }
 
+
+    // Result reads use direct document lookups. Firestore evaluates rules even
+    // when the requested document does not exist, so resource.data cannot prove
+    // ownership in that case. Permit only the exact result IDs the authenticated
+    // navigator can own; this lets an unfinished assessment return "not found"
+    // without granting access to another navigator's result.
+    function isOwnResultDocId(docId) {
+      return isNavigator() && (
+        docId == request.auth.token.navigatorId ||
+        docId == request.auth.token.navigatorId + '__pediatrics' ||
+        docId == request.auth.token.navigatorId + '__pediatrics__spot' ||
+        docId == request.auth.token.navigatorId + '__pediatrics__qa' ||
+        docId == request.auth.token.navigatorId + '__obgyn' ||
+        docId == request.auth.token.navigatorId + '__obgyn__spot' ||
+        docId == request.auth.token.navigatorId + '__obgyn__qa'
+      );
+    }
+
     // PIN hashes and roster metadata never leave the supervisor/server boundary.
     match /roster/{docId} {
       allow read, create, update, delete: if isSupervisor();
     }
 
     match /results/{docId} {
-      allow read: if isSupervisor() || owns(resource.data);
+      allow get: if isSupervisor() || owns(resource.data) || isOwnResultDocId(docId);
+      allow list: if isSupervisor();
       allow create: if isSupervisor() || owns(request.resource.data);
       allow update: if isSupervisor() || (owns(resource.data) && owns(request.resource.data) && ownerUnchanged());
       allow delete: if isSupervisor();
