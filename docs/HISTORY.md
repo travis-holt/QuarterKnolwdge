@@ -4,16 +4,21 @@
 ### 2026-07-13 - Bind result document IDs to navigator identity (path + body ownership)
 - **Follow-up to the same day's "incomplete-navigator result reads" fix (below):** that fix's
   `isOwnResultDocId(docId)` direct-read exception recognized a navigator's own deterministic result
-  paths, but the `get` rule combined it with `owns(resource.data)` as an independent OR
-  (`owns(resource.data) || isOwnResultDocId(docId)`). Path ownership and body ownership were checked
-  separately, not together.
+  paths, and the `get` rule allowed EITHER that path-only branch OR `owns(resource.data)` (body
+  ownership) — independent alternatives, not a combined check. Separately, and more importantly,
+  `create` checked ONLY `owns(request.resource.data)` (the requested body) — it never checked
+  whether the document ID belonged to the requester at all.
 - **Exploit this allowed:** an authenticated navigator (A) could `create` a document at ANOTHER
   navigator's (B's) deterministic result path (e.g. `results/navigator-b__pediatrics`) while writing
-  their OWN `navigatorId` into the body. The path-only branch (`isOwnResultDocId`) doesn't check the
-  body, and — for B — the body-only branch (`owns(resource.data)`) would treat that squatted document
-  as B's own once B tried to read it, exposing A's spoofed content at B's expected path (result
-  spoofing) and blocking B's own legitimate submission from ever occupying that path (denial of
-  service against B's own retake).
+  A's OWN `navigatorId` into the body. `create` accepted this purely on body ownership, since it
+  never checked the path. From there: **B** could read the malformed document through the old
+  `get` rule's path-only branch (`isOwnResultDocId(docId)`, which doesn't inspect the body) —
+  exposing A's spoofed content at B's expected path (result spoofing). **A** retained read/update
+  access to the same document through the body-only `get`/`update` branch (`owns(resource.data)`
+  still matched A's `navigatorId`). And **B** could not repair or overwrite it: `update` requires
+  `owns(resource.data)` on the EXISTING body, which still said `navigatorId: navigator-a`, so B's
+  own legitimate submission was blocked from ever occupying that path (denial of service against
+  B's own retake).
 - **Fix:** `results/{docId}` now requires the document ID AND the body to both belong to the caller
   for every operation:
   - `get`: `isSupervisor() || (isOwnResultDocId(docId) && (!resultDocExists(docId) || owns(resource.data)))`
@@ -54,12 +59,40 @@
   row under the same stable ID AND any legacy no-ID floor row sharing the same display name, while
   never merging two rows that simply share a name but have different navigatorIds. `NavigatorApp`
   now calls `findRow(rows, navigatorId ?? name)` instead of `findRow(rows, name)`. New
-  `src/lib/navigatorResultMerge.test.js` (7 unit tests covering the stale/fresh, legacy-name-fallback,
-  distinct-ID/same-name, rename, no-own-result/no-mutation, duplicate-collapse, and ID/name-collision
-  cases) plus a new NavigatorApp behavioral regression test in `src/components/roleApps.behavior.test.jsx`
-  that mocks a stale `/api/mentor-scores` projection for the signed-in navigator alongside a fresher
-  own MCQ result and asserts only the fresh score renders — confirmed to fail against the pre-fix
-  merge logic and pass against the fix.
+  `src/lib/navigatorResultMerge.test.js` (**10 unit tests total**: 3 for `navigatorResultIdentityKey`
+  — id-priority, name fallback, id/name collision-safety — and 7 for
+  `mergeNavigatorFloorAndOwnResult` — stale/fresh same-ID replacement, legacy-name-fallback,
+  distinct-ID/same-name non-merge, rename, no-own-result/no-mutation, duplicate-collapse, and
+  no-input-mutation; the same-ID collapse case directly asserts `toHaveLength(1)` on the returned
+  merged array) plus a NavigatorApp behavioral regression test in
+  `src/components/roleApps.behavior.test.jsx` ("uses the fresh own score when the mentor projection
+  contains a stale copy of the current navigator") that mocks a stale `/api/mentor-scores` projection
+  for the signed-in navigator alongside a fresher own MCQ result and asserts the fresh score renders
+  while the stale one does not — confirmed to fail against the pre-fix merge logic and pass against
+  the fix. (The rendered-app test proves score freshness, not a DOM row count — `NavigatorApp` has no
+  semantic per-row container to assert "exactly one row" against, and the navigator's display name
+  legitimately appears elsewhere on the page regardless of the merge outcome; exact same-ID collapse
+  is proven directly by the helper's own unit test instead.)
+- **Rollout prerequisite — pre-publish existing-data integrity scan (documented, not run here):**
+  the tightened rules are fail-closed against any ALREADY-EXISTING malformed result document (e.g.
+  a historical doc at `results/navigator-b__pediatrics` whose stored `navigatorId` is
+  `navigator-a`) — once published, neither navigator A nor navigator B could read or fix it
+  (A's `navigatorId` doesn't match the path; B's `navigatorId` doesn't match the body), only a
+  supervisor/server administrator could. This is correct fail-closed behavior, but it means
+  existing malformed documents must be found and triaged BEFORE publishing, or affected navigators
+  would be silently locked out of a result they should own. Documented required check (using
+  trusted Firebase Admin access only, never navigator client access — not run as part of this PR
+  and no production system was accessed): read every document in `results`, and for each, validate
+  the document ID against its own `navigatorId`/`department`/`assessmentType` fields using the
+  canonical ID forms — MCQ `<navigatorId>__<department>`, Spot `<navigatorId>__<department>__spot`,
+  QA `<navigatorId>__<department>__qa`, departments `pediatrics`/`obgyn`, plus the legacy
+  `<navigatorId>`-only form (valid ONLY as legacy Pediatrics MCQ). Flag: missing `navigatorId`;
+  document ID belonging to a different `navigatorId` than the body; unsupported department;
+  unsupported `assessmentType`; a suffix inconsistent with `assessmentType`; a legacy plain ID
+  carrying non-Pediatrics or non-MCQ data; and duplicate/conflicting canonical slots for the same
+  navigator+department+type. Investigate every mismatch, and quarantine/archive/manually correct
+  any malformed document (preserving evidence first) via trusted administrator access before the
+  new rules go live. See CLAUDE.md §12/§15.
 - **Documented, not fixed, in this PR — client-authoritative scoring:** this PR closes the
   document-ID/body ownership hole and the row-identity bug, but MCQ/Spot scoring still runs
   client-side and a navigator can still write their own ownership-scoped result document. Firestore
@@ -68,10 +101,11 @@
   client run. Client-submitted MCQ/Spot results should not be treated as tamper-proof, high-stakes
   employment evidence until a separate, larger server-authoritative scoring migration ships (see
   CLAUDE.md §12 and §15 for the required design). That migration is explicitly out of scope here.
-- **Verification:** full local `npm test` suite green (with the two new test files), `npm run
-  test:rules` 51/51 against the fixed rules (and confirmed failing against the pre-fix rules),
-  `npm run build` clean, `node --check` on both new script files, `git diff --check` clean. No
-  Firestore rules were published, no production data changed, no deployment occurred.
+- **Verification:** full local `npm test` suite green (with the new `navigatorResultMerge.test.js`
+  file and the edited `roleApps.behavior.test.jsx`), `npm run test:rules` 51/51 against the fixed
+  rules (and confirmed failing — 7/51 — against the pre-fix rules), `npm run build` clean,
+  `node --check` on both new script files, `git diff --check` clean. No Firestore rules were
+  published, no production data changed, no deployment occurred.
 
 ### 2026-07-13 - Fix incomplete-navigator result reads under hardened rules
 - **Production regression:** after PR #25's ownership rules were published, navigators missing any

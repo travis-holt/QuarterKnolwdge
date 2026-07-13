@@ -962,15 +962,23 @@ stateDiagram-v2
   `navigatorId`. A new `resultDocExists(docId)` helper lets `get` still return a normal "not found"
   read for a genuinely missing own document, while denying access to an EXISTING document at that
   same path whose stored `navigatorId` belongs to someone else.
-- **Reasoning:** the prior rule (`owns(resource.data) || isOwnResultDocId(docId)`, from PR #26)
-  checked path ownership and body ownership as independent alternatives. A navigator could create a
-  document at another navigator's deterministic path with their own `navigatorId` in the body
-  ("squatting"); the body-only branch would then treat that squatted document as legitimately owned
-  by the path's rightful navigator once they tried to read it — enabling result spoofing and blocking
-  the rightful navigator's own future submission at that path (denial of service).
+- **Reasoning:** the prior rules (from PR #26) checked path ownership and body ownership as
+  separate, unbound gates across different operations, not together on any one operation. `create`
+  checked ONLY `owns(request.resource.data)` — the requested body — with no check that the document
+  ID belonged to the requester. `get` separately allowed EITHER `owns(resource.data)` (body
+  ownership) OR `isOwnResultDocId(docId)` (path ownership) alone. That let navigator A create a
+  document at navigator B's deterministic path (`results/navigator-b__pediatrics`) while writing
+  A's own `navigatorId` into the body — `create` accepted it purely on body ownership, never
+  checking the path was B's. From there: **B** could read the malformed document through the
+  path-only `isOwnResultDocId` branch of the old `get` rule (result spoofing — B sees A's content at
+  B's expected path); **A** retained read/update access to the same document through the body-only
+  branch (`owns(resource.data)` still matched A's `navigatorId`); and **B** could not repair or
+  replace it, since `update`'s `owns(resource.data)` check failed against the existing body's
+  `navigatorId: navigator-a` (denial of service against B's own legitimate submission).
 - **Alternatives considered:** requiring only path ownership for `get` (re-opens the original PR #26
   "missing document returns permission-denied" regression, since Firestore evaluates rules even for
-  nonexistent documents); requiring only body ownership (the exact hole being closed). Both rejected.
+  nonexistent documents); requiring only body ownership on `create` without also binding the path
+  (the exact hole being closed — leaves squatting possible). Both rejected.
 - **Impact:** `create`/`update` were already body-ownership-gated but not also path-gated;
   `create`/`update` now also require `isOwnResultDocId(docId)`. `get` now requires both, existence-
   aware. Legacy Pediatrics IDs, missing-own-document reads, and all pre-existing create/update
@@ -1182,11 +1190,15 @@ of this file on 2026-07-07 to cut per-session context cost (it was ~55% of the f
   UUID joins, nanosecond timestamps, comparable-instrument analytics, and retake-aware question
   health close the remaining audit findings. Vite 8 + plugin-react 6 now form one valid dependency
   tree and Railway installs from the lockfile with `npm ci`.
-- **Result document-ID/body ownership binding (2026-07-13):** PR #26's direct-read exception for a
-  navigator's own missing result documents checked path ownership (`isOwnResultDocId(docId)`) and
-  body ownership (`owns(resource.data)`) as independent ORs, so a document "squatted" at another
-  navigator's deterministic path — created with the attacker's own `navigatorId` in the body —
-  would be treated as legitimately owned. `get`/`create`/`update` now require BOTH the document ID
+- **Result document-ID/body ownership binding (2026-07-13):** PR #26's `create` rule for `results`
+  checked only `owns(request.resource.data)` (the requested body) with no check that the document
+  ID belonged to the requester, and `get` separately allowed EITHER body ownership OR path ownership
+  (`isOwnResultDocId(docId)`) alone. A navigator (A) could `create` a document at ANOTHER navigator's
+  (B's) deterministic path with A's own `navigatorId` in the body ("squatting") — `create` accepted
+  it purely on body ownership. B could then read that squatted document through the path-only `get`
+  branch (result spoofing); A retained access through the body-only `get`/`update` branch; and B
+  could not overwrite it, since the existing body's `navigatorId` no longer matched B (denial of
+  service against B's own submission). `get`/`create`/`update` now require BOTH the document ID
   and the stored/requested body to belong to the authenticated navigator; a genuinely missing own
   document still reads as a normal not-found result. A committed Firestore emulator regression
   suite (`tests/firestore-rules/result-authorization.rules.mjs`, `npm run test:rules`, wired into
@@ -1301,7 +1313,8 @@ of this file on 2026-07-07 to cut per-session context cost (it was ~55% of the f
   transitions + empty states + navigator-detail open; NavigatorApp dept-select → phase hub /
   dashboard / My Training / Practice chooser / My History / dept switch / stale-floor-projection
   own-row regression — Firebase/db/session/apiFetch mocked, browser APIs stubbed, no audio started),
-  `src/lib/navigatorResultMerge.test.js` (7 unit tests for the stable-identity floor/own result merge),
+  `src/lib/navigatorResultMerge.test.js` (10 unit tests for the stable-identity floor/own result
+  merge: 3 for `navigatorResultIdentityKey` + 7 for `mergeNavigatorFloorAndOwnResult`),
   `src/components/navigatorDetail.override.test.jsx` (supervisor practice overrides, final QA
   review actions, deterministic-conflict transparency — `db.js` mocked, no Firebase).
   The F22 voice call (relay + Web Audio) is verified by live
@@ -1651,14 +1664,17 @@ npm run test:e2e     # run the Playwright browser tests (auto-builds + starts th
   `VoiceCall.jsx` now blocks completion unless interview save, grading, and grade-save all succeed;
   supervisor reset archives active QA attempts for that navigator + department so archived QA no
   longer counts as current completion.
-- **~~Result document-ID squatting~~ (resolved 2026-07-13):** PR #26's `isOwnResultDocId(docId)`
-  direct-read exception checked PATH ownership independently of BODY ownership
-  (`owns(resource.data) || isOwnResultDocId(docId)` as separate ORs). A navigator could create a
-  document at ANOTHER navigator's deterministic result path with their own `navigatorId` in the
-  body ("squatting"), which the body-only `owns()` branch would then treat as legitimately theirs —
-  risking result spoofing and a denial-of-service against the victim's own future submission. Fixed:
-  `get`/`create`/`update` now require the doc ID AND the body to both belong to the caller
-  (`isOwnResultDocId(docId) && (!exists(...) || owns(resource.data))` for reads). See
+- **~~Result document-ID squatting~~ (resolved 2026-07-13):** PR #26's `create` rule for `results`
+  checked only body ownership (`owns(request.resource.data)`) with no check that the document ID
+  belonged to the requester. A navigator (A) could `create` a document at ANOTHER navigator's (B's)
+  deterministic result path with A's own `navigatorId` in the body ("squatting") — accepted purely
+  on body ownership. B could then read that squatted document through the old `get` rule's path-only
+  branch (`isOwnResultDocId(docId)`, independent of `owns(resource.data)`) — result spoofing; A
+  retained read/update access through the body-only branch; and B could not overwrite it, since the
+  existing body's `navigatorId` no longer matched B — a denial-of-service against the victim's own
+  future submission. Fixed: `get`/`create`/`update` now require the doc ID AND the body to both
+  belong to the caller (`isOwnResultDocId(docId) && (!exists(...) || owns(resource.data))` for reads).
+  See
   [§6](#6-technical-decisions-log) 2026-07-13 entry. Covered by a committed Firestore emulator
   regression suite (`tests/firestore-rules/result-authorization.rules.mjs`, run via
   `npm run test:rules`), not just a manual verification note.
@@ -1675,6 +1691,24 @@ npm run test:e2e     # run the Playwright browser tests (auto-builds + starts th
 - **Deployment prerequisite:** this branch intentionally fails closed without Firebase Admin and
   an explicit production supervisor passcode. Follow the rollout order in `.env.local.example` /
   `README.md`; tightening rules before deploying the identity endpoints would lock users out.
+- **Deployment prerequisite — pre-publish existing-results integrity scan (2026-07-13, not yet
+  run):** the 2026-07-13 result-document-ID/body ownership rules are fail-closed against any
+  ALREADY-EXISTING malformed `results` document (path belongs to one navigator, stored `navigatorId`
+  belongs to another) — once published, NEITHER navigator could read or repair it; only a
+  supervisor/server administrator could. Before publishing those rules, a trusted operator must run
+  a **read-only** scan of the `results` collection using Firebase Admin access (never navigator
+  client access): for every document, validate the document ID against its own
+  `navigatorId`/`department`/`assessmentType` using the canonical forms — MCQ
+  `<navigatorId>__<department>`, Spot `<navigatorId>__<department>__spot`, QA
+  `<navigatorId>__<department>__qa`, departments `pediatrics`/`obgyn`, plus the legacy
+  `<navigatorId>`-only form (valid only as legacy Pediatrics MCQ) — and flag: missing `navigatorId`;
+  a document ID belonging to a different `navigatorId`; an unsupported department or
+  `assessmentType`; a suffix inconsistent with `assessmentType`; a legacy plain ID carrying
+  non-Pediatrics/non-MCQ data; and duplicate/conflicting canonical slots. Investigate every
+  mismatch and quarantine/archive/manually correct affected documents (preserving evidence first)
+  via trusted administrator access before the tightened rules go live. **This scan has not been run
+  against production; no claim is made that the production `results` collection is or is not
+  clean.**
 - **Browser/live-service validation gap:** unit/build/server checks are complete, but microphone
   interoperability and real Firebase/Gemini behavior still require the safe post-deploy smoke and
   a deliberate voice call on the target browser.
@@ -1806,8 +1840,10 @@ npm run test:e2e     # run the Playwright browser tests (auto-builds + starts th
 
 1. **Maintain this CLAUDE.md** on every change (highest standing priority).
 2. **Deploy the identity boundary safely** — add Firebase Admin + supervisor secrets, deploy this
-   code, verify navigator/supervisor token exchange, then publish the **tightened (2026-07-13)**
-   Firestore rules (result document-ID + body ownership binding). Never reverse that order.
+   code, verify navigator/supervisor token exchange, **run the read-only pre-publish existing-results
+   integrity scan** (see [§12](#12-bugs--known-issues) "pre-publish existing-results integrity scan")
+   and resolve any flagged documents, then publish the **tightened (2026-07-13)** Firestore rules
+   (result document-ID + body ownership binding). Never reverse that order.
 3. **Post-deploy browser smoke** — run the safe Playwright suite and one deliberate microphone call;
    the container cannot prove real browser permission/device or live Firebase/Gemini behavior.
 4. **Deeper role-app tests** — current unit/behavior coverage is broad; editing questions,
@@ -1893,13 +1929,18 @@ npm run test:e2e     # run the Playwright browser tests (auto-builds + starts th
   Confirm Pass + Override to Fail; AI FAIL → Confirm Fail + Override to Pass; NEEDS REVIEW →
   override-only, reason required); `_qa-rubric.js` pass/fail math + capability matrix unchanged).
 - ✅ Result document-ID/body ownership binding + NavigatorApp own-row identity fix — done
-  2026-07-13 (815 tests, 42 test files, + a new committed 51-assertion Firestore Rules emulator
-  suite run via `npm run test:rules` and wired into CI). Closed the PR #26 result-document
-  "squatting" hole (path-only vs. body-only ownership checked as independent ORs) by requiring
-  both for `get`/`create`/`update`; fixed a related NavigatorApp bug where a stale floor-projection
-  copy of the current navigator could outrank their own fresh result on the dashboard
+  2026-07-13 (a new committed 51-assertion Firestore Rules emulator suite run via
+  `npm run test:rules` and wired into CI; see [§8](#8-current-system-state) for the current unit
+  test totals). Closed the PR #26 result-document "squatting" hole — `create` checked only body
+  ownership with no path check, letting a navigator create a document at another navigator's
+  deterministic path with their own `navigatorId` in the body, which the old `get` rule's path-only
+  branch would then expose to the path's rightful owner — by requiring BOTH path and body ownership
+  for `get`/`create`/`update`; fixed a related NavigatorApp bug where a stale floor-projection copy
+  of the current navigator could outrank their own fresh result on the dashboard
   (`src/lib/navigatorResultMerge.js`). Documented, not fixed here: MCQ/Spot scoring remains
   client-computed — see §12/§15 for the separate future server-authoritative scoring migration.
+  A **read-only pre-publish integrity scan of the existing `results` collection** (trusted Admin
+  access only) is a rollout prerequisite before the tightened rules are published — see §12/§15.
 
 ---
 

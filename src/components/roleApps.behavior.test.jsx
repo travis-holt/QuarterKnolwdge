@@ -393,7 +393,7 @@ describe('NavigatorApp — flow behavior', () => {
     expect(await deptHeading()).toBeInTheDocument();
   });
 
-  it('shows the fresh own score once (not a stale duplicate) when the floor projection has a stale copy of the current navigator', async () => {
+  it('uses the fresh own score when the mentor projection contains a stale copy of the current navigator', async () => {
     // Own stored MCQ result: fresh, intake = 92 (a value not otherwise used
     // by any domain in the shared DOMAIN_SCORES fixture, so it can't collide).
     dbMocks.getResult.mockImplementation((_id, dept, type) => {
@@ -425,10 +425,15 @@ describe('NavigatorApp — flow behavior', () => {
     fireEvent.click(screen.getByText('Pediatrics').closest('button'));
     await screen.findByText('AI PASS · PENDING REVIEW'); // on the dashboard
 
-    // The fresh own score (92) is shown, not the stale floor projection (15).
+    // NavigatorApp resolves the current navigator from the fresh own result,
+    // not the stale floor projection: the fresh score (92) renders and the
+    // stale one (15) does not. This proves score freshness in the rendered
+    // app; exact same-ID row collapse is proven directly (with an inspectable
+    // merged array) by mergeNavigatorFloorAndOwnResult's own unit tests in
+    // navigatorResultMerge.test.js — this test cannot assert "exactly one
+    // row" itself, since the navigator's name legitimately appears elsewhere
+    // on the dashboard (headings, nav, etc.) regardless of the merge outcome.
     await waitFor(() => expect(screen.getByText('92% in this domain')).toBeInTheDocument());
     expect(screen.queryByText('15% in this domain')).not.toBeInTheDocument();
-    // Exactly one row for the current navigator — no duplicate produced by the merge.
-    expect(screen.getAllByText('Nav One').length).toBeGreaterThan(0);
   });
 });
