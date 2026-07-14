@@ -120,10 +120,10 @@ describe('geminiWithRotation', () => {
     vi.restoreAllMocks();
   });
 
-  it('returns { ok: true, text } on a successful first call', async () => {
+  it('returns { ok: true, text, model } on a successful first call', async () => {
     fetch.mockResolvedValue(okResponse('hello'));
     const result = await geminiWithRotation(['key1'], {}, { label: 'test' });
-    expect(result).toEqual({ ok: true, text: 'hello' });
+    expect(result).toEqual({ ok: true, text: 'hello', model: MODEL });
     expect(fetch).toHaveBeenCalledTimes(1);
   });
 
@@ -132,7 +132,7 @@ describe('geminiWithRotation', () => {
       .mockResolvedValueOnce(errResponse(429))
       .mockResolvedValueOnce(okResponse('retry-ok'));
     const result = await geminiWithRotation(['key1', 'key2'], {}, { label: 'test' });
-    expect(result).toEqual({ ok: true, text: 'retry-ok' });
+    expect(result).toEqual({ ok: true, text: 'retry-ok', model: MODEL });
     expect(fetch).toHaveBeenCalledTimes(2);
   });
 
@@ -163,7 +163,7 @@ describe('geminiWithRotation', () => {
       .mockRejectedValueOnce(new Error('network'))
       .mockResolvedValueOnce(okResponse('recovered'));
     const result = await geminiWithRotation(['k1', 'k2'], {}, { label: 'test' });
-    expect(result).toEqual({ ok: true, text: 'recovered' });
+    expect(result).toEqual({ ok: true, text: 'recovered', model: MODEL });
   });
 
   it('returns exhausted (not auth) when mix of 429 and network errors', async () => {
@@ -182,7 +182,9 @@ describe('geminiWithRotation', () => {
       .mockResolvedValueOnce(errResponse(429)) // k2 on MODEL
       .mockResolvedValueOnce(okResponse('lite-ok')); // first key tried on LITE_MODEL
     const result = await geminiWithRotation(['k1', 'k2'], {}, { label: 'test', models: [MODEL, LITE_MODEL] });
-    expect(result).toEqual({ ok: true, text: 'lite-ok' });
+    // The returned model is the one that actually answered — the fallback, not
+    // the requested default.
+    expect(result).toEqual({ ok: true, text: 'lite-ok', model: LITE_MODEL });
     expect(fetch).toHaveBeenCalledTimes(3);
     // first two calls hit the primary model, the third the fallback
     expect(fetch.mock.calls[0][0]).toContain(`/models/${MODEL}:`);
@@ -193,7 +195,7 @@ describe('geminiWithRotation', () => {
   it('does not touch the fallback model when the primary succeeds', async () => {
     fetch.mockResolvedValue(okResponse('primary-ok'));
     const result = await geminiWithRotation(['k1'], {}, { label: 'test', models: [MODEL, LITE_MODEL] });
-    expect(result).toEqual({ ok: true, text: 'primary-ok' });
+    expect(result).toEqual({ ok: true, text: 'primary-ok', model: MODEL });
     expect(fetch).toHaveBeenCalledTimes(1);
     expect(fetch.mock.calls[0][0]).toContain(`/models/${MODEL}:`);
   });
@@ -217,6 +219,14 @@ describe('geminiWithRotation', () => {
     const result = await geminiWithRotation(['k1'], {}, { label: 'test' });
     expect(result).toEqual({ ok: false, reason: 'exhausted' });
     expect(fetch).toHaveBeenCalledTimes(1); // no second-model retry
+  });
+
+  it('returns the actual successful model (a single pinned model returns that model)', async () => {
+    fetch.mockResolvedValue(okResponse('pinned'));
+    const result = await geminiWithRotation(['k1', 'k2'], {}, { label: 'grade-call-qa', models: [STABLE_MODEL] });
+    expect(result.model).toBe(STABLE_MODEL);
+    // Backward compatible: callers that only read text still work.
+    expect(result.text).toBe('pinned');
   });
 
   // ── per-key cooldown ───────────────────────────────────────────────────────
@@ -246,7 +256,7 @@ describe('geminiWithRotation', () => {
     expect(fetch).toHaveBeenCalledTimes(2);
 
     const result = await geminiWithRotation(['ka', 'kb'], {}, { label: 'test' });
-    expect(result).toEqual({ ok: true, text: 'ok' });
+    expect(result).toEqual({ ok: true, text: 'ok', model: MODEL });
     expect(fetch).toHaveBeenCalledTimes(3);
     expect(fetch.mock.calls[2][0]).toContain('key=kb'); // ka was skipped
   });
@@ -264,7 +274,7 @@ describe('geminiWithRotation', () => {
 
     Date.now.mockReturnValue(t0 + 6000); // past the 5s retryDelay
     expect(await geminiWithRotation(['k1'], {}, { label: 'test' }))
-      .toEqual({ ok: true, text: 'back' });
+      .toEqual({ ok: true, text: 'back', model: MODEL });
     expect(fetch).toHaveBeenCalledTimes(2);
   });
 
@@ -286,7 +296,7 @@ describe('geminiWithRotation', () => {
     expect(fetch).toHaveBeenCalledTimes(2);
 
     const result = await geminiWithRotation(['k1'], {}, { label: 'test', models: [MODEL, STABLE_MODEL] });
-    expect(result).toEqual({ ok: true, text: 'stable-ok' });
+    expect(result).toEqual({ ok: true, text: 'stable-ok', model: STABLE_MODEL });
     expect(fetch).toHaveBeenCalledTimes(3); // MODEL skipped — only STABLE_MODEL was called
     expect(fetch.mock.calls[2][0]).toContain(`/models/${STABLE_MODEL}:`);
   });
@@ -297,7 +307,7 @@ describe('geminiWithRotation', () => {
       .mockResolvedValue(okResponse('lite-ok'));
     await geminiWithRotation(['k1'], {}, { label: 'test' }); // MODEL-only request trips it
     const result = await geminiWithRotation(['k1'], {}, { label: 'test', models: [MODEL, LITE_MODEL] });
-    expect(result).toEqual({ ok: true, text: 'lite-ok' });
+    expect(result).toEqual({ ok: true, text: 'lite-ok', model: LITE_MODEL });
     // second request skipped MODEL (cooling) and went straight to LITE_MODEL
     expect(fetch).toHaveBeenCalledTimes(2);
     expect(fetch.mock.calls[1][0]).toContain(`/models/${LITE_MODEL}:`);

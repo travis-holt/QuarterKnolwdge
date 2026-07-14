@@ -8,6 +8,13 @@ const SHARED_SCORING_NOTES = [
   'Do not require a scripted phrase; grade the decision quality, documentation, and boundaries.',
 ];
 
+// Bank-level default scenario version — bump when the curated scenario set or its
+// expected behaviors/scoring notes materially change. Every scenario inherits it
+// through the factory below; an individual scenario may override `version` later
+// if it evolves independently. The trusted (server-resolved) version is recorded
+// on every stored QA result (qa.gradingMetadata.scenarioVersion).
+export const CALL_QA_SCENARIO_BANK_VERSION = 'call-qa-scenarios-v1';
+
 function scenario({
   id,
   department,
@@ -23,6 +30,7 @@ function scenario({
   expectedActions,
   criticalMisses,
   scoringNotes = SHARED_SCORING_NOTES,
+  version = CALL_QA_SCENARIO_BANK_VERSION,
 }) {
   return {
     id,
@@ -39,6 +47,7 @@ function scenario({
     expectedActions,
     criticalMisses,
     scoringNotes,
+    version,
   };
 }
 

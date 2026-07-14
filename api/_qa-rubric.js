@@ -22,60 +22,146 @@ import {
   QA_RUBRIC,
   QA_AUTO_FAILS,
   QA_PASS_THRESHOLD,
+  QA_RUBRIC_VERSION,
   VERDICTS,
+  BASES,
   rubricCriteria,
 } from '../src/data/qaRubric.js';
 
-export { QA_RUBRIC, QA_AUTO_FAILS, QA_PASS_THRESHOLD, VERDICTS, rubricCriteria };
+export { QA_RUBRIC, QA_AUTO_FAILS, QA_PASS_THRESHOLD, QA_RUBRIC_VERSION, VERDICTS, BASES, rubricCriteria };
 
 // ── Evidence verification ────────────────────────────────────────────────────
 
+// A small, conservative, deterministic contraction expansion so a quote and a
+// transcript turn match even when one wrote "I'm" and the other "I am". Applied
+// to BOTH sides before punctuation is stripped. Only unambiguous contractions
+// are expanded; possessive "'s" is left to be stripped as punctuation.
+const CONTRACTIONS = [
+  [/\bcan['’]t\b/g, 'can not'],
+  [/\bwon['’]t\b/g, 'will not'],
+  [/\bshan['’]t\b/g, 'shall not'],
+  [/\bain['’]t\b/g, 'is not'],
+  [/(\w)n['’]t\b/g, '$1 not'],       // didn't → did not, isn't → is not, …
+  [/\bi['’]m\b/g, 'i am'],
+  [/\bit['’]s\b/g, 'it is'],
+  [/\bthat['’]s\b/g, 'that is'],
+  [/\bwhat['’]s\b/g, 'what is'],
+  [/\bhe['’]s\b/g, 'he is'],
+  [/\bshe['’]s\b/g, 'she is'],
+  [/\bthere['’]s\b/g, 'there is'],
+  [/\blet['’]s\b/g, 'let us'],
+  [/(\w)['’]re\b/g, '$1 are'],       // you're → you are, we're → we are
+  [/(\w)['’]ve\b/g, '$1 have'],      // I've → I have
+  [/(\w)['’]ll\b/g, '$1 will'],      // I'll → I will
+  [/(\w)['’]d\b/g, '$1 would'],      // I'd → I would
+];
+
 function normalizeForMatch(s) {
-  return String(s ?? '')
-    .toLowerCase()
+  let text = String(s ?? '').toLowerCase().replace(/[‘’]/g, "'");
+  for (const [pattern, replacement] of CONTRACTIONS) text = text.replace(pattern, replacement);
+  return text
     .replace(/[^\p{L}\p{N}\s]/gu, ' ')
     .replace(/\s+/g, ' ')
     .trim();
 }
 
+// Caller-side role aliases: historical fixtures use `patient`, live transcripts
+// use `patient`, and some corpora say `caller`. They are equivalent and are NEVER
+// eligible when navigator evidence is required.
+const CALLER_ROLES = new Set(['patient', 'caller']);
+
+function turnMatchesRole(turnRole, role) {
+  if (role === 'navigator') return turnRole === 'navigator';
+  if (role === 'caller' || role === 'patient') return CALLER_ROLES.has(turnRole);
+  return turnRole === role;
+}
+
+function eligibleTurns(transcript, role) {
+  return (Array.isArray(transcript) ? transcript : []).filter((t) => turnMatchesRole(t?.role, role));
+}
+
+// A quote must be substantive (2+ words) to be evidence — a single word can
+// match by accident and proves nothing.
+function quoteWords(needle) {
+  return needle.split(' ').filter(Boolean);
+}
+
 /**
- * True when the quoted evidence actually appears in the transcript.
+ * True when the quoted evidence really appears — as ONE contiguous, in-order
+ * span — inside a SINGLE eligible transcript turn of the required role.
  *
- * The model is told to quote one contiguous line, but in practice it sometimes
- * stitches lines from several turns (or lightly paraphrases one line while
- * quoting the next verbatim) — so the quote is split into fragments on
- * newlines, ellipses, adjacent quote marks, and sentence boundaries (role
- * labels stripped), and the evidence stands if ANY substantive fragment
- * (2+ words) is really in the call: one genuine quoted sentence is proof of
- * the behavior; the gate exists to kill fully-hallucinated evidence, not to
- * punish quoting format.
+ * This intentionally does NOT stitch fragments across turns, does NOT match an
+ * unordered word bag, and does NOT search the concatenated full transcript. For
+ * Call QA, `role` is always 'navigator': caller/patient wording can never award
+ * a navigator criterion, verify a navigator auto-fail, or validate an
+ * evidence-based negative judgment.
  *
- * Per fragment: normalized substring of the full call text, with a fallback for
- * 4+ word fragments where every word appears within one single turn (tolerates
- * reordered stitching like "I'm" → "I am").
+ * Matching tolerances (applied via `normalizeForMatch`): case, punctuation,
+ * repeated whitespace, curly vs. straight apostrophes, and a small deterministic
+ * contraction normalization ("I'm" ↔ "I am"). No fuzzy/semantic matching.
+ *
  * @param {{role:string, text:string}[]} transcript
  * @param {string} quote
+ * @param {{role?: 'navigator'|'caller'|'patient', requireSingleTurn?: boolean}} [opts]
  */
-export function verifyEvidence(transcript, quote) {
-  const fragments = String(quote ?? '')
-    .split(/\r?\n|\.{3}|…|["”]\s*["“]|(?<=[.!?])\s+/)
-    .map((f) => f.replace(/^\s*["'“”]*\s*(navigator|caller|patient)\s*:\s*/i, ''))
-    .map(normalizeForMatch)
-    .filter((f) => f.split(' ').filter(Boolean).length >= 2);
-  if (fragments.length === 0) return false;
-  const full = normalizeForMatch(transcript.map((t) => t.text).join(' '));
-  return fragments.some((q) => {
-    if (full.includes(q)) return true;
-    const words = q.split(' ');
-    if (words.length < 4) return false;
-    return transcript.some((t) => {
-      const turn = ` ${normalizeForMatch(t.text)} `;
-      return words.every((w) => turn.includes(` ${w} `));
-    });
-  });
+export function verifyEvidence(transcript, quote, { role = 'navigator', requireSingleTurn = true } = {}) {
+  const stripped = String(quote ?? '').replace(/^\s*["'“”]*\s*(navigator|caller|patient)\s*:\s*/i, '');
+  const needle = normalizeForMatch(stripped);
+  if (quoteWords(needle).length < 2) return false;
+
+  const turns = eligibleTurns(transcript, role);
+  if (turns.length === 0) return false;
+
+  // requireSingleTurn (the grading default): the quote must be a contiguous
+  // substring of ONE eligible turn. When false, we still never touch the mixed
+  // full transcript — we only join same-role eligible turns — so caller wording
+  // can never leak in. Grading always passes requireSingleTurn: true.
+  if (requireSingleTurn) {
+    return turns.some((t) => normalizeForMatch(t.text).includes(needle));
+  }
+  const sameRoleJoined = normalizeForMatch(turns.map((t) => t.text).join(' '));
+  return sameRoleJoined.includes(needle);
+}
+
+// Grading always requires one navigator turn. A single shared options object so
+// every call site verifies evidence the same way.
+const NAVIGATOR_EVIDENCE = { role: 'navigator', requireSingleTurn: true };
+export function verifyNavigatorEvidence(transcript, quote) {
+  return verifyEvidence(transcript, quote, NAVIGATOR_EVIDENCE);
 }
 
 // ── Response validation (model output → trusted verdicts) ───────────────────
+
+// Is there a substantive (2+ word) evidence quote present?
+function hasSubstantiveEvidence(evidence) {
+  return quoteWords(normalizeForMatch(evidence)).length >= 2;
+}
+
+/**
+ * Validate one criterion's verdict/basis/evidence combination. Returns an error
+ * string for a malformed combination (so the whole response is rejected and the
+ * existing malformed-response retry runs), or null when the combination is legal.
+ *
+ * Legal shapes:
+ *   MET      + EVIDENCE + non-empty evidence
+ *   NOT_MET  + EVIDENCE + non-empty evidence   (observed wrong/unsafe behavior)
+ *   NOT_MET  + ABSENCE  + no substantive evidence (behavior simply absent)
+ *   NA       + ABSENCE
+ */
+export function validateCriterionBasis(verdict, basis, evidence) {
+  if (!BASES.has(basis)) return `unknown or missing basis "${basis}".`;
+  const hasEvidence = String(evidence ?? '').trim().length > 0;
+  if (verdict === 'MET') {
+    if (basis !== 'EVIDENCE') return 'MET must use basis EVIDENCE.';
+    if (!hasEvidence) return 'MET requires a non-empty evidence quote.';
+  } else if (verdict === 'NOT_MET') {
+    if (basis === 'EVIDENCE' && !hasEvidence) return 'NOT_MET with basis EVIDENCE requires an evidence quote.';
+    if (basis === 'ABSENCE' && hasSubstantiveEvidence(evidence)) return 'NOT_MET with basis ABSENCE must not carry a substantive evidence quote.';
+  } else if (verdict === 'NA') {
+    if (basis !== 'ABSENCE') return 'NA must use basis ABSENCE.';
+  }
+  return null;
+}
 
 /**
  * Validate the model's raw JSON against the rubric. Pure; no I/O.
@@ -91,12 +177,14 @@ export function validateQaResponse(parsed) {
     if (!c || typeof c !== 'object' || typeof c.id !== 'string') continue;
     const verdict = String(c.verdict ?? '').toUpperCase();
     if (!VERDICTS.has(verdict)) continue;
-    byId.set(c.id, {
-      id: c.id,
-      verdict,
-      evidence: typeof c.evidence === 'string' ? c.evidence : '',
-      note: typeof c.note === 'string' ? c.note : '',
-    });
+    const basis = String(c.basis ?? '').toUpperCase();
+    const evidence = typeof c.evidence === 'string' ? c.evidence : '';
+    const note = typeof c.note === 'string' ? c.note : '';
+    // Reject malformed verdict/basis/evidence combinations rather than silently
+    // coercing them — this trips the endpoint's malformed-response retry.
+    const basisError = validateCriterionBasis(verdict, basis, evidence);
+    if (basisError) return { error: `Criterion ${c.id}: ${basisError}` };
+    byId.set(c.id, { id: c.id, verdict, basis, evidence, note });
   }
 
   const missing = rubricCriteria().filter((c) => !byId.has(c.id)).map((c) => c.id);
@@ -442,13 +530,19 @@ export function repairQaVerdictsForScenario(validated, transcript, context = {})
   const completeRefill = signals.medication && signals.pharmacy && signals.callback && signals.outOrUrgency;
   const needsMessage = routingPolicy?.messageRepair === true;
 
+  // A repair may only be applied when its replacement evidence verifies as ONE
+  // navigator turn — a repair must never introduce unverifiable (or caller-side)
+  // evidence. If it does not verify, the grader's NOT_MET stands.
   const applyRepair = (criterion, rule, reason) => {
+    if (!verifyNavigatorEvidence(transcript, signals.committedRoutingLine)) return;
     repairs.push({
       criterionId: criterion.id, rule, from: criterion.verdict, to: 'MET', reason,
       evidence: signals.committedRoutingLine,
-      originalVerdict: criterion.verdict, originalNote: criterion.note, originalEvidence: criterion.evidence,
+      originalVerdict: criterion.verdict, originalBasis: criterion.basis,
+      originalNote: criterion.note, originalEvidence: criterion.evidence,
     });
-    criterion.verdict = 'MET'; criterion.evidence = signals.committedRoutingLine; criterion.note = reason;
+    criterion.verdict = 'MET'; criterion.basis = 'EVIDENCE';
+    criterion.evidence = signals.committedRoutingLine; criterion.note = reason;
   };
 
   for (const criterion of criteria) {
@@ -545,17 +639,37 @@ export function scoreQa(verdicts, autoFails, transcript) {
 
   const criteria = verdicts.map((v) => {
     const def = defs.get(v.id);
+    // Preserve the raw validated model judgment untouched, so trust-gate and
+    // repair changes never erase what the grader actually said.
+    const modelJudgment = { verdict: v.verdict, basis: v.basis, evidence: v.evidence, note: v.note };
     let verdict = v.verdict;
+    let basis = v.basis;
     let unverified = false;
-    if (verdict === 'MET' && !verifyEvidence(transcript, v.evidence)) {
+    let unresolved = false;
+    let unresolvedReason = null;
+
+    if (verdict === 'MET' && !verifyNavigatorEvidence(transcript, v.evidence)) {
+      // A MET whose quote can't be verified in a navigator turn loses the credit.
       verdict = 'NOT_MET';
+      basis = 'ABSENCE';
       unverified = true;
+    } else if (verdict === 'NOT_MET' && basis === 'EVIDENCE'
+      && !verifyNavigatorEvidence(transcript, v.evidence)) {
+      // An evidence-based negative whose offending quote can't be verified in a
+      // navigator turn is NOT fully trustworthy. It stays provisionally NOT_MET
+      // for scoring (never becomes MET), but is marked unresolved so the review
+      // layer forces supervisor review and the UI never calls it "observed".
+      unresolved = true;
+      unresolvedReason = 'negative-evidence-not-verified';
     }
-    if (verdict === 'NA' && def.core) verdict = 'NOT_MET';
+    if (verdict === 'NA' && def.core) { verdict = 'NOT_MET'; basis = 'ABSENCE'; }
+
     return {
       id: def.id, text: def.text, points: def.points,
       categoryId: def.categoryId, categoryName: def.categoryName,
-      verdict, evidence: v.evidence, note: v.note, unverified,
+      verdict, basis, evidence: v.evidence, note: v.note,
+      unverified, unresolved, unresolvedReason,
+      modelJudgment,
     };
   });
 
@@ -579,7 +693,8 @@ export function scoreQa(verdicts, autoFails, transcript) {
   const verifiedAutoFails = [];
   const unverifiedAutoFails = [];
   for (const a of autoFails) {
-    (verifyEvidence(transcript, a.evidence) ? verifiedAutoFails : unverifiedAutoFails).push(withText(a));
+    // An auto-fail is a navigator behavior: only a navigator turn can verify it.
+    (verifyNavigatorEvidence(transcript, a.evidence) ? verifiedAutoFails : unverifiedAutoFails).push(withText(a));
   }
 
   const autoFailed = verifiedAutoFails.length > 0;
@@ -645,6 +760,20 @@ export function assessQa(qa, transcript, { correctedTurns = 0, repairs = [], det
       detail: `${unverified.length} criterion verdict(s) cited quotes not found in the transcript and were scored NOT MET (${unverified.map((c) => c.id).join(', ')}). Confirm against the transcript.`,
     });
   }
+
+  // Evidence-based NOT_MET judgments whose offending quote could not be verified
+  // in a navigator turn: the grader ALLEGED an observed wrong/unsafe behavior but
+  // the quote does not hold up. They stay provisionally NOT_MET but must not be
+  // presented as definitively observed, and they force supervisor review.
+  const unresolvedNegatives = qa.criteria.filter((c) => c.unresolved);
+  if (unresolvedNegatives.length > 0) {
+    flags.push({
+      id: 'unresolved-negative-evidence',
+      label: 'Negative finding could not be verified',
+      detail: `The grader reported ${unresolvedNegatives.length} negative finding(s) as observed (${unresolvedNegatives.map((c) => c.id).join(', ')}) but the quoted navigator evidence did not verify. Confirm against the transcript before treating them as observed behaviors.`,
+    });
+  }
+  const unresolvedSafety = unresolvedNegatives.filter((c) => SAFETY_CRITICAL_CRITERIA.has(c.id));
 
   if (qa.unverifiedAutoFails?.length > 0) {
     flags.push({
@@ -731,10 +860,14 @@ export function assessQa(qa, transcript, { correctedTurns = 0, repairs = [], det
 
   const safetyRisk = qa.autoFails.length > 0 || qa.unverifiedAutoFails?.length > 0
     ? 'critical'
-    : safetyMissed.length > 0 ? 'elevated' : 'none';
+    : safetyMissed.length > 0 || unresolvedSafety.length > 0 ? 'elevated' : 'none';
 
   let recommendation;
   if (qa.autoFails.length > 0) recommendation = 'fail';
+  // An unresolved negative (grader alleged an observed miss its quote can't back
+  // up) can never produce a confident verdict — a supervisor decides, regardless
+  // of the numerical score. Safety-critical unresolved negatives elevate risk.
+  else if (unresolvedNegatives.length > 0) recommendation = 'needs_review';
   else if (confidence === 'low' || borderline || qa.unverifiedAutoFails?.length > 0) recommendation = 'needs_review';
   else if (qa.pass && safetyMissed.length > 0) recommendation = 'needs_review'; // never an unreviewed pass over a safety miss
   else if (repairFlippedOutcome) recommendation = 'needs_review'; // repairs are decision support, not the final word
@@ -762,7 +895,9 @@ export function buildGradeProjection(qa) {
     summary += ` FLAGGED FOR SUPERVISOR REVIEW (${qa.review.reviewFlags.map((f) => f.label).join('; ')}).`;
   }
 
-  const quote = (c) => (c.evidence && !c.unverified ? ` — "${c.evidence}"` : '');
+  // Only quote evidence that actually verified: never present an unverified MET
+  // or an unresolved (unverifiable) negative quote as if it were observed.
+  const quote = (c) => (c.evidence && !c.unverified && !c.unresolved ? ` — "${c.evidence}"` : '');
   const strengths = qa.criteria
     .filter((c) => c.verdict === 'MET')
     .sort((a, b) => b.points - a.points)

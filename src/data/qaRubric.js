@@ -95,6 +95,18 @@ export const QA_AUTO_FAILS = [
 export const QA_PASS_THRESHOLD = 85;
 export const VERDICTS = new Set(['MET', 'NOT_MET', 'NA']);
 
+// Every negative/positive judgment must declare its BASIS: EVIDENCE = the model
+// observed the behavior and quotes it; ABSENCE = the behavior simply did not
+// happen (nothing to quote). This lets the pipeline distinguish "the navigator
+// did the wrong thing (here is the line)" from "the navigator never did it".
+export const BASES = new Set(['EVIDENCE', 'ABSENCE']);
+
+// Rubric version — bump whenever the criteria set, their points, category
+// weights, or auto-fail definitions change. Recorded on every stored QA result
+// (qa.gradingMetadata.rubricVersion) so a supervisor can tell which rubric graded
+// a historical attempt.
+export const QA_RUBRIC_VERSION = 'qa-rubric-v1';
+
 export function rubricCriteria(rubric = QA_RUBRIC) {
   return rubric.flatMap((cat) =>
     cat.criteria.map((c) => ({ ...c, categoryId: cat.id, categoryName: cat.name })));

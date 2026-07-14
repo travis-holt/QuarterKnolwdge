@@ -86,14 +86,17 @@ export function simulateGrader(transcript, profile = {}) {
   const navLines = transcript.filter((t) => t.role === 'navigator').map((t) => t.text);
   const defaultQuote = navLines.reduce((a, b) => (b.length > a.length ? b : a), navLines[0] ?? '');
   const criteria = rubricCriteria().map((c) => {
-    if (na.includes(c.id)) return { id: c.id, verdict: 'NA', evidence: '', note: 'Not applicable to this scenario.' };
+    if (na.includes(c.id)) return { id: c.id, verdict: 'NA', basis: 'ABSENCE', evidence: '', note: 'Not applicable to this scenario.' };
     if (c.id in notMet) {
       const entry = notMet[c.id];
       const note = typeof entry === 'string' ? entry : entry.note;
       const evidence = typeof entry === 'string' ? '' : (entry.evidence ?? '');
-      return { id: c.id, verdict: 'NOT_MET', evidence, note };
+      // A quoted offending line is an OBSERVED (EVIDENCE) miss; a note-only miss
+      // is an ABSENCE. This mirrors how a real grader must report each shape.
+      const basis = evidence ? 'EVIDENCE' : 'ABSENCE';
+      return { id: c.id, verdict: 'NOT_MET', basis, evidence, note };
     }
-    return { id: c.id, verdict: 'MET', evidence: metEvidence[c.id] ?? defaultQuote, note: '' };
+    return { id: c.id, verdict: 'MET', basis: 'EVIDENCE', evidence: metEvidence[c.id] ?? defaultQuote, note: '' };
   });
   return { criteria, autoFails: autoFails.map((a) => ({ triggered: true, note: '', ...a })) };
 }

@@ -3,6 +3,7 @@ import { DOMAINS } from '../data/questions.js';
 import { interviewScoreColor } from '../data/config.js';
 import { selectCallQaScenario } from '../data/callQaScenarios.js';
 import { saveInterview, updateInterviewGrade } from '../lib/db.js';
+import { qaAiResultLabel } from '../lib/qaFinalReview.js';
 import { apiFetch } from '../lib/apiFetch.js';
 import { selectPracticeDomain } from '../lib/practiceDomain.js';
 import { getFirebaseIdToken } from '../lib/firebase.js';
@@ -787,11 +788,11 @@ export default function VoiceCall({ navigatorId, name, department = 'pediatrics'
             <p className="interview__score-label">Call QA Test</p>
             {qa ? (
               <>
-                <p className="qa-result__verdict">{needsReview ? 'NEEDS REVIEW' : qa.pass ? 'PASS' : 'FAIL'}</p>
+                <p className="qa-result__verdict">{qaAiResultLabel(qa)}</p>
                 <p className="interview__score-value" style={{ color: verdictColor }}>
                   {qa.score}<span className="interview__score-denom">/100</span>
                 </p>
-                <p className="readoff__sub">Pass mark: {qa.passThreshold}. No partial credit — every criterion is met or missed.</p>
+                <p className="readoff__sub">Pass mark: {qa.passThreshold}. No partial credit — every criterion is met or missed. This is an AI recommendation pending supervisor review — not a final verdict.</p>
                 {needsReview && (
                   <p className="readoff__sub qa-result__review-note">
                     This result is flagged for supervisor review — the score alone doesn&rsquo;t decide it.

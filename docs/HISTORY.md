@@ -1,5 +1,81 @@
 # Development History - Knowledge Check
 
+### 2026-07-14 (part 5) - Call QA evidence integrity + model auditability (PR 1)
+- **Context:** hardening pass on the existing Call QA grading pipeline (F25). The pipeline was
+  reliable but had three trust gaps: (1) evidence verification (`verifyEvidence`) matched against
+  the *concatenated full transcript* and had an unordered word-bag fallback, so a quote could be
+  "verified" from caller wording or stitched across turns; (2) a NOT_MET verdict did not
+  distinguish an *observed wrong behavior* from an *absent behavior*, and an unverifiable negative
+  allegation was treated as fully trustworthy; (3) scored Call QA used a `[MODEL, STABLE, LITE]`
+  fallback chain, so a scored assessment could be graded by an un-recorded, un-calibrated model, and
+  no model/version provenance was stored. **This PR does NOT make the transcript server-authoritative
+  (that is PR 2).**
+- **Evidence integrity:** `verifyEvidence(transcript, quote, { role, requireSingleTurn })` now
+  matches a normalized, in-order, **contiguous substring inside ONE eligible turn** of the required
+  role (grading always uses `verifyNavigatorEvidence` = `{ role: 'navigator', requireSingleTurn:
+  true }`). Removed the unordered `words.every(...)` fallback and the full-transcript concatenation.
+  `patient`/`caller` are equivalent caller-side aliases and never satisfy a navigator criterion,
+  auto-fail, or negative evidence. Matching tolerates case, punctuation, repeated whitespace, curly
+  apostrophes, and a small deterministic contraction normalization ("I'm" ↔ "I am") — no fuzzy or
+  semantic matching. All MET criterion evidence, auto-fail evidence, evidence-based NOT_MET, and
+  deterministic repair evidence go through this one verifier; a repair is only applied when its
+  replacement evidence verifies as one navigator turn.
+- **Negative-judgment basis:** every grader criterion now carries `basis` (`EVIDENCE` | `ABSENCE`).
+  MET → EVIDENCE + quote; an OBSERVED wrong/unsafe miss → NOT_MET/EVIDENCE + quoted navigator line;
+  a never-happened behavior → NOT_MET (or NA)/ABSENCE + empty evidence. `validateQaResponse` (and
+  the exported `validateCriterionBasis`) reject any other combination (MET/ABSENCE, MET-empty,
+  NOT_MET/EVIDENCE-empty, NOT_MET/ABSENCE-with-evidence, NA/EVIDENCE, unknown/missing basis) so the
+  existing malformed-response retry runs — malformed output is never silently coerced. The response
+  schema + grader prompt require and explain `basis`.
+- **Unresolved negatives:** a NOT_MET/EVIDENCE whose quote fails navigator verification stays
+  provisionally NOT_MET (never becomes MET) but is marked `unresolved` + `unresolvedReason`, forces
+  `recommendation: needs_review` via the new `unresolved-negative-evidence` review flag, and raises
+  `safetyRisk` to at least `elevated` when the criterion is safety-critical. It is never presented
+  as observed (excluded from projected quotes).
+- **Model auditability:** the raw validated grader judgment is preserved on every scored criterion
+  as `modelJudgment` and on every repair as `originalBasis` (alongside the existing
+  `originalVerdict`/`originalNote`/`originalEvidence`). `geminiWithRotation` now returns the actual
+  successful `model` (backward-compatible — callers reading only `text` are unaffected).
+- **Pinned scored model:** `grade-call-qa` uses ONE model via the new `callQaGraderModel(env)`
+  helper + `CALL_QA_GRADER_MODEL` env var (default `MODEL`; empty/whitespace → `MODEL`). Key
+  rotation still applies; **model fallback does not** — a pinned-model exhaustion returns the normal
+  grading failure (preserving the already-saved attempt for the existing retry flow), never a Lite
+  fallback; a malformed-output retry reuses the same pinned model. Advisory practice grading and
+  other endpoints keep their fallback chains.
+- **Grading metadata:** every successful QA result now includes `qa.gradingMetadata =
+  { model, rubricVersion, promptVersion, scenarioVersion, gradedAt }`, all server-owned — `model`
+  is the actual answering model, `rubricVersion` (`QA_RUBRIC_VERSION`) / `promptVersion`
+  (`CALL_QA_PROMPT_VERSION`) are pinned constants, `scenarioVersion` comes from the trusted curated
+  scenario (`CALL_QA_SCENARIO_BANK_VERSION` via the `scenario()` factory), and `gradedAt` is a
+  server ISO timestamp. Client-supplied model/version/gradedAt are ignored. Persisted through the
+  existing `updateInterviewGrade(id, grade, qa)` path — no new collection or metadata document.
+- **Non-final labels:** the navigator-facing immediate Call QA result and the supervisor
+  history badge never show a bare PASS/FAIL for an un-reviewed attempt. New shared helpers in
+  `qaFinalReview.js` — `qaAiResultLabel(qa)` (`AI PASS/FAIL — PENDING SUPERVISOR REVIEW` /
+  `NEEDS SUPERVISOR REVIEW`), `qaHistoryBadgeLabel(session)` (`QA TEST · AI PASS — PENDING REVIEW`
+  … / `QA TEST · FINAL/OVERRIDDEN PASS/FAIL`), and `qaBadgeTone(session)`. The supervisor detail
+  panel keeps its explicit "AI verdict: … / Final verdict: …" rows. Existing `qaFinalReview` /
+  `qaFinalVerdict` / supervisor confirm/override flow unchanged.
+- **Preserved:** glossary corrections, curated-scenario authority checks, fairness repairs
+  (still whitelist-only NOT_MET→MET on `know-rule`/`doc-te`), routing-policy checks, deterministic
+  conflict findings, auto-fail evidence verification, the 85 pass threshold + auto-fail zeroing,
+  persistence retries, supervisor final review, the deterministic corpus (54/54), and grading
+  invariants (17/17). The captured-response fixture gained `basis` on every criterion; its two
+  refill evidence quotes were corrected to the glossary-normalized form they grade against (it is a
+  `simulated-example`, not a real capture).
+- **Files:** `api/_qa-rubric.js`, `api/grade-call-qa.js`, `api/_gemini-client.js`,
+  `src/data/qaRubric.js`, `src/data/callQaScenarios.js`, `src/components/VoiceCall.jsx`,
+  `src/components/NavigatorDetail.jsx`, `src/lib/qaFinalReview.js`,
+  `api/_qa-grading-corpus.js`, `api/fixtures/qa-model-capture.example.json`; tests:
+  `api/grade-call-qa.test.js`, `api/_gemini-client.test.js`, new `api/gradeCallQaEndpoint.test.js`,
+  `src/lib/qaFinalReview.test.js`, `src/components/navigatorDetail.override.test.jsx`; docs:
+  `.env.local.example`, `docs/GRADING_INVARIANTS.md`, `CLAUDE.md`. Full suite **939 passing / 47
+  files**; corpus 54/54; invariants 17/17. New Railway/Vercel env var to set on the next scored
+  re-calibration only: `CALL_QA_GRADER_MODEL` (recommended initial value `gemini-2.5-flash`).
+  **Limitations unchanged:** the transcript is still browser-authoritative, the final utterance can
+  still be lost, browser tampering remains possible, and real-world acoustic calibration is pending
+  (PR 2 territory). No merge, Firebase deploy, Railway deploy, or migration performed.
+
 ### 2026-07-14 (part 4) - Top-level Assessment Bank selector (Scenario Questions / Spot the Error)
 - **Context:** PR #28 merged to `main` as `db8c0f4`; it redesigned the Question Bank into the collapsible
   workspace documented in the entries below. Separately, an unrelated branch

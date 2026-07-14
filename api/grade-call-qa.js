@@ -20,10 +20,10 @@
 import { sopContextFor, sopContextForFresh } from './_sop-context.js';
 import { navigatorContextBlock } from './_navigator-operating-model.js';
 import { correctTranscriptWithStats, glossaryPromptBlock } from './_qa-glossary.js';
-import { getApiKeys, geminiWithRotation, rotationFailure, MODEL, STABLE_MODEL, LITE_MODEL } from './_gemini-client.js';
+import { getApiKeys, geminiWithRotation, rotationFailure, MODEL } from './_gemini-client.js';
 import { validateSecret } from './_auth.js';
 import {
-  QA_RUBRIC, QA_AUTO_FAILS, rubricCriteria,
+  QA_RUBRIC, QA_AUTO_FAILS, QA_RUBRIC_VERSION, rubricCriteria,
   validateQaResponse, repairQaVerdictsForScenario, scoreQa, assessQa, buildGradeProjection,
   evaluateQaDeterministicFindings,
 } from './_qa-rubric.js';
@@ -32,6 +32,24 @@ import { getCallQaScenarioById } from '../src/data/callQaScenarios.js';
 
 const MAX_TURNS = 60;
 const MAX_TURN_CHARS = 2000;
+
+// Grader prompt version — bump whenever the grading INSTRUCTIONS materially
+// change. Recorded on qa.gradingMetadata.promptVersion. This version reflects the
+// judgment-basis (EVIDENCE / ABSENCE) grader contract introduced in this PR.
+export const CALL_QA_PROMPT_VERSION = 'call-qa-grader-v1';
+
+/**
+ * The single, pinned model used to SCORE a Call QA test. Scored grading must be
+ * auditable and calibrated against ONE model — no silent fallback to a
+ * lower-quality model. Configurable via CALL_QA_GRADER_MODEL; defaults to the
+ * calibrated primary model. Empty/whitespace config falls back to MODEL.
+ * Key rotation across API keys still applies; model fallback does not.
+ * @param {NodeJS.ProcessEnv} [env]
+ */
+export function callQaGraderModel(env = process.env) {
+  const configured = String(env?.CALL_QA_GRADER_MODEL ?? '').trim();
+  return configured || MODEL;
+}
 
 function trustedScenarioMetadata(scenario) {
   return {
@@ -75,6 +93,8 @@ export function resolveQaScenarioContext({ scenario = '', department = 'pediatri
     status,
     qaScenarioId: requestedId || null,
     department: trusted?.department ?? department,
+    // Server-trusted scenario version; never a browser-supplied value.
+    scenarioVersion: trusted?.version ?? null,
     gradingScenario: trusted ? buildTrustedGradingScenario(trusted) : String(scenario),
     repairContext: {
       scenario: trusted?.scenario ?? String(scenario),
@@ -98,10 +118,11 @@ const RESPONSE_SCHEMA = {
         properties: {
           id:       { type: 'STRING' },
           verdict:  { type: 'STRING', enum: ['MET', 'NOT_MET', 'NA'] },
+          basis:    { type: 'STRING', enum: ['EVIDENCE', 'ABSENCE'] },
           evidence: { type: 'STRING' },
           note:     { type: 'STRING' },
         },
-        required: ['id', 'verdict', 'evidence', 'note'],
+        required: ['id', 'verdict', 'basis', 'evidence', 'note'],
       },
     },
     autoFails: {
@@ -135,17 +156,28 @@ export function buildMessages(scenario, transcript, department, sopContext = sop
   const systemInstruction =
 `You are a strict QA auditor at a medical contact centre, scoring a patient navigator's call \
 against a fixed quality rubric. You do NOT assign scores. For EACH rubric criterion you return \
-exactly one verdict:
+exactly one verdict AND one basis:
 
-  MET      — the transcript clearly shows the behavior. You MUST put ONE contiguous verbatim \
-quote from a SINGLE turn in "evidence" — copied character-for-character, no role label, no \
-ellipses, no stitching lines together. For behaviors shown across the whole call, quote the \
-single best example line.
-  NOT_MET  — the behavior is absent, wrong, or only partial. Put a one-sentence reason in \
-"note"; "evidence" may quote the offending line or be empty if the failure is an absence.
-  NA       — the criterion genuinely cannot apply to this scenario (e.g., no appointment was \
-needed, so no recap was possible). Use sparingly; greeting, verification, tone, listening, and \
-closing criteria apply to EVERY call.
+  MET      (basis "EVIDENCE")  — the transcript clearly shows the NAVIGATOR doing the behavior. \
+You MUST put ONE contiguous verbatim quote from a SINGLE NAVIGATOR turn in "evidence" — copied \
+character-for-character, no role label, no ellipses, no stitching lines together, never a caller \
+line. For behaviors shown across the whole call, quote the single best navigator example line.
+  NOT_MET  (basis "EVIDENCE") — the navigator did the WRONG or UNSAFE thing and it is OBSERVABLE. \
+Use this whenever the miss is an observed action: wrong routing destination, clinical/medication \
+advice, an unsafe promise, sarcasm/profanity, an incorrect scheduling instruction, reading or \
+interpreting a result, or sharing information before verification. You MUST quote the offending \
+NAVIGATOR line verbatim in "evidence" and name the rule broken in "note".
+  NOT_MET  (basis "ABSENCE")  — the navigator simply NEVER did the expected behavior (e.g. never \
+stated their name, never offered the survey, never confirmed callback info, never gathered a \
+required detail). Put the reason in "note" and leave "evidence" EMPTY — there is nothing to quote.
+  NA       (basis "ABSENCE")  — the criterion genuinely cannot apply to this scenario (e.g., no \
+appointment was needed, so no recap was possible). Leave "evidence" EMPTY. Use sparingly; \
+greeting, verification, tone, listening, and closing criteria apply to EVERY call.
+
+BASIS RULES (strict — a mismatch is rejected): MET always uses EVIDENCE with a real navigator \
+quote. An OBSERVED wrong/unsafe behavior is NOT_MET with basis EVIDENCE and a quoted navigator \
+line — never call an observed violation an absence. A behavior that never happened is NOT_MET (or \
+NA) with basis ABSENCE and empty evidence. Never put substantive evidence on an ABSENCE.
 
 Grading rules — this is a hard test, apply them strictly:
 - Judge ONLY what is in the transcript. If the navigator did not say it, it did not happen.
@@ -234,7 +266,7 @@ function buildBody(systemInstruction, userMessage) {
   };
 }
 
-export function finalizeQaResult(scored, transcript, correctedTurns = 0, repairs = [], metadataIntegrity = { verified: true, status: 'verified' }, forcedReviewReasons = [], deterministicFindings = []) {
+export function finalizeQaResult(scored, transcript, correctedTurns = 0, repairs = [], metadataIntegrity = { verified: true, status: 'verified' }, forcedReviewReasons = [], deterministicFindings = [], gradingMetadata = null) {
   const review = assessQa(scored, transcript, { correctedTurns, repairs, deterministicFindings });
   // Deterministic conflict layer (NOT repairs): a model-positive verdict that
   // contradicts the authoritative routing policy, or a deterministic unsafe-
@@ -294,6 +326,7 @@ export function finalizeQaResult(scored, transcript, correctedTurns = 0, repairs
       status: metadataIntegrity.status,
       qaScenarioId: metadataIntegrity.qaScenarioId ?? null,
     },
+    ...(gradingMetadata ? { gradingMetadata } : {}),
   };
   const grade = buildGradeProjection(qa);
   return { qa, grade };
@@ -329,15 +362,24 @@ export default async function handler(req, res) {
   );
   const body = buildBody(systemInstruction, userMessage);
 
+  // Scored Call QA uses ONE pinned, auditable model — key rotation only, NO model
+  // fallback. If the pinned model is unavailable on every key, we return a grading
+  // failure and let the already-saved attempt be retried; we never silently drop
+  // to a lower-quality model for a scored assessment.
+  const graderModel = callQaGraderModel();
+
   // One retry on malformed output: temp-0 structured JSON is almost always
-  // well-formed, but a missing criterion id would otherwise 502 a real test.
+  // well-formed, but a missing criterion id would otherwise 502 a real test. The
+  // retry uses the SAME pinned model.
   let validated = null;
+  let usedModel = graderModel;
   for (let attempt = 0; attempt < 2 && !validated; attempt++) {
-    const result = await geminiWithRotation(keys, body, { label: 'grade-call-qa', models: [MODEL, STABLE_MODEL, LITE_MODEL] });
+    const result = await geminiWithRotation(keys, body, { label: 'grade-call-qa', models: [graderModel] });
     if (!result.ok) {
       const { status, error } = rotationFailure(result, { exhausted: 'The grader is busy right now. Try again shortly.' });
       return res.status(status).json({ error });
     }
+    usedModel = result.model ?? graderModel;
     let parsed;
     try {
       parsed = JSON.parse(result.text ?? '');
@@ -364,8 +406,19 @@ export default async function handler(req, res) {
   const deterministicFindings = evaluateQaDeterministicFindings(
     scored.criteria, boundedTranscript, scenarioContext.repairContext,
   );
+  // Versioned, server-generated grading provenance. Every value is server-owned:
+  // the model is the one that actually answered, versions are pinned constants,
+  // the scenario version comes from the trusted curated scenario, and gradedAt is
+  // generated here — never trusted from the browser.
+  const gradingMetadata = {
+    model: usedModel,
+    rubricVersion: QA_RUBRIC_VERSION,
+    promptVersion: CALL_QA_PROMPT_VERSION,
+    scenarioVersion: scenarioContext.scenarioVersion ?? null,
+    gradedAt: new Date().toISOString(),
+  };
   const { qa, grade } = finalizeQaResult(
-    scored, boundedTranscript, correctedTurns, repaired.repairs, scenarioContext, repaired.reviewReasons, deterministicFindings,
+    scored, boundedTranscript, correctedTurns, repaired.repairs, scenarioContext, repaired.reviewReasons, deterministicFindings, gradingMetadata,
   );
 
   return res.status(200).json({ qa, grade });

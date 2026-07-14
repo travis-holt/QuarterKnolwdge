@@ -3,12 +3,14 @@
 
 import { describe, it, expect } from 'vitest';
 import {
-  QA_RUBRIC, QA_AUTO_FAILS, QA_PASS_THRESHOLD, QA_REVIEW_MARGIN, rubricCriteria,
-  verifyEvidence, validateQaResponse, getRefillWorkflowSignals, evaluateRoutingDecision, repairQaVerdictsForScenario, scoreQa, assessQa, buildGradeProjection,
+  QA_RUBRIC, QA_AUTO_FAILS, QA_PASS_THRESHOLD, QA_RUBRIC_VERSION, QA_REVIEW_MARGIN, rubricCriteria,
+  verifyEvidence, verifyNavigatorEvidence, validateQaResponse, validateCriterionBasis,
+  getRefillWorkflowSignals, evaluateRoutingDecision, repairQaVerdictsForScenario, scoreQa, assessQa, buildGradeProjection,
   findOverPromiseLine, findClinicalAdviceLine, isUncertainRoutingLanguage,
   isStrictPeOnlyFailure, isLiteralTeWordingFailure, evaluateQaDeterministicFindings,
+  SAFETY_CRITICAL_CRITERIA,
 } from './_qa-rubric.js';
-import { buildMessages, buildTrustedGradingScenario, finalizeQaResult, resolveQaScenarioContext } from './grade-call-qa.js';
+import { buildMessages, buildTrustedGradingScenario, finalizeQaResult, resolveQaScenarioContext, callQaGraderModel, CALL_QA_PROMPT_VERSION } from './grade-call-qa.js';
 import { getCallQaScenarioById } from '../src/data/callQaScenarios.js';
 import { COMPETENCY_IDS } from '../src/data/competencies.js';
 import { DOMAINS } from '../src/data/questions.js';
@@ -48,7 +50,7 @@ function allMetVerdicts() {
     'close-survey': 'stay on the line for our survey',
     'close-anything-thanks': 'anything else I can help with',
   };
-  return rubricCriteria().map((c) => ({ id: c.id, verdict: 'MET', evidence: quotes[c.id], note: '' }));
+  return rubricCriteria().map((c) => ({ id: c.id, verdict: 'MET', basis: 'EVIDENCE', evidence: quotes[c.id], note: '' }));
 }
 
 // ── Rubric integrity ─────────────────────────────────────────────────────────
@@ -101,72 +103,131 @@ describe('QA_RUBRIC', () => {
 // ── verifyEvidence ───────────────────────────────────────────────────────────
 
 describe('verifyEvidence', () => {
-  it('accepts a verbatim quote', () => {
-    expect(verifyEvidence(TRANSCRIPT, 'this is Dana')).toBe(true);
-  });
+  const NAV = { role: 'navigator', requireSingleTurn: true };
 
-  it('accepts a quote with different punctuation/casing', () => {
-    expect(verifyEvidence(TRANSCRIPT, 'THANK YOU FOR CALLING, AIZER-HEALTH')).toBe(true);
+  it('accepts a verbatim navigator quote in one turn', () => {
+    expect(verifyEvidence(TRANSCRIPT, 'this is Dana', NAV)).toBe(true);
   });
 
   it('rejects an invented quote', () => {
-    expect(verifyEvidence(TRANSCRIPT, 'I verified your insurance already')).toBe(false);
+    expect(verifyEvidence(TRANSCRIPT, 'I verified your insurance already', NAV)).toBe(false);
   });
 
   it('rejects empty evidence', () => {
-    expect(verifyEvidence(TRANSCRIPT, '')).toBe(false);
-    expect(verifyEvidence(TRANSCRIPT, null)).toBe(false);
-  });
-
-  it('accepts a 4+ word quote whose words all appear in one turn', () => {
-    expect(verifyEvidence(TRANSCRIPT, 'pulling up the schedule now I am')).toBe(false); // spans phrasing not in one turn ("I am" vs "I'm")
-    expect(verifyEvidence(TRANSCRIPT, 'schedule the pulling now up')).toBe(true); // same words, one turn
-  });
-
-  it('does not word-match short quotes across the call', () => {
-    expect(verifyEvidence(TRANSCRIPT, 'survey Dana')).toBe(false);
+    expect(verifyEvidence(TRANSCRIPT, '', NAV)).toBe(false);
+    expect(verifyEvidence(TRANSCRIPT, null, NAV)).toBe(false);
   });
 
   it('strips a role-label prefix from the quote', () => {
-    expect(verifyEvidence(TRANSCRIPT, 'Navigator: this is Dana')).toBe(true);
-  });
-
-  it('accepts a stitched multi-line quote when one fragment is genuine', () => {
-    expect(verifyEvidence(TRANSCRIPT, 'a line never said...stay on the line for our survey')).toBe(true);
-    expect(verifyEvidence(TRANSCRIPT, 'a line never said\nNavigator: pulling up the schedule')).toBe(true);
-    expect(verifyEvidence(TRANSCRIPT, '"anything else I can help with" "a line never said"')).toBe(true);
-    // Paraphrased sentence stitched to a verbatim one (observed live): the
-    // genuine sentence after the "?" boundary carries the evidence.
-    expect(verifyEvidence(
-      [...TRANSCRIPT, { role: 'navigator', text: 'Wonderful. Thank you for calling Aizer Health, and have a great day!' }],
-      'Is there anything more I could help with? Thank you for calling Aizer Health, and have a great day!',
-    )).toBe(true);
-  });
-
-  it('rejects a stitched quote where no fragment is genuine', () => {
-    expect(verifyEvidence(TRANSCRIPT, 'invented line one...another invented line')).toBe(false);
+    expect(verifyEvidence(TRANSCRIPT, 'Navigator: this is Dana', NAV)).toBe(true);
   });
 
   it('rejects single-word quotes', () => {
-    expect(verifyEvidence(TRANSCRIPT, 'survey')).toBe(false);
+    expect(verifyEvidence(TRANSCRIPT, 'survey', NAV)).toBe(false);
+    expect(verifyEvidence(TRANSCRIPT, 'Dana', NAV)).toBe(false);
+  });
+
+  // ── Evidence-role tests ──────────────────────────────────────────────────
+  it('caller text cannot satisfy a navigator criterion', () => {
+    // "I need a checkup for my son" is only spoken by the caller.
+    expect(verifyEvidence(TRANSCRIPT, 'I need a checkup for my son', NAV)).toBe(false);
+  });
+
+  it('a navigator quote in one turn verifies', () => {
+    expect(verifyEvidence(TRANSCRIPT, 'pulling up the schedule now', NAV)).toBe(true);
+  });
+
+  it('treats patient and caller as equivalent caller-side aliases, never navigator', () => {
+    const mixed = [
+      { role: 'navigator', text: 'Good morning, thank you for calling Aizer Health.' },
+      { role: 'caller', text: 'My prescription is for amoxicillin.' },
+      { role: 'patient', text: 'And the pharmacy is on Main Street.' },
+    ];
+    // Caller-side lines never satisfy a navigator criterion...
+    expect(verifyEvidence(mixed, 'My prescription is for amoxicillin', NAV)).toBe(false);
+    expect(verifyEvidence(mixed, 'the pharmacy is on Main Street', NAV)).toBe(false);
+    // ...but both aliases are eligible as caller evidence.
+    expect(verifyEvidence(mixed, 'My prescription is for amoxicillin', { role: 'caller', requireSingleTurn: true })).toBe(true);
+    expect(verifyEvidence(mixed, 'the pharmacy is on Main Street', { role: 'caller', requireSingleTurn: true })).toBe(true);
+  });
+
+  // ── Turn-boundary tests ──────────────────────────────────────────────────
+  it('rejects a quote spanning two navigator turns', () => {
+    // "I understand you want him seen soon" ends turn 4; "You are all set for
+    // Tuesday" begins turn 5 — a real span across two navigator turns.
+    expect(verifyEvidence(TRANSCRIPT, 'I understand you want him seen soon You are all set for Tuesday', NAV)).toBe(false);
+  });
+
+  it('rejects a quote combining caller and navigator wording', () => {
+    expect(verifyEvidence(TRANSCRIPT, 'I need a checkup for my son Good morning thank you for calling', NAV)).toBe(false);
+  });
+
+  it('rejects a stitched quote joined by ellipses', () => {
+    expect(verifyEvidence(TRANSCRIPT, 'a line never said...stay on the line for our survey', NAV)).toBe(false);
+  });
+
+  it('rejects when only one fragment of a multi-fragment quote is genuine', () => {
+    expect(verifyEvidence(TRANSCRIPT, 'this is Dana ... a line that was never said in the call', NAV)).toBe(false);
+  });
+
+  it('does not verify against the concatenated full transcript', () => {
+    // Every word below appears somewhere in the call, but never contiguously in
+    // one navigator turn.
+    expect(verifyEvidence(TRANSCRIPT, 'checkup survey Baker Town first name Dana', NAV)).toBe(false);
+  });
+
+  // ── Matching tests ───────────────────────────────────────────────────────
+  it('accepts case and punctuation differences', () => {
+    expect(verifyEvidence(TRANSCRIPT, 'THANK YOU FOR CALLING, AIZER-HEALTH', NAV)).toBe(true);
+  });
+
+  it('accepts repeated-whitespace differences', () => {
+    expect(verifyEvidence(TRANSCRIPT, 'this   is    Dana', NAV)).toBe(true);
+  });
+
+  it('accepts supported contraction normalization ("I\'m" ↔ "I am")', () => {
+    // Transcript says "I'm pulling up the schedule now"; quote expands it.
+    expect(verifyEvidence(TRANSCRIPT, 'I am pulling up the schedule now', NAV)).toBe(true);
+  });
+
+  it('rejects an unordered word bag', () => {
+    expect(verifyEvidence(TRANSCRIPT, 'schedule the pulling now up', NAV)).toBe(false);
+  });
+
+  it('rejects ordered but non-contiguous words', () => {
+    // Ordered, but skips "now." between "schedule" and "I understand".
+    expect(verifyEvidence(TRANSCRIPT, 'pulling up the schedule I understand you want him', NAV)).toBe(false);
+  });
+
+  it('defaults to requiring navigator evidence', () => {
+    // Same signature without opts still requires a navigator turn.
+    expect(verifyEvidence(TRANSCRIPT, 'this is Dana')).toBe(true);
+    expect(verifyEvidence(TRANSCRIPT, 'I need a checkup for my son')).toBe(false);
   });
 });
 
 // ── validateQaResponse ───────────────────────────────────────────────────────
 
 describe('validateQaResponse', () => {
-  it('accepts a complete response and normalizes verdict case', () => {
+  // Helper: a full, legal MET response for every criterion.
+  const allMet = (overrides = {}) => ({
+    criteria: rubricCriteria().map((c) =>
+      overrides[c.id] ?? { id: c.id, verdict: 'MET', basis: 'EVIDENCE', evidence: 'the navigator said this', note: '' }),
+    autoFails: [],
+  });
+
+  it('accepts a complete response and normalizes verdict/basis case', () => {
     const parsed = {
-      criteria: rubricCriteria().map((c) => ({ id: c.id, verdict: 'met', evidence: 'x', note: '' })),
+      criteria: rubricCriteria().map((c) => ({ id: c.id, verdict: 'met', basis: 'evidence', evidence: 'x', note: '' })),
       autoFails: [],
     };
     const out = validateQaResponse(parsed);
     expect(out.data).toBeTruthy();
-    expect(out.data.criteria.every((c) => c.verdict === 'MET')).toBe(true);
+    expect(out.data.criteria.every((c) => c.verdict === 'MET' && c.basis === 'EVIDENCE')).toBe(true);
   });
 
   it('rejects a response missing criterion ids', () => {
-    const parsed = { criteria: [{ id: 'open-greet', verdict: 'MET', evidence: '', note: '' }], autoFails: [] };
+    const parsed = { criteria: [{ id: 'open-greet', verdict: 'MET', basis: 'EVIDENCE', evidence: 'x', note: '' }], autoFails: [] };
     expect(validateQaResponse(parsed).error).toMatch(/Missing verdicts/);
   });
 
@@ -177,7 +238,7 @@ describe('validateQaResponse', () => {
 
   it('keeps only known, triggered auto-fails', () => {
     const parsed = {
-      criteria: rubricCriteria().map((c) => ({ id: c.id, verdict: 'NOT_MET', evidence: '', note: '' })),
+      criteria: rubricCriteria().map((c) => ({ id: c.id, verdict: 'NOT_MET', basis: 'ABSENCE', evidence: '', note: 'absent' })),
       autoFails: [
         { id: 'af-scope', triggered: true, evidence: 'q', note: '' },
         { id: 'af-hipaa', triggered: false, evidence: '', note: '' },
@@ -187,6 +248,53 @@ describe('validateQaResponse', () => {
     const out = validateQaResponse(parsed);
     expect(out.data.autoFails).toHaveLength(1);
     expect(out.data.autoFails[0].id).toBe('af-scope');
+  });
+
+  // ── Negative-basis validation ────────────────────────────────────────────
+  it('accepts MET/EVIDENCE with non-empty evidence', () => {
+    expect(validateQaResponse(allMet()).data).toBeTruthy();
+  });
+
+  it('rejects MET with basis ABSENCE', () => {
+    expect(validateQaResponse(allMet({ 'open-greet': { id: 'open-greet', verdict: 'MET', basis: 'ABSENCE', evidence: 'hi', note: '' } })).error)
+      .toMatch(/MET must use basis EVIDENCE/);
+  });
+
+  it('rejects MET with empty evidence', () => {
+    expect(validateQaResponse(allMet({ 'open-greet': { id: 'open-greet', verdict: 'MET', basis: 'EVIDENCE', evidence: '', note: '' } })).error)
+      .toMatch(/MET requires a non-empty evidence quote/);
+  });
+
+  it('accepts NOT_MET/ABSENCE with empty evidence', () => {
+    expect(validateQaResponse(allMet({ 'close-survey': { id: 'close-survey', verdict: 'NOT_MET', basis: 'ABSENCE', evidence: '', note: 'never offered the survey' } })).data)
+      .toBeTruthy();
+  });
+
+  it('accepts NOT_MET/EVIDENCE with an offending quote', () => {
+    expect(validateQaResponse(allMet({ 'know-rule': { id: 'know-rule', verdict: 'NOT_MET', basis: 'EVIDENCE', evidence: 'you can double the dose', note: 'gave dosing advice' } })).data)
+      .toBeTruthy();
+  });
+
+  it('rejects NOT_MET/EVIDENCE with empty evidence', () => {
+    expect(validateQaResponse(allMet({ 'know-rule': { id: 'know-rule', verdict: 'NOT_MET', basis: 'EVIDENCE', evidence: '', note: 'observed wrong routing' } })).error)
+      .toMatch(/NOT_MET with basis EVIDENCE requires an evidence quote/);
+  });
+
+  it('rejects NOT_MET/ABSENCE that carries a substantive evidence quote', () => {
+    expect(validateQaResponse(allMet({ 'know-rule': { id: 'know-rule', verdict: 'NOT_MET', basis: 'ABSENCE', evidence: 'the navigator clearly said this line', note: 'x' } })).error)
+      .toMatch(/NOT_MET with basis ABSENCE must not carry a substantive evidence quote/);
+  });
+
+  it('rejects NA with basis EVIDENCE', () => {
+    expect(validateQaResponse(allMet({ 'sched-flow': { id: 'sched-flow', verdict: 'NA', basis: 'EVIDENCE', evidence: 'something', note: '' } })).error)
+      .toMatch(/NA must use basis ABSENCE/);
+  });
+
+  it('rejects a missing or unknown basis so the malformed-response retry runs', () => {
+    expect(validateQaResponse(allMet({ 'open-greet': { id: 'open-greet', verdict: 'MET', evidence: 'hi', note: '' } })).error)
+      .toMatch(/unknown or missing basis/);
+    expect(validateQaResponse(allMet({ 'open-greet': { id: 'open-greet', verdict: 'MET', basis: 'GUESS', evidence: 'hi', note: '' } })).error)
+      .toMatch(/unknown or missing basis/);
   });
 });
 
@@ -1323,5 +1431,147 @@ describe('server-authoritative Call QA scenario metadata', () => {
     expect(qa.review.recommendation).toBe('needs_review');
     expect(qa.review.reviewFlags.map((flag) => flag.id)).toContain('unverified-scenario-metadata');
     expect(qa.repairs).toEqual([]);
+  });
+});
+
+// ── Version constants ────────────────────────────────────────────────────────
+
+describe('grading versions', () => {
+  it('exposes stable rubric and prompt version constants', () => {
+    expect(QA_RUBRIC_VERSION).toBe('qa-rubric-v1');
+    expect(CALL_QA_PROMPT_VERSION).toMatch(/^call-qa-grader-/);
+  });
+});
+
+// ── Negative-judgment basis, unresolved negatives, and model auditability ─────
+
+describe('scoreQa — evidence role, negative basis, and model auditability', () => {
+  const withCriterion = (id, patch) =>
+    allMetVerdicts().map((v) => (v.id === id ? { ...v, ...patch } : v));
+  const CALLER_LINE = 'I need a checkup for my son'; // spoken only by the patient in TRANSCRIPT
+
+  it('preserves the original model judgment for every criterion', () => {
+    const scored = scoreQa(allMetVerdicts(), [], TRANSCRIPT);
+    const c = scored.criteria.find((x) => x.id === 'open-name');
+    expect(c.modelJudgment).toEqual({ verdict: 'MET', basis: 'EVIDENCE', evidence: 'this is Dana', note: '' });
+  });
+
+  it('keeps the original MET judgment after a trust-gate downgrade', () => {
+    const scored = scoreQa(withCriterion('know-rule', { evidence: 'a line that was never said' }), [], TRANSCRIPT);
+    const c = scored.criteria.find((x) => x.id === 'know-rule');
+    expect(c.verdict).toBe('NOT_MET');
+    expect(c.unverified).toBe(true);
+    expect(c.modelJudgment).toMatchObject({ verdict: 'MET', basis: 'EVIDENCE' });
+  });
+
+  it('a NOT_MET/EVIDENCE with a verified navigator quote is NOT unresolved', () => {
+    const c = scoreQa(withCriterion('know-rule', { verdict: 'NOT_MET', basis: 'EVIDENCE', evidence: 'this is Dana', note: 'observed wrong routing' }), [], TRANSCRIPT)
+      .criteria.find((x) => x.id === 'know-rule');
+    expect(c.verdict).toBe('NOT_MET');
+    expect(c.unresolved).toBe(false);
+  });
+
+  it('a NOT_MET/EVIDENCE with an unverifiable quote becomes unresolved (stays NOT_MET, never MET)', () => {
+    const c = scoreQa(withCriterion('know-rule', { verdict: 'NOT_MET', basis: 'EVIDENCE', evidence: 'a totally invented offending line', note: 'x' }), [], TRANSCRIPT)
+      .criteria.find((x) => x.id === 'know-rule');
+    expect(c.verdict).toBe('NOT_MET');
+    expect(c.unresolved).toBe(true);
+    expect(c.unresolvedReason).toBe('negative-evidence-not-verified');
+  });
+
+  it('a NOT_MET/EVIDENCE quoting the CALLER becomes unresolved (caller wording is not navigator evidence)', () => {
+    const c = scoreQa(withCriterion('know-rule', { verdict: 'NOT_MET', basis: 'EVIDENCE', evidence: CALLER_LINE, note: 'x' }), [], TRANSCRIPT)
+      .criteria.find((x) => x.id === 'know-rule');
+    expect(c.unresolved).toBe(true);
+  });
+
+  it('a NOT_MET/ABSENCE is never unresolved (nothing to verify)', () => {
+    const c = scoreQa(withCriterion('close-survey', { verdict: 'NOT_MET', basis: 'ABSENCE', evidence: '', note: 'never offered the survey' }), [], TRANSCRIPT)
+      .criteria.find((x) => x.id === 'close-survey');
+    expect(c.unresolved).toBe(false);
+  });
+
+  it('caller wording cannot verify an auto-fail', () => {
+    const qa = scoreQa(allMetVerdicts(), [{ id: 'af-scope', evidence: CALLER_LINE, note: '' }], TRANSCRIPT);
+    expect(qa.autoFails).toHaveLength(0);
+    expect(qa.unverifiedAutoFails).toHaveLength(1);
+    expect(qa.pass).toBe(true); // an unverified auto-fail never fails the navigator
+  });
+});
+
+describe('assessQa — unresolved negatives force supervisor review', () => {
+  const withCriterion = (id, patch) =>
+    allMetVerdicts().map((v) => (v.id === id ? { ...v, ...patch } : v));
+
+  it('any unresolved negative forces needs_review and cannot produce a clean AI pass', () => {
+    // Only know-rule (9 pts) is lost → score 91 ≥ 85 would pass on points alone.
+    const scored = scoreQa(withCriterion('know-rule', { verdict: 'NOT_MET', basis: 'EVIDENCE', evidence: 'invented offending line', note: 'alleged dosing advice' }), [], TRANSCRIPT);
+    expect(scored.score).toBeGreaterThanOrEqual(QA_PASS_THRESHOLD);
+    expect(scored.pass).toBe(true);
+    const review = assessQa(scored, TRANSCRIPT, {});
+    expect(review.recommendation).toBe('needs_review');
+    expect(review.reviewFlags.map((f) => f.id)).toContain('unresolved-negative-evidence');
+  });
+
+  it('an unresolved SAFETY-critical negative raises safety risk to at least elevated', () => {
+    expect(SAFETY_CRITICAL_CRITERIA.has('know-rule')).toBe(true);
+    const scored = scoreQa(withCriterion('know-rule', { verdict: 'NOT_MET', basis: 'EVIDENCE', evidence: 'invented offending line', note: 'x' }), [], TRANSCRIPT);
+    const review = assessQa(scored, TRANSCRIPT, {});
+    expect(['elevated', 'critical']).toContain(review.safetyRisk);
+    expect(review.recommendation).toBe('needs_review');
+  });
+
+  it('an unverified auto-fail keeps its critical-risk, needs_review behavior', () => {
+    const qa = scoreQa(allMetVerdicts(), [{ id: 'af-scope', evidence: 'a fabricated offending line' }], TRANSCRIPT);
+    expect(qa.pass).toBe(true);
+    const review = assessQa(qa, TRANSCRIPT, {});
+    expect(review.safetyRisk).toBe('critical');
+    expect(review.recommendation).toBe('needs_review');
+    expect(review.reviewFlags.map((f) => f.id)).toContain('possible-unsafe-behavior');
+  });
+});
+
+describe('repairQaVerdictsForScenario — original basis + navigator-verified evidence', () => {
+  const context = { scenario: 'A standard pediatric medication refill.', department: 'pediatrics', metadata: { workflowType: 'prescription_refill' } };
+  const completeRefill = [
+    { role: 'navigator', text: 'What is the medication name?' },
+    { role: 'navigator', text: 'Which pharmacy do you prefer?' },
+    { role: 'navigator', text: 'What is the best callback number to reach you?' },
+    { role: 'navigator', text: 'She is completely out, so I will mark it urgent.' },
+    { role: 'navigator', text: 'I will send this request to the PEDS Encounters queue.' },
+  ];
+  const notMetKnowDoc = () => allMetVerdicts().map((c) =>
+    c.id === 'know-rule'
+      ? { ...c, verdict: 'NOT_MET', basis: 'ABSENCE', evidence: '', note: 'The navigator failed to ask about the patient PE status.' }
+      : c.id === 'doc-te'
+        ? { ...c, verdict: 'NOT_MET', basis: 'ABSENCE', evidence: '', note: 'No Telephone Encounter was logged.' }
+        : c);
+
+  it('records the original basis and only applies navigator-verified replacement evidence', () => {
+    const repaired = repairQaVerdictsForScenario({ criteria: notMetKnowDoc(), autoFails: [] }, completeRefill, context);
+    expect(repaired.repairs.length).toBeGreaterThan(0);
+    for (const r of repaired.repairs) {
+      expect(r.originalBasis).toBe('ABSENCE');
+      expect(r.originalVerdict).toBe('NOT_MET');
+      // Every replacement evidence quote must verify as ONE navigator turn.
+      expect(verifyNavigatorEvidence(completeRefill, r.evidence)).toBe(true);
+    }
+    // Repaired criteria are effectively MET/EVIDENCE.
+    const know = repaired.criteria.find((c) => c.id === 'know-rule');
+    expect(know.verdict).toBe('MET');
+    expect(know.basis).toBe('EVIDENCE');
+  });
+
+  it('caller wording can never become repair evidence (no navigator routing commitment → no repair)', () => {
+    const callerRouted = [
+      { role: 'navigator', text: 'What is the medication name?' },
+      { role: 'navigator', text: 'Which pharmacy do you prefer?' },
+      { role: 'navigator', text: 'What is the best callback number to reach you?' },
+      { role: 'navigator', text: 'She is completely out.' },
+      { role: 'patient', text: 'I will send this request to the PEDS Encounters queue myself.' },
+    ];
+    const repaired = repairQaVerdictsForScenario({ criteria: notMetKnowDoc(), autoFails: [] }, callerRouted, context);
+    expect(repaired.repairs).toHaveLength(0);
+    expect(repaired.criteria.find((c) => c.id === 'know-rule').verdict).toBe('NOT_MET');
   });
 });
