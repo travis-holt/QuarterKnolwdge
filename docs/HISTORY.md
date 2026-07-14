@@ -69,12 +69,33 @@
   `api/_qa-grading-corpus.js`, `api/fixtures/qa-model-capture.example.json`; tests:
   `api/grade-call-qa.test.js`, `api/_gemini-client.test.js`, new `api/gradeCallQaEndpoint.test.js`,
   `src/lib/qaFinalReview.test.js`, `src/components/navigatorDetail.override.test.jsx`; docs:
-  `.env.local.example`, `docs/GRADING_INVARIANTS.md`, `CLAUDE.md`. Full suite **939 passing / 47
-  files**; corpus 54/54; invariants 17/17. New Railway/Vercel env var to set on the next scored
-  re-calibration only: `CALL_QA_GRADER_MODEL` (recommended initial value `gemini-2.5-flash`).
-  **Limitations unchanged:** the transcript is still browser-authoritative, the final utterance can
-  still be lost, browser tampering remains possible, and real-world acoustic calibration is pending
-  (PR 2 territory). No merge, Firebase deploy, Railway deploy, or migration performed.
+  `.env.local.example`, `docs/GRADING_INVARIANTS.md`, `CLAUDE.md`. New Railway/Vercel env var to set
+  on the next scored re-calibration only: `CALL_QA_GRADER_MODEL` (recommended initial value
+  `gemini-2.5-flash`). **Limitations unchanged:** the transcript is still browser-authoritative, the
+  final utterance can still be lost, browser tampering remains possible, and real-world acoustic
+  calibration is pending (PR 2 territory). No merge, Firebase deploy, Railway deploy, or migration
+  performed.
+- **Audit follow-up (same PR, 2026-07-14):** six review findings addressed. (1) The raw
+  per-criterion `modelJudgment` is now captured in `repairQaVerdictsForScenario` **before** a repair
+  mutates the effective verdict/basis/evidence/note, so a repaired effective MET still exposes the
+  grader's original NOT_MET judgment (previously `scoreQa` built `modelJudgment` from the
+  already-repaired fields). (2) The ORIGINAL evidence-based negative is evaluated before repair:
+  an original `NOT_MET`/`EVIDENCE` whose quote fails navigator-turn verification carries
+  `unresolved: true` / `unresolvedReason: 'negative-evidence-not-verified'` **through** any
+  subsequent repair — the effective verdict may become MET, but the unresolved original allegation
+  still forces `needs_review`. (3) The remaining un-reviewed QA UI surfaces — `PhaseHub.jsx` phase
+  summary and `QaLatestCard` in `NavigatorApp.jsx` — now use the shared `qaSummaryLabel`/`qaBadgeTone`
+  helpers (new `qaSummaryLabel`), so pending results read `AI PASS/FAIL — PENDING SUPERVISOR REVIEW`
+  or `NEEDS SUPERVISOR REVIEW`, and `FINAL`/`OVERRIDDEN` appear only after `qaFinalReview`. (4)
+  `buildMessages()` serializes both `patient` and `caller` roles as `Caller` (only `navigator` →
+  `Navigator`) — a `role:'caller'` turn can no longer be labelled Navigator in the grader prompt.
+  (5) `callQaScenarioMetadata()` records `scenarioVersion: selectedScenario.version` so saved-but-
+  ungraded attempts retain scenario provenance (the server-trusted scenario version stays
+  authoritative for `qa.gradingMetadata`). (6) Corrected the stale `grade-call-qa.js` module comment
+  that still described a Lite-model fallback. New regression tests cover all six. Full suite **948
+  passing / 47 files**; corpus 54/54; invariants 17/17. `npm run test:rules` was **not runnable in
+  this environment (no Java / Firestore emulator); this PR changes no Firestore rules** — run it in a
+  Java-equipped environment before release.
 
 ### 2026-07-14 (part 4) - Top-level Assessment Bank selector (Scenario Questions / Spot the Error)
 - **Context:** PR #28 merged to `main` as `db8c0f4`; it redesigned the Question Bank into the collapsible

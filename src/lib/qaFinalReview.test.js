@@ -8,6 +8,7 @@ import {
   qaHistoryBadgeLabel,
   qaBadgeTone,
   qaAiResultLabel,
+  qaSummaryLabel,
 } from './qaFinalReview.js';
 
 describe('qaFinalReview helpers', () => {
@@ -139,5 +140,20 @@ describe('qaBadgeTone', () => {
   it('maps reviewed verdicts to the FINAL/OVERRIDDEN tone', () => {
     expect(qaBadgeTone({ qa: { pass: false }, qaFinalReview: { status: 'overridden_pass' } })).toBe('pass');
     expect(qaBadgeTone({ qa: { pass: true }, qaFinalReview: { status: 'confirmed_fail' } })).toBe('fail');
+  });
+});
+
+describe('qaSummaryLabel — shared phase-hub / dashboard label', () => {
+  it('pending attempts are non-final AI recommendations (never a bare PASS/FAIL)', () => {
+    expect(qaSummaryLabel({ qa: { pass: true } })).toBe('AI PASS — PENDING SUPERVISOR REVIEW');
+    expect(qaSummaryLabel({ qa: { pass: false } })).toBe('AI FAIL — PENDING SUPERVISOR REVIEW');
+    expect(qaSummaryLabel({ qa: { pass: true, review: { recommendation: 'needs_review' } } }))
+      .toBe('NEEDS SUPERVISOR REVIEW');
+  });
+  it('reviewed attempts show the supervisor final/overridden verdict', () => {
+    expect(qaSummaryLabel({ qa: { pass: true }, qaFinalReview: { status: 'confirmed_pass', finalPass: true } }))
+      .toBe('FINAL PASS');
+    expect(qaSummaryLabel({ qa: { pass: true }, qaFinalReview: { status: 'overridden_fail', finalPass: false } }))
+      .toBe('OVERRIDDEN FAIL');
   });
 });

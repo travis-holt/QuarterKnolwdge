@@ -1536,7 +1536,7 @@ of this file on 2026-07-07 to cut per-session context cost (it was ~55% of the f
 - **Experimental / mockup:**
   - Training **content** is mockup (flagged in UI). Logic is real.
   - **Adult Medicine and Behavioural Health** are not assessed; **Pediatrics and OB/GYN** are live.
-- **Test coverage:** **939 tests** across **47 test files** (adds `api/gradeCallQaEndpoint.test.js`
+- **Test coverage:** **948 tests** across **47 test files** (adds `api/gradeCallQaEndpoint.test.js`
   — handler-level model-pinning + grading-metadata tests — plus the PR-1 Call QA evidence-integrity
   and non-final-label tests in `api/grade-call-qa.test.js`, `api/_gemini-client.test.js`,
   `src/lib/qaFinalReview.test.js`, and `src/components/navigatorDetail.override.test.jsx`; adds
@@ -1638,7 +1638,7 @@ of this file on 2026-07-07 to cut per-session context cost (it was ~55% of the f
   OB/GYN = **37** seed questions (offline fallback) + the **48-item MCQ v2 operating-model bank**
   (24 Pediatrics + 24 OB/GYN) that replaces the weak active bank via a marker-gated
   archive-and-replace migration (bank grows in Firestore per dept) · 4 departments (**Pediatrics
-  + OB/GYN live**, 2 mockup) · **939** unit tests (47 test files) + a committed **51-assertion**
+  + OB/GYN live**, 2 mockup) · **948** unit tests (47 test files) + a committed **51-assertion**
   Firestore Rules emulator suite (`npm run test:rules`, not part of the unit-test count) ·
   **13** Firestore collections
   (`roster`, `results`, `resultHistory`, `questions`, `audits`, `interviews`, `completions`,
@@ -1864,7 +1864,7 @@ npm run test:e2e     # run the Playwright browser tests (auto-builds + starts th
 - Heatmap intensity toggle (show % inside matrix cells).
 
 ### Technical Debt
-- **939 tests** across 47 test files as of 2026-07-14 (plus a committed 51-assertion Firestore
+- **948 tests** across 47 test files as of 2026-07-14 (plus a committed 51-assertion Firestore
   Rules emulator suite, `npm run test:rules`, run separately from the unit-test gate). **Role-app
   coverage** (`App`, `Start`,
   `SupervisorApp`, `NavigatorApp`) now includes both shell smoke tests (mount + gate/session routing)

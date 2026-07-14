@@ -47,6 +47,9 @@ export function callQaScenarioMetadata(selectedScenario) {
     scenarioSource: 'curated',
     qaScenarioId: selectedScenario.id,
     qaScenarioTitle: selectedScenario.title,
+    // Retain scenario provenance on the saved (possibly not-yet-graded) attempt.
+    // The server-trusted scenario version stays authoritative for qa.gradingMetadata.
+    scenarioVersion: selectedScenario.version,
     workflowType: selectedScenario.workflowType,
     difficulty: selectedScenario.difficulty,
     domainIds: selectedScenario.domainIds,

@@ -9,12 +9,14 @@
 // outputs a number.
 //
 // Returns { qa: {score, rawScore, pass, passThreshold, categories, criteria,
-// autoFails}, grade: {score, summary, strengths, improvements} } — `grade` is
-// the projection stored on the interview doc so the existing supervisor panel
-// renders QA tests with zero changes.
+// autoFails, gradingMetadata}, grade: {score, summary, strengths, improvements} }
+// — `grade` is the projection stored on the interview doc so the existing
+// supervisor panel renders QA tests with zero changes.
 //
-// Scored output prefers the primary model, then uses the lite fallback on capacity errors;
-// deterministic rubric scoring remains the quality gate.
+// Scored output uses ONE pinned, auditable grader model (CALL_QA_GRADER_MODEL,
+// default MODEL): it rotates across API keys but NEVER falls back to a different
+// model, and a malformed-output retry reuses the same model. Deterministic rubric
+// scoring remains the quality gate.
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { sopContextFor, sopContextForFresh } from './_sop-context.js';
@@ -143,9 +145,11 @@ const RESPONSE_SCHEMA = {
 };
 
 export function buildMessages(scenario, transcript, department, sopContext = sopContextFor(department)) {
+  // Both 'patient' and 'caller' are caller-side roles; only 'navigator' is the
+  // navigator. Never serialize a caller-side turn as "Navigator".
   const callText = transcript
     .slice(0, MAX_TURNS)
-    .map((t) => `${t.role === 'patient' ? 'Caller' : 'Navigator'}: ${String(t.text ?? '').slice(0, MAX_TURN_CHARS)}`)
+    .map((t) => `${t.role === 'navigator' ? 'Navigator' : 'Caller'}: ${String(t.text ?? '').slice(0, MAX_TURN_CHARS)}`)
     .join('\n');
 
   const rubricText = QA_RUBRIC

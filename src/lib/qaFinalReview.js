@@ -89,3 +89,14 @@ export function qaAiResultLabel(qa) {
     ? 'AI PASS — PENDING SUPERVISOR REVIEW'
     : 'AI FAIL — PENDING SUPERVISOR REVIEW';
 }
+
+/**
+ * A short summary verdict label (no "QA TEST ·" prefix) for a stored QA session,
+ * shared by the navigator's phase hub and dashboard cards. A pending (un-reviewed)
+ * attempt is always an AI recommendation pending review — never a bare PASS/FAIL;
+ * a reviewed attempt shows the supervisor's final/overridden verdict.
+ */
+export function qaSummaryLabel(session) {
+  if (qaFinalReviewStatus(session) !== 'pending') return qaFinalReviewLabel(session);
+  return qaAiResultLabel(session?.qa);
+}

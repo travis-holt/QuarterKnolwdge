@@ -514,7 +514,22 @@ export function getRefillWorkflowSignals(transcript, context = {}) {
 export const REPAIRABLE_CRITERIA = new Set(['know-rule', 'doc-te']);
 
 export function repairQaVerdictsForScenario(validated, transcript, context = {}) {
-  const criteria = validated.criteria.map((criterion) => ({ ...criterion }));
+  const criteria = validated.criteria.map((criterion) => ({
+    ...criterion,
+    // Preserve the RAW model judgment before any repair mutates the effective
+    // verdict/basis/evidence/note, so a repaired effective MET still exposes the
+    // grader's original NOT_MET judgment for auditing.
+    modelJudgment: criterion.modelJudgment ?? {
+      verdict: criterion.verdict, basis: criterion.basis,
+      evidence: criterion.evidence, note: criterion.note,
+    },
+    // Evaluate the ORIGINAL evidence-based negative BEFORE a repair can erase its
+    // trust status: an original NOT_MET/EVIDENCE whose quote can't be verified in
+    // a navigator turn is an untrustworthy allegation. Even if the effective
+    // verdict is later repaired to MET, this must still force supervisor review.
+    originalUnresolved: criterion.verdict === 'NOT_MET' && criterion.basis === 'EVIDENCE'
+      && !verifyNavigatorEvidence(transcript, criterion.evidence),
+  }));
   const repairs = [];
   const signals = getRefillWorkflowSignals(transcript, context);
   const routingPolicy = routingPolicyFor(context);
@@ -639,14 +654,18 @@ export function scoreQa(verdicts, autoFails, transcript) {
 
   const criteria = verdicts.map((v) => {
     const def = defs.get(v.id);
-    // Preserve the raw validated model judgment untouched, so trust-gate and
-    // repair changes never erase what the grader actually said.
-    const modelJudgment = { verdict: v.verdict, basis: v.basis, evidence: v.evidence, note: v.note };
+    // Use the raw model judgment preserved by the repair layer (before it mutated
+    // the effective fields); fall back to this verdict's own fields when scoreQa
+    // is called directly on validated verdicts (no repair layer ran).
+    const modelJudgment = v.modelJudgment ?? { verdict: v.verdict, basis: v.basis, evidence: v.evidence, note: v.note };
     let verdict = v.verdict;
     let basis = v.basis;
     let unverified = false;
-    let unresolved = false;
-    let unresolvedReason = null;
+    // An original evidence-based negative whose quote failed navigator
+    // verification is untrustworthy even after a deterministic repair flipped the
+    // effective verdict to MET — carry that unresolved status through.
+    let unresolved = Boolean(v.originalUnresolved);
+    let unresolvedReason = unresolved ? 'negative-evidence-not-verified' : null;
 
     if (verdict === 'MET' && !verifyNavigatorEvidence(transcript, v.evidence)) {
       // A MET whose quote can't be verified in a navigator turn loses the credit.

@@ -265,9 +265,36 @@ describe('PhaseHub', () => {
       />
     );
     expect(screen.getByText('All 3 phases complete')).toBeTruthy();
-    expect(screen.getByText(/FAIL · 62\/100/)).toBeTruthy();
+    // A pending (un-reviewed) attempt is a non-final AI recommendation, never a bare FAIL.
+    expect(screen.getByText(/AI FAIL — PENDING SUPERVISOR REVIEW · 62\/100/)).toBeTruthy();
     const cards = screen.getAllByRole('button').filter((b) => b.className.includes('phase-card'));
     expect(cards.every((c) => !c.disabled)).toBe(true);
+  });
+
+  it('shows a pending AI PASS as non-final (never a bare PASS)', () => {
+    render(
+      <PhaseHub
+        deptName="Pediatrics"
+        done={{ mcq: true, spot: true, qa: true }}
+        results={{ mcq: { scores: { intake: 90 } }, spot: { scores: { intake: 100 } } }}
+        latestQa={{ qa: { pass: true, score: 92, review: { recommendation: 'pass' } } }}
+        onStart={noop}
+      />
+    );
+    expect(screen.getByText(/AI PASS — PENDING SUPERVISOR REVIEW · 92\/100/)).toBeTruthy();
+  });
+
+  it('shows a needs-review attempt as NEEDS SUPERVISOR REVIEW', () => {
+    render(
+      <PhaseHub
+        deptName="Pediatrics"
+        done={{ mcq: true, spot: true, qa: true }}
+        results={{ mcq: { scores: { intake: 90 } }, spot: { scores: { intake: 100 } } }}
+        latestQa={{ qa: { pass: true, score: 86, review: { recommendation: 'needs_review' } } }}
+        onStart={noop}
+      />
+    );
+    expect(screen.getByText(/NEEDS SUPERVISOR REVIEW · 86\/100/)).toBeTruthy();
   });
 });
 

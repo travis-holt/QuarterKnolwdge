@@ -1575,3 +1575,61 @@ describe('repairQaVerdictsForScenario — original basis + navigator-verified ev
     expect(repaired.criteria.find((c) => c.id === 'know-rule').verdict).toBe('NOT_MET');
   });
 });
+
+describe('repair preserves raw model judgment and unresolved trust status', () => {
+  const context = { scenario: 'A standard pediatric medication refill.', department: 'pediatrics', metadata: { workflowType: 'prescription_refill' } };
+  const completeRefill = [
+    { role: 'navigator', text: 'What is the medication name?' },
+    { role: 'navigator', text: 'Which pharmacy do you prefer?' },
+    { role: 'navigator', text: 'What is the best callback number to reach you?' },
+    { role: 'navigator', text: 'She is completely out, so I will mark it urgent.' },
+    { role: 'navigator', text: 'I will send this request to the PEDS Encounters queue.' },
+  ];
+
+  it('a repaired effective MET still exposes the original model NOT_MET judgment', () => {
+    const verdicts = allMetVerdicts().map((c) => c.id === 'know-rule'
+      ? { ...c, verdict: 'NOT_MET', basis: 'ABSENCE', evidence: '', note: 'The navigator failed to ask about the patient PE status.' }
+      : c);
+    const repaired = repairQaVerdictsForScenario({ criteria: verdicts, autoFails: [] }, completeRefill, context);
+    const scored = scoreQa(repaired.criteria, repaired.autoFails, completeRefill);
+    const know = scored.criteria.find((c) => c.id === 'know-rule');
+    expect(know.verdict).toBe('MET'); // effective verdict after repair
+    // The raw model judgment survives the repair untouched.
+    expect(know.modelJudgment).toEqual({
+      verdict: 'NOT_MET', basis: 'ABSENCE', evidence: '',
+      note: 'The navigator failed to ask about the patient PE status.',
+    });
+  });
+
+  it('an original NOT_MET/EVIDENCE with an unverifiable quote stays unresolved after a repair and forces needs_review', () => {
+    const verdicts = allMetVerdicts().map((c) => c.id === 'doc-te'
+      ? { ...c, verdict: 'NOT_MET', basis: 'EVIDENCE', evidence: 'I will fax this to nowhere in particular', note: 'The navigator did not route or log the TE.' }
+      : c);
+    const repaired = repairQaVerdictsForScenario({ criteria: verdicts, autoFails: [] }, completeRefill, context);
+    expect(repaired.repairs.some((r) => r.criterionId === 'doc-te')).toBe(true);
+    const scored = scoreQa(repaired.criteria, repaired.autoFails, completeRefill);
+    const doc = scored.criteria.find((c) => c.id === 'doc-te');
+    expect(doc.verdict).toBe('MET'); // effective verdict was repaired...
+    expect(doc.unresolved).toBe(true); // ...but the original allegation was never verifiable
+    expect(doc.unresolvedReason).toBe('negative-evidence-not-verified');
+    expect(doc.modelJudgment).toMatchObject({ verdict: 'NOT_MET', basis: 'EVIDENCE' });
+    const review = assessQa(scored, completeRefill, { repairs: repaired.repairs });
+    expect(review.recommendation).toBe('needs_review');
+    expect(review.reviewFlags.map((f) => f.id)).toContain('unresolved-negative-evidence');
+  });
+});
+
+describe('buildMessages — caller-side role serialization', () => {
+  it('serializes both patient and caller turns as Caller, never Navigator', () => {
+    const { userMessage } = buildMessages('scn', [
+      { role: 'navigator', text: 'Thank you for calling Aizer Health.' },
+      { role: 'caller', text: 'My prescription is for amoxicillin.' },
+      { role: 'patient', text: 'And the pharmacy is on Main Street.' },
+    ], 'pediatrics', 'SOP');
+    expect(userMessage).toContain('Navigator: Thank you for calling Aizer Health.');
+    expect(userMessage).toContain('Caller: My prescription is for amoxicillin.');
+    expect(userMessage).toContain('Caller: And the pharmacy is on Main Street.');
+    // A caller line must never be labelled Navigator.
+    expect(userMessage).not.toContain('Navigator: My prescription is for amoxicillin.');
+  });
+});
