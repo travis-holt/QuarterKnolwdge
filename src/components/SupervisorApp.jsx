@@ -7,8 +7,7 @@ import Navigators from './Navigators.jsx';
 import NavigatorDetail from './NavigatorDetail.jsx';
 import Training from './Training.jsx';
 import TrainingModule from './TrainingModule.jsx';
-import QuestionBank from './QuestionBank.jsx';
-import AuditBank from './AuditBank.jsx';
+import AssessmentBankSelector from './AssessmentBankSelector.jsx';
 import SopManager from './SopManager.jsx';
 import ActionCenter from './ActionCenter.jsx';
 import Mentorship from './Mentorship.jsx';
@@ -505,28 +504,31 @@ export default function SupervisorApp({ onSignOut }) {
             )}
 
             {view === 'questions' && (
-              <>
-                <QuestionBank
-                  questions={questions}
-                  results={questionAttempts}
-                  selectedDept={selectedDept}
-                  onActivate={activateQuestion}
-                  onArchive={archiveQuestion}
-                  onDelete={deleteQuestion}
-                  onSaveEdit={updateQuestion}
-                  onGenerate={handleGenerate}
-                  onSaveFeedback={handleSaveFeedback}
-                  onSaveProposal={handleSaveLearningProposal}
-                />
-                <AuditBank
-                  audits={audits}
-                  selectedDept={selectedDept}
-                  onGenerate={handleGenerateAudits}
-                  onActivate={activateAudit}
-                  onArchive={archiveAudit}
-                  onDelete={deleteAudit}
-                />
-              </>
+              <AssessmentBankSelector
+                questions={questions}
+                audits={audits}
+                selectedDept={selectedDept}
+                questionBankProps={{
+                  questions,
+                  results: questionAttempts,
+                  selectedDept,
+                  onActivate: activateQuestion,
+                  onArchive: archiveQuestion,
+                  onDelete: deleteQuestion,
+                  onSaveEdit: updateQuestion,
+                  onGenerate: handleGenerate,
+                  onSaveFeedback: handleSaveFeedback,
+                  onSaveProposal: handleSaveLearningProposal,
+                }}
+                auditBankProps={{
+                  audits,
+                  selectedDept,
+                  onGenerate: handleGenerateAudits,
+                  onActivate: activateAudit,
+                  onArchive: archiveAudit,
+                  onDelete: deleteAudit,
+                }}
+              />
             )}
           </>
         )}
