@@ -4001,6 +4001,57 @@ textarea:focus-visible {
 .qbank__gen-row .qedit__field {
   margin: 0;
 }
+.qbank__section-head {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  background: none;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+  text-align: left;
+}
+.qbank__section-head .overview__panel-title {
+  margin: 0;
+}
+.qbank__groups {
+  display: grid;
+  gap: 0.65rem;
+  margin-top: 0.75rem;
+}
+.qbank__group {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  overflow: hidden;
+}
+.qbank__group.is-open {
+  border-color: var(--accent);
+}
+.qbank__group-head {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0.6rem 0.85rem;
+  background: var(--surface-2);
+  border: none;
+  cursor: pointer;
+  text-align: left;
+}
+.qbank__group-head:hover {
+  background: var(--surface-3);
+}
+.qbank__group-count {
+  font-size: 0.8rem;
+  color: var(--ink-soft);
+  margin-left: auto;
+}
+.qbank__group .qbank__list {
+  padding: 0.85rem;
+  margin: 0;
+}
 .qbank__msg {
   margin: 0.75rem 0 0;
   font-size: 0.9rem;

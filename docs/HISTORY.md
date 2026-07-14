@@ -1,6 +1,25 @@
 # Development History - Knowledge Check
 
 
+### 2026-07-14 - Question Bank: collapsible status sections + per-domain grouping
+- **Problem:** `QuestionBank.jsx` rendered Review queue / Active / Archived as three always-expanded
+  flat `<ul>` lists on one page. With the 48-item MCQ v2 bank (24 questions per department), a
+  supervisor had to scroll past every active question just to reach the Archived section, or to find
+  one domain's questions among 24.
+- **Fix:** each status bucket (`draft`/`active`/`archived`) is now a collapsible panel (`renderSection`
+  helper in `QuestionBank.jsx`) with a clickable header (`.qbank__section-head`) showing the count and
+  a ↑/↓ toggle, reusing the existing `interview-log__toggle` open/closed pattern. Inside an open
+  section, questions are further grouped by domain (`groupByDomain`) into their own collapsible
+  sub-panels (`.qbank__group`/`.qbank__group-head`) showing a per-domain count — a supervisor opens
+  only the status + domain combination they need instead of scrolling one long page. Default state:
+  Review queue open (it's the actionable one), Active and Archived collapsed. Pure UI change — no
+  props, data shape, or business logic touched; `renderQuestion`'s `actions` callback signature changed
+  from `actions(blocked)` to `actions(q, blocked)` since the action-button factories are now defined
+  once per section instead of once per list item (needed `q` back in scope). New CSS in `styles.css`
+  under `.qbank__section-head`/`.qbank__groups`/`.qbank__group*`.
+- **Verified:** `npm test` 815/815, `npm run build` clean.
+- **Files:** `src/components/QuestionBank.jsx`, `src/styles.css`.
+
 ### 2026-07-13 - Bind result document IDs to navigator identity (path + body ownership)
 - **Follow-up to the same day's "incomplete-navigator result reads" fix (below):** that fix's
   `isOwnResultDocId(docId)` direct-read exception recognized a navigator's own deterministic result

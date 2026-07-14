@@ -20,6 +20,23 @@ export default function QuestionBank({ questions, results = [], selectedDept = '
   const [generating, setGenerating] = useState(false);
   const [queueingId, setQueueingId] = useState(null);
   const [message, setMessage] = useState(null); // { kind: 'ok'|'err', text }
+  const [openSections, setOpenSections] = useState({ draft: true, active: false, archived: false });
+  const [openGroups, setOpenGroups] = useState({});
+
+  const toggleSection = (statusKey) => setOpenSections((s) => ({ ...s, [statusKey]: !s[statusKey] }));
+  const toggleGroup = (key) => setOpenGroups((g) => ({ ...g, [key]: !g[key] }));
+
+  // Split a status bucket into per-domain groups (in DOMAINS order) so a
+  // supervisor can open just the domain they care about instead of scrolling
+  // past every question in a status to find it.
+  const groupByDomain = (items) => {
+    const map = new Map(DOMAINS.map((d) => [d.id, []]));
+    for (const q of items) {
+      if (!map.has(q.domainId)) map.set(q.domainId, []);
+      map.get(q.domainId).push(q);
+    }
+    return [...map.entries()].filter(([, groupItems]) => groupItems.length > 0);
+  };
 
   // Filter the bank to the supervisor's selected department.
   const deptQuestions = questions.filter((q) => (q.department ?? 'pediatrics') === selectedDept);
@@ -163,9 +180,48 @@ export default function QuestionBank({ questions, results = [], selectedDept = '
         {best?.rationale && <p className="qbank__why">Best answer: {best.rationale}</p>}
         <div className="qbank__actions">
           <button className="btn btn--ghost btn--sm" onClick={() => setEditingId(q.id)}>Edit</button>
-          {actions(blocked)}
+          {actions(q, blocked)}
         </div>
       </li>
+    );
+  };
+
+  const renderSection = (statusKey, title, items, actionsFactory, { showHealth = false, emptyText = 'Nothing here yet.' } = {}) => {
+    const isOpen = openSections[statusKey];
+    const groups = groupByDomain(items);
+    return (
+      <div className="card overview__panel qbank__section">
+        <button className="qbank__section-head" onClick={() => toggleSection(statusKey)} aria-expanded={isOpen}>
+          <h2 className="overview__panel-title">{title} · {items.length}</h2>
+          <span className="interview-log__toggle" aria-hidden="true">{isOpen ? '↑' : '↓'}</span>
+        </button>
+        {isOpen && (
+          items.length === 0 ? (
+            <p className="readoff__empty">{emptyText}</p>
+          ) : (
+            <div className="qbank__groups">
+              {groups.map(([domainId, groupItems]) => {
+                const key = `${statusKey}__${domainId}`;
+                const groupOpen = openGroups[key] ?? false;
+                return (
+                  <div key={key} className={`qbank__group ${groupOpen ? 'is-open' : ''}`}>
+                    <button className="qbank__group-head" onClick={() => toggleGroup(key)} aria-expanded={groupOpen}>
+                      <span className="tag tag--accent">{domainName(domainId)}</span>
+                      <span className="qbank__group-count">{groupItems.length} question{groupItems.length !== 1 ? 's' : ''}</span>
+                      <span className="interview-log__toggle" aria-hidden="true">{groupOpen ? '↑' : '↓'}</span>
+                    </button>
+                    {groupOpen && (
+                      <ul className="qbank__list">
+                        {groupItems.map((q) => renderQuestion(q, actionsFactory, showHealth))}
+                      </ul>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          )
+        )}
+      </div>
     );
   };
 
@@ -208,63 +264,40 @@ export default function QuestionBank({ questions, results = [], selectedDept = '
       </div>
 
       {/* ── Review queue (drafts) ─────────────────────────────────────── */}
-      <div className="card overview__panel">
-        <h2 className="overview__panel-title">Review queue · {drafts.length}</h2>
-        {drafts.length === 0 ? (
-          <p className="readoff__empty">No drafts awaiting review.</p>
-        ) : (
-          <ul className="qbank__list">
-            {drafts.map((q) =>
-              renderQuestion(
-                q,
-                (blocked) => (
-                  <>
-                    <button className="btn btn--primary btn--sm" onClick={() => onActivate(q.id)} disabled={blocked}>Activate</button>
-                    <button className="btn btn--ghost btn--sm" onClick={() => onDelete(q.id)}>Discard</button>
-                  </>
-                )
-              )
-            )}
-          </ul>
-        )}
-      </div>
+      {renderSection(
+        'draft',
+        'Review queue',
+        drafts,
+        (q, blocked) => (
+          <>
+            <button className="btn btn--primary btn--sm" onClick={() => onActivate(q.id)} disabled={blocked}>Activate</button>
+            <button className="btn btn--ghost btn--sm" onClick={() => onDelete(q.id)}>Discard</button>
+          </>
+        ),
+        { emptyText: 'No drafts awaiting review.' }
+      )}
 
       {/* ── Active ────────────────────────────────────────────────────── */}
-      <div className="card overview__panel">
-        <h2 className="overview__panel-title">Active in the check · {active.length}</h2>
-        {active.length === 0 ? (
-          <p className="readoff__empty">No active questions yet — activate a draft to build the check.</p>
-        ) : (
-          <ul className="qbank__list">
-            {active.map((q) =>
-              renderQuestion(
-                q,
-                () => <button className="btn btn--ghost btn--sm" onClick={() => onArchive(q.id)}>Archive</button>,
-                true
-              )
-            )}
-          </ul>
-        )}
-      </div>
+      {renderSection(
+        'active',
+        'Active in the check',
+        active,
+        (q) => <button className="btn btn--ghost btn--sm" onClick={() => onArchive(q.id)}>Archive</button>,
+        { showHealth: true, emptyText: 'No active questions yet — activate a draft to build the check.' }
+      )}
 
       {/* ── Archived ──────────────────────────────────────────────────── */}
-      {archived.length > 0 && (
-        <div className="card overview__panel">
-          <h2 className="overview__panel-title">Archived · {archived.length}</h2>
-          <ul className="qbank__list">
-            {archived.map((q) =>
-              renderQuestion(
-                q,
-                (blocked) => (
-                  <>
-                    <button className="btn btn--ghost btn--sm" onClick={() => onActivate(q.id)} disabled={blocked}>Restore</button>
-                    <button className="btn btn--ghost btn--sm" onClick={() => onDelete(q.id)}>Delete</button>
-                  </>
-                )
-              )
-            )}
-          </ul>
-        </div>
+      {archived.length > 0 && renderSection(
+        'archived',
+        'Archived',
+        archived,
+        (q, blocked) => (
+          <>
+            <button className="btn btn--ghost btn--sm" onClick={() => onActivate(q.id)} disabled={blocked}>Restore</button>
+            <button className="btn btn--ghost btn--sm" onClick={() => onDelete(q.id)}>Delete</button>
+          </>
+        ),
+        { emptyText: 'Nothing archived yet.' }
       )}
     </section>
   );

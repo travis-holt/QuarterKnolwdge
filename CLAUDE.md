@@ -11,7 +11,8 @@
 > [§8 Current System State](#8-current-system-state) and [§15 Current Priorities](#15-current-priorities)
 > accurate at all times.
 >
-> **Last updated:** 2026-07-13 (result document-ID/body ownership binding + navigator own-row identity fix) ·
+> **Last updated:** 2026-07-13 (PR #27 — result document-ID/body ownership binding + navigator
+> own-row identity fix — merged to `main`) ·
 > **Doc maintainer:** Claude (AI agent) + repo owner. Assumptions are explicitly marked **[ASSUMPTION]**.
 
 ---
@@ -1207,7 +1208,10 @@ of this file on 2026-07-07 to cut per-session context cost (it was ~55% of the f
   The navigator dashboard's own-row merge was also fixed to key on stable `navigatorId` (with a
   legacy display-name fallback) instead of colliding `navigatorId ?? name` / `name`-only keys, so a
   stale floor projection of the current navigator can no longer outrank their own fresh result (see
-  `src/lib/navigatorResultMerge.js`). **This PR does not make MCQ/Spot scoring itself
+  `src/lib/navigatorResultMerge.js`). **Merged to `main` via PR #27 (commit `06eb40c`).** This change
+  is now live in the codebase but its Firestore rule tightening is **not yet published** to any
+  Firebase project — see the pre-publish integrity scan requirement below and in
+  [§15](#15-current-priorities). **It also does not make MCQ/Spot scoring itself
   server-authoritative** — see the client-authoritative scoring limitation in
   [§12](#12-bugs--known-issues) and the required migration in [§15](#15-current-priorities).
 - **Working end to end (logic + UI):** supervisor adds navigators / generates+curates questions
@@ -1691,14 +1695,14 @@ npm run test:e2e     # run the Playwright browser tests (auto-builds + starts th
 - **Deployment prerequisite:** this branch intentionally fails closed without Firebase Admin and
   an explicit production supervisor passcode. Follow the rollout order in `.env.local.example` /
   `README.md`; tightening rules before deploying the identity endpoints would lock users out.
-- **Deployment prerequisite — pre-publish existing-results integrity scan (2026-07-13, not yet
-  run):** the 2026-07-13 result-document-ID/body ownership rules are fail-closed against any
-  ALREADY-EXISTING malformed `results` document (path belongs to one navigator, stored `navigatorId`
-  belongs to another) — once published, NEITHER navigator could read or repair it; only a
-  supervisor/server administrator could. Before publishing those rules, a trusted operator must run
-  a **read-only** scan of the `results` collection using Firebase Admin access (never navigator
-  client access): for every document, validate the document ID against its own
-  `navigatorId`/`department`/`assessmentType` using the canonical forms — MCQ
+- **Deployment prerequisite — pre-publish existing-results integrity scan (2026-07-13, PR #27
+  merged to `main`; scan still not yet run):** the result-document-ID/body ownership rules merged in
+  PR #27 are fail-closed against any ALREADY-EXISTING malformed `results` document (path belongs to
+  one navigator, stored `navigatorId` belongs to another) — once published, NEITHER navigator could
+  read or repair it; only a supervisor/server administrator could. Before publishing those rules, a
+  trusted operator must run a **read-only** scan of the `results` collection using Firebase Admin
+  access (never navigator client access): for every document, validate the document ID against its
+  own `navigatorId`/`department`/`assessmentType` using the canonical forms — MCQ
   `<navigatorId>__<department>`, Spot `<navigatorId>__<department>__spot`, QA
   `<navigatorId>__<department>__qa`, departments `pediatrics`/`obgyn`, plus the legacy
   `<navigatorId>`-only form (valid only as legacy Pediatrics MCQ) — and flag: missing `navigatorId`;
@@ -1706,9 +1710,12 @@ npm run test:e2e     # run the Playwright browser tests (auto-builds + starts th
   `assessmentType`; a suffix inconsistent with `assessmentType`; a legacy plain ID carrying
   non-Pediatrics/non-MCQ data; and duplicate/conflicting canonical slots. Investigate every
   mismatch and quarantine/archive/manually correct affected documents (preserving evidence first)
-  via trusted administrator access before the tightened rules go live. **This scan has not been run
-  against production; no claim is made that the production `results` collection is or is not
-  clean.**
+  via trusted administrator access before the tightened rules go live. A read-only implementation of
+  this check exists at `scripts/scan-results-integrity.mjs` (uses `api/_firebase-admin.js`; performs
+  no writes/updates/deletes; exits non-zero and prints findings instead of a clean pass) —
+  **[ASSUMPTION]** confirm this script is reviewed and committed before relying on it. **This scan
+  has not been run against production; no claim is made that the production `results` collection is
+  or is not clean.**
 - **Browser/live-service validation gap:** unit/build/server checks are complete, but microphone
   interoperability and real Firebase/Gemini behavior still require the safe post-deploy smoke and
   a deliberate voice call on the target browser.
@@ -1839,11 +1846,14 @@ npm run test:e2e     # run the Playwright browser tests (auto-builds + starts th
 ## 15. Current Priorities
 
 1. **Maintain this CLAUDE.md** on every change (highest standing priority).
-2. **Deploy the identity boundary safely** — add Firebase Admin + supervisor secrets, deploy this
-   code, verify navigator/supervisor token exchange, **run the read-only pre-publish existing-results
-   integrity scan** (see [§12](#12-bugs--known-issues) "pre-publish existing-results integrity scan")
-   and resolve any flagged documents, then publish the **tightened (2026-07-13)** Firestore rules
-   (result document-ID + body ownership binding). Never reverse that order.
+2. **Deploy the identity boundary safely** — PR #27 (result document-ID + body ownership binding)
+   is merged to `main`; Railway will auto-deploy the app code on its next push-triggered build. That
+   deploy does NOT publish the tightened Firestore rules by itself. Before publishing them: add
+   Firebase Admin + supervisor secrets if not already set, verify navigator/supervisor token
+   exchange, **run the read-only pre-publish existing-results integrity scan** (see
+   [§12](#12-bugs--known-issues) "pre-publish existing-results integrity scan") and resolve any
+   flagged documents, **then** publish the **tightened (2026-07-13)** Firestore rules. Never reverse
+   that order.
 3. **Post-deploy browser smoke** — run the safe Playwright suite and one deliberate microphone call;
    the container cannot prove real browser permission/device or live Firebase/Gemini behavior.
 4. **Deeper role-app tests** — current unit/behavior coverage is broad; editing questions,
@@ -1929,7 +1939,8 @@ npm run test:e2e     # run the Playwright browser tests (auto-builds + starts th
   Confirm Pass + Override to Fail; AI FAIL → Confirm Fail + Override to Pass; NEEDS REVIEW →
   override-only, reason required); `_qa-rubric.js` pass/fail math + capability matrix unchanged).
 - ✅ Result document-ID/body ownership binding + NavigatorApp own-row identity fix — done
-  2026-07-13 (a new committed 51-assertion Firestore Rules emulator suite run via
+  2026-07-13, merged to `main` via PR #27 (commit `06eb40c`) (a new committed 51-assertion
+  Firestore Rules emulator suite run via
   `npm run test:rules` and wired into CI; see [§8](#8-current-system-state) for the current unit
   test totals). Closed the PR #26 result-document "squatting" hole — `create` checked only body
   ownership with no path check, letting a navigator create a document at another navigator's
