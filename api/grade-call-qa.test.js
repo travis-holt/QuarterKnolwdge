@@ -282,7 +282,33 @@ describe('validateQaResponse', () => {
 
   it('rejects NOT_MET/ABSENCE that carries a substantive evidence quote', () => {
     expect(validateQaResponse(allMet({ 'know-rule': { id: 'know-rule', verdict: 'NOT_MET', basis: 'ABSENCE', evidence: 'the navigator clearly said this line', note: 'x' } })).error)
-      .toMatch(/NOT_MET with basis ABSENCE must not carry a substantive evidence quote/);
+      .toMatch(/NOT_MET with basis ABSENCE must have empty evidence/);
+  });
+
+  // ABSENCE means "no evidence quote" — ANY non-whitespace evidence is rejected,
+  // including a single word or punctuation.
+  it('rejects NOT_MET/ABSENCE with one-word evidence', () => {
+    expect(validateQaResponse(allMet({ 'know-rule': { id: 'know-rule', verdict: 'NOT_MET', basis: 'ABSENCE', evidence: 'incorrect', note: 'x' } })).error)
+      .toMatch(/NOT_MET with basis ABSENCE must have empty evidence/);
+  });
+
+  it('rejects NOT_MET/ABSENCE with punctuation-only evidence', () => {
+    for (const evidence of ['.', 'N/A']) {
+      expect(validateQaResponse(allMet({ 'know-rule': { id: 'know-rule', verdict: 'NOT_MET', basis: 'ABSENCE', evidence, note: 'x' } })).error)
+        .toMatch(/NOT_MET with basis ABSENCE must have empty evidence/);
+    }
+  });
+
+  it('rejects NA/ABSENCE with non-empty evidence', () => {
+    expect(validateQaResponse(allMet({ 'sched-flow': { id: 'sched-flow', verdict: 'NA', basis: 'ABSENCE', evidence: 'N/A', note: '' } })).error)
+      .toMatch(/NA with basis ABSENCE must have empty evidence/);
+  });
+
+  it('accepts whitespace-only evidence for an ABSENCE judgment', () => {
+    expect(validateQaResponse(allMet({
+      'close-survey': { id: 'close-survey', verdict: 'NOT_MET', basis: 'ABSENCE', evidence: '   ', note: 'never offered the survey' },
+      'sched-flow': { id: 'sched-flow', verdict: 'NA', basis: 'ABSENCE', evidence: '\n\t ', note: '' },
+    })).data).toBeTruthy();
   });
 
   it('rejects NA with basis EVIDENCE', () => {
@@ -1471,7 +1497,7 @@ describe('scoreQa — evidence role, negative basis, and model auditability', ()
     expect(c.unresolved).toBe(false);
   });
 
-  it('a NOT_MET/EVIDENCE with an unverifiable quote becomes unresolved (stays NOT_MET, never MET)', () => {
+  it('a NOT_MET/EVIDENCE with an unverifiable quote becomes unresolved (stays NOT_MET when no repair applies)', () => {
     const c = scoreQa(withCriterion('know-rule', { verdict: 'NOT_MET', basis: 'EVIDENCE', evidence: 'a totally invented offending line', note: 'x' }), [], TRANSCRIPT)
       .criteria.find((x) => x.id === 'know-rule');
     expect(c.verdict).toBe('NOT_MET');

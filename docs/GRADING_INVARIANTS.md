@@ -26,11 +26,19 @@ These six statements are binding across the whole Call QA pipeline:
    turns, combining a caller and navigator turn, or reconstructed from ellipsis-
    joined fragments does not verify.
 4. **Evidence-based negative findings without verified evidence are UNRESOLVED.** A
-   `NOT_MET` with `basis: 'EVIDENCE'` whose quote fails navigator verification stays
-   provisionally `NOT_MET` (never becomes `MET`) but is marked
-   `unresolved: true` (`unresolvedReason: 'negative-evidence-not-verified'`), forces
-   `recommendation: 'needs_review'`, and — when the criterion is safety-critical —
-   raises `safetyRisk` to at least `elevated`. It is never presented as observed.
+   `NOT_MET` with `basis: 'EVIDENCE'` whose quote fails navigator verification is
+   marked `unresolved: true` (`unresolvedReason: 'negative-evidence-not-verified'`),
+   forces `recommendation: 'needs_review'`, and — when the criterion is
+   safety-critical — raises `safetyRisk` to at least `elevated`. The original model
+   judgment is never presented as observed. **The narrow repair exception:** an
+   unverifiable evidence-based negative normally stays provisionally `NOT_MET`, but a
+   separate whitelist-only deterministic fairness repair backed by *independently
+   verified* navigator evidence may change the **effective** verdict to `MET`. The
+   repair does **not** validate the model's fabricated negative quote — the repaired
+   `MET` is supported by *different, verified* navigator evidence. The original model
+   judgment and its unresolved status are retained in `modelJudgment` /
+   `unresolved`, and the attempt still gets `recommendation: 'needs_review'`. This
+   exception applies only to the existing repair whitelist (`REPAIRABLE_CRITERIA`).
 5. **Scored Call QA uses ONE recorded model.** The endpoint pins a single grader
    model (`CALL_QA_GRADER_MODEL`, default `MODEL`), rotates only across API keys,
    never falls back to a different model, and retries malformed output on the same
@@ -91,6 +99,21 @@ Each layer distrusts the previous one in a specific direction:
   forces `needs_review`.
 - The **score** may sit at the pass boundary → the borderline band (±`QA_REVIEW_MARGIN`)
   forces `needs_review`, which also absorbs round-up-to-85 edge cases.
+
+### Unverifiable evidence-based negatives and the repair exception
+
+> An unverifiable evidence-based negative remains unresolved. It normally stays
+> provisionally NOT_MET, but a separate whitelist-only deterministic fairness repair
+> backed by independently verified navigator evidence may change the effective verdict
+> to MET. The original model judgment and unresolved status remain preserved, and the
+> attempt must still receive `recommendation: 'needs_review'`.
+
+This is intentional and enforced by the corpus + `grade-call-qa.test.js`
+("repair preserves raw model judgment and unresolved trust status"): the repair does
+NOT validate the model's fabricated negative quote — the repaired MET is supported by
+*different, verified* navigator evidence; the unresolved original allegation is retained
+in `modelJudgment`; supervisor review stays mandatory; and it applies only to the repair
+whitelist (`REPAIRABLE_CRITERIA` = `know-rule`, `doc-te`).
 
 ## 2. Universal invariants (all scoring systems)
 

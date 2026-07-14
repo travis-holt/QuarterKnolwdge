@@ -116,6 +116,23 @@ describe('grade-call-qa endpoint — pinned model', () => {
     expect(geminiWithRotation.mock.calls[0][2].models).toEqual([MODEL]);
     expect(geminiWithRotation.mock.calls[1][2].models).toEqual([MODEL]);
   });
+
+  it('malformed ABSENCE evidence trips the malformed-response retry', () => {
+    // A well-formed JSON that violates the basis contract (NOT_MET/ABSENCE with a
+    // non-whitespace quote) must fail validation and be retried, not accepted.
+    const invalid = JSON.parse(validText);
+    invalid.criteria = invalid.criteria.map((c) =>
+      c.id === 'open-greet' ? { ...c, verdict: 'NOT_MET', basis: 'ABSENCE', evidence: 'incorrect', note: 'x' } : c);
+    return (async () => {
+      geminiWithRotation
+        .mockResolvedValueOnce(OK(JSON.stringify(invalid)))
+        .mockResolvedValueOnce(OK(validText));
+      const res = makeRes();
+      await handler(makeReq(), res);
+      expect(res.statusCode).toBe(200);
+      expect(geminiWithRotation).toHaveBeenCalledTimes(2); // first (invalid) → retry → valid
+    })();
+  });
 });
 
 describe('grade-call-qa endpoint — versioned grading metadata', () => {

@@ -27,11 +27,14 @@
   NOT_MET/EVIDENCE-empty, NOT_MET/ABSENCE-with-evidence, NA/EVIDENCE, unknown/missing basis) so the
   existing malformed-response retry runs — malformed output is never silently coerced. The response
   schema + grader prompt require and explain `basis`.
-- **Unresolved negatives:** a NOT_MET/EVIDENCE whose quote fails navigator verification stays
-  provisionally NOT_MET (never becomes MET) but is marked `unresolved` + `unresolvedReason`, forces
-  `recommendation: needs_review` via the new `unresolved-negative-evidence` review flag, and raises
-  `safetyRisk` to at least `elevated` when the criterion is safety-critical. It is never presented
-  as observed (excluded from projected quotes).
+- **Unresolved negatives:** a NOT_MET/EVIDENCE whose quote fails navigator verification is marked
+  `unresolved` + `unresolvedReason`, forces `recommendation: needs_review` via the new
+  `unresolved-negative-evidence` review flag, and raises `safetyRisk` to at least `elevated` when the
+  criterion is safety-critical. It normally stays provisionally NOT_MET; a whitelist-only deterministic
+  fairness repair backed by independently verified navigator evidence may change the *effective*
+  verdict to MET, but the original allegation stays unresolved and supervisor review remains
+  mandatory (see the audit follow-up below and GRADING_INVARIANTS §0.4). It is never presented as
+  observed (excluded from projected quotes).
 - **Model auditability:** the raw validated grader judgment is preserved on every scored criterion
   as `modelJudgment` and on every repair as `originalBasis` (alongside the existing
   `originalVerdict`/`originalNote`/`originalEvidence`). `geminiWithRotation` now returns the actual
@@ -96,6 +99,24 @@
   passing / 47 files**; corpus 54/54; invariants 17/17. `npm run test:rules` was **not runnable in
   this environment (no Java / Firestore emulator); this PR changes no Firestore rules** — run it in a
   Java-equipped environment before release.
+- **Merge-review follow-up (same PR #31, 2026-07-14):** two findings. (1) `validateCriterionBasis`
+  now enforces that an `ABSENCE` judgment has **completely empty or whitespace-only** evidence — ANY
+  non-whitespace quote (`"incorrect"`, `"N/A"`, `"."`, a full sentence) is rejected for both
+  `NOT_MET/ABSENCE` and `NA/ABSENCE`, replacing the earlier "substantive two-word" threshold (error:
+  `"<verdict> with basis ABSENCE must have empty evidence."`). Malformed ABSENCE evidence trips the
+  endpoint's existing malformed-response retry (regression-tested). The now-unused
+  `hasSubstantiveEvidence` helper was removed. (2) The binding docs were corrected to match the
+  implemented repair exception: an unverifiable evidence-based negative normally stays provisionally
+  NOT_MET, but a whitelist-only deterministic fairness repair backed by *independently verified*
+  navigator evidence may change the *effective* verdict to MET — the repair never validates the
+  model's fabricated negative quote, the original judgment + unresolved status are retained in
+  `modelJudgment`, and supervisor review stays mandatory (`recommendation: needs_review`). Statements
+  saying an unresolved negative "never becomes MET" were revised across `CLAUDE.md`,
+  `docs/GRADING_INVARIANTS.md` (§0.4 + a new §1 note), `docs/HISTORY.md`, and the `_qa-rubric.js`
+  comments. New regression tests: ABSENCE one-word / punctuation-only / `N/A` rejection, whitespace-
+  only acceptance, and the endpoint malformed-ABSENCE retry. Full suite **953 passing / 47 files**;
+  corpus 54/54; invariants 17/17; build clean. `npm run test:rules` still not runnable here
+  (no Java / Firestore emulator); no Firestore rules changed.
 
 ### 2026-07-14 (part 4) - Top-level Assessment Bank selector (Scenario Questions / Spot the Error)
 - **Context:** PR #28 merged to `main` as `db8c0f4`; it redesigned the Question Bank into the collapsible

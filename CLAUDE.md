@@ -733,10 +733,16 @@ training assignments.
   credit, verify an auto-fail, or validate a negative. (2) Every criterion carries a `basis`
   (`EVIDENCE` for an observed behavior with a navigator quote; `ABSENCE` for a never-happened
   behavior with empty evidence); `validateQaResponse`/`validateCriterionBasis` reject illegal
-  combinations so the malformed-response retry runs. (3) A NOT_MET/EVIDENCE whose quote fails
-  navigator verification becomes **unresolved** — it stays provisionally NOT_MET (never MET), forces
-  `needs_review`, and elevates `safetyRisk` for safety-critical criteria. (4) The raw model judgment
-  is preserved on every criterion (`modelJudgment`) and repair (`originalBasis`). (5) Scored Call QA
+  combinations so the malformed-response retry runs (an `ABSENCE` judgment must have empty or
+  whitespace-only evidence — any non-whitespace quote is rejected). (3) A NOT_MET/EVIDENCE whose
+  quote fails navigator verification becomes **unresolved** — it normally stays provisionally
+  NOT_MET, forces `needs_review`, and elevates `safetyRisk` for safety-critical criteria. **Narrow
+  exception:** a whitelist-only deterministic fairness repair backed by *independently verified*
+  navigator evidence may change the *effective* verdict to MET — but the original (fabricated)
+  negative quote is never validated, the original judgment + unresolved status are retained, and the
+  attempt still requires supervisor review (see [docs/GRADING_INVARIANTS.md](docs/GRADING_INVARIANTS.md)
+  §0.4). (4) The raw model judgment is preserved on every criterion (`modelJudgment`) and repair
+  (`originalBasis`). (5) Scored Call QA
   uses ONE pinned model via `callQaGraderModel(env)` + `CALL_QA_GRADER_MODEL` (default `MODEL`) — key
   rotation only, **never a model fallback**; `geminiWithRotation` returns the actual `model`. (6)
   Every result stores `qa.gradingMetadata = {model, rubricVersion, promptVersion, scenarioVersion,
@@ -1536,7 +1542,7 @@ of this file on 2026-07-07 to cut per-session context cost (it was ~55% of the f
 - **Experimental / mockup:**
   - Training **content** is mockup (flagged in UI). Logic is real.
   - **Adult Medicine and Behavioural Health** are not assessed; **Pediatrics and OB/GYN** are live.
-- **Test coverage:** **948 tests** across **47 test files** (adds `api/gradeCallQaEndpoint.test.js`
+- **Test coverage:** **953 tests** across **47 test files** (adds `api/gradeCallQaEndpoint.test.js`
   — handler-level model-pinning + grading-metadata tests — plus the PR-1 Call QA evidence-integrity
   and non-final-label tests in `api/grade-call-qa.test.js`, `api/_gemini-client.test.js`,
   `src/lib/qaFinalReview.test.js`, and `src/components/navigatorDetail.override.test.jsx`; adds
@@ -1638,7 +1644,7 @@ of this file on 2026-07-07 to cut per-session context cost (it was ~55% of the f
   OB/GYN = **37** seed questions (offline fallback) + the **48-item MCQ v2 operating-model bank**
   (24 Pediatrics + 24 OB/GYN) that replaces the weak active bank via a marker-gated
   archive-and-replace migration (bank grows in Firestore per dept) · 4 departments (**Pediatrics
-  + OB/GYN live**, 2 mockup) · **948** unit tests (47 test files) + a committed **51-assertion**
+  + OB/GYN live**, 2 mockup) · **953** unit tests (47 test files) + a committed **51-assertion**
   Firestore Rules emulator suite (`npm run test:rules`, not part of the unit-test count) ·
   **13** Firestore collections
   (`roster`, `results`, `resultHistory`, `questions`, `audits`, `interviews`, `completions`,
@@ -1864,7 +1870,7 @@ npm run test:e2e     # run the Playwright browser tests (auto-builds + starts th
 - Heatmap intensity toggle (show % inside matrix cells).
 
 ### Technical Debt
-- **948 tests** across 47 test files as of 2026-07-14 (plus a committed 51-assertion Firestore
+- **953 tests** across 47 test files as of 2026-07-14 (plus a committed 51-assertion Firestore
   Rules emulator suite, `npm run test:rules`, run separately from the unit-test gate). **Role-app
   coverage** (`App`, `Start`,
   `SupervisorApp`, `NavigatorApp`) now includes both shell smoke tests (mount + gate/session routing)

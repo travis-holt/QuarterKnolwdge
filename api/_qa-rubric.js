@@ -132,21 +132,20 @@ export function verifyNavigatorEvidence(transcript, quote) {
 
 // ── Response validation (model output → trusted verdicts) ───────────────────
 
-// Is there a substantive (2+ word) evidence quote present?
-function hasSubstantiveEvidence(evidence) {
-  return quoteWords(normalizeForMatch(evidence)).length >= 2;
-}
-
 /**
  * Validate one criterion's verdict/basis/evidence combination. Returns an error
  * string for a malformed combination (so the whole response is rejected and the
  * existing malformed-response retry runs), or null when the combination is legal.
  *
+ * ABSENCE means "there is no evidence quote" — so an ABSENCE judgment must have
+ * completely empty or whitespace-only evidence; ANY non-whitespace evidence
+ * (even a single word or punctuation like "N/A", ".", "incorrect") is rejected.
+ *
  * Legal shapes:
  *   MET      + EVIDENCE + non-empty evidence
- *   NOT_MET  + EVIDENCE + non-empty evidence   (observed wrong/unsafe behavior)
- *   NOT_MET  + ABSENCE  + no substantive evidence (behavior simply absent)
- *   NA       + ABSENCE
+ *   NOT_MET  + EVIDENCE + non-empty evidence      (observed wrong/unsafe behavior)
+ *   NOT_MET  + ABSENCE  + empty/whitespace evidence (behavior simply absent)
+ *   NA       + ABSENCE  + empty/whitespace evidence
  */
 export function validateCriterionBasis(verdict, basis, evidence) {
   if (!BASES.has(basis)) return `unknown or missing basis "${basis}".`;
@@ -156,9 +155,10 @@ export function validateCriterionBasis(verdict, basis, evidence) {
     if (!hasEvidence) return 'MET requires a non-empty evidence quote.';
   } else if (verdict === 'NOT_MET') {
     if (basis === 'EVIDENCE' && !hasEvidence) return 'NOT_MET with basis EVIDENCE requires an evidence quote.';
-    if (basis === 'ABSENCE' && hasSubstantiveEvidence(evidence)) return 'NOT_MET with basis ABSENCE must not carry a substantive evidence quote.';
+    if (basis === 'ABSENCE' && hasEvidence) return 'NOT_MET with basis ABSENCE must have empty evidence.';
   } else if (verdict === 'NA') {
     if (basis !== 'ABSENCE') return 'NA must use basis ABSENCE.';
+    if (hasEvidence) return 'NA with basis ABSENCE must have empty evidence.';
   }
   return null;
 }
@@ -675,9 +675,13 @@ export function scoreQa(verdicts, autoFails, transcript) {
     } else if (verdict === 'NOT_MET' && basis === 'EVIDENCE'
       && !verifyNavigatorEvidence(transcript, v.evidence)) {
       // An evidence-based negative whose offending quote can't be verified in a
-      // navigator turn is NOT fully trustworthy. It stays provisionally NOT_MET
-      // for scoring (never becomes MET), but is marked unresolved so the review
-      // layer forces supervisor review and the UI never calls it "observed".
+      // navigator turn is NOT fully trustworthy. It normally stays NOT_MET for
+      // scoring, but a whitelist-only deterministic fairness repair backed by
+      // DIFFERENT, independently verified navigator evidence may have already
+      // changed the effective verdict to MET (in which case v.originalUnresolved
+      // above already carried the flag). Either way it is marked unresolved so
+      // the review layer forces supervisor review and the UI never calls the
+      // original allegation "observed".
       unresolved = true;
       unresolvedReason = 'negative-evidence-not-verified';
     }
@@ -782,8 +786,11 @@ export function assessQa(qa, transcript, { correctedTurns = 0, repairs = [], det
 
   // Evidence-based NOT_MET judgments whose offending quote could not be verified
   // in a navigator turn: the grader ALLEGED an observed wrong/unsafe behavior but
-  // the quote does not hold up. They stay provisionally NOT_MET but must not be
-  // presented as definitively observed, and they force supervisor review.
+  // the quote does not hold up. The effective verdict usually stays NOT_MET, but
+  // a whitelist-only deterministic fairness repair (backed by DIFFERENT, verified
+  // navigator evidence) may have changed it to MET — the original allegation
+  // stays unresolved regardless, must not be presented as definitively observed,
+  // and forces supervisor review.
   const unresolvedNegatives = qa.criteria.filter((c) => c.unresolved);
   if (unresolvedNegatives.length > 0) {
     flags.push({
