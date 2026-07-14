@@ -8,7 +8,56 @@
 > [`api/_qa-grading-corpus.test.js`](../api/_qa-grading-corpus.test.js) — if one of
 > those tests fails after your change, re-read this document before "fixing" the test.
 >
-> Last updated: 2026-07-10.
+> Last updated: 2026-07-14.
+
+## 0. Evidence integrity & model auditability (PR-1, 2026-07-14)
+
+These six statements are binding across the whole Call QA pipeline:
+
+1. **Navigator-behavior evidence must originate from ONE navigator turn.** Verification
+   (`verifyEvidence(transcript, quote, { role: 'navigator', requireSingleTurn: true })`,
+   or the `verifyNavigatorEvidence` shorthand) matches a normalized, in-order,
+   contiguous substring inside a single navigator turn. No unordered word bag, no
+   cross-turn stitching, no matching against the concatenated full transcript.
+2. **Caller/patient wording can never award navigator credit, verify a navigator
+   auto-fail, or validate an evidence-based negative judgment.** `patient` and
+   `caller` are equivalent caller-side aliases and are never treated as `navigator`.
+3. **Evidence cannot be stitched across turns.** A quote spanning two navigator
+   turns, combining a caller and navigator turn, or reconstructed from ellipsis-
+   joined fragments does not verify.
+4. **Evidence-based negative findings without verified evidence are UNRESOLVED.** A
+   `NOT_MET` with `basis: 'EVIDENCE'` whose quote fails navigator verification is
+   marked `unresolved: true` (`unresolvedReason: 'negative-evidence-not-verified'`),
+   forces `recommendation: 'needs_review'`, and — when the criterion is
+   safety-critical — raises `safetyRisk` to at least `elevated`. The original model
+   judgment is never presented as observed. **The narrow repair exception:** an
+   unverifiable evidence-based negative normally stays provisionally `NOT_MET`, but a
+   separate whitelist-only deterministic fairness repair backed by *independently
+   verified* navigator evidence may change the **effective** verdict to `MET`. The
+   repair does **not** validate the model's fabricated negative quote — the repaired
+   `MET` is supported by *different, verified* navigator evidence. The original model
+   judgment and its unresolved status are retained in `modelJudgment` /
+   `unresolved`, and the attempt still gets `recommendation: 'needs_review'`. This
+   exception applies only to the existing repair whitelist (`REPAIRABLE_CRITERIA`).
+5. **Scored Call QA uses ONE recorded model.** The endpoint pins a single grader
+   model (`CALL_QA_GRADER_MODEL`, default `MODEL`), rotates only across API keys,
+   never falls back to a different model, and retries malformed output on the same
+   pinned model. Every stored result records `qa.gradingMetadata` = `{ model,
+   rubricVersion, promptVersion, scenarioVersion, gradedAt }`, all server-owned.
+6. **Unreviewed AI recommendations are never displayed as final verdicts.** The
+   navigator-facing immediate result and the stored-attempt history badge always
+   mark an un-reviewed result as an AI recommendation pending supervisor review
+   (`qaAiResultLabel` / `qaHistoryBadgeLabel`); only a supervisor `qaFinalReview`
+   produces `FINAL`/`OVERRIDDEN PASS`/`FAIL`.
+
+Every grader criterion carries a `basis` (`EVIDENCE` | `ABSENCE`). MET is always
+`EVIDENCE` with a verified navigator quote. An OBSERVED wrong/unsafe miss is
+`NOT_MET`/`EVIDENCE` with a quoted navigator line; a behavior that never happened is
+`NOT_MET` (or `NA`)/`ABSENCE` with empty evidence. `validateQaResponse` rejects any
+other combination so the existing malformed-response retry runs. The raw validated
+model judgment is preserved on every scored criterion as `modelJudgment` (and on every
+repair as `originalVerdict`/`originalBasis`/`originalNote`/`originalEvidence`), so a
+trust-gate change or repair never erases what the grader actually said.
 
 ## 1. The evidence model (Call QA)
 
@@ -17,15 +66,22 @@ The Call QA pipeline is designed so that **no single component is trusted alone*
 ```
 voice transcript
   → glossary correction        (deterministic, bounded to a curated glossary — never invents words)
-  → Gemini grader @ temp 0     (verdicts MET / NOT_MET / NA + verbatim evidence quote; NEVER a score)
-  → validation                 (shape check: all 20 criteria, known auto-fail ids)
+  → pinned Gemini grader @ temp 0  (ONE recorded model; verdict MET/NOT_MET/NA + BASIS
+                                EVIDENCE/ABSENCE + a navigator evidence quote; NEVER a score)
+  → validation                 (shape check: all 20 criteria, verdict/basis/evidence legality,
+                                known auto-fail ids)
   → fairness repairs           (deterministic, whitelist-only, evidence-gated — see §3)
-  → trust-gated scoring        (MET without verifiable evidence → NOT_MET; NA on core → NOT_MET;
-                                auto-fail stands only with verified evidence and zeroes the score)
+  → trust-gated scoring        (MET without a verified navigator quote → NOT_MET; NA on core →
+                                NOT_MET; a NOT_MET/EVIDENCE whose quote can't be verified in a
+                                navigator turn → unresolved; auto-fail stands only with verified
+                                navigator evidence and zeroes the score; modelJudgment preserved)
   → deterministic conflicts    (model-POSITIVE error protection: MET verdicts that contradict the
                                 routing policy, and deterministic unsafe-language signals — see §3a)
-  → review assessment          (deterministic flags → pass / needs_review / fail recommendation)
-  → supervisor final verdict   (human decision stored beside, never over, the AI result)
+  → review assessment          (deterministic flags → pass / needs_review / fail recommendation;
+                                any unresolved negative forces needs_review)
+  → grading metadata           (server-owned model + rubric/prompt/scenario versions + gradedAt)
+  → supervisor final verdict   (human decision stored beside, never over, the AI result;
+                                un-reviewed results are shown as AI recommendations, never final)
 ```
 
 Each layer distrusts the previous one in a specific direction:
@@ -43,6 +99,21 @@ Each layer distrusts the previous one in a specific direction:
   forces `needs_review`.
 - The **score** may sit at the pass boundary → the borderline band (±`QA_REVIEW_MARGIN`)
   forces `needs_review`, which also absorbs round-up-to-85 edge cases.
+
+### Unverifiable evidence-based negatives and the repair exception
+
+> An unverifiable evidence-based negative remains unresolved. It normally stays
+> provisionally NOT_MET, but a separate whitelist-only deterministic fairness repair
+> backed by independently verified navigator evidence may change the effective verdict
+> to MET. The original model judgment and unresolved status remain preserved, and the
+> attempt must still receive `recommendation: 'needs_review'`.
+
+This is intentional and enforced by the corpus + `grade-call-qa.test.js`
+("repair preserves raw model judgment and unresolved trust status"): the repair does
+NOT validate the model's fabricated negative quote — the repaired MET is supported by
+*different, verified* navigator evidence; the unresolved original allegation is retained
+in `modelJudgment`; supervisor review stays mandatory; and it applies only to the repair
+whitelist (`REPAIRABLE_CRITERIA` = `know-rule`, `doc-te`).
 
 ## 2. Universal invariants (all scoring systems)
 

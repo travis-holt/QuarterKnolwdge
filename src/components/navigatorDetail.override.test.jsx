@@ -422,3 +422,29 @@ describe('NavigatorDetail — supervisor grade override', () => {
     expect(screen.queryByText('Edit final review')).not.toBeInTheDocument();
   });
 });
+
+describe('NavigatorDetail — QA history badge is never an unreviewed bare verdict', () => {
+  it('a pending AI pass badge says AI PASS — PENDING REVIEW (never a bare PASS)', async () => {
+    renderDetail(qaSession());
+    expect(await screen.findByText('QA TEST · AI PASS — PENDING REVIEW')).toBeInTheDocument();
+    // The compact badge is never a standalone PASS.
+    expect(screen.queryByText('QA TEST · PASS')).not.toBeInTheDocument();
+  });
+
+  it('a pending AI fail badge says AI FAIL — PENDING REVIEW', async () => {
+    renderDetail(qaFailSession());
+    expect(await screen.findByText('QA TEST · AI FAIL — PENDING REVIEW')).toBeInTheDocument();
+  });
+
+  it('a needs-review badge says NEEDS SUPERVISOR REVIEW', async () => {
+    renderDetail(qaNeedsReviewSession());
+    expect(await screen.findByText('QA TEST · NEEDS SUPERVISOR REVIEW')).toBeInTheDocument();
+  });
+
+  it('a confirmed final verdict shows FINAL PASS on the badge', async () => {
+    renderDetail(qaSession({
+      qaFinalReview: { status: 'confirmed_pass', finalPass: true, reviewedBy: 'supervisor', reviewedAt: { seconds: 1 } },
+    }));
+    expect(await screen.findByText('QA TEST · FINAL PASS')).toBeInTheDocument();
+  });
+});

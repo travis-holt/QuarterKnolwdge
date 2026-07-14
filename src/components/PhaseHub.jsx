@@ -1,5 +1,6 @@
 import { buildPhases, PHASE_META, completedCount, nextPhase } from '../lib/phases.js';
 import { departmentOverall } from '../lib/scoring.js';
+import { qaSummaryLabel, qaBadgeTone } from '../lib/qaFinalReview.js';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // PhaseHub — the navigator's 3-phase assessment home. Shows the fixed
@@ -19,11 +20,12 @@ function phaseSummary(id, results, latestQa) {
   if (id === 'qa') {
     const qa = latestQa?.qa;
     if (!qa) return null;
-    const needsReview = qa.review?.recommendation === 'needs_review';
+    // Un-reviewed attempts are AI recommendations pending supervisor review,
+    // never a bare PASS/FAIL; a supervisor-reviewed attempt shows its final label.
     return {
-      label: needsReview ? 'NEEDS REVIEW' : qa.pass ? 'PASS' : 'FAIL',
+      label: qaSummaryLabel(latestQa),
       detail: `${qa.score}/100`,
-      tone: needsReview ? 'review' : qa.pass ? 'pass' : 'fail',
+      tone: qaBadgeTone(latestQa),
     };
   }
   const scores = results?.[id]?.scores;

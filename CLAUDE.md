@@ -11,7 +11,12 @@
 > [§8 Current System State](#8-current-system-state) and [§15 Current Priorities](#15-current-priorities)
 > accurate at all times.
 >
-> **Last updated:** 2026-07-14 (result document-ID/body ownership binding + navigator own-row
+> **Last updated:** 2026-07-14 (PR 1 — Call QA evidence integrity + model auditability:
+> single-navigator-turn contiguous evidence verification, EVIDENCE/ABSENCE grader basis, unresolved
+> negatives forcing supervisor review, preserved raw model judgment, a pinned auditable grader model
+> (`CALL_QA_GRADER_MODEL`, no scored model fallback), versioned `qa.gradingMetadata`, and non-final
+> "AI recommendation pending review" labels — see F25 + docs/GRADING_INVARIANTS.md §0; then the
+> result document-ID/body ownership binding + navigator own-row
 > identity fix; supervisor Question Bank redesigned as a collapsible review workspace, hardened
 > across three follow-up passes — async-load-aware tab defaults + a sort-label fix; failure-safe
 > persistence actions + a truly modal generation dialog + an empty-department tab fix + edit-error
@@ -719,6 +724,34 @@ training assignments.
   **positively scoped literal-TE/absent-action complaint** (generic "did not say"/"not documented"
   notes never qualify); and the supervisor UI shows each repair's original grader
   verdict/note/evidence plus a "Deterministic grading conflicts" section.
+- **Evidence integrity + model auditability (PR 1, 2026-07-14):** the grading pipeline was hardened
+  so no single component is over-trusted (details in
+  [docs/GRADING_INVARIANTS.md](docs/GRADING_INVARIANTS.md) §0). (1) `verifyEvidence(transcript,
+  quote, {role, requireSingleTurn})` now matches a normalized, in-order, **contiguous substring in
+  ONE navigator turn** (`verifyNavigatorEvidence`) — the unordered word-bag fallback and
+  full-transcript concatenation are gone, and caller/patient wording can never award navigator
+  credit, verify an auto-fail, or validate a negative. (2) Every criterion carries a `basis`
+  (`EVIDENCE` for an observed behavior with a navigator quote; `ABSENCE` for a never-happened
+  behavior with empty evidence); `validateQaResponse`/`validateCriterionBasis` reject illegal
+  combinations so the malformed-response retry runs (an `ABSENCE` judgment must have empty or
+  whitespace-only evidence — any non-whitespace quote is rejected). (3) A NOT_MET/EVIDENCE whose
+  quote fails navigator verification becomes **unresolved** — it normally stays provisionally
+  NOT_MET, forces `needs_review`, and elevates `safetyRisk` for safety-critical criteria. **Narrow
+  exception:** a whitelist-only deterministic fairness repair backed by *independently verified*
+  navigator evidence may change the *effective* verdict to MET — but the original (fabricated)
+  negative quote is never validated, the original judgment + unresolved status are retained, and the
+  attempt still requires supervisor review (see [docs/GRADING_INVARIANTS.md](docs/GRADING_INVARIANTS.md)
+  §0.4). (4) The raw model judgment is preserved on every criterion (`modelJudgment`) and repair
+  (`originalBasis`). (5) Scored Call QA
+  uses ONE pinned model via `callQaGraderModel(env)` + `CALL_QA_GRADER_MODEL` (default `MODEL`) — key
+  rotation only, **never a model fallback**; `geminiWithRotation` returns the actual `model`. (6)
+  Every result stores `qa.gradingMetadata = {model, rubricVersion, promptVersion, scenarioVersion,
+  gradedAt}` (server-owned; client values ignored). (7) Non-final labels — the immediate result and
+  history badge mark an un-reviewed attempt as an AI recommendation pending supervisor review
+  (`qaAiResultLabel`/`qaHistoryBadgeLabel`/`qaBadgeTone` in `qaFinalReview.js`), never a bare
+  PASS/FAIL. This PR does **not** make the transcript server-authoritative (that is PR 2); the
+  transcript remains browser-authoritative and the deterministic corpus proves the deterministic
+  pipeline, not live Gemini judgment.
 - **Supervisor final review (2026-07-09):** Call QA Test attempts now support a supervisor final
   verdict stored on the interview doc as `qaFinalReview`. The AI rubric result remains preserved on
   `qa`; supervisors can confirm AI pass/fail or override to final pass/fail with a required reason
@@ -1509,7 +1542,10 @@ of this file on 2026-07-07 to cut per-session context cost (it was ~55% of the f
 - **Experimental / mockup:**
   - Training **content** is mockup (flagged in UI). Logic is real.
   - **Adult Medicine and Behavioural Health** are not assessed; **Pediatrics and OB/GYN** are live.
-- **Test coverage:** **886 tests** across **46 test files** (adds
+- **Test coverage:** **953 tests** across **47 test files** (adds `api/gradeCallQaEndpoint.test.js`
+  — handler-level model-pinning + grading-metadata tests — plus the PR-1 Call QA evidence-integrity
+  and non-final-label tests in `api/grade-call-qa.test.js`, `api/_gemini-client.test.js`,
+  `src/lib/qaFinalReview.test.js`, and `src/components/navigatorDetail.override.test.jsx`; adds
   `src/components/assessmentBankSelector.test.jsx` — 12 tests for the top-level Assessment Bank
   selector — from the 2026-07-14 Assessment Bank selector change, implemented in PR #30; see F14).
   Also adds `src/components/questionBank.test.jsx` and `src/lib/questionBankView.test.js` from the
@@ -1608,7 +1644,7 @@ of this file on 2026-07-07 to cut per-session context cost (it was ~55% of the f
   OB/GYN = **37** seed questions (offline fallback) + the **48-item MCQ v2 operating-model bank**
   (24 Pediatrics + 24 OB/GYN) that replaces the weak active bank via a marker-gated
   archive-and-replace migration (bank grows in Firestore per dept) · 4 departments (**Pediatrics
-  + OB/GYN live**, 2 mockup) · **886** unit tests (46 test files) + a committed **51-assertion**
+  + OB/GYN live**, 2 mockup) · **953** unit tests (47 test files) + a committed **51-assertion**
   Firestore Rules emulator suite (`npm run test:rules`, not part of the unit-test count) ·
   **13** Firestore collections
   (`roster`, `results`, `resultHistory`, `questions`, `audits`, `interviews`, `completions`,
@@ -1733,7 +1769,10 @@ of this file on 2026-07-07 to cut per-session context cost (it was ~55% of the f
 - **Env vars:** client/build-time `VITE_FIREBASE_*`; server-only
   `FIREBASE_SERVICE_ACCOUNT_JSON` (or split `FIREBASE_PROJECT_ID` / `FIREBASE_CLIENT_EMAIL` /
   `FIREBASE_PRIVATE_KEY`), `SUPERVISOR_PASSCODE_SERVER`, `SESSION_SIGNING_SECRET`,
-  `GEMINI_API_KEYS` (or one `GEMINI_API_KEY`), and optional `GEMINI_REQUEST_TIMEOUT_MS`.
+  `GEMINI_API_KEYS` (or one `GEMINI_API_KEY`), optional `GEMINI_REQUEST_TIMEOUT_MS`, and optional
+  `CALL_QA_GRADER_MODEL` (the single pinned, auditable model that SCORES the Call QA Test; defaults
+  to `MODEL`/`gemini-2.5-flash` — key rotation only, never a model fallback; set it only to re-pin
+  the grader after a deliberate re-calibration).
 - **db.js API** (the only Firestore surface): roster — `addToRoster`, `getRoster`,
   `subscribeRoster(cb,onError)`, `updateRosterEntry(id,patch)`, `setRosterStatus(id,status)`;
   results — `getResult(navigatorId, department, assessmentType)`,
@@ -1831,7 +1870,7 @@ npm run test:e2e     # run the Playwright browser tests (auto-builds + starts th
 - Heatmap intensity toggle (show % inside matrix cells).
 
 ### Technical Debt
-- **886 tests** across 46 test files as of 2026-07-14 (plus a committed 51-assertion Firestore
+- **953 tests** across 47 test files as of 2026-07-14 (plus a committed 51-assertion Firestore
   Rules emulator suite, `npm run test:rules`, run separately from the unit-test gate). **Role-app
   coverage** (`App`, `Start`,
   `SupervisorApp`, `NavigatorApp`) now includes both shell smoke tests (mount + gate/session routing)

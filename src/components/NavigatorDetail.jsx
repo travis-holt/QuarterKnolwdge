@@ -5,7 +5,7 @@ import { DEPARTMENTS, isAssessed } from '../data/departments.js';
 import { LEVELS, interviewScoreColor } from '../data/config.js';
 import { findRow, mentorSuggestions, trainingForRow, buildTrend, trainingImpact, buildDossier } from '../lib/scoring.js';
 import { getInterviews, getResultHistory, updateInterviewGradeOverride, updateQaFinalReview } from '../lib/db.js';
-import { qaFinalReviewLabel, qaFinalVerdict } from '../lib/qaFinalReview.js';
+import { qaFinalReviewLabel, qaFinalVerdict, qaHistoryBadgeLabel, qaBadgeTone } from '../lib/qaFinalReview.js';
 import { compareTimestampValues, timestampMillis } from '../lib/time.js';
 import Sparkline from './Sparkline.jsx';
 import FeedbackControls from './FeedbackControls.jsx';
@@ -572,8 +572,8 @@ export default function NavigatorDetail({ rows, name, deptName, dept, deptMatrix
                     >
                       <span className="tag">{domainName(session.domainId)}</span>
                       {session.qa && (
-                        <span className={`qa-log-badge ${session.qa.review?.recommendation === 'needs_review' ? 'qa-log-badge--review' : session.qa.pass ? 'qa-log-badge--pass' : 'qa-log-badge--fail'}`}>
-                          QA TEST · {session.qa.review?.recommendation === 'needs_review' ? 'NEEDS REVIEW' : session.qa.pass ? 'PASS' : 'FAIL'}
+                        <span className={`qa-log-badge qa-log-badge--${qaBadgeTone(session)}`}>
+                          {qaHistoryBadgeLabel(session)}
                         </span>
                       )}
                       {session.qaArchived && (

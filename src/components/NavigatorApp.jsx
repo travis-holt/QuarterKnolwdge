@@ -26,7 +26,7 @@ import { MINICHECK_SIZE, MINICHECK_PASS } from '../data/config.js';
 import { phasesComplete, completedCount, latestQaForDept } from '../lib/phases.js';
 import { ResultSaveQueue } from '../lib/resultSaveQueue.js';
 import { clientTimestamp, compareTimestampValues, timestampMillis } from '../lib/time.js';
-import { qaFinalVerdict } from '../lib/qaFinalReview.js';
+import { qaSummaryLabel, qaBadgeTone } from '../lib/qaFinalReview.js';
 import { isFirebaseConfigured } from '../lib/firebase.js';
 import { SEED_QUESTIONS, SEED_QUESTIONS_OBGYN, DOMAINS, domainName } from '../data/questions.js';
 import { ASSESSED_DEPTS, departmentName } from '../data/departments.js';
@@ -769,16 +769,13 @@ function AssessmentBar({ activeType, resultsByType, onSwitch, onTakeAnother, pha
 
 function QaLatestCard({ attempt, onRetake }) {
   const qa = attempt?.qa ?? {};
-  const verdict = qaFinalVerdict(attempt);
-  const needsReview = verdict.needsSupervisorReview || qa.review?.recommendation === 'needs_review';
-  const displayPass = verdict.finalPass ?? verdict.aiPass;
-  const label = verdict.finalPass == null
-    ? qa.review?.recommendation === 'needs_review'
-      ? 'NEEDS REVIEW'
-      : `${displayPass ? 'AI PASS' : 'AI FAIL'} · PENDING REVIEW`
-    : verdict.label;
+  // Shared helpers: a pending attempt is always an AI recommendation pending
+  // supervisor review (or NEEDS SUPERVISOR REVIEW), never a bare PASS/FAIL; a
+  // reviewed attempt shows the supervisor's final/overridden verdict.
+  const tone = qaBadgeTone(attempt);
+  const label = qaSummaryLabel(attempt);
   return (
-    <div className={`card qa-latest ${needsReview ? 'qa-latest--review' : displayPass ? 'qa-latest--pass' : 'qa-latest--fail'}`}>
+    <div className={`card qa-latest qa-latest--${tone}`}>
       <div>
         <p className="qa-latest__eyebrow">Latest Call QA Test</p>
         <h2 className="qa-latest__title">{label}</h2>

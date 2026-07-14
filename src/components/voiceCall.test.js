@@ -19,6 +19,7 @@ const curated = {
   title: 'Albuterol refill, out of medication',
   workflowType: 'prescription_refill',
   difficulty: 'medium',
+  version: 'call-qa-scenarios-v1',
   domainIds: ['routing'],
   competencyIds: ['sopKnowledge'],
   expectedActions: ['Confirm medication name and preferred pharmacy', 'Mark HIGH PRIORITY (out of med)'],
@@ -34,6 +35,10 @@ describe('callQaScenarioMetadata', () => {
       expectedActions: curated.expectedActions,
       criticalMisses: curated.criticalMisses,
     });
+  });
+
+  it('retains scenario provenance (scenarioVersion) on the saved attempt', () => {
+    expect(callQaScenarioMetadata(curated).scenarioVersion).toBe('call-qa-scenarios-v1');
   });
 });
 

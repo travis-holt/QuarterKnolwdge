@@ -298,7 +298,27 @@ describe('NavigatorApp — flow behavior', () => {
     fireEvent.click(screen.getByText('Pediatrics').closest('button'));
 
     // An AI result remains visibly pending until a supervisor records the final verdict.
-    expect(await screen.findByText('AI PASS · PENDING REVIEW')).toBeInTheDocument();
+    // QaLatestCard renders the shared qaSummaryLabel helper — a non-final AI recommendation.
+    expect((await screen.findAllByText('AI PASS — PENDING SUPERVISOR REVIEW')).length).toBeGreaterThan(0);
+    // Never a bare, final-looking PASS while the attempt is un-reviewed.
+    expect(screen.queryByText('PASS')).not.toBeInTheDocument();
+  });
+
+  it('QaLatestCard shows a needs-review attempt as NEEDS SUPERVISOR REVIEW (non-final)', async () => {
+    dbMocks.getResult.mockImplementation((_id, dept, type) => {
+      if (type === 'mcq') return Promise.resolve(makeResult({ assessmentType: 'mcq' }));
+      if (type === 'spot') return Promise.resolve(makeResult({ assessmentType: 'spot' }));
+      return Promise.resolve(null);
+    });
+    dbMocks.getInterviews.mockResolvedValue([
+      { navigatorId: 'nav-1', department: 'pediatrics', endedAt: { seconds: 1_700_000_500 }, transcript: [], qa: { pass: true, score: 86, review: { recommendation: 'needs_review' } } },
+    ]);
+
+    renderNav();
+    await deptHeading();
+    fireEvent.click(screen.getByText('Pediatrics').closest('button'));
+
+    expect((await screen.findAllByText('NEEDS SUPERVISOR REVIEW')).length).toBeGreaterThan(0);
   });
 
   it('dashboard renders mocked domain score data', async () => {
@@ -338,7 +358,7 @@ describe('NavigatorApp — flow behavior', () => {
     renderNav();
     await deptHeading();
     fireEvent.click(screen.getByText('Pediatrics').closest('button'));
-    await screen.findByText('AI PASS · PENDING REVIEW');
+    await screen.findAllByText('AI PASS — PENDING SUPERVISOR REVIEW');
 
     fireEvent.click(screen.getByRole('button', { name: 'My training' }));
     // The training view mounts (a stored result → a plan, not the empty state).
@@ -423,7 +443,7 @@ describe('NavigatorApp — flow behavior', () => {
     renderNav();
     await deptHeading();
     fireEvent.click(screen.getByText('Pediatrics').closest('button'));
-    await screen.findByText('AI PASS · PENDING REVIEW'); // on the dashboard
+    await screen.findAllByText('AI PASS — PENDING SUPERVISOR REVIEW'); // on the dashboard
 
     // NavigatorApp resolves the current navigator from the fresh own result,
     // not the stale floor projection: the fresh score (92) renders and the

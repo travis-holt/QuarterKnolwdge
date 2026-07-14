@@ -10,8 +10,11 @@
 // transient / quota / permission failures. It returns a normalized result the
 // caller maps to an HTTP response:
 //
-//   { ok: true,  text }                     → 200 from Gemini (text MAY be empty;
-//                                              callers validate their own output)
+//   { ok: true,  text, model }              → 200 from Gemini (text MAY be empty;
+//                                              callers validate their own output;
+//                                              `model` is the model that actually
+//                                              produced the response — the primary
+//                                              or whichever fallback answered)
 //   { ok: false, reason: 'fatal', status }  → non-rotatable error (our bug)  → 502
 //   { ok: false, reason: 'auth' }           → every key failed with 403       → 500
 //   { ok: false, reason: 'exhausted' }      → keys rate-limited / overloaded  → 429
@@ -176,7 +179,7 @@ export async function geminiWithRotation(keys, body, { label = 'gemini', models 
         sawNonAuthFailure = true; // a network/transient throw is not an auth problem
         continue;
       }
-      if (result.ok) return { ok: true, text: result.text };
+      if (result.ok) return { ok: true, text: result.text, model };
       if (ROTATABLE.has(result.status)) {
         sawFailure = true;
         if (result.status === 403) {
