@@ -9,7 +9,8 @@ import { detectOverusedWorkflow, hasBlockingFlags, validateAuditContent } from '
 // activates the ones that feel like real calls. Navigators' assessments draw
 // from `active` items instantly instead of waiting 40–70s on live generation.
 //
-// Rendered inside the supervisor "Questions" tab, below the Question Bank.
+// Rendered inside the supervisor "Questions" tab, in its own "Spot the Error"
+// panel of the AssessmentBankSelector tablist (see AssessmentBankSelector.jsx).
 
 export default function AuditBank({ audits, selectedDept = 'pediatrics', onGenerate, onActivate, onArchive, onDelete }) {
   const [genDomain, setGenDomain] = useState(DOMAINS[0].id);
@@ -103,7 +104,7 @@ export default function AuditBank({ audits, selectedDept = 'pediatrics', onGener
 
   return (
     <>
-      <header className="overview__head" style={{ marginTop: '2.5rem' }}>
+      <header className="overview__head">
         <h1 className="overview__title">Spot the Error bank</h1>
         <p className="overview__lede">
           Pre-generate audit transcripts here so navigators&rsquo; assessments start instantly

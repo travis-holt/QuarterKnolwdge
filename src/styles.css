@@ -4138,6 +4138,72 @@ textarea:focus-visible {
   padding: 20px;
 }
 
+/* ── Assessment Bank selector (top-level Questions view chooser) ─────────── */
+.assessbank {
+  display: flex;
+  flex-direction: column;
+  gap: 1.25rem;
+}
+.assessbank-tabs {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.75rem;
+}
+.assessbank-tabs__tab {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.3rem;
+  text-align: left;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  padding: 0.9rem 1.05rem;
+  cursor: pointer;
+  transition: border-color 0.15s ease, background 0.15s ease;
+}
+.assessbank-tabs__tab:hover {
+  border-color: var(--accent-soft);
+}
+.assessbank-tabs__tab:focus-visible {
+  outline: none;
+  box-shadow: var(--ring);
+}
+.assessbank-tabs__tab.is-active {
+  border-color: var(--accent);
+  background: var(--surface-2);
+}
+.assessbank-tabs__label {
+  font-size: 1rem;
+  font-weight: 700;
+  color: var(--ink);
+}
+.assessbank-tabs__tab.is-active .assessbank-tabs__label {
+  color: var(--accent-deep);
+}
+.assessbank-tabs__desc {
+  font-size: 0.82rem;
+  color: var(--ink-soft);
+  line-height: 1.4;
+}
+.assessbank-tabs__counts {
+  margin-top: 0.15rem;
+  font-size: 0.76rem;
+  color: var(--ink-faint);
+  font-variant-numeric: tabular-nums;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+.assessbank-tabs__tab.is-active .assessbank-tabs__counts {
+  color: var(--accent);
+}
+
+@media (max-width: 760px) {
+  .assessbank-tabs {
+    grid-template-columns: 1fr;
+  }
+}
+
 /* ── Search / filter / sort toolbar ──────────────────────────────────────── */
 .qbank-toolbar {
   display: flex;

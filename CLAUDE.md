@@ -17,7 +17,9 @@
 > persistence actions + a truly modal generation dialog + an empty-department tab fix + edit-error
 > placement + roving-tabindex tab keyboard nav; then modal focus-restoration timing, department-
 > scoped transient messages, truly-immutable per-request generation tags, keyboard focus
-> containment during generation, and Edit disabled during any pending action) ·
+> containment during generation, and Edit disabled during any pending action; then a top-level
+> Assessment Bank selector so Scenario Questions and Spot the Error no longer share one scrolling
+> page — draft PR, not yet merged) ·
 > **Doc maintainer:** Claude (AI agent) + repo owner. Assumptions are explicitly marked **[ASSUMPTION]**.
 
 ---
@@ -372,7 +374,8 @@ training assignments.
   remain in the repo but are **no longer wired**. One error per transcript (multi-error = v2).
   - **Audit bank (2026-07-03, pilot-feedback fix):** transcripts are now pre-generated into a
   Firestore `audits` collection with the question-bank review-gate model (draft → active →
-  archived). Supervisor UI `AuditBank.jsx` (Questions tab, below the Question Bank): per-domain
+  archived). Supervisor UI `AuditBank.jsx` (Questions tab, in its own "Spot the Error" panel of
+  the `AssessmentBankSelector` tablist described below): per-domain
   coverage read-off, per-workflow coverage for the selected domain, balanced-vs-specific
   generation modes, transcript review with the planted error highlighted, and activation blocks
   for guard-flagged content. `SpotTheError.jsx` draws shuffled `active` bank items first and now
@@ -952,6 +955,44 @@ training assignments.
       focus landing correctly on the trigger button after Escape/Cancel/× closes, 10×
       Tab/Shift+Tab staying inside the dialog throughout generation, focus moving to "Done" when
       generation completes, and the department-scoped generation banner.
+  - **Assessment Bank selector (2026-07-14):** the supervisor "Questions" tab used to render
+    `QuestionBank` immediately followed by `AuditBank` (Spot the Error) on one long page, forcing a
+    scroll through the entire Scenario Question Bank (up to 24 active items per department) to
+    reach the Spot the Error bank below it. New
+    [AssessmentBankSelector.jsx](src/components/AssessmentBankSelector.jsx) sits above both: a
+    `role="tablist"` of two compact cards ("Scenario Questions" / "Spot the Error"), each showing
+    its name, a short description, and department-scoped draft/active counts (`statusCounts` from
+    `questionBankView.js` for Scenario Questions; a direct department+status filter over `audits`
+    for Spot the Error, mirroring `AuditBank`'s own internal filter — no shared helper existed for
+    that side, so this is the one place that duplicates a two-line predicate rather than importing
+    audit-bank internals). Only one bank is visually shown at a time; **both stay mounted** the
+    whole time (toggled via the native `hidden` attribute, not conditional rendering), so each
+    bank's own internal state (QuestionBank's status tab, filters, expanded row; AuditBank's
+    generation form selections) survives switching back and forth. `hidden` also means the inactive
+    panel has zero layout height and cannot receive keyboard focus — verified in a real Chromium
+    browser (not just jsdom): the inactive panel's `getBoundingClientRect()` is `null`, and its
+    controls are unreachable via role-based queries and Tab order. Keyboard support is the same
+    roving-tabindex APG pattern already used by `QuestionBank`'s own status tabs (Left/Right/Home/
+    End; only the selected tab has `tabIndex={0}`). `SupervisorApp.jsx` no longer imports
+    `QuestionBank`/`AuditBank` directly — it passes two grouped prop objects
+    (`questionBankProps`/`auditBankProps`, identical to the props each component received before)
+    into `AssessmentBankSelector`, which forwards them unchanged; `selectedDept` flows through
+    exactly as before. Neither `QuestionBank.jsx` nor `AuditBank.jsx` internals were rewritten —
+    the only change inside `AuditBank.jsx` itself is dropping a now-stale `marginTop: '2.5rem'`
+    inline style that existed solely to space it below `QuestionBank` on the old single-page
+    layout (it now renders as the top of its own panel). New CSS: `.assessbank*` in `styles.css`,
+    a responsive 2-column→1-column grid at the existing `max-width: 760px` breakpoint. 12 new
+    tests in [src/components/assessmentBankSelector.test.jsx](src/components/assessmentBankSelector.test.jsx)
+    (default selection, hide/show on click, state preservation across a switch, keyboard nav,
+    department-scoped counts updating on a dept change, and confirmation that no `QuestionBank`
+    toolbar/tabs/generation-button behavior was removed). Real-browser-verified (headless Chromium,
+    desktop 1440px + mobile 390px viewports, against the live dev server and real Firestore data):
+    default-selected Scenario Questions, switching to Spot the Error and back, keyboard Left/Right/
+    Home/End, and the two cards stacking to one column on mobile with both fully inside the
+    viewport. That same walkthrough surfaced a **pre-existing, unrelated** mobile issue: the
+    supervisor `Nav` bar's link strip (`.nav__links`) has no wrap/scroll handling and overflows the
+    viewport at phone widths (confirmed present on the Overview tab too, not introduced by this
+    change) — out of scope here, left for a future Nav responsiveness pass.
 - **MCQ v2 operating-model bank (2026-07-09):** the active MCQ bank was replaced with an
   operating-model-driven v2 bank ([src/data/questions-v2.js](src/data/questions-v2.js)) — 48
   scenario-based MCQs (**24 Pediatrics + 24 OB/GYN, 4 per domain per department**) that test real
@@ -1023,7 +1064,8 @@ QuarterKnolwdge/
     ├── styles.css           # entire stylesheet
     ├── components/          # Nav, Start, Check, Coaching, Matrix, Overview, Navigators,
     │                        #   NavigatorDetail, Training, MyTraining, TrainingModule,
-    │                        #   QuestionBank, QuestionEditor, DeptBar, SupervisorApp,
+    │                        #   AssessmentBankSelector, QuestionBank, QuestionEditor, AuditBank,
+    │                        #   DeptBar, SupervisorApp,
     │                        #   NavigatorApp, EmptyState, Footer,
     │                        #   Reveal + CountUp (presentation-layer motion primitives)
     ├── data/                # config, questions (DOMAINS + SEED_QUESTIONS), competencies,
@@ -1467,8 +1509,10 @@ of this file on 2026-07-07 to cut per-session context cost (it was ~55% of the f
 - **Experimental / mockup:**
   - Training **content** is mockup (flagged in UI). Logic is real.
   - **Adult Medicine and Behavioural Health** are not assessed; **Pediatrics and OB/GYN** are live.
-- **Test coverage:** **874 tests** across **45 test files** (adds
-  `src/components/questionBank.test.jsx` and `src/lib/questionBankView.test.js` from the
+- **Test coverage:** **886 tests** across **46 test files** (adds
+  `src/components/assessmentBankSelector.test.jsx` — 12 tests for the top-level Assessment Bank
+  selector — from the 2026-07-14 Assessment Bank selector change, currently a draft PR; see F14).
+  Also adds `src/components/questionBank.test.jsx` and `src/lib/questionBankView.test.js` from the
   2026-07-13 Question Bank collapsible-workspace redesign — see F14). Also adds `src/lib/navigatorResultMerge.test.js`
   — the stable-identity floor/own merge helper — and one NavigatorApp behavioral regression test in
   `roleApps.behavior.test.jsx`, both from the 2026-07-13 result-document-integrity fix; see below).
@@ -1564,7 +1608,7 @@ of this file on 2026-07-07 to cut per-session context cost (it was ~55% of the f
   OB/GYN = **37** seed questions (offline fallback) + the **48-item MCQ v2 operating-model bank**
   (24 Pediatrics + 24 OB/GYN) that replaces the weak active bank via a marker-gated
   archive-and-replace migration (bank grows in Firestore per dept) · 4 departments (**Pediatrics
-  + OB/GYN live**, 2 mockup) · **874** unit tests (45 test files) + a committed **51-assertion**
+  + OB/GYN live**, 2 mockup) · **886** unit tests (46 test files) + a committed **51-assertion**
   Firestore Rules emulator suite (`npm run test:rules`, not part of the unit-test count) ·
   **13** Firestore collections
   (`roster`, `results`, `resultHistory`, `questions`, `audits`, `interviews`, `completions`,
@@ -1787,7 +1831,7 @@ npm run test:e2e     # run the Playwright browser tests (auto-builds + starts th
 - Heatmap intensity toggle (show % inside matrix cells).
 
 ### Technical Debt
-- **874 tests** across 45 test files as of 2026-07-13 (plus a committed 51-assertion Firestore
+- **886 tests** across 46 test files as of 2026-07-14 (plus a committed 51-assertion Firestore
   Rules emulator suite, `npm run test:rules`, run separately from the unit-test gate). **Role-app
   coverage** (`App`, `Start`,
   `SupervisorApp`, `NavigatorApp`) now includes both shell smoke tests (mount + gate/session routing)
@@ -2140,6 +2184,12 @@ npm run test:e2e     # run the Playwright browser tests (auto-builds + starts th
   (874 tests, 45 test files; a committed 51-assertion Firestore Rules emulator suite verified live
   against a real JDK — see [§15](#15-current-priorities)). Draft branch:
   `redesign/question-bank-workspace`.
+- ✅ Top-level Assessment Bank selector (Scenario Questions / Spot the Error) — done 2026-07-14; see
+  F14. Adds `AssessmentBankSelector.jsx` above the existing (unmodified internals) `QuestionBank`/
+  `AuditBank`; only one bank shown at a time via `hidden` (both stay mounted), accessible
+  `role="tablist"` with roving-tabindex keyboard nav, department-scoped draft/active counts on each
+  tab. Real-browser-verified at desktop + mobile widths (886 tests, 46 test files). Draft PR, not
+  yet merged: `feature/assessment-bank-selector`.
 
 
 ---

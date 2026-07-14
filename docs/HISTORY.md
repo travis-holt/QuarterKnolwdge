@@ -1,5 +1,55 @@
 # Development History - Knowledge Check
 
+### 2026-07-14 (part 4) - Top-level Assessment Bank selector (Scenario Questions / Spot the Error)
+- **Context:** PR #28 (merge commit `db8c0f4`) redesigned the Question Bank into the collapsible
+  workspace documented in the entries below. Separately, an unrelated branch
+  (`feature/question-bank-collapsible-sections`, opened as PR #29) was built from stale pre-PR-#28
+  `main` and re-implemented an outdated, already-superseded design (a simple per-domain-grouped
+  accordion) on top of code PR #28 had already replaced. **PR #29 must not be merged** — this entry
+  and branch (`feature/assessment-bank-selector`) start clean from latest `main` (including PR #28)
+  and implement the actual, still-outstanding request: the supervisor "Questions" tab rendered
+  `QuestionBank` immediately followed by `AuditBank` on one page, forcing a scroll through the
+  entire (up to 24-item) Scenario Question Bank just to reach the Spot the Error bank below it.
+- **Fix:** new [src/components/AssessmentBankSelector.jsx](../src/components/AssessmentBankSelector.jsx)
+  renders an accessible `role="tablist"` of two compact cards — "Scenario Questions" and "Spot the
+  Error" — each showing its name, a one-line description, and department-scoped draft/active
+  counts. Only one bank is visible at a time; **both stay mounted** (toggled via the native
+  `hidden` attribute rather than conditional rendering), so each bank's own internal UI state
+  (QuestionBank's status tab/filters/expanded row; AuditBank's generation form) survives switching
+  back and forth. Roving-tabindex keyboard nav (Left/Right/Home/End) mirrors the pattern
+  `QuestionBank` already uses for its own status tabs. `SupervisorApp.jsx` no longer imports
+  `QuestionBank`/`AuditBank` directly — it builds two grouped prop objects
+  (`questionBankProps`/`auditBankProps`, unchanged from the props each component received before)
+  and passes them into `AssessmentBankSelector`, which forwards them through untouched;
+  `selectedDept` flows through exactly as before. **Neither `QuestionBank.jsx` nor `AuditBank.jsx`
+  internals were rewritten** — no status-tab/toolbar/generation-dialog/accordion behavior was
+  removed or duplicated. The only edit inside `AuditBank.jsx` is dropping a now-stale
+  `marginTop: '2.5rem'` inline style that existed solely to space it below `QuestionBank` on the
+  old single-page layout; it now renders as the top of its own panel. New CSS (`.assessbank*` in
+  `styles.css`) reuses the existing `max-width: 760px` breakpoint to collapse the two-card grid to
+  one column on narrow viewports.
+- **Verification:** 12 new tests in
+  [src/components/assessmentBankSelector.test.jsx](../src/components/assessmentBankSelector.test.jsx)
+  covering default selection, hide/show on click and switch-back, state preservation across a
+  switch, keyboard navigation, department-scoped counts updating on a department change, and
+  confirmation that no `QuestionBank` toolbar/tabs/generation-button behavior was removed (886
+  tests total, 46 files). `npm run build` clean. `npm audit --omit=dev`: 0 vulnerabilities.
+  `npm ls --all`: valid tree. `git diff --check`: no whitespace errors. `npm run test:rules` could
+  not be run in this environment (no Java/JDK available for the Firestore emulator) — this change
+  does not touch `firestore.rules` or any Firestore document shape, so it is unaffected by that
+  suite either way; a Java-equipped environment should still confirm before merge. A real headless
+  Chromium walkthrough (Playwright, against the actual dev server and live Firestore data, not just
+  jsdom) verified default-selected Scenario Questions, switching to Spot the Error and back,
+  keyboard Left/Right/Home/End, both banks staying mounted with zero layout height while hidden,
+  and the two cards stacking to one column at a 390px mobile viewport with both fully inside the
+  viewport. That walkthrough also surfaced a **pre-existing, unrelated** issue confirmed present on
+  the Overview tab too (not introduced by this change): the supervisor `Nav` bar's link strip has
+  no wrap/scroll handling and overflows the viewport at phone widths — left for a future Nav
+  responsiveness pass, out of scope here.
+- **Files:** new `src/components/AssessmentBankSelector.jsx`,
+  `src/components/assessmentBankSelector.test.jsx`; edited `src/components/SupervisorApp.jsx`,
+  `src/components/AuditBank.jsx`, `src/styles.css`, `CLAUDE.md`.
+
 ### 2026-07-14 (part 3) - Question Bank: focus-timing, message-scoping, request-tag, keyboard fixes
 - **Follow-up to the same day's failure-safe-actions/true-modality pass** (same branch,
   `redesign/question-bank-workspace`), a fourth round of coordinator review corrections.
