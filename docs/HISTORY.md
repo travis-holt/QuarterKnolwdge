@@ -1,12 +1,13 @@
 # Development History - Knowledge Check
 
 ### 2026-07-14 (part 4) - Top-level Assessment Bank selector (Scenario Questions / Spot the Error)
-- **Context:** PR #28 (merge commit `db8c0f4`) redesigned the Question Bank into the collapsible
+- **Context:** PR #28 merged to `main` as `db8c0f4`; it redesigned the Question Bank into the collapsible
   workspace documented in the entries below. Separately, an unrelated branch
   (`feature/question-bank-collapsible-sections`, opened as PR #29) was built from stale pre-PR-#28
   `main` and re-implemented an outdated, already-superseded design (a simple per-domain-grouped
-  accordion) on top of code PR #28 had already replaced. **PR #29 must not be merged** — this entry
-  and branch (`feature/assessment-bank-selector`) start clean from latest `main` (including PR #28)
+  accordion) on top of code PR #28 had already replaced. **PR #29 was closed unmerged as
+  superseded.** This entry and PR #30 (`feature/assessment-bank-selector`) start clean from latest
+  `main` (including PR #28)
   and implement the actual, still-outstanding request: the supervisor "Questions" tab rendered
   `QuestionBank` immediately followed by `AuditBank` on one page, forcing a scroll through the
   entire (up to 24-item) Scenario Question Bank just to reach the Spot the Error bank below it.
@@ -34,10 +35,9 @@
   switch, keyboard navigation, department-scoped counts updating on a department change, and
   confirmation that no `QuestionBank` toolbar/tabs/generation-button behavior was removed (886
   tests total, 46 files). `npm run build` clean. `npm audit --omit=dev`: 0 vulnerabilities.
-  `npm ls --all`: valid tree. `git diff --check`: no whitespace errors. `npm run test:rules` could
-  not be run in this environment (no Java/JDK available for the Firestore emulator) — this change
-  does not touch `firestore.rules` or any Firestore document shape, so it is unaffected by that
-  suite either way; a Java-equipped environment should still confirm before merge. A real headless
+  `npm ls --all`: valid tree. `git diff --check`: no whitespace errors. GitHub CI run #71 passed
+  the unit suite, the real Firestore Rules emulator regression suite, and the production build.
+  A real headless
   Chromium walkthrough (Playwright, against the actual dev server and live Firestore data, not just
   jsdom) verified default-selected Scenario Questions, switching to Spot the Error and back,
   keyboard Left/Right/Home/End, both banks staying mounted with zero layout height while hidden,
@@ -331,7 +331,7 @@
   question, in every one of the stacked Review Queue / Active / Archived sections at once. On a
   bank of any real size this was a very long, hard-to-scan page with no way to focus on one
   question at a time.
-- **Redesign (branch `redesign/question-bank-workspace`, draft PR, not merged):**
+- **Redesign (implemented in PR #28, merged to `main` as `db8c0f4`):**
   - Compact header (title + "Generate questions" primary button) + 4 department-scoped summary
     pills (Awaiting review / Active / Archived / Needs review), replacing the old always-open
     "Generate from the SOP" panel and 2-3 stacked full-list sections.

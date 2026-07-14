@@ -19,7 +19,7 @@
 > scoped transient messages, truly-immutable per-request generation tags, keyboard focus
 > containment during generation, and Edit disabled during any pending action; then a top-level
 > Assessment Bank selector so Scenario Questions and Spot the Error no longer share one scrolling
-> page — draft PR, not yet merged) ·
+> page — implemented in PR #30) ·
 > **Doc maintainer:** Claude (AI agent) + repo owner. Assumptions are explicitly marked **[ASSUMPTION]**.
 
 ---
@@ -969,9 +969,9 @@ training assignments.
     whole time (toggled via the native `hidden` attribute, not conditional rendering), so each
     bank's own internal state (QuestionBank's status tab, filters, expanded row; AuditBank's
     generation form selections) survives switching back and forth. `hidden` also means the inactive
-    panel has zero layout height and cannot receive keyboard focus — verified in a real Chromium
-    browser (not just jsdom): the inactive panel's `getBoundingClientRect()` is `null`, and its
-    controls are unreachable via role-based queries and Tab order. Keyboard support is the same
+    panel has no rendered box / zero layout dimensions, is excluded from keyboard navigation and
+    the accessibility tree — verified in a real Chromium browser (not just jsdom). Keyboard
+    support is the same
     roving-tabindex APG pattern already used by `QuestionBank`'s own status tabs (Left/Right/Home/
     End; only the selected tab has `tabIndex={0}`). `SupervisorApp.jsx` no longer imports
     `QuestionBank`/`AuditBank` directly — it passes two grouped prop objects
@@ -1511,7 +1511,7 @@ of this file on 2026-07-07 to cut per-session context cost (it was ~55% of the f
   - **Adult Medicine and Behavioural Health** are not assessed; **Pediatrics and OB/GYN** are live.
 - **Test coverage:** **886 tests** across **46 test files** (adds
   `src/components/assessmentBankSelector.test.jsx` — 12 tests for the top-level Assessment Bank
-  selector — from the 2026-07-14 Assessment Bank selector change, currently a draft PR; see F14).
+  selector — from the 2026-07-14 Assessment Bank selector change, implemented in PR #30; see F14).
   Also adds `src/components/questionBank.test.jsx` and `src/lib/questionBankView.test.js` from the
   2026-07-13 Question Bank collapsible-workspace redesign — see F14). Also adds `src/lib/navigatorResultMerge.test.js`
   — the stable-identity floor/own merge helper — and one NavigatorApp behavioral regression test in
@@ -2182,14 +2182,14 @@ npm run test:e2e     # run the Playwright browser tests (auto-builds + starts th
   (no longer read back out of a mutable ref), keyboard focus containment inside the dialog even
   with zero enabled controls, and Edit disabled during any pending persistence action; see F14
   (874 tests, 45 test files; a committed 51-assertion Firestore Rules emulator suite verified live
-  against a real JDK — see [§15](#15-current-priorities)). Draft branch:
-  `redesign/question-bank-workspace`.
+  against a real JDK — see [§15](#15-current-priorities)). Implemented in PR #28, merged to main
+  as `db8c0f4`.
 - ✅ Top-level Assessment Bank selector (Scenario Questions / Spot the Error) — done 2026-07-14; see
   F14. Adds `AssessmentBankSelector.jsx` above the existing (unmodified internals) `QuestionBank`/
   `AuditBank`; only one bank shown at a time via `hidden` (both stay mounted), accessible
   `role="tablist"` with roving-tabindex keyboard nav, department-scoped draft/active counts on each
-  tab. Real-browser-verified at desktop + mobile widths (886 tests, 46 test files). Draft PR, not
-  yet merged: `feature/assessment-bank-selector`.
+  tab. Real-browser-verified at desktop + mobile widths (886 tests, 46 test files). Implemented
+  in PR #30.
 
 
 ---
