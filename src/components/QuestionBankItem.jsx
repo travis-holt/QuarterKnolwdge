@@ -184,7 +184,7 @@ export default function QuestionBankItem({
           )}
 
           <div className="qbank__actions">
-            <button className="btn btn--ghost btn--sm" type="button" onClick={stop(onEdit)}>Edit</button>
+            <button className="btn btn--ghost btn--sm" type="button" disabled={anyPending} onClick={stop(onEdit)}>Edit</button>
             {status === 'draft' && (
               <>
                 <button className="btn btn--primary btn--sm" type="button" disabled={blocked || anyPending} onClick={stop(() => onActivate(q.id))}>{activateLabel}</button>

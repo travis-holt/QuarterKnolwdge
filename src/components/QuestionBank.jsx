@@ -117,11 +117,13 @@ export default function QuestionBank({ questions, results = [], selectedDept = '
   }, [selectedDept, deptQuestions, counts]);
 
   // Always-current department, readable from stale closures (see
-  // handleGenerated) — updated on every render, no dependency array.
+  // handleGenerated). Set synchronously DURING render — not via a passive
+  // effect — so it is guaranteed correct even if a generation completion is
+  // validated before effects for this render have flushed. Mutating a ref
+  // during render like this is safe (it doesn't affect this render's output
+  // and every render is idempotent).
   const selectedDeptRef = useRef(selectedDept);
-  useEffect(() => {
-    selectedDeptRef.current = selectedDept;
-  });
+  selectedDeptRef.current = selectedDept;
 
   const tabQuestions = useMemo(
     () => deptQuestions.filter((q) => questionStatus(q) === activeTab),
@@ -180,35 +182,43 @@ export default function QuestionBank({ questions, results = [], selectedDept = '
   const closeGenerateDialog = () => setGenerationDialogOpen(false);
 
   // ── Generation stale-completion guard ───────────────────────────────────
-  // `handleGenerated`/`wrappedOnGenerate` are recreated fresh on every render
-  // (ordinary JS closures), so whichever instance is actually invoked when a
-  // Gemini call resolves has `selectedDept` fixed to whatever department was
-  // active when the dialog's "Generate scenarios" click captured it. If the
-  // supervisor has since switched departments, `selectedDeptRef.current`
-  // (always current) will no longer match — the stale completion is
-  // dropped: no tab switch, no success banner leaking into the department
-  // the supervisor is now looking at. `generationSeqRef` adds a second,
-  // independent guard against a newer request superseding an older one.
+  // Each request gets its own IMMUTABLE tag `{ dept, seq }` created the
+  // instant it starts, and that exact tag is threaded through the whole
+  // round-trip (returned alongside the count, handed back to `onGenerated`
+  // by the dialog) — `handleGenerated` validates the SUPPLIED tag, it never
+  // infers request identity by re-reading a mutable "latest" ref. That
+  // matters because a ref only ever holds the LATEST request's tag: if
+  // request A starts, request B supersedes it, and A resolves last, reading
+  // "the current ref" for A's completion would wrongly return B's tag
+  // (which — being current — would pass the staleness check). Carrying A's
+  // own tag through its own promise chain means A is correctly recognized
+  // as stale even though a *different* request is now "current".
+  // `generationSeqRef` is only ever incremented (never read back into a
+  // per-request tag after the fact), and `selectedDeptRef` is kept in sync
+  // synchronously during render (see above) so a completion validated
+  // immediately after a department switch still sees the fresh value.
   const generationSeqRef = useRef(0);
-  const requestTagRef = useRef(null);
 
   const wrappedOnGenerate = async (args) => {
     generationSeqRef.current += 1;
-    requestTagRef.current = { dept: selectedDept, seq: generationSeqRef.current };
-    return onGenerate(args);
+    const tag = Object.freeze({ dept: selectedDept, seq: generationSeqRef.current });
+    const n = await onGenerate(args);
+    return { n, tag };
   };
 
-  const handleGenerated = (text) => {
-    const tag = requestTagRef.current;
+  const handleGenerated = (text, tag) => {
     const isStale = !tag || tag.dept !== selectedDeptRef.current || tag.seq !== generationSeqRef.current;
     if (isStale) return;
     // Generation success is an explicit, action-driven override — distinct
     // from "don't override a manual tab pick". It still needs to stick, so
     // mark the department resolved (not "manual") so a later snapshot can't
     // undo it, without conflating it with an actual supervisor tab click.
-    resolvedDeptsRef.current.set(selectedDept, true);
+    resolvedDeptsRef.current.set(tag.dept, true);
     changeTab('draft');
-    setGenMessage({ kind: 'ok', text });
+    // Stamp the message with the department it belongs to (see genMessage
+    // render guard below) so it can never be shown while viewing a
+    // different department, even if this exact completion is legitimate.
+    setGenMessage({ kind: 'ok', text, dept: tag.dept });
   };
 
   // ── Failure-safe persistence actions ────────────────────────────────────
@@ -276,6 +286,7 @@ export default function QuestionBank({ questions, results = [], selectedDept = '
 
   const queueRevision = async (q, h) => {
     if (!onSaveProposal) return;
+    const dept = selectedDept; // captured now — stamped on the message below
     setQueueingId(q.id);
     setQueueMessage(null);
     try {
@@ -296,9 +307,9 @@ export default function QuestionBank({ questions, results = [], selectedDept = '
           h?.canTeachFailCount > 0 ? `${h.canTeachFailCount} Can-Teach misses` : 'No Can-Teach miss signal',
         ],
       });
-      setQueueMessage({ kind: 'ok', text: 'Question revision queued in Learning Loop.' });
+      setQueueMessage({ kind: 'ok', text: 'Question revision queued in Learning Loop.', dept });
     } catch (err) {
-      setQueueMessage({ kind: 'err', text: err?.message || 'Could not queue revision. Check Firebase config/network.' });
+      setQueueMessage({ kind: 'err', text: err?.message || 'Could not queue revision. Check Firebase config/network.', dept });
     } finally {
       setQueueingId(null);
     }
@@ -384,10 +395,10 @@ export default function QuestionBank({ questions, results = [], selectedDept = '
         id={`qbank-tabpanel-${activeTab}`}
         aria-labelledby={`qbank-tab-${activeTab}`}
       >
-        {activeTab === 'draft' && genMessage && (
+        {activeTab === 'draft' && genMessage && genMessage.dept === selectedDept && (
           <p className={`qbank__msg ${genMessage.kind === 'err' ? 'is-err' : 'is-ok'}`} role="status">{genMessage.text}</p>
         )}
-        {queueMessage && (
+        {queueMessage && queueMessage.dept === selectedDept && (
           <p className={`qbank__msg ${queueMessage.kind === 'err' ? 'is-err' : 'is-ok'}`} role="status">{queueMessage.text}</p>
         )}
 

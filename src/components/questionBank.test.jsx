@@ -508,6 +508,70 @@ describe('QuestionBank — generation stale-completion guard', () => {
   });
 });
 
+describe('QuestionBank — department-scoped transient messages', () => {
+  it('does not leak a Pediatrics generation success message into OB/GYN', async () => {
+    const onGenerate = vi.fn().mockResolvedValue(2);
+    const pedsQuestions = [makeQuestion({ id: 'p-active', status: 'active', department: 'pediatrics' })];
+    const { rerender } = render(<QuestionBank {...baseProps({ questions: pedsQuestions, selectedDept: 'pediatrics', onGenerate })} />);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Generate questions' }));
+    fireEvent.click(screen.getByRole('button', { name: /generate scenarios/i }));
+    await within(screen.getByRole('tabpanel')).findByText(/added to the Review Queue/i);
+    fireEvent.click(screen.getByRole('button', { name: 'Done' }));
+
+    // Switch to OB/GYN, which has its own draft (so its Review Queue is reachable).
+    const obgynQuestions = [...pedsQuestions, makeQuestion({ id: 'o-draft', status: 'draft', department: 'obgyn' })];
+    rerender(<QuestionBank {...baseProps({ questions: obgynQuestions, selectedDept: 'obgyn', onGenerate })} />);
+    expect(tab('Review Queue').getAttribute('aria-selected')).toBe('true'); // obgyn auto-resolves (has a draft)
+    expect(screen.getByRole('tabpanel')).not.toHaveTextContent(/added to the Review Queue/i);
+  });
+
+  it('does not leak a Learning Loop queue message between departments', async () => {
+    const onSaveProposal = vi.fn().mockResolvedValue(undefined);
+    const q = makeQuestion({ id: 'flagged-1', status: 'active', department: 'pediatrics' });
+    // 10 wrong answers -> correctRate 0 -> health status 'review' -> "Queue revision" renders.
+    const results = Array.from({ length: 10 }, () => ({ answers: { [q.id]: 'b' }, scores: {} }));
+    const { rerender } = render(<QuestionBank {...baseProps({ questions: [q], results, selectedDept: 'pediatrics', onSaveProposal })} />);
+    fireEvent.click(screen.getByRole('button', { expanded: false }));
+    fireEvent.click(screen.getByRole('button', { name: 'Queue revision' }));
+    await screen.findByText('Question revision queued in Learning Loop.');
+
+    rerender(<QuestionBank {...baseProps({ questions: [q], results, selectedDept: 'obgyn', onSaveProposal })} />);
+    expect(screen.queryByText('Question revision queued in Learning Loop.')).not.toBeInTheDocument();
+  });
+});
+
+describe('QuestionBank — Edit disabled during a pending action', () => {
+  it('disables Edit while Activate is pending (the row must not switch into QuestionEditor mid-write)', async () => {
+    const { promise, reject } = deferred();
+    const onActivate = vi.fn().mockReturnValue(promise);
+    const questions = [makeQuestion({ id: 'd1', status: 'draft' })];
+    render(<QuestionBank {...baseProps({ questions, onActivate })} />);
+    fireEvent.click(screen.getByRole('button', { expanded: false }));
+    fireEvent.click(screen.getByRole('button', { name: 'Activate' }));
+
+    const editBtn = screen.getByRole('button', { name: 'Edit' });
+    expect(editBtn).toBeDisabled();
+    fireEvent.click(editBtn); // clicking a disabled button must not open the editor
+    expect(screen.queryByRole('textbox')).not.toBeInTheDocument();
+
+    reject(new Error('failed'));
+    await screen.findByRole('alert');
+    // Once the write settles (here: fails, so the row stays put), Edit is enabled again.
+    expect(screen.getByRole('button', { name: 'Edit' })).not.toBeDisabled();
+  });
+
+  it('disables Edit while Archive is pending', () => {
+    const { promise } = deferred();
+    const onArchive = vi.fn().mockReturnValue(promise);
+    const questions = [makeQuestion({ id: 'x1', status: 'active' })];
+    render(<QuestionBank {...baseProps({ questions, onArchive })} />);
+    fireEvent.click(screen.getByRole('button', { expanded: false }));
+    fireEvent.click(screen.getByRole('button', { name: 'Archive' }));
+    expect(screen.getByRole('button', { name: 'Edit' })).toBeDisabled();
+  });
+});
+
 describe('QuestionBank — empty-department tab state', () => {
   it('resets to Active immediately when switching to a department with no questions, even if the previous department had resolved to Review Queue', () => {
     const pedsWithDraft = [makeQuestion({ id: 'p1', status: 'draft', department: 'pediatrics' })];

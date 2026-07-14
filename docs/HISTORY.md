@@ -1,5 +1,88 @@
 # Development History - Knowledge Check
 
+### 2026-07-14 (part 3) - Question Bank: focus-timing, message-scoping, request-tag, keyboard fixes
+- **Follow-up to the same day's failure-safe-actions/true-modality pass** (same branch,
+  `redesign/question-bank-workspace`), a fourth round of coordinator review corrections.
+- **1. Fixed modal focus-restoration timing.** `QuestionBankGenerateDialog`'s `close()` used to
+  call `onClose()` then immediately `returnFocusRef.current.focus()` in the same synchronous
+  handler. Since React may not have committed the dialog's unmount (and the paired un-inert of
+  `#root`) by the time that line runs, the focus() call could silently do nothing while the
+  trigger button was still inside an inert subtree. Fixed: moved the focus-restore into the SAME
+  `useEffect` cleanup that un-inerts `#root`, in that exact order — un-inert first, then focus —
+  which is guaranteed correct regardless of React's commit timing, since both statements execute
+  synchronously within the one cleanup callback. `close()` itself is now just a guarded call to
+  `onClose()`. Escape, backdrop click, Cancel, and the × button all still route through the same
+  `close()`, so all three real dismissal paths get the fix uniformly. Verified in a real browser:
+  Escape, Cancel, and × close all land focus back on "Generate questions" and clear `#root.inert`.
+- **2. Department-scoped transient messages.** `genMessage` (generation success/error banner) and
+  `queueMessage` (Learning Loop "revision queued" banner) now carry the department they were
+  created for (`{ ..., dept }`) and only render when `message.dept === selectedDept` — chosen over
+  the "clear both on department switch" alternative because it also lets a message correctly
+  reappear if the supervisor switches back to the department it belongs to. A Pediatrics
+  generation success message (or a Learning Loop queue message) can no longer be visible while
+  viewing OB/GYN.
+- **3. Generation request tags are now truly immutable per request.** The prior fix (2026-07-14,
+  part 2) tagged each generation with `{ dept, seq }`, but stored it in a single mutable
+  `requestTagRef.current` — an OLDER request's completion read *whatever the ref currently held*,
+  which could already have been overwritten by a NEWER request's tag by the time the older one
+  resolved. Concretely: request A starts (ref = tagA, seq 1); request B starts before A resolves
+  (ref = tagB, seq 2); when A finally resolves and reads `requestTagRef.current`, it gets tagB —
+  and the staleness check (`tag.seq !== generationSeqRef.current`) would then pass, since tagB's
+  seq *does* match the latest sequence, incorrectly treating A's stale completion as current.
+  Fixed: `wrappedOnGenerate` now creates a **frozen, request-scoped** `{ dept, seq }` object and
+  returns it *alongside* the count (`{ n, tag }`); the dialog passes that exact tag back to
+  `onGenerated(text, tag)`; `handleGenerated` validates the **supplied** tag against the live
+  department ref + latest sequence — it never reads a ref to infer which request just completed.
+  Also: `selectedDeptRef.current = selectedDept` is now assigned **synchronously during render**
+  (a plain ref mutation, which is safe and does not affect this render's output) rather than in a
+  passive `useEffect`, so the ref is guaranteed current even if a completion is validated before
+  this render's effects have had a chance to flush.
+- **4. Keyboard focus stays inside the modal even with zero enabled controls.** While generating,
+  every real control in the dialog is disabled, so the existing focusable-elements query returns
+  an empty list — Tab could then fall through toward `document.body`. Fixed: the dialog container
+  now has `tabIndex={-1}` and becomes the focus anchor the moment generation starts (a `useEffect`
+  keyed on the `generating` transition calls `dialogRef.current.focus()`); the Tab/Shift+Tab
+  keydown handler now explicitly re-focuses the dialog container whenever the focusable list is
+  empty (or focus has otherwise drifted outside the dialog), instead of doing nothing; and once
+  generation completes, focus moves to a real enabled control (the footer Done/Cancel button).
+- **5. Edit disabled while any persistence action is pending.** While Activate, Restore, Archive,
+  Discard, or Delete is in flight for a question, its Edit button is now also disabled
+  (`disabled={anyPending}` in `QuestionBankItem.jsx`) — the row can no longer switch into
+  `QuestionEditor` mid-write.
+- **Tests:** 6 new tests added to `src/components/questionBank.test.jsx` (46 total) — two for
+  department-scoped messages (generation success banner, Learning Loop queue message), two for
+  Edit-disabled-during-pending (Activate and Archive), covering both the disabled state and (for
+  Archive, which doesn't auto-collapse the row) re-enabling once the write settles. A new dedicated
+  file, `src/components/questionBankGenerationOrdering.test.jsx` (2 tests), mocks
+  `QuestionBankGenerateDialog` with a minimal, non-serializing stand-in specifically so the
+  immutable-tag guarantee (item 3) can be exercised directly: the *real* dialog structurally
+  prevents two overlapping generation requests (the button disables itself and dismissal is
+  suppressed while generating) — which is a correct and intentional property, not a testing
+  inconvenience — so reproducing "an older request resolves after a newer one supersedes it"
+  requires bypassing that serialization, exactly as the earlier department-switch race test
+  bypassed the modal's own UI-level prevention via a forced re-render. Both are documented,
+  deliberate defense-in-depth tests of the underlying guard logic, decoupled from whether the UI
+  can currently reach that state. Full suite: **874 tests across 45 files** (was 868/44 before
+  this pass).
+- **Real-browser (headless Chromium) walkthrough, third round:** a fresh throwaway harness (never
+  committed) verified, in a real browser: focus lands correctly on the "Generate questions" button
+  and `#root.inert` clears after all three close paths (Escape, Cancel, ×); 10× Tab and 10×
+  Shift+Tab never leave the dialog while a (harness-simulated, 600ms) generation is in flight, with
+  every control disabled; focus moves to the "Done" button once generation completes; a
+  generation success banner is visible in Pediatrics but not after switching to OB/GYN; and Edit is
+  disabled while Archive is pending and re-enabled once it settles.
+- **Verification (this pass, portable JDK reused, no `npm ci` needed — `node_modules` was already
+  intact from the prior pass):** `npm test -- src/components` **131 passed** (9 files, was 125/8);
+  `npm test` **874 passed** (45 files, was 868/44); `npm run test:rules` **51 passed, 0 failed**
+  against the real Firestore Rules emulator; `npm run build` clean; `npm audit --omit=dev` 0
+  vulnerabilities; `npm ls --all` exits 0 with no `ELSPROBLEMS`/required-dependency errors (68
+  informational `UNMET OPTIONAL DEPENDENCY` entries only, unchanged from prior passes); `git diff
+  --check` clean.
+- **Files:** edited `src/components/{QuestionBank,QuestionBankGenerateDialog,QuestionBankItem,
+  questionBank.test}.jsx`; new `src/components/questionBankGenerationOrdering.test.jsx`; edited
+  `CLAUDE.md`, `docs/HISTORY.md`. No Firestore rules, scoring, question content, or document-shape
+  changes.
+
 ### 2026-07-14 (part 2) - Question Bank: failure-safe actions, true modality, keyboard/empty-dept fixes
 - **Follow-up to the same day's async-load-tab-default + sort-label pass** (same branch,
   `redesign/question-bank-workspace`), addressing a second round of coordinator review feedback.
