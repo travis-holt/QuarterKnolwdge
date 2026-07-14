@@ -1,5 +1,339 @@
 # Development History - Knowledge Check
 
+### 2026-07-14 (part 3) - Question Bank: focus-timing, message-scoping, request-tag, keyboard fixes
+- **Follow-up to the same day's failure-safe-actions/true-modality pass** (same branch,
+  `redesign/question-bank-workspace`), a fourth round of coordinator review corrections.
+- **1. Fixed modal focus-restoration timing.** `QuestionBankGenerateDialog`'s `close()` used to
+  call `onClose()` then immediately `returnFocusRef.current.focus()` in the same synchronous
+  handler. Since React may not have committed the dialog's unmount (and the paired un-inert of
+  `#root`) by the time that line runs, the focus() call could silently do nothing while the
+  trigger button was still inside an inert subtree. Fixed: moved the focus-restore into the SAME
+  `useEffect` cleanup that un-inerts `#root`, in that exact order — un-inert first, then focus —
+  which is guaranteed correct regardless of React's commit timing, since both statements execute
+  synchronously within the one cleanup callback. `close()` itself is now just a guarded call to
+  `onClose()`. Escape, backdrop click, Cancel, and the × button all still route through the same
+  `close()`, so all three real dismissal paths get the fix uniformly. Verified in a real browser:
+  Escape, Cancel, and × close all land focus back on "Generate questions" and clear `#root.inert`.
+- **2. Department-scoped transient messages.** `genMessage` (generation success/error banner) and
+  `queueMessage` (Learning Loop "revision queued" banner) now carry the department they were
+  created for (`{ ..., dept }`) and only render when `message.dept === selectedDept` — chosen over
+  the "clear both on department switch" alternative because it also lets a message correctly
+  reappear if the supervisor switches back to the department it belongs to. A Pediatrics
+  generation success message (or a Learning Loop queue message) can no longer be visible while
+  viewing OB/GYN.
+- **3. Generation request tags are now truly immutable per request.** The prior fix (2026-07-14,
+  part 2) tagged each generation with `{ dept, seq }`, but stored it in a single mutable
+  `requestTagRef.current` — an OLDER request's completion read *whatever the ref currently held*,
+  which could already have been overwritten by a NEWER request's tag by the time the older one
+  resolved. Concretely: request A starts (ref = tagA, seq 1); request B starts before A resolves
+  (ref = tagB, seq 2); when A finally resolves and reads `requestTagRef.current`, it gets tagB —
+  and the staleness check (`tag.seq !== generationSeqRef.current`) would then pass, since tagB's
+  seq *does* match the latest sequence, incorrectly treating A's stale completion as current.
+  Fixed: `wrappedOnGenerate` now creates a **frozen, request-scoped** `{ dept, seq }` object and
+  returns it *alongside* the count (`{ n, tag }`); the dialog passes that exact tag back to
+  `onGenerated(text, tag)`; `handleGenerated` validates the **supplied** tag against the live
+  department ref + latest sequence — it never reads a ref to infer which request just completed.
+  Also: `selectedDeptRef.current = selectedDept` is now assigned **synchronously during render**
+  (a plain ref mutation, which is safe and does not affect this render's output) rather than in a
+  passive `useEffect`, so the ref is guaranteed current even if a completion is validated before
+  this render's effects have had a chance to flush.
+- **4. Keyboard focus stays inside the modal even with zero enabled controls.** While generating,
+  every real control in the dialog is disabled, so the existing focusable-elements query returns
+  an empty list — Tab could then fall through toward `document.body`. Fixed: the dialog container
+  now has `tabIndex={-1}` and becomes the focus anchor the moment generation starts (a `useEffect`
+  keyed on the `generating` transition calls `dialogRef.current.focus()`); the Tab/Shift+Tab
+  keydown handler now explicitly re-focuses the dialog container whenever the focusable list is
+  empty (or focus has otherwise drifted outside the dialog), instead of doing nothing; and once
+  generation completes, focus moves to a real enabled control (the footer Done/Cancel button).
+- **5. Edit disabled while any persistence action is pending.** While Activate, Restore, Archive,
+  Discard, or Delete is in flight for a question, its Edit button is now also disabled
+  (`disabled={anyPending}` in `QuestionBankItem.jsx`) — the row can no longer switch into
+  `QuestionEditor` mid-write.
+- **Tests:** 6 new tests added to `src/components/questionBank.test.jsx` (46 total) — two for
+  department-scoped messages (generation success banner, Learning Loop queue message), two for
+  Edit-disabled-during-pending (Activate and Archive), covering both the disabled state and (for
+  Archive, which doesn't auto-collapse the row) re-enabling once the write settles. A new dedicated
+  file, `src/components/questionBankGenerationOrdering.test.jsx` (2 tests), mocks
+  `QuestionBankGenerateDialog` with a minimal, non-serializing stand-in specifically so the
+  immutable-tag guarantee (item 3) can be exercised directly: the *real* dialog structurally
+  prevents two overlapping generation requests (the button disables itself and dismissal is
+  suppressed while generating) — which is a correct and intentional property, not a testing
+  inconvenience — so reproducing "an older request resolves after a newer one supersedes it"
+  requires bypassing that serialization, exactly as the earlier department-switch race test
+  bypassed the modal's own UI-level prevention via a forced re-render. Both are documented,
+  deliberate defense-in-depth tests of the underlying guard logic, decoupled from whether the UI
+  can currently reach that state. Full suite: **874 tests across 45 files** (was 868/44 before
+  this pass).
+- **Real-browser (headless Chromium) walkthrough, third round:** a fresh throwaway harness (never
+  committed) verified, in a real browser: focus lands correctly on the "Generate questions" button
+  and `#root.inert` clears after all three close paths (Escape, Cancel, ×); 10× Tab and 10×
+  Shift+Tab never leave the dialog while a (harness-simulated, 600ms) generation is in flight, with
+  every control disabled; focus moves to the "Done" button once generation completes; a
+  generation success banner is visible in Pediatrics but not after switching to OB/GYN; and Edit is
+  disabled while Archive is pending and re-enabled once it settles.
+- **Verification (this pass, portable JDK reused, no `npm ci` needed — `node_modules` was already
+  intact from the prior pass):** `npm test -- src/components` **131 passed** (9 files, was 125/8);
+  `npm test` **874 passed** (45 files, was 868/44); `npm run test:rules` **51 passed, 0 failed**
+  against the real Firestore Rules emulator; `npm run build` clean; `npm audit --omit=dev` 0
+  vulnerabilities; `npm ls --all` exits 0 with no `ELSPROBLEMS`/required-dependency errors (68
+  informational `UNMET OPTIONAL DEPENDENCY` entries only, unchanged from prior passes); `git diff
+  --check` clean.
+- **Files:** edited `src/components/{QuestionBank,QuestionBankGenerateDialog,QuestionBankItem,
+  questionBank.test}.jsx`; new `src/components/questionBankGenerationOrdering.test.jsx`; edited
+  `CLAUDE.md`, `docs/HISTORY.md`. No Firestore rules, scoring, question content, or document-shape
+  changes.
+
+### 2026-07-14 (part 2) - Question Bank: failure-safe actions, true modality, keyboard/empty-dept fixes
+- **Follow-up to the same day's async-load-tab-default + sort-label pass** (same branch,
+  `redesign/question-bank-workspace`), addressing a second round of coordinator review feedback.
+- **1. Failure-safe persistence actions.** Activate, Delete (draft discard AND archived delete),
+  Archive, and Restore (which also goes through `onActivate`) are real async Firestore operations
+  that can reject — the prior implementation assumed success (auto-advancing the Review Queue
+  unconditionally). Fixed with a shared `runAction(id, actionKey, fn, advanceOnSuccess)` helper in
+  `QuestionBank.jsx`:
+  - A synchronous `pendingRef` `Set` guards re-entrancy — duplicate/rapid clicks before React even
+    re-renders still only trigger one write (verified directly in a real browser with 3
+    back-to-back forced clicks).
+  - `pendingActions`/`actionErrors` state (keyed by question id) disables the in-flight button and
+    swaps its label to a pending state ("Activating…"/"Restoring…"/"Archiving…"/"Discarding…"/
+    "Deleting…"), rendered in `QuestionBankItem.jsx`.
+  - On rejection, a `role="alert"` inline error renders beside that specific question's actions —
+    the question stays expanded, and (for Review Queue activate/discard) auto-advance to the next
+    draft does **not** fire; the write must resolve successfully first.
+  - Archive/Restore/archived-Delete get the identical pending+error treatment (auto-advance was
+    never part of their contract, so nothing else changes for them).
+  - Tests: rejected-promise scenarios for no-auto-advance-on-failure, expansion retention, the
+    accessible error, duplicate-click de-duplication, and a genuine successful-write auto-advance
+    (simulated via a follow-up rerender with updated data, matching how the real Firestore
+    subscription round-trip would present it).
+- **2. Generation-dialog stale-completion race eliminated.** Previously, if the supervisor closed
+  the dialog or switched departments while a generation was still in flight, the eventual
+  completion could still call `setActiveTab('draft')` / show a success banner against whatever
+  department the supervisor was *now* looking at — a stale Pediatrics generation could silently
+  switch OB/GYN's tab. Fixed with two independent layers (both implemented, not just one):
+  - The dialog is now truly modal (see #3) — Escape/backdrop-click/×-button/Cancel are all
+    suppressed while `generating` is true, so the dialog cannot be dismissed mid-request, and the
+    background (including the department switcher) becomes `inert` while it's open — the race is
+    unreachable through the UI at all once both fixes are combined.
+  - Independently, `QuestionBank.jsx` tags every generation with the department + a monotonic
+    sequence number the instant it starts (`wrappedOnGenerate` sets `requestTagRef.current =
+    {dept: selectedDept, seq}`, relying on ordinary JS closures — each render creates fresh
+    closures, so whichever one is actually invoked when the request resolves is bound to whatever
+    department was selected at click time). `handleGenerated` compares that tag against a
+    continuously-updated ref (`selectedDeptRef`, synced every render via a no-deps effect) and a
+    live `generationSeqRef`; a mismatch means the completion is dropped — no tab switch, no
+    banner. This logical guard is unit-tested by forcing a re-render with a different
+    `selectedDept` mid-flight (via a deferred/controllable promise), independent of whether the UI
+    would also prevent the switch — defense in depth, and resilient to any future change to the
+    modal's dismiss-prevention behavior.
+- **3. Generation dialog made truly modal.** Replaced the plain `role="dialog"` div with:
+  a `createPortal` render directly under `document.body` (so the dialog is NOT a descendant of
+  `#root`, meaning marking `#root` `inert` doesn't also disable the dialog itself); `#root` gets
+  `inert` + `aria-hidden="true"` while the dialog is open, restored on close; a manual Tab/
+  Shift+Tab keydown handler loops focus within the dialog's own focusable elements (a native
+  `<dialog>` was considered per the task brief, but jsdom's `showModal()`/`close()` support is
+  inconsistent across versions — the manual approach behaves identically in unit tests and real
+  browsers); and Escape/backdrop-click/×-button/footer-Cancel are all suppressed while generating
+  (see #2). Focus still returns to the "Generate questions" trigger button on close.
+- **4. Empty-department tab-state fix.** Switching departments previously left whatever tab the
+  *previous* department had been on displayed for the newly-selected one, because the "auto-
+  resolve" effect only fires once the new department's `deptQuestions` becomes non-empty — a
+  department with zero questions never gets that signal and would otherwise show a stale tab
+  forever. Fixed: the department-switch effect now immediately resets the tab to Active (a
+  correct temporary default for any department, empty or not); the resolve effect still upgrades
+  it to Review Queue as soon as the new department's first non-empty snapshot contains drafts, and
+  manual tab choices still are never overridden (both existing rules preserved).
+- **5. Edit-save errors moved beside the active editor.** The error paragraph previously rendered
+  once, after the whole question list — not obviously tied to the specific editor above it in a
+  filtered/sorted list. Now rendered as a `role="alert"` paragraph inside the very same
+  `<li class="is-editing">` as the open `QuestionEditor`, immediately below it.
+- **6. Full roving-tabindex keyboard semantics for the status tabs** (WAI-ARIA Authoring Practices
+  tabs pattern, automatic activation): only the selected tab has `tabIndex={0}`; the other two are
+  `-1`. Left/Right arrows move focus AND selection between tabs, wrapping at the ends; Home/End
+  jump to the first/last tab. Enter/Space needed no new code — these are native `<button>`s.
+- **Tests:** 10 new Vitest tests in `src/components/questionBank.test.jsx` (40 total, up from 30):
+  activation-failure (no-advance/stays-expanded/accessible-error), duplicate-click guard,
+  successful-activation-still-advances, archive/restore/archived-delete failure-handling parity,
+  the stale-generation-completion guard, the empty-department reset, edit-error placement, and
+  roving-tabindex arrow/Home/End navigation (with wraparound). Full suite: **868 tests across 44
+  files** (was 858/44). `npm run test:rules`: **51/51** against a real Firestore Rules emulator
+  (reused the portable Temurin 21 JDK from the previous pass — extracted into the session scratch
+  dir, prepended to `PATH`, no admin/install required). `npm run build`: clean. `npm audit
+  --omit=dev`: 0 vulnerabilities. `npm ci` was re-run first to get a clean worktree-local
+  `node_modules`; `npm ls --all` now exits 0 with no `ELSPROBLEMS`/required-dependency errors (only
+  68 informational `UNMET OPTIONAL DEPENDENCY` entries for platform-specific/ecosystem-adjacent
+  packages, same as the prior pass). `git diff --check`: clean.
+- **Real-browser (headless Chromium) walkthrough, second round:** a richer throwaway harness
+  (never committed — created outside `src/`, deleted before finalizing) exposed a `window.__qb`
+  control surface (`failNextActivate`/`failNextArchive`/`failNextDelete`, call-count arrays,
+  `setQuestions`/`setDept`) so failure/retry/duplicate-click/department-switch scenarios could be
+  driven deterministically. All 20 scripted checks passed in a real browser, including several
+  that are NOT meaningfully testable in jsdom: 15× Tab and 15× Shift+Tab presses confirming focus
+  never left the open dialog, `#root.inert === true` while open (and cleared after close), the ×
+  and footer buttons genuinely disabled while generating, and Escape/backdrop-click confirmed
+  inert while generating. Screenshots captured (activation-failure state with the accessible error
+  visible, and the generation dialog mid-flow with the dimmed/inert background). One real bug was
+  found and fixed *while building the harness test itself* (not a product bug): Playwright text-
+  based button locators stopped matching once the button's label switched from "Activate" to
+  "Activating…" mid-test — fixed in the test script by using a class-based locator instead; noted
+  here for completeness even though it was a test-authoring issue, not an app defect.
+- **Files:** edited `src/components/{QuestionBank,QuestionBankGenerateDialog,QuestionBankItem,
+  questionBank.test}.jsx`, `src/styles.css` (new `.qbank__action-error` rule), `CLAUDE.md`,
+  `docs/HISTORY.md`. No Firestore rules, scoring, question content, or document-shape changes.
+
+
+### 2026-07-14 - Question Bank workspace: async-load-aware tab default fix + sort-label wording fix
+- **Follow-up to the 2026-07-13 Question Bank redesign** (same branch,
+  `redesign/question-bank-workspace`), addressing coordinator review feedback before the PR ships.
+- **Bug fixed — initial-tab resolution against async Firestore data:** `SupervisorApp` renders
+  `QuestionBank` with `questions=[]` on mount, then fills that array in asynchronously via
+  `subscribeQuestions`. The first cut of the redesign picked the default status tab (Review Queue
+  if drafts exist, else Active) exactly once, against whatever `questions` happened to be at first
+  render — i.e. against the still-empty array — so in real usage the tab could get permanently
+  stuck on Active even when the department's actual first Firestore snapshot contained drafts.
+  - **Fix:** `QuestionBank` now defers the auto-default decision until the current department's
+    first **non-empty** snapshot arrives, tracked per department in a `resolvedDeptsRef` map (not a
+    single shared boolean) so a resolution made while viewing one department can never leak into
+    another. The decision resolves **at most once per department-visit**. A tab the supervisor
+    clicks manually (`changeTab(tab, {manual:true})`, recorded in `manualDeptsRef`) always wins over
+    the auto-default for the rest of that department's session — a later async load can never snap
+    the tab back. A successful generation still force-switches to Review Queue; that is treated as a
+    separate, intentional, action-driven override (not the "don't override manual" rule), implemented
+    by marking the department resolved (not manual) in `handleGenerated`. Switching departments —
+    including revisiting one already seen this session — always re-arms the auto-default logic for
+    the newly selected department, so a department that previously resolved to Active is not
+    "sticky" on return. A department that legitimately has zero questions is never stuck in a
+    loading limbo: `defaultStatusTab()` on all-zero counts already returns `'active'`, which is both
+    the correct final answer and the initial guess, and the empty-state message renders immediately
+    regardless of resolution status — no additional "questions loaded" signal from `SupervisorApp`
+    was needed for correctness.
+  - **Tests:** 4 new regression tests in `src/components/questionBank.test.jsx` — async
+    empty→(active+draft) resolves to Review Queue; async empty→active-only resolves to Active; a
+    manual tab selection survives a later async load (does not snap back); and a department switch
+    re-resolves fresh even when the previous department had resolved to Active.
+- **Wording fixed — misleading sort labels:** "Recently updated"/"Oldest updated" implied an
+  `updatedAt` field that questions do not have and do not maintain; sorting has always used
+  `createdAt`. Relabeled to **"Newest created"/"Oldest created"** in
+  `src/lib/questionBankView.js` `SORT_OPTIONS`. Sort mode ids (`updatedDesc`/`updatedAsc`) were left
+  unchanged — only the label text changed. No `updatedAt` field was added to the question document
+  shape (explicitly out of scope).
+- **Verification (this pass, in the actual agent worktree, not an ambient/shared node_modules):**
+  - `npm ci` — clean install, 864 packages, into the worktree's own `node_modules` (previously this
+    worktree had no local `node_modules` of its own and was silently resolving packages from
+    elsewhere, which made `npm ls --all` report false "UNMET DEPENDENCY" errors for core packages).
+  - `npm test -- src/components` — **115 passed** (8 test files; was 111/8 before this pass).
+  - `npm test` (full suite) — **858 passed** (44 test files; was 854/44 before this pass).
+  - `npm run test:rules` — **actually executed this time** against a real Firestore Rules emulator.
+    A JDK is not installed in this sandbox by default; a portable Eclipse Temurin 21 JDK zip was
+    downloaded and extracted into the session scratch directory (no admin/install required — a
+    `winget`-driven MSI install failed with exit 1602, "user cancelled", consistent with no
+    interactive UAC in this sandbox; the portable zip sidesteps that) and prepended to `PATH` for
+    the command. Result: **51 passed, 0 failed** against the real emulator (`firebase
+    emulators:exec --only firestore`), covering the full own-ID matrix, cross-navigator denial,
+    squatted-document protection, arbitrary-ID denial, ownership-mutation denial, and
+    list/query/supervisor behavior — unchanged from the 2026-07-13 rules-hardening PR, since this
+    pass touched no Firestore rules.
+  - `npm run build` — clean (`✓ 92 modules transformed`, built in ~580ms).
+  - `npm audit --omit=dev` — `found 0 vulnerabilities`.
+  - `npm ls --all` — now genuinely clean: exit code 0, no `ELSPROBLEMS`, no `npm error`, no
+    required-dependency "missing"/"UNMET DEPENDENCY" lines. The only remaining "UNMET OPTIONAL
+    DEPENDENCY" entries (68 of them) are legitimately optional, platform-specific, or
+    ecosystem-adjacent packages (darwin/linux native binaries, React Native/TypeScript peer
+    optionals, etc.) that npm correctly reports as informational without erroring — a normal
+    pattern for a project this size, not a defect.
+  - `git diff --check` — clean (exit 0; only benign LF→CRLF conversion notices, not diff errors).
+  - `git status --short` — clean after committing this pass's changes.
+- **Real browser walkthrough — actually performed this time:** Playwright's bundled Chromium
+  (already installed at `~/AppData/Local/ms-playwright`, a real browser engine, not jsdom) was
+  driven headlessly against a temporary, throwaway harness page (`harness.html`/`harness.jsx`,
+  created outside `src/`, served by a plain `vite` dev server on a scratch port, and deleted — never
+  committed) that mounts the real `QuestionBank.jsx` + the real `styles.css` with mock data that
+  mimics `SupervisorApp`'s actual async-load shape (`questions=[]` on mount, then a snapshot with
+  drafts + active + archived items arrives ~400ms later). All 21 scripted checks passed against the
+  real rendered DOM/CSS: (1) the initial pre-load guess is Active, (2) **the exact bug being fixed**
+  — after the async snapshot lands with drafts, the tab switches to Review Queue — verified true in
+  a real browser, not just jsdom; (3) questions render collapsed with no option text visible; (4)
+  only one row expands at a time; (5) the generation dialog opens, Escape closes it, and focus
+  returns to the "Generate questions" button; (6) the renamed sort labels ("Newest created"/"Oldest
+  created") appear and the old ones do not; (7) search and domain filters narrow the visible count;
+  (8) Edit opens `QuestionEditor` and Cancel restores the expanded view; (9) Archive/Restore actions
+  are present and clickable without crashing; (10) switching departments re-resolves the tab fresh
+  (OB/GYN with no drafts → Active; back to Pediatrics with drafts → Review Queue); (11) tablet
+  (820px) and mobile (390px) viewports have no horizontal overflow. Screenshots were captured at
+  each step for visual review.
+  - **Real bug found and fixed by this walkthrough:** the mobile toolbar screenshot showed a large
+    empty gap under the search box. Root cause: `.qbank-toolbar__search { flex: 1 1 220px; }` sets a
+    220px **flex-basis**, which the row layout treats as a width — but the `max-width: 760px` media
+    query switches `.qbank-toolbar` to `flex-direction: column`, at which point that same 220px basis
+    is applied to the **height** dimension instead, inflating the search field's box. Fixed with a
+    mobile-only override (`flex: none; min-width: 0;` on `.qbank-toolbar__search`). Re-verified with
+    the same Playwright harness after the fix — gap gone, all 21 checks still passing, screenshots
+    re-captured.
+- **Files:** edited `src/components/QuestionBank.jsx` (async-load-aware tab resolution + manual/
+  generation override tracking), `src/components/questionBank.test.jsx` (+4 tests),
+  `src/lib/questionBankView.js` (sort label wording only), `src/styles.css` (mobile toolbar
+  flex-basis fix found during the browser walkthrough), `CLAUDE.md`, `docs/HISTORY.md`. No
+  Firestore rules, scoring, question content, or document-shape changes.
+
+### 2026-07-13 - Redesign supervisor Question Bank as a collapsible review workspace
+- **Problem:** the Question Bank (F14) rendered every question permanently fully expanded — all
+  answer options, point values, rationale, health detail, tags, and the full action row, for every
+  question, in every one of the stacked Review Queue / Active / Archived sections at once. On a
+  bank of any real size this was a very long, hard-to-scan page with no way to focus on one
+  question at a time.
+- **Redesign (branch `redesign/question-bank-workspace`, draft PR, not merged):**
+  - Compact header (title + "Generate questions" primary button) + 4 department-scoped summary
+    pills (Awaiting review / Active / Archived / Needs review), replacing the old always-open
+    "Generate from the SOP" panel and 2-3 stacked full-list sections.
+  - Generation moved into an accessible modal, `QuestionBankGenerateDialog.jsx` — `role="dialog"`,
+    focuses in on open, Escape closes it, focus returns to the trigger button on close. A
+    successful generation switches the workspace to the Review Queue tab and the success message
+    stays visible (in the dialog and as a banner in that tab) so new drafts are easy to find.
+  - Real semantic status tabs (`role="tablist"/"tab"/"tabpanel"`, `aria-selected`): Review Queue /
+    Active / Archived, each with a live count. Defaults to Review Queue when there are drafts,
+    otherwise Active.
+  - Search/filter/sort toolbar (`QuestionBankToolbar.jsx`): case-insensitive search over
+    scenario/ID/option text; domain, competency, and health filters (a "Not live" health state for
+    drafts/archived items instead of ever mislabeling them healthy); 7 sort modes, with
+    health-based sorts always placing no-health-data questions after ones with health data; a
+    "N of M questions" count; a "Clear filters" action that only appears when a filter is active.
+  - Collapsed-by-default, single-open accordion rows (`QuestionBankItem.jsx`): collapsed shows
+    only status/domain/competency tags, a 2-line CSS-clamped scenario preview, the (secondary)
+    question ID, and a health summary; expanding reveals the full options/rationale/health-detail/
+    content-warning/action panel. Clicking an action button inside the expanded panel never
+    toggles the accordion (`stopPropagation`); opening a second question collapses the first;
+    switching tabs or filtering the expanded question out of view clears the expanded state.
+  - Review Queue workflow polish: a small progress readout ("Question N of M" while one is
+    expanded, otherwise "M questions awaiting review") plus Previous/Next controls scoped to the
+    current filtered queue (correctly disabled at the ends); activating or discarding the
+    currently-expanded draft auto-advances to the next remaining one. Deliberately **no bulk
+    activation** — every question still requires individual review, per the review-gate model.
+  - New pure helper module `src/lib/questionBankView.js` (statusCounts, defaultStatusTab,
+    filterQuestions, sortQuestions — never mutates its input, matchesSearch, hasActiveFilters,
+    nextExpandedId, adjacentQuestionId, indexOfQuestion) so all filtering/sorting/navigation logic
+    is unit-testable without rendering React.
+  - **All existing behavior preserved exactly** — generation, editing (`QuestionEditor.jsx`
+    unchanged; save failures now keep the editor open with an inline error instead of silently
+    closing on rejection), activation/restore, archive, delete/discard, content-guard blocking
+    (`hasBlockingFlags`/`validateQuestionContent` still disable Activate/Restore and show the
+    blocking reason), question health (`computeQuestionHealth`), supervisor `FeedbackControls`,
+    and Learning Loop revision queueing — same props/callbacks (`onActivate`, `onArchive`,
+    `onDelete`, `onSaveEdit`, `onGenerate`, `onSaveFeedback`, `onSaveProposal`), same Firestore
+    document shape, no scoring/activation/validation logic changes.
+- **Tests:** new `src/components/questionBank.test.jsx` (26 tests: tab defaults/isolation,
+  collapsed-by-default rendering, single-open accordion, action-click-does-not-toggle-accordion,
+  search/domain/competency/health filters, clear-filters, sort-does-not-mutate-input,
+  generate-opens-dialog, successful-generation-switches-tab, activate/restore/archive/discard/
+  delete callback wiring, blocked-content gating, edit-opens-correct-question, empty and
+  filtered-empty states, tab/accordion aria attributes) and new `src/lib/questionBankView.test.js`
+  (13 tests for the pure helpers). Full suite: **854 tests across 44 files** (was 815/42),
+  `npm run build` clean, `npm audit --omit=dev` 0 vulnerabilities.
+- **Not done in this change (explicit non-goals):** no question content rewrites, no scoring/point
+  changes, no Firestore document-shape changes, no data migration, no bulk activation, no
+  pagination, no AI-generation prompt changes, no auth/Firestore-rules changes, no deploy, no merge.
+- **Verification gap:** built and self-reviewed in a non-browser sandbox — no manual browser
+  click-through, no screenshots. A human should click through the redesigned workspace (desktop/
+  tablet/mobile) before merging.
 
 ### 2026-07-13 - Bind result document IDs to navigator identity (path + body ownership)
 - **Follow-up to the same day's "incomplete-navigator result reads" fix (below):** that fix's
