@@ -11,7 +11,17 @@
 > [§8 Current System State](#8-current-system-state) and [§15 Current Priorities](#15-current-priorities)
 > accurate at all times.
 >
-> **Last updated:** 2026-07-14 (PR 1 — Call QA evidence integrity + model auditability:
+> **Last updated:** 2026-07-14 (PR 2 — server-authoritative Call QA transcript: the scored Call QA
+> test is now captured, finalized, loaded, graded, and persisted by the SERVER. The `/api/live`
+> relay derives navigator identity from the verified token, loads the curated scenario server-side,
+> creates a server-owned attempt before the call, captures Gemini Live's transcription events,
+> checkpoints them, runs a bounded End-Call drain handshake, and finalizes explicit capture states;
+> `/api/grade-call-qa` now takes ONLY `{ attemptId }`, loads the stored transcript + trusted scenario
+> snapshot, grades that (all PR-1 invariants preserved), and persists idempotently via a grading
+> lease; the browser never submits or writes a scored transcript/grade; `firestore.rules` blocks
+> navigators from creating/mutating server Call QA attempts; new pure server modules
+> `api/_call-qa-transcript.js` + `api/_call-qa-attempts.js`, DI-testable relay, and a chained
+> emulator rules suite — see F25 + docs/GRADING_INVARIANTS.md §0a. Prior: PR 1 — Call QA evidence integrity + model auditability:
 > single-navigator-turn contiguous evidence verification, EVIDENCE/ABSENCE grader basis, unresolved
 > negatives forcing supervisor review, preserved raw model judgment, a pinned auditable grader model
 > (`CALL_QA_GRADER_MODEL`, no scored model fallback), versioned `qa.gradingMetadata`, and non-final
@@ -752,6 +762,34 @@ training assignments.
   PASS/FAIL. This PR does **not** make the transcript server-authoritative (that is PR 2); the
   transcript remains browser-authoritative and the deterministic corpus proves the deterministic
   pipeline, not live Gemini judgment.
+- **Server-authoritative transcript capture + finalization (PR 2, 2026-07-14):** the scored Call QA
+  transcript is no longer browser-owned. (1) For `mode:'test'`, the `/api/live` relay
+  ([api/live-relay.js](api/live-relay.js), now dependency-injected/testable) receives only
+  `{ idToken, mode:'test', department, qaScenarioId }`, verifies the token, requires the navigator
+  role, derives `navigatorId` from the token, loads + validates the curated scenario server-side, and
+  creates a server-owned attempt ([api/_call-qa-attempts.js](api/_call-qa-attempts.js), in the
+  `interviews` collection) with an immutable `scenarioSnapshot` BEFORE returning `ready`. (2) The
+  relay captures the authoritative transcript from Gemini Live's `inputTranscription` (navigator) /
+  `outputTranscription` (caller) via a pure coalescer ([api/_call-qa-transcript.js](api/_call-qa-transcript.js)),
+  forwards captions to the browser as a NON-authoritative mirror, ignores any browser transcript
+  message, and checkpoints at turn boundaries. (3) End Call runs a bounded **drain handshake**
+  (signal end-of-audio upstream → wait `CALL_QA_DRAIN_TIMEOUT_MS` for a final boundary → finalize
+  `captured` vs `capture_incomplete` → `{type:'captured'}`); an unexpected disconnect finalizes
+  `abandoned`. Explicit `captureStatus`/`gradingStatus` axes mean an active/abandoned/incomplete
+  attempt with no `qa` never counts as Phase 3 complete. (4) `POST /api/grade-call-qa` now takes ONLY
+  `{ attemptId }`: it loads the stored transcript + snapshot, grades via the reusable
+  `gradeCallQaTranscript()` service (all PR-1 invariants preserved), and persists idempotently via a
+  transactional grading **lease** (already-graded returns the stored result with no second Gemini
+  call; a failure keeps the transcript for retry). It adds server-owned `qa.transcriptMetadata`
+  provenance (separate from `qa.gradingMetadata`) and forces `needs_review` on an incomplete capture.
+  (5) `VoiceCall.jsx` test mode keeps only the attempt id + caption mirror — it no longer calls
+  `saveInterview`/`updateInterviewGrade` or submits a transcript, and retries grade by `{ attemptId }`.
+  (6) `firestore.rules` blocks navigators from creating a server Call QA attempt or mutating one;
+  Admin writes bypass rules. (7) Supervisor UI shows "Server-captured live transcript" + capture
+  status (legacy attempts labelled "Legacy browser-captured transcript"). Binding rules in
+  [docs/GRADING_INVARIANTS.md](docs/GRADING_INVARIANTS.md) §0a. Does NOT make MCQ/Spot scoring
+  server-authoritative (separate future project) and does not prove perfect speech recognition; real
+  microphone validation remains a post-deploy step.
 - **Supervisor final review (2026-07-09):** Call QA Test attempts now support a supervisor final
   verdict stored on the interview doc as `qaFinalReview`. The AI rubric result remains preserved on
   `qa`; supervisors can confirm AI pass/fail or override to final pass/fail with a required reason
@@ -1542,7 +1580,12 @@ of this file on 2026-07-07 to cut per-session context cost (it was ~55% of the f
 - **Experimental / mockup:**
   - Training **content** is mockup (flagged in UI). Logic is real.
   - **Adult Medicine and Behavioural Health** are not assessed; **Pediatrics and OB/GYN** are live.
-- **Test coverage:** **953 tests** across **47 test files** (adds `api/gradeCallQaEndpoint.test.js`
+- **Test coverage:** **997 tests** across **50 test files** (PR 2 adds `api/_call-qa-transcript.test.js`,
+  `api/_call-qa-attempts.test.js` — the pure transcript coalescer + server attempt state
+  machine/lease — and `api/liveRelay.test.js` — the dependency-injected relay capture + drain +
+  disconnect behavior; `api/gradeCallQaEndpoint.test.js` was rewritten for the attempt-id endpoint +
+  reusable grading service, and the `voiceCall.test.js` / `components.test.jsx` QA blocks for the
+  `gradeCallQaByAttemptId` contract. PR 1 adds `api/gradeCallQaEndpoint.test.js`
   — handler-level model-pinning + grading-metadata tests — plus the PR-1 Call QA evidence-integrity
   and non-final-label tests in `api/grade-call-qa.test.js`, `api/_gemini-client.test.js`,
   `src/lib/qaFinalReview.test.js`, and `src/components/navigatorDetail.override.test.jsx`; adds
@@ -1644,8 +1687,9 @@ of this file on 2026-07-07 to cut per-session context cost (it was ~55% of the f
   OB/GYN = **37** seed questions (offline fallback) + the **48-item MCQ v2 operating-model bank**
   (24 Pediatrics + 24 OB/GYN) that replaces the weak active bank via a marker-gated
   archive-and-replace migration (bank grows in Firestore per dept) · 4 departments (**Pediatrics
-  + OB/GYN live**, 2 mockup) · **953** unit tests (47 test files) + a committed **51-assertion**
-  Firestore Rules emulator suite (`npm run test:rules`, not part of the unit-test count) ·
+  + OB/GYN live**, 2 mockup) · **997** unit tests (50 test files) + two committed Firestore Rules
+  emulator suites (`npm run test:rules` — the 51-assertion result-authorization suite + the PR-2
+  Call QA interviews suite; require Java, run in CI, not part of the unit-test count) ·
   **13** Firestore collections
   (`roster`, `results`, `resultHistory`, `questions`, `audits`, `interviews`, `completions`,
   `pairings`, `supervisorFeedback`, `learningProposals`, `sops`, `activeSops`, `contentMigrations`) ·
@@ -1743,10 +1787,13 @@ of this file on 2026-07-07 to cut per-session context cost (it was ~55% of the f
     specific over time; advisory only).
   - `POST /api/interview-turn` `{ domain, secret }` (init, no scenario) → `{ scenario, callerName, reply }`. `{ domain, scenario, callerName, history, navigatorMessage, secret }` (turn) → `{ reply }`.
   - `POST /api/grade-interview` `{ domain, scenario, transcript, name, secret }` → `{ grade: { score:number(0–100), summary:string, strengths:string[], improvements:string[] } }`. Gemini reviews the full transcript against the SOP; temp 0.3 for consistency. Advisory only.
-  - `POST /api/grade-call-qa` `{ scenario, transcript, department, qaScenarioId }` → `{ qa, grade }`.
-    The server resolves all repair/scoring metadata from `qaScenarioId`; arbitrary browser metadata
-    is ignored. Missing/unknown/mismatched ids still receive a deterministic score but repairs are
-    disabled and `qa.review` is forced to supervisor review.
+  - `POST /api/grade-call-qa` `{ attemptId }` → `{ qa, grade, attemptId }` (PR 2). The browser sends
+    ONLY the server attempt id; the endpoint authenticates, loads the SERVER-CAPTURED transcript +
+    trusted `scenarioSnapshot` via Firebase Admin, verifies ownership + capture state, grades that
+    stored transcript, and persists the result idempotently via a grading lease. A raw client
+    transcript/scenario/metadata is ignored even if included. Missing/unknown/mismatched scenario ids
+    still receive a deterministic score but repairs are disabled and `qa.review` is forced to
+    supervisor review; an incomplete capture forces `needs_review`.
   - `POST /api/generate-audit` `{ domain, department, workflowType, avoidWorkflowTypes, secret }` → `{ transcript, errorIndex, hint, modelExplanation, workflowType, errorKind, difficulty }` (~10-turn flawed transcript for the "Spot the Error" exercise).
   - `POST /api/coach-audit` `{ domain, modelExplanation, navigatorAnswer, name, secret }` → `{ reply }` (warm 2–3 sentence mentor coaching note; advisory only).
   - `POST /api/refine-sop` — `{ mode:'build', rawText, department, secret }` → `{ sop: { title, body, notes[] } }` (structures a raw document into the 6-domain SOP layout); `{ mode:'refine', rawText, currentSop, department, secret }` → `{ sop: { title, body, changes:[{type, summary}] } }` (merges new material into the active SOP, flagging contradictions/outdated rules/additions/clarifications). Output is always saved client-side as a draft — the endpoint never writes Firestore.
@@ -1760,11 +1807,17 @@ of this file on 2026-07-07 to cut per-session context cost (it was ~55% of the f
   - `POST /api/logout` → `200 { ok }`, clears the session cookie (idempotent).
   - `GET /api/health` → `{ ok }`.
 - **WebSocket endpoint:**
-  - `WS /api/live` — real-time voice practice call relay (F22). Client sends `{type:'start',
-    idToken, navigatorId, callerName, scenario, department, openingLine}` then streams `{type:'audio', data}`
-    (base64 PCM16 @16kHz mic frames); relay forwards to Gemini Live and streams back
-    `{type:'ready'|'audio'|'transcript'|'interrupted'|'turnComplete'|'error'}`. Key held
-    server-side; persona built via `buildSystemInstruction()`. Model
+  - `WS /api/live` — real-time voice relay (F22). **Practice** (`mode:'practice'`, default): client
+    sends `{type:'start', idToken, mode, navigatorId, callerName, scenario, department, openingLine,
+    caseFile}` (browser-owned generated scenario, advisory). **Scored Call QA** (`mode:'test'`, PR 2):
+    client sends ONLY `{type:'start', idToken, mode:'test', department, qaScenarioId}` — the relay
+    derives `navigatorId` from the token, loads the curated scenario server-side, and creates a
+    server-owned attempt before replying `{type:'ready', attemptId, scenario:{id,title,callerName,
+    department,version}}`. Both then stream `{type:'audio', data}` (base64 PCM16 @16kHz mic frames);
+    relay streams back `{type:'ready'|'audio'|'transcript'|'interrupted'|'turnComplete'|'error'}`. In
+    test mode the relay captures the authoritative transcript and, on `{type:'end'}`, runs a bounded
+    drain then replies `{type:'captured', attemptId, captureComplete}`; browser `transcript` messages
+    are ignored. Key held server-side; persona built via `buildSystemInstruction()`. Model
     `gemini-3.1-flash-live-preview`.
 - **Env vars:** client/build-time `VITE_FIREBASE_*`; server-only
   `FIREBASE_SERVICE_ACCOUNT_JSON` (or split `FIREBASE_PROJECT_ID` / `FIREBASE_CLIENT_EMAIL` /
@@ -1870,8 +1923,8 @@ npm run test:e2e     # run the Playwright browser tests (auto-builds + starts th
 - Heatmap intensity toggle (show % inside matrix cells).
 
 ### Technical Debt
-- **953 tests** across 47 test files as of 2026-07-14 (plus a committed 51-assertion Firestore
-  Rules emulator suite, `npm run test:rules`, run separately from the unit-test gate). **Role-app
+- **997 tests** across 50 test files as of 2026-07-14 (plus two committed Firestore Rules emulator
+  suites, `npm run test:rules`, run separately from the unit-test gate). **Role-app
   coverage** (`App`, `Start`,
   `SupervisorApp`, `NavigatorApp`) now includes both shell smoke tests (mount + gate/session routing)
   and per-tab behavioural tests (`roleApps.behavior.test.jsx`: tab transitions, empty states,
@@ -2229,6 +2282,20 @@ npm run test:e2e     # run the Playwright browser tests (auto-builds + starts th
   `role="tablist"` with roving-tabindex keyboard nav, department-scoped draft/active counts on each
   tab. Real-browser-verified at desktop + mobile widths (886 tests, 46 test files). Implemented
   in PR #30.
+- ✅ Server-authoritative Call QA transcript capture + finalization (PR 2) — done 2026-07-14; see F25
+  + docs/GRADING_INVARIANTS.md §0a. The scored Call QA test is captured, finalized, loaded, graded,
+  and persisted by the server: the `/api/live` relay derives identity from the token, loads the
+  curated scenario server-side, creates a server-owned attempt with an immutable scenario snapshot
+  before the call, captures Gemini Live's transcription events, checkpoints them, runs a bounded
+  End-Call drain handshake, and finalizes explicit capture states (`captured`/`capture_incomplete`/
+  `abandoned`); `/api/grade-call-qa` takes ONLY `{ attemptId }`, grades the stored transcript, and
+  persists idempotently via a grading lease; `VoiceCall.jsx` test mode no longer submits or writes a
+  transcript/grade; `firestore.rules` blocks navigators from creating/mutating server Call QA
+  attempts (new `tests/firestore-rules/call-qa-interviews.rules.mjs`, chained into `test:rules`); new
+  pure server modules `api/_call-qa-transcript.js` + `api/_call-qa-attempts.js` and a DI-testable
+  relay (997 tests, 50 test files). **Does NOT** cover server-authoritative MCQ/Spot scoring (still
+  the separate future project below) and does not prove perfect speech recognition; real-microphone
+  and Firestore-rules (Java) validation remain post-deploy steps not runnable in the container.
 
 
 ---

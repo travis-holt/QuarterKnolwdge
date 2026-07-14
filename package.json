@@ -13,7 +13,7 @@
     "preview": "vite preview",
     "test": "vitest run",
     "test:watch": "vitest",
-    "test:rules": "firebase emulators:exec --project demo-quarterly-knowledge-check --only firestore \"node tests/firestore-rules/result-authorization.rules.mjs\"",
+    "test:rules": "firebase emulators:exec --project demo-quarterly-knowledge-check --only firestore \"node tests/firestore-rules/result-authorization.rules.mjs && node tests/firestore-rules/call-qa-interviews.rules.mjs\"",
     "test:e2e": "playwright test tests/e2e/",
     "test:e2e:safe": "playwright test tests/e2e/",
     "test:e2e:deep": "playwright test \"(?<!tests/)e2e/\"",

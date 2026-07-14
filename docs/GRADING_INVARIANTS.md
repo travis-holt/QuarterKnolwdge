@@ -8,7 +8,54 @@
 > [`api/_qa-grading-corpus.test.js`](../api/_qa-grading-corpus.test.js) — if one of
 > those tests fails after your change, re-read this document before "fixing" the test.
 >
-> Last updated: 2026-07-14.
+> Last updated: 2026-07-14 (PR 2 — server-authoritative Call QA transcript).
+
+## 0a. Server-authoritative Call QA transcript (PR 2, 2026-07-14)
+
+These ten statements are binding for the SCORED Call QA test (`mode: 'test'`).
+They govern where a graded transcript comes from and who may write it; they do
+not weaken any §0 evidence/model invariant, which still runs on that transcript.
+
+1. **A scored Call QA transcript originates from the authenticated server relay**
+   (`api/live-relay.js`), captured from Gemini Live's `inputTranscription`
+   (navigator) / `outputTranscription` (caller). The browser never supplies it.
+2. **Browser captions are a non-authoritative mirror.** The relay forwards
+   `transcript` messages to the browser for live display only; a `transcript`
+   message *from* the browser is ignored entirely.
+3. **The scored endpoint loads the transcript by server attempt id.**
+   `POST /api/grade-call-qa` accepts only `{ attemptId }`; it loads the stored
+   transcript + scenario snapshot via Firebase Admin and ignores any transcript,
+   scenario, department, or grader metadata a client includes alongside the id.
+4. **The browser cannot write or replace a scored transcript or QA result.**
+   `firestore.rules` forbids a navigator from creating a document with
+   `assessmentType:'call-qa'`, `captureAuthority:'server'`, or a curated QA
+   scenario id, and from mutating any field (transcript, capture state, scenario
+   snapshot, grade, qa, server metadata) of a server-created attempt. All server
+   writes go through Admin, which bypasses client rules.
+5. **Trusted scenario snapshots are chosen and stored server-side.** The relay
+   loads the curated scenario with `getCallQaScenarioById()`, validates the
+   department, and stores an immutable `scenarioSnapshot`. Grading uses that
+   stored snapshot, so a later scenario-bank revision cannot change the context an
+   already-captured attempt was graded against.
+6. **Finalization has a bounded drain protocol.** End Call signals end-of-audio
+   upstream and waits at most `CALL_QA_DRAIN_TIMEOUT_MS` for a final transcription
+   boundary so the last navigator utterance is not lost to socket teardown.
+7. **Incomplete capture is explicit and never silently treated as complete.** A
+   drain timeout, upstream drop, or unexpected browser disconnect finalizes the
+   attempt as `capture_incomplete` / `abandoned` with recorded metadata. An
+   `abandoned` attempt is never auto-graded; a `capture_incomplete` attempt graded
+   later is forced to `needs_review` via the `capture-integrity-incomplete` flag.
+8. **Legacy browser-captured attempts remain labelled legacy.** Attempts without
+   `captureAuthority` are treated as legacy browser capture, never relabelled
+   server-authoritative, and never bulk-migrated.
+9. **Server authority protects against browser tampering — not speech-recognition
+   error.** "Server-captured" means the transcript came from the trusted relay, not
+   that transcription was perfect. UI wording says "captured by the call server,"
+   never "perfect," and the §0 non-final supervisor-review rule still applies.
+10. **Grading is idempotent and retryable via a lease.** An already-graded attempt
+    returns its stored result without a second Gemini call; a prior failure keeps
+    the transcript for retry; a Firestore grading lease prevents two concurrent
+    requests from invoking the grader twice.
 
 ## 0. Evidence integrity & model auditability (PR-1, 2026-07-14)
 

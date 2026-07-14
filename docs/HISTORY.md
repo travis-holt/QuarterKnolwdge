@@ -1,5 +1,59 @@
 # Development History - Knowledge Check
 
+### 2026-07-14 (part 6) - Server-authoritative Call QA transcript capture (PR 2)
+- **Context:** PR 1 hardened the Call QA *grading* pipeline but left the scored transcript
+  browser-authoritative — `VoiceCall.jsx` coalesced transcript fragments in browser memory, saved
+  them through the client Firestore SDK, and sent the same browser-built transcript to
+  `/api/grade-call-qa`. A modified browser could alter or replace its own transcript before grading,
+  and clicking End closed the socket immediately, which could drop the final transcription event.
+- **Change:** the scored Call QA test is now captured, finalized, loaded, graded, and persisted by
+  the server.
+  - **New `api/_call-qa-transcript.js`** — pure, testable transcript coalescer (`TranscriptCapture`)
+    that normalizes roles to `patient`/`navigator`, coalesces consecutive same-role fragments,
+    bounds turn length + count, and ignores empties.
+  - **New `api/_call-qa-attempts.js`** — server-owned Call QA attempt state machine over the
+    existing `interviews` collection (Firebase Admin). Explicit `captureStatus`
+    (`active`/`captured`/`capture_incomplete`/`abandoned`) and `gradingStatus`
+    (`not_started`/`grading`/`graded`/`grade_failed`) axes, an immutable server `scenarioSnapshot`,
+    checkpoint/finalize writes, and a transactional grading **lease** for idempotency. All functions
+    take `db` for DI so the machine is unit-testable against an in-memory Firestore double.
+  - **`api/live-relay.js` rewritten with dependency injection.** Test-mode `start` now carries only
+    `{ idToken, mode:'test', department, qaScenarioId }`; the relay derives `navigatorId` from the
+    verified token, loads + validates the curated scenario server-side, creates the attempt BEFORE
+    `ready`, captures the transcript from Gemini Live's `inputTranscription`/`outputTranscription`,
+    checkpoints at turn boundaries, IGNORES any browser transcript message, and runs a bounded
+    **End Call drain handshake** (signal end-of-audio upstream → wait `CALL_QA_DRAIN_TIMEOUT_MS` for
+    a final boundary → finalize `captured` vs `capture_incomplete` → send `{type:'captured'}`). An
+    unexpected disconnect persists the partial transcript as `abandoned`. Practice mode is unchanged.
+  - **`api/grade-call-qa.js`** — the grading orchestration is extracted into a reusable
+    `gradeCallQaTranscript()` service (all PR-1 invariants preserved); the public endpoint now takes
+    ONLY `{ attemptId }`, loads the stored transcript + snapshot, grades that, and persists via the
+    lease. Idempotent (already-graded returns the stored result with no second Gemini call),
+    retryable (a failure keeps the transcript), and adds server-owned `qa.transcriptMetadata`
+    provenance separate from `qa.gradingMetadata`.
+  - **`VoiceCall.jsx` test mode** no longer calls `saveInterview`/`updateInterviewGrade` or submits a
+    transcript. It keeps only the attempt id + a caption mirror, runs the End→`finalizing`→`captured`
+    handshake, and grades by `{ attemptId }`. `apiFetch` now surfaces the HTTP status so the client
+    can show the "no speech captured" (422) case distinctly. Practice mode unchanged.
+  - **`firestore.rules`** — navigators may still create/read their own practice interviews and attach
+    the advisory grade, but may NOT create a server-authoritative Call QA attempt (`assessmentType:
+    'call-qa'`, `captureAuthority:'server'`, or a curated QA scenario id) nor mutate any field of a
+    server-created attempt. New emulator suite `tests/firestore-rules/call-qa-interviews.rules.mjs`
+    (chained into `npm run test:rules`).
+  - **Supervisor UI** (`NavigatorDetail.jsx`) shows transcript provenance: "Server-captured live
+    transcript" + capture status (with an incomplete-capture warning) vs "Legacy browser-captured
+    transcript." Navigator result screen says "Transcript captured by the call server" — never
+    "perfect."
+- **Tests:** +44 unit tests (997 total, 50 files) — `api/_call-qa-transcript.test.js`,
+  `api/_call-qa-attempts.test.js`, rewritten `api/gradeCallQaEndpoint.test.js` (attempt-id +
+  service), new `api/liveRelay.test.js` (DI capture + drain + disconnect), and rewritten
+  `voiceCall.test.js` / `components.test.jsx` QA blocks. Rules suite requires a Java-equipped
+  environment (run in CI); not runnable in the container. Build clean.
+- **Explicitly NOT in scope:** server-authoritative MCQ/Spot scoring (separate future project); real
+  microphone/acoustic validation (post-deploy manual step). No migration or deployment performed.
+- **Docs:** [GRADING_INVARIANTS.md](GRADING_INVARIANTS.md) §0a (ten new binding invariants);
+  CLAUDE.md F25 + counts.
+
 ### 2026-07-14 (part 5) - Call QA evidence integrity + model auditability (PR 1)
 - **Context:** hardening pass on the existing Call QA grading pipeline (F25). The pipeline was
   reliable but had three trust gaps: (1) evidence verification (`verifyEvidence`) matched against
