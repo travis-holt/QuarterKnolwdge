@@ -819,6 +819,18 @@ training assignments.
   drain+settle config plus a persistence/network margin (`clientFinalizeGuardMs`) and sends it in
   `ready.finalization`; the browser applies it (no hardcoded 15s) with a ≥60s fallback, so it can
   never abandon a valid drain before the server's real deadline.
+- **PR 2 checkpoint write serialization (2026-07-15, final merge blocker):** see
+  [docs/GRADING_INVARIANTS.md](docs/GRADING_INVARIANTS.md) §0d. Checkpoint writes were still allowed
+  to run concurrently (`requestCheckpoint` called async `doCheckpoint` without serializing), so an
+  older checkpoint could overwrite a newer one, or land after the terminal `finalizeCapture()` and
+  overwrite the finalized transcript. Now ALL checkpoint writes go through one session-owned
+  serialized loop: at most one `checkpointTranscript()` in flight, concurrent requests coalesce onto
+  the running loop and re-write only the NEWEST bounded snapshot (generated at write time), and
+  `terminateCapture()` sets `finalizing` (blocking any new checkpoint), drains all in-flight
+  checkpoint work, then performs `finalizeCapture()` as the LAST write. No checkpoint can begin or
+  complete after finalization; a checkpoint failure preserves dirty state so a later checkpoint or
+  finalization still persists the newest transcript; `captured` means the terminal write both
+  succeeded and is the final transcript write.
 - **Supervisor final review (2026-07-09):** Call QA Test attempts now support a supervisor final
   verdict stored on the interview doc as `qaFinalReview`. The AI rubric result remains preserved on
   `qa`; supervisors can confirm AI pass/fail or override to final pass/fail with a required reason
@@ -1609,7 +1621,7 @@ of this file on 2026-07-07 to cut per-session context cost (it was ~55% of the f
 - **Experimental / mockup:**
   - Training **content** is mockup (flagged in UI). Logic is real.
   - **Adult Medicine and Behavioural Health** are not assessed; **Pediatrics and OB/GYN** are live.
-- **Test coverage:** **1040 tests** across **51 test files** (PR 2 final merge-review adds active-turn-settle/ordering/durability/bounds/finalization-timing relay tests, `boundedAppend` + client finalize-guard tests; PR 2 merge-review adds
+- **Test coverage:** **1045 tests** across **51 test files** (PR 2 final merge blocker adds 5 serialized-checkpoint race tests + controllable-write-order fake Firestore; PR 2 final merge-review adds active-turn-settle/ordering/durability/bounds/finalization-timing relay tests, `boundedAppend` + client finalize-guard tests; PR 2 merge-review adds
   `src/components/voiceCall.component.test.jsx` — the End-Call handshake + capture-vs-grade-retry
   distinctions with fake browser APIs — and expands `api/liveRelay.test.js` (two-stage drain,
   transcript ordering, roster-member gate, ack-after-write), `api/_call-qa-attempts.test.js` (exact
@@ -1722,7 +1734,7 @@ of this file on 2026-07-07 to cut per-session context cost (it was ~55% of the f
   OB/GYN = **37** seed questions (offline fallback) + the **48-item MCQ v2 operating-model bank**
   (24 Pediatrics + 24 OB/GYN) that replaces the weak active bank via a marker-gated
   archive-and-replace migration (bank grows in Firestore per dept) · 4 departments (**Pediatrics
-  + OB/GYN live**, 2 mockup) · **1040** unit tests (51 test files) + two committed Firestore Rules
+  + OB/GYN live**, 2 mockup) · **1045** unit tests (51 test files) + two committed Firestore Rules
   emulator suites (`npm run test:rules` — the 51-assertion result-authorization suite + the PR-2
   Call QA interviews suite; require Java, run in CI, not part of the unit-test count) ·
   **13** Firestore collections
@@ -1958,7 +1970,7 @@ npm run test:e2e     # run the Playwright browser tests (auto-builds + starts th
 - Heatmap intensity toggle (show % inside matrix cells).
 
 ### Technical Debt
-- **1040 tests** across 51 test files as of 2026-07-15 (plus two committed Firestore Rules emulator
+- **1045 tests** across 51 test files as of 2026-07-15 (plus two committed Firestore Rules emulator
   suites, `npm run test:rules`, run separately from the unit-test gate). **Role-app
   coverage** (`App`, `Start`,
   `SupervisorApp`, `NavigatorApp`) now includes both shell smoke tests (mount + gate/session routing)
@@ -2328,7 +2340,7 @@ npm run test:e2e     # run the Playwright browser tests (auto-builds + starts th
   transcript/grade; `firestore.rules` blocks navigators from creating/mutating server Call QA
   attempts (new `tests/firestore-rules/call-qa-interviews.rules.mjs`, chained into `test:rules`); new
   pure server modules `api/_call-qa-transcript.js` + `api/_call-qa-attempts.js` and a DI-testable
-  relay (1040 tests, 51 test files). **Does NOT** cover server-authoritative MCQ/Spot scoring (still
+  relay (1045 tests, 51 test files). **Does NOT** cover server-authoritative MCQ/Spot scoring (still
   the separate future project below) and does not prove perfect speech recognition; real-microphone
   and Firestore-rules (Java) validation remain post-deploy steps not runnable in the container.
 

@@ -8,7 +8,34 @@
 > [`api/_qa-grading-corpus.test.js`](../api/_qa-grading-corpus.test.js) — if one of
 > those tests fails after your change, re-read this document before "fixing" the test.
 >
-> Last updated: 2026-07-15 (PR 2 final merge-review — capture integration fixes).
+> Last updated: 2026-07-15 (PR 2 final merge blocker — checkpoint write serialization).
+
+## 0d. Call QA checkpoint write serialization (PR 2 final merge blocker, 2026-07-15)
+
+These strengthen §0a/§0b/§0c. All are binding for the SCORED Call QA test.
+
+1. **Call QA checkpoint writes are serialized per session.** At most one
+   `checkpointTranscript()` write is ever in flight for a call; concurrent requests
+   coalesce onto a single write loop rather than launching parallel Firestore
+   writes. An older checkpoint can therefore never overwrite a newer one.
+2. **Coalesced checkpoints always persist the newest pending bounded snapshot.**
+   The snapshot is generated when the queued write executes, so obsolete
+   intermediate snapshots are never written; when a write finishes, only the newest
+   pending state is re-written (not every stale intermediate).
+3. **Terminal capture finalization waits for and supersedes all checkpoint work.**
+   `terminateCapture()` sets `finalizing` (which blocks any new checkpoint from
+   starting), cancels the trailing-checkpoint timer, drains all in-flight
+   checkpoint writes, then performs `finalizeCapture()` as the LAST write.
+4. **No checkpoint can modify transcript data after terminal finalization.** Once
+   `finalizing`/`finalized` is set, checkpoint requests refuse to start a write, so
+   nothing can overwrite the finalized `transcript` / `lastTranscriptAt` /
+   `captureMetadata.*` after the terminal write.
+5. **A capture acknowledgement means the terminal write is both successful AND the
+   final transcript write.** `captured` is sent only after `finalizeCapture()`
+   succeeds, and no checkpoint write can begin or complete after it. A checkpoint
+   failure preserves dirty state (never silently forgotten) so a later checkpoint
+   or the terminal finalization still persists the newest transcript; a failed
+   terminal write keeps the retake behavior and never sends `captured`.
 
 ## 0c. Call QA capture integration fixes (PR 2 final merge review, 2026-07-15)
 

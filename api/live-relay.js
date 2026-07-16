@@ -192,6 +192,7 @@ export function handleConnection(client, req, depsInput) {
     turnCompleteObserved: false,
     lastCheckpointAt: 0,
     checkpointDirty: false, // staged content changed since the last durable write
+    checkpointInFlight: null, // the serialized checkpoint-write loop promise (or null)
     trailingCheckpointTimer: null, // guarantees a late fragment is written durably
     drainTimer: null,       // overall drain deadline
     settleTimer: null,      // quiet-transcription window (active OR drain)
@@ -274,47 +275,91 @@ export function handleConnection(client, req, depsInput) {
     return merged;
   }
 
-  // Write the durable checkpoint NOW (bounded snapshot). Clears the dirty flag +
-  // any trailing timer.
-  async function doCheckpoint() {
-    if (session.mode !== 'test' || !session.attemptId || !session.capture) return;
-    session.checkpointDirty = false;
-    if (session.trailingCheckpointTimer) { deps.clearTimer(session.trailingCheckpointTimer); session.trailingCheckpointTimer = null; }
+  // Build the checkpoint payload from the CURRENT bounded state. Generated at the
+  // moment the queued write executes, so it always reflects the newest transcript
+  // (older, obsolete snapshots are never written).
+  function buildCheckpointPayload() {
     session.lastCheckpointAt = deps.now();
     const transcript = boundedSnapshot();
-    try {
-      await checkpointTranscript(deps.db(), session.attemptId, {
-        transcript,
-        navigatorTurnCount: transcript.filter((t) => t.role === 'navigator').length,
-        callerTurnCount: transcript.filter((t) => t.role === 'patient').length,
-        turnCompleteObserved: session.turnCompleteObserved,
-        warnings: session.capture.warnings,
-        now: session.lastCheckpointAt,
-      });
-    } catch (err) {
-      console.warn(`[live-relay] checkpoint failed for attempt ${session.attemptId}: ${err?.message ?? err}`);
+    return {
+      transcript,
+      navigatorTurnCount: transcript.filter((t) => t.role === 'navigator').length,
+      callerTurnCount: transcript.filter((t) => t.role === 'patient').length,
+      turnCompleteObserved: session.turnCompleteObserved,
+      warnings: session.capture.warnings,
+      now: session.lastCheckpointAt,
+    };
+  }
+
+  // SERIALIZED checkpoint writer. At most ONE checkpointTranscript() is ever in
+  // flight per session; concurrent requests coalesce onto a single loop that
+  // re-writes the NEWEST snapshot when the current write finishes. This makes a
+  // stale (older) checkpoint incapable of overwriting a newer one, and lets the
+  // terminal finalization await + supersede all checkpoint work. Returns the
+  // in-flight promise so callers that need durability can await it.
+  function runCheckpointQueue() {
+    if (session.mode !== 'test' || !session.attemptId || !session.capture) return Promise.resolve();
+    // Finalization owns persistence from that point on — never start a new write.
+    if (session.finalizing || session.finalized || session.closed) return session.checkpointInFlight ?? Promise.resolve();
+    if (session.checkpointInFlight) {
+      // A write is already running; the running loop will pick up the newest state.
+      session.checkpointDirty = true;
+      return session.checkpointInFlight;
+    }
+    const loop = async () => {
+      // Coalesce: write the newest snapshot; re-iterate only if more arrived AND
+      // finalization hasn't taken ownership. Never a tight infinite retry loop.
+      // eslint-disable-next-line no-constant-condition
+      while (true) {
+        session.checkpointDirty = false;
+        if (session.trailingCheckpointTimer) { deps.clearTimer(session.trailingCheckpointTimer); session.trailingCheckpointTimer = null; }
+        const payload = buildCheckpointPayload();
+        try {
+          await checkpointTranscript(deps.db(), session.attemptId, payload);
+        } catch (err) {
+          // Preserve dirty so a later checkpoint / terminal finalization still
+          // persists the newest transcript. Break to avoid a hot retry loop; a
+          // later trigger (transcription, settle, finalize) re-runs the queue.
+          session.checkpointDirty = true;
+          console.warn(`[live-relay] checkpoint failed for attempt ${session.attemptId}: ${err?.message ?? err}`);
+          break;
+        }
+        if (!session.checkpointDirty || session.finalizing || session.finalized || session.closed) break;
+      }
+    };
+    session.checkpointInFlight = loop().finally(() => { session.checkpointInFlight = null; });
+    return session.checkpointInFlight;
+  }
+
+  // Wait for any in-flight checkpoint work to finish. Callers MUST set
+  // `session.finalizing` first so no new checkpoint can start meanwhile.
+  async function drainCheckpointQueue() {
+    while (session.checkpointInFlight) {
+      try { await session.checkpointInFlight; } catch { /* logged in the loop */ }
     }
   }
 
-  // Request a checkpoint. Forced writes (turn boundaries, post-boundary/drain
-  // fragments) go durable immediately. Debounced writes never DROP a late
-  // fragment: they mark the checkpoint dirty and guarantee ONE trailing durable
-  // write, so a crash mid-settle can't leave the durable copy behind memory.
+  // Request a checkpoint (awaitable). Forced writes (turn boundaries, post-
+  // boundary/drain fragments, settle/End) enqueue immediately. Debounced writes
+  // never DROP a late fragment: they mark the checkpoint dirty and guarantee ONE
+  // trailing durable write, so a crash mid-settle can't leave the durable copy
+  // behind memory. Never starts a write once finalization owns persistence.
   function requestCheckpoint({ force = false } = {}) {
-    if (session.mode !== 'test' || !session.attemptId || !session.capture) return;
+    if (session.mode !== 'test' || !session.attemptId || !session.capture) return Promise.resolve();
+    if (session.finalizing || session.finalized || session.closed) return session.checkpointInFlight ?? Promise.resolve();
     const now = deps.now();
     if (force || now - session.lastCheckpointAt >= CALL_QA_CHECKPOINT_INTERVAL_MS) {
-      doCheckpoint();
-      return;
+      return runCheckpointQueue();
     }
     session.checkpointDirty = true;
     if (!session.trailingCheckpointTimer) {
       session.trailingCheckpointTimer = deps.setTimer(() => {
         session.trailingCheckpointTimer = null;
-        if (session.checkpointDirty) doCheckpoint();
+        if (session.checkpointDirty && !session.finalizing && !session.finalized && !session.closed) runCheckpointQueue();
       }, CALL_QA_CHECKPOINT_INTERVAL_MS);
       session.trailingCheckpointTimer?.unref?.();
     }
+    return session.checkpointInFlight ?? Promise.resolve();
   }
 
   // ── Terminal capture (single path, guarded, ack only after durable write) ──
@@ -324,8 +369,15 @@ export function handleConnection(client, req, depsInput) {
     if (session.mode !== 'test' || !session.attemptId) return { ok: false, skipped: true };
     if (session.finalized) return { ok: false, alreadyFinalized: true };
     if (session.finalizing) return { ok: false, inProgress: true };
+    // (1) Take ownership of persistence. From here `requestCheckpoint` refuses to
+    // start new writes, so no checkpoint can begin after finalization.
     session.finalizing = true;
+    // (2/3) Cancel the trailing checkpoint + settle/drain timers.
     clearDrainTimers();
+    // (4) Await all already-running checkpoint work before the terminal write, so
+    // no stale checkpoint can land after finalizeCapture(). (5)
+    await drainCheckpointQueue();
+    // (6/7) Absorb the staged exchange and build the LATEST bounded final transcript.
     flushStage();
     const transcript = session.capture ? session.capture.toArray() : [];
     const captureStatus = abandoned
@@ -654,11 +706,11 @@ export function handleConnection(client, req, depsInput) {
     // A LATER late fragment becomes a NEW exchange, never merged into this one.
     session.boundaryObserved = false;
     flushStage();
-    await doCheckpoint();
+    await requestCheckpoint({ force: true }); // durable: await the serialized write
   }
 
   // ── End Call handshake (test mode) ───────────────────────────────────────
-  function handleEndCall() {
+  async function handleEndCall() {
     if (session.mode !== 'test') {
       // Practice mode has no server capture; just tear down.
       return shutdown('practice-end');
@@ -673,13 +725,14 @@ export function handleConnection(client, req, depsInput) {
     // (nav-first) so the drain starts from a clean stage — no duplicate flush.
     if (session.settleTimer) { deps.clearTimer(session.settleTimer); session.settleTimer = null; }
     flushStage();
-    requestCheckpoint({ force: true });
-    // Signal end-of-audio upstream so the model finishes its final turn.
+    // Signal end-of-audio upstream so the model finishes its final turn, then set
+    // the overall drain deadline. The drain start does not wait on Firestore.
     session.upstream.send(AUDIO_STREAM_END);
-    // Overall drain deadline: finalize as incomplete if the transcript never
-    // reaches a quiet post-End boundary in time.
     session.drainTimer = deps.setTimer(() => finishDrain('drain-timeout'), CALL_QA_DRAIN_TIMEOUT_MS);
     session.drainTimer?.unref?.();
+    // Durably persist the absorbed exchange for the End→finalize window (best
+    // effort; the terminal finalization drains + rewrites the full transcript).
+    await requestCheckpoint({ force: true });
   }
 
   async function finishDrain(reason) {

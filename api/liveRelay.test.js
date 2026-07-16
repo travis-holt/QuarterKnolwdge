@@ -504,6 +504,152 @@ describe('durable + bounded staged checkpoints', () => {
   });
 });
 
+// ── Serialized checkpoint writes (race safety) ──────────────────────────────
+describe('serialized checkpoint writes', () => {
+  const CHECKPOINT_ONLY = (patch) => !('captureStatus' in patch);
+  const transcriptText = (h) => (storedAttempt(h)?.transcript ?? []).map((t) => t.text).join(' ');
+
+  it('an older checkpoint can never overwrite a newer one (writes are serialized)', async () => {
+    const h = harness();
+    await startTest(h);
+    h.db._control.deferUpdates = CHECKPOINT_ONLY; // hold checkpoint writes
+    upstreamNav(h, 'version-one');
+    upstreamTurnComplete(h);        // forces checkpoint A (deferred)
+    await flush();
+    expect(h.db._deferred.length).toBe(1); // A is in flight
+
+    upstreamNav(h, 'version-two-late'); // request B while A in flight
+    await flush();
+    // B must NOT start a parallel write — it coalesces onto the running loop.
+    expect(h.db._deferred.length).toBe(1);
+
+    h.db.settleDeferred(0);          // resolve A → loop re-writes the NEWEST snapshot
+    await flush();
+    await flush();
+    expect(h.db._deferred.length).toBe(1); // exactly one trailing write (B)
+    expect(h.db._deferred[0].patch.transcript.map((t) => t.text).join(' ')).toContain('version-two-late');
+
+    h.db.settleDeferred(0);          // resolve B
+    await flush();
+    expect(transcriptText(h)).toContain('version-one');
+    expect(transcriptText(h)).toContain('version-two-late');
+    // The store only ever moved forward — an obsolete A never overwrote B.
+    expect(h.db._applied.map((a) => a.type)).toEqual(['checkpoint', 'checkpoint']);
+  });
+
+  it('a late fragment while a checkpoint is in flight yields exactly ONE trailing write, once', async () => {
+    const h = harness();
+    await startTest(h);
+    h.db._control.deferUpdates = CHECKPOINT_ONLY;
+    upstreamNav(h, 'base');
+    upstreamTurnComplete(h);         // checkpoint A
+    await flush();
+    upstreamNav(h, 'lateword');      // late fragment while A unresolved
+    await flush();
+    expect(h.db._deferred.length).toBe(1);
+    h.db.settleDeferred(0);          // A resolves → one trailing B
+    await flush();
+    await flush();
+    expect(h.db._deferred.length).toBe(1);
+    h.db.settleDeferred(0);
+    await flush();
+    // Exactly one trailing write persisted the newest transcript; fragment once.
+    expect(h.db._applied.filter((a) => a.type === 'checkpoint').length).toBe(2);
+    expect((transcriptText(h).match(/lateword/g) || []).length).toBe(1);
+  });
+
+  it('a checkpoint cannot overwrite the terminal finalization', async () => {
+    const h = harness();
+    await startTest(h);
+    h.db._control.deferUpdates = true; // hold ALL writes
+    upstreamNav(h, 'early');
+    upstreamTurnComplete(h);          // checkpoint A (deferred, older transcript)
+    await flush();
+    upstreamNav(h, 'final-words');    // newer staged content
+    await flush();
+    expect(h.db._deferred.length).toBe(1);
+    expect(h.db._deferred[0].type).toBe('checkpoint');
+
+    await h.client.emit('message', JSON.stringify({ type: 'end' }));
+    await flush();
+    upstreamTurnComplete(h);          // post-end boundary → drain settle (checkpoint coalesced)
+    await flush();
+    h.fireSettleTimer();              // finishDrain('settled') → terminateCapture (awaits the queue)
+    await flush();
+    // Finalization is blocked draining the in-flight checkpoint; only A pending.
+    expect(h.db._deferred.length).toBe(1);
+    expect(h.db._deferred[0].type).toBe('checkpoint');
+
+    h.db.settleDeferred(0);           // resolve the stale checkpoint A
+    await flush();
+    await flush();
+    // Now the terminal finalize write is queued (the checkpoint loop broke on finalizing).
+    expect(h.db._deferred.length).toBe(1);
+    expect(h.db._deferred[0].type).toBe('finalize');
+
+    h.db.settleDeferred(0);           // apply the terminal write
+    await flush();
+    await flush();
+    // The terminal finalize is the LAST write; NO checkpoint runs after it.
+    const types = h.db._applied.map((a) => a.type);
+    expect(types[types.length - 1]).toBe('finalize');
+    const lastFinalize = types.lastIndexOf('finalize');
+    expect(types.slice(lastFinalize + 1).includes('checkpoint')).toBe(false);
+    expect(transcriptText(h)).toContain('early');
+    expect(transcriptText(h)).toContain('final-words');
+    expect(h.client.lastByType('captured')).toBeTruthy();
+    expect(storedAttempt(h).captureStatus).toBe(CAPTURE_STATUS.CAPTURED);
+  });
+
+  it('a checkpoint failure preserves dirty state; a later finalization still persists the newest transcript (no transcript in logs)', async () => {
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const h = harness();
+    await startTest(h);
+    h.db._control.failUpdates = (patch) => !('captureStatus' in patch); // fail checkpoints only
+    upstreamNav(h, 'secret-transcript-text');
+    upstreamTurnComplete(h);          // checkpoint fails
+    await flush();
+    await flush();
+    // The checkpoint write failed, so the durable transcript is not yet updated.
+    expect(transcriptText(h)).not.toContain('secret-transcript-text');
+    // Re-enable writes and finalize — the newest transcript must still persist.
+    h.db._control.failUpdates = false;
+    await h.client.emit('message', JSON.stringify({ type: 'end' }));
+    await flush();
+    h.fireDrainTimer();
+    await flush();
+    await flush();
+    expect(transcriptText(h)).toContain('secret-transcript-text');
+    // Transcript content is NEVER logged.
+    const logged = warnSpy.mock.calls.map((c) => c.join(' ')).join(' ');
+    expect(logged).not.toContain('secret-transcript-text');
+    warnSpy.mockRestore();
+  });
+
+  it('once finalizing, no new checkpoint write starts and a duplicate disconnect does not double-finalize', async () => {
+    const h = harness();
+    await startTest(h);
+    upstreamNav(h, 'x');
+    upstreamTurnComplete(h);
+    await flush();
+    await h.client.emit('message', JSON.stringify({ type: 'end' }));
+    await flush();
+    h.fireDrainTimer();               // terminateCapture → finalized, captured, shutdown
+    await flush();
+    await flush();
+    expect(h.client.lastByType('captured')).toBeTruthy();
+    const appliedAfterFinalize = h.db._applied.length;
+    // A late transcription after finalization must NOT start a checkpoint write.
+    upstreamNav(h, 'too-late');
+    await flush();
+    expect(h.db._applied.length).toBe(appliedAfterFinalize);
+    // A duplicate disconnect must not create a second terminal write.
+    await h.client.emit('close');
+    await flush();
+    expect(h.db._applied.filter((a) => a.type === 'finalize').length).toBe(1);
+  });
+});
+
 // ── Finalization timing metadata (Fix 3) ────────────────────────────────────
 describe('finalization timing (client guard)', () => {
   it('ready includes a server-computed clientGuardMs that exceeds drain + settle', async () => {

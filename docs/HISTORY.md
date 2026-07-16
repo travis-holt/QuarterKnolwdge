@@ -1,5 +1,36 @@
 # Development History - Knowledge Check
 
+### 2026-07-15 (part 3) - Call QA checkpoint write serialization (PR 2 final merge blocker)
+- **Context:** the final merge review of draft PR #32 found the server-authoritative transcript
+  pipeline still permitted concurrent Firestore checkpoint writes: `requestCheckpoint({force})` called
+  the async `doCheckpoint()` without serializing it, so (a) an older in-flight checkpoint could
+  complete after a newer one and overwrite it, and (b) an in-flight checkpoint could land AFTER the
+  terminal `finalizeCapture()` and overwrite the finalized transcript/metadata while `captureStatus`
+  stayed `captured`. Fixed on the same branch in one commit; no merge/deploy.
+- **Fix (`api/live-relay.js`):** all checkpoint writes now go through ONE session-owned serialized
+  loop (`runCheckpointQueue` + `buildCheckpointPayload` + `drainCheckpointQueue`).
+  - At most one `checkpointTranscript()` is ever in flight; concurrent requests set a dirty flag and
+    coalesce onto the running loop, which re-writes the NEWEST bounded snapshot (generated at write
+    time) when the current write finishes — an older snapshot can never overwrite a newer one, and it
+    never does one write per fragment.
+  - `terminateCapture()` sets `finalizing` first (which blocks any new checkpoint from starting),
+    cancels the trailing-checkpoint timer, **awaits `drainCheckpointQueue()`**, then runs
+    `finalizeCapture()` as the LAST write. `requestCheckpoint`/`runCheckpointQueue`/the trailing timer
+    all refuse to start once `finalizing`/`finalized`/`closed`, so no checkpoint can modify transcript
+    data after finalization. Durability points (active-turn settle expiry, End Call, terminal
+    finalization) `await` the queue.
+  - A checkpoint failure preserves dirty state (re-set on the caught error, loop breaks to avoid a hot
+    retry) so a later checkpoint or the terminal finalization still persists the newest transcript;
+    transcript content is never logged; a failed terminal write keeps the retake behavior.
+- **Tests:** +5 (1045 total, 51 files) in `api/liveRelay.test.js`, with a new controllable-write-order
+  fake Firestore (`_deferred`/`settleDeferred`/`failDeferred`/`_applied` in
+  `api/fixtures/fakeFirestore.js`): older-checkpoint-can't-overwrite-newer, one-trailing-write-per-late-
+  fragment, checkpoint-can't-overwrite-terminal-finalization (finalize is the last write, no checkpoint
+  after), checkpoint-failure-preserves-dirty (+ no transcript in logs), and finalization-ownership (no
+  new checkpoint + no double-finalize after `finalizing`).
+- **Docs:** [GRADING_INVARIANTS.md](GRADING_INVARIANTS.md) §0d (5 new binding statements), CLAUDE.md
+  F25 + counts.
+
 ### 2026-07-15 (part 2) - Call QA capture integration fixes (PR 2 final merge-review)
 - **Context:** the final merge-review of draft PR #32 found three integration defects in the
   server-authoritative Call QA capture. Fixed on the same branch in one follow-up commit; no

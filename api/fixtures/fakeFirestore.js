@@ -28,9 +28,23 @@ export function createFakeFirestore(seed = {}) {
   }
   let autoId = 0;
   const stats = { geminiCalls: 0, txCount: 0 };
-  // Test control: when set, doc().update() rejects (to exercise write-failure
-  // paths such as a failed capture finalization).
-  const control = { failUpdates: false, failUpdatesError: new Error('simulated Firestore update failure') };
+  // Test control:
+  //   failUpdates — boolean OR predicate(patch): when truthy, doc().update()
+  //     rejects (to exercise write-failure paths).
+  //   deferUpdates — boolean OR predicate(patch): when truthy, doc().update()
+  //     is HELD (returns a pending promise) so the test can control write
+  //     completion order. Settle/fail via the returned db.settleDeferred()/
+  //     failDeferred() helpers.
+  const control = { failUpdates: false, deferUpdates: false, failUpdatesError: new Error('simulated Firestore update failure') };
+  const deferred = [];        // pending, test-controlled update() promises
+  const applied = [];         // ordered log of APPLIED updates: { type, patch }
+
+  const truthyFor = (opt, patch) => (typeof opt === 'function' ? opt(patch) : Boolean(opt));
+  const patchType = (patch) => ('captureStatus' in patch ? 'finalize' : 'checkpoint');
+  const applyPatch = (key, patch) => {
+    store.set(key, applyUpdate(store.get(key), patch));
+    applied.push({ type: patchType(patch), patch });
+  };
 
   function docRef(coll, id) {
     const key = `${coll}/${id}`;
@@ -44,9 +58,14 @@ export function createFakeFirestore(seed = {}) {
       },
       async set(data) { store.set(key, applyUpdate({}, data)); },
       async update(patch) {
-        if (control.failUpdates) throw control.failUpdatesError;
+        if (truthyFor(control.failUpdates, patch)) throw control.failUpdatesError;
         if (!store.has(key)) throw new Error(`No document to update: ${key}`);
-        store.set(key, applyUpdate(store.get(key), patch));
+        if (truthyFor(control.deferUpdates, patch)) {
+          return new Promise((resolve, reject) => {
+            deferred.push({ key, patch, type: patchType(patch), resolve, reject });
+          });
+        }
+        applyPatch(key, patch);
       },
       async delete() { store.delete(key); },
     };
@@ -60,6 +79,25 @@ export function createFakeFirestore(seed = {}) {
     _store: store,
     _stats: stats,
     _control: control,
+    _deferred: deferred,       // pending update() promises, in arrival order
+    _applied: applied,         // ordered log of applied updates
+    // Apply + resolve the deferred update at index i (default: oldest).
+    settleDeferred(i = 0) {
+      const d = deferred[i];
+      if (!d) return false;
+      deferred.splice(i, 1);
+      applyPatch(d.key, d.patch);
+      d.resolve();
+      return true;
+    },
+    // Reject the deferred update at index i WITHOUT applying it.
+    failDeferred(i = 0) {
+      const d = deferred[i];
+      if (!d) return false;
+      deferred.splice(i, 1);
+      d.reject(control.failUpdatesError);
+      return true;
+    },
     collection(coll) {
       return { doc: (id) => docRef(coll, id ?? `auto-${++autoId}`) };
     },
