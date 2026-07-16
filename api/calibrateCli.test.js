@@ -113,10 +113,7 @@ describe('Call QA calibration CLI', () => {
         qa: {
           pass: true,
           score: 92,
-          criteria: [
-            { id: 'know-rule', verdict: 'MET' },
-            { id: 'doc-te', verdict: 'MET' },
-          ],
+          criteria: fixture.modelRun.criteria,
           autoFails: [],
           review: {
             recommendation: 'pass',

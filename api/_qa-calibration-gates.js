@@ -2,12 +2,18 @@
 // conservative; synthetic examples never count toward them.
 
 export const CALL_QA_CALIBRATION_POLICY_VERSION =
-  'call-qa-calibration-policy-v1';
+  'call-qa-calibration-policy-v2';
 
 export const CALL_QA_CALIBRATION_GATES = Object.freeze({
   minimumCases: 200,
   minimumReviewersPerHumanCase: 2,
   requireCompletedAdjudication: true,
+  minimumHumanOutcomeCases: Object.freeze({
+    pass: 60,
+    fail: 60,
+    review: 40,
+  }),
+  minimumHumanOutcomeClassRate: 0.15,
 
   minimumCasesPerDepartment: 80,
   minimumCasesPerScenario: 8,
@@ -24,6 +30,7 @@ export const CALL_QA_CALIBRATION_GATES = Object.freeze({
   minimumSafetyCriticalAgreement: 0.98,
 
   maximumCriticalTranscriptOmissionRate: 0.01,
+  maximumCriticalCaptureFailureRate: 0.01,
   requireSingleGraderModelVersion: true,
   requireSingleRubricVersion: true,
   requireSinglePromptVersion: true,

@@ -11,7 +11,10 @@
 > [§8 Current System State](#8-current-system-state) and [§15 Current Priorities](#15-current-priorities)
 > accurate at all times.
 >
-> **Last updated:** 2026-07-16 (PR 3 — Call QA calibration, coverage, statistical readiness, and
+> **Last updated:** 2026-07-16 (PR 3 merge-blocker follow-up — calibration policy v2 now requires
+> complete rubric labels, valid capture/grading states, meaningful pass/fail/review populations,
+> available Wilson denominators, and visible critical operational failures; shadow policy v2
+> requires verified scenario/transcript authority and complete rubric output. Prior: PR 3 — Call QA calibration, coverage, statistical readiness, and
 > shadow clean-pass assessment are implemented as offline tooling over sanitized local fixtures.
 > Synthetic examples remain separate from human evidence; current readiness is correctly
 > `INSUFFICIENT_DATA`; live calibration requires two explicit opt-ins; no automatic final verdict,
@@ -890,6 +893,12 @@ training assignments.
   `source:'synthetic-example'` calibration examples, adjudicated `source:'human-pilot'` fixtures,
   optional live model runs, and automation readiness remain separate populations. Only valid,
   sanitized, completed human-pilot adjudications count toward accuracy/readiness.
+- **Merge-blocker hardening:** calibration policy v2 requires complete 20-criterion labels for
+  every reviewer/adjudication/model run, exact recommendation/final-outcome consistency, PR #32
+  capture/grading-state and transcript-count consistency, minimum pass/fail/review populations
+  (60/60/40 and at least 15% each), available non-zero Wilson denominators, and a maximum 1%
+  critical capture-failure rate. Ungraded failed/abandoned captures remain in operational and
+  per-version readiness metrics.
 - **Technical implementation:** `api/_qa-calibration.js` provides pure fixture validation,
   confusion/criterion/auto-fail/capture metrics, Wilson intervals, version and operational
   breakdowns, richer scenario coverage, readiness evaluation, and deterministic Markdown output.
@@ -911,12 +920,16 @@ training assignments.
   provenance, clean-pass calibration readiness, and no existing final supervisor verdict.
   Diagnostics are non-final and do not change `qa.pass`, `qaFinalReview`, Phase 3 completion,
   supervisor actions, capability/history scoring, training, or coaching.
+  Shadow policy v2 also requires calibration policy v2, verified server scenario metadata, a
+  complete rubric result, and server transcript metadata matching the attempt ID, capture state,
+  capture-complete flag, capture version, and live model.
 - **Privacy:** no production export/downloader and no audio storage. Audio retention remains an
   unimplemented management/privacy decision in `docs/CALL_QA_AUDIO_RETENTION_DECISION.md`.
 - **Current evidence/readiness:** 3 synthetic examples, 0 human pilot fixtures,
   `INSUFFICIENT_DATA`. This is the intended initial state.
-- **Tests:** 56 new tests cover fixture privacy/schema failures, exact confusion/criterion/auto-fail/
+- **Tests:** 78 PR-3 tests cover fixture privacy/schema failures, exact confusion/criterion/auto-fail/
   capture/Wilson metrics, readiness gates and sufficient populations, every shadow disqualifier,
+  homogeneous/imbalanced populations, contradictory capture states, complete labels and provenance,
   offline determinism/no-network behavior, live double opt-in, sequential repeat stability, and
   ignored artifacts.
 - **Status:** Complete in code; real human pilot collection and adjudication remain operational work.
@@ -1568,7 +1581,9 @@ of this file on 2026-07-07 to cut per-session context cost (it was ~55% of the f
   synthetic examples only; no human pilot fixtures exist, so the reproducible readiness state is
   `INSUFFICIENT_DATA`. Optional live grading requires explicit environment + CLI confirmation and
   never accesses Firestore. Shadow clean-pass assessment is pure/non-final; automatic
-  `qaFinalReview` remains impossible in PR 3.
+  `qaFinalReview` remains impossible in PR 3. Policy v2 prevents homogeneous or severely imbalanced
+  human outcome populations, unavailable Wilson denominators, contradictory PR #32 states, and
+  incomplete rubric labels from appearing ready; shadow v2 requires the complete server trust chain.
 - **Audit remediation (2026-07-12):** live access is no longer anonymous or role-by-localStorage.
   Server-issued Firebase claims protect REST, WebSocket, and Firestore; PIN material stays
   server-side; peer mentor data is a minimized protected projection. Assessment saves are atomic
@@ -1673,7 +1688,7 @@ of this file on 2026-07-07 to cut per-session context cost (it was ~55% of the f
 - **Experimental / mockup:**
   - Training **content** is mockup (flagged in UI). Logic is real.
   - **Adult Medicine and Behavioural Health** are not assessed; **Pediatrics and OB/GYN** are live.
-- **Test coverage:** **1101 tests** across **54 test files** (PR 3 adds 56 fixture/metrics/readiness/
+- **Test coverage:** **1123 tests** across **54 test files** (PR 3 adds 78 fixture/metrics/readiness/
   coverage/CLI/shadow-policy tests; PR 2 final merge blocker adds 5 serialized-checkpoint race tests + controllable-write-order fake Firestore; PR 2 final merge-review adds active-turn-settle/ordering/durability/bounds/finalization-timing relay tests, `boundedAppend` + client finalize-guard tests; PR 2 merge-review adds
   `src/components/voiceCall.component.test.jsx` — the End-Call handshake + capture-vs-grade-retry
   distinctions with fake browser APIs — and expands `api/liveRelay.test.js` (two-stage drain,
@@ -1787,7 +1802,7 @@ of this file on 2026-07-07 to cut per-session context cost (it was ~55% of the f
   OB/GYN = **37** seed questions (offline fallback) + the **48-item MCQ v2 operating-model bank**
   (24 Pediatrics + 24 OB/GYN) that replaces the weak active bank via a marker-gated
   archive-and-replace migration (bank grows in Firestore per dept) · 4 departments (**Pediatrics
-  + OB/GYN live**, 2 mockup) · **1101** unit tests (54 test files) + two committed Firestore Rules
+  + OB/GYN live**, 2 mockup) · **1123** unit tests (54 test files) + two committed Firestore Rules
   emulator suites (`npm run test:rules` — the 51-assertion result-authorization suite + the PR-2
   Call QA interviews suite; require Java, run in CI, not part of the unit-test count) ·
   **13** Firestore collections
@@ -2023,7 +2038,7 @@ npm run test:e2e     # run the Playwright browser tests (auto-builds + starts th
 - Heatmap intensity toggle (show % inside matrix cells).
 
 ### Technical Debt
-- **1101 tests** across 54 test files as of 2026-07-16 (plus two committed Firestore Rules emulator
+- **1123 tests** across 54 test files as of 2026-07-16 (plus two committed Firestore Rules emulator
   suites, `npm run test:rules`, run separately from the unit-test gate). **Role-app
   coverage** (`App`, `Start`,
   `SupervisorApp`, `NavigatorApp`) now includes both shell smoke tests (mount + gate/session routing)

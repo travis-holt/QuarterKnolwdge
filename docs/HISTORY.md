@@ -1,5 +1,36 @@
 # Development History - Knowledge Check
 
+### 2026-07-16 - PR #33 calibration/readiness merge-blocker hardening
+- **Population integrity:** bumped the calibration policy to
+  `call-qa-calibration-policy-v2`. Readiness now requires at least 60 human passes, 60 fails, and
+  40 review-required outcomes, with every class at least 15% of evaluated cases. Zero-denominator
+  Wilson intervals remain `null`/unavailable and cannot satisfy readiness. All-pass, all-fail,
+  all-review, severely imbalanced, and zero-denominator populations are regression-tested.
+- **Label integrity:** every human reviewer, adjudication, and model run must label all 20 rubric
+  criteria exactly once (`NA` when inapplicable). Missing/unknown criteria and duplicate model
+  criteria fail validation. Adjudicated recommendation/finalPass/reviewRequired and model
+  recommendation/pass combinations are checked for consistency. The 3 synthetic examples and all
+  sufficient-population test builders now use the complete rubric.
+- **Capture integrity:** fixture validation now enforces the PR #32 capture/grading state matrix,
+  exact `captureComplete` semantics, model-run presence only for graded attempts, and exact
+  patient/navigator transcript role counts. Human incomplete, abandoned, active, and grade-failed
+  attempts remain visible in capture/grading breakdowns and every mixed-version readiness report.
+  A versioned 1% critical capture-failure gate covers incomplete, abandoned, and grade-failed
+  attempts, so enough successful cases cannot hide operational failures.
+- **Shadow hardening:** bumped the non-final diagnostic policy to
+  `call-qa-clean-pass-shadow-v2`. Eligibility now requires calibration policy v2,
+  `qa.metadataIntegrity.verified === true`, a complete valid rubric result, and
+  server-authoritative `qa.transcriptMetadata` matching the attempt ID, capture state,
+  capture-complete flag, capture version, and live model. `off|shadow` remains the entire mode set;
+  no `qaFinalReview` or automatic finalization path was added.
+- **Verification:** focused calibration/shadow/CLI tests 78/78; `npm test` 1123/1123 across 54
+  files; `npm run test:rules` 51/51 + 16/16; `npm run build` passed with the existing Firebase
+  chunk-size warning; `npm run qa:calibrate` and `npm run qa:coverage` remained
+  `INSUFFICIENT_DATA` with 0 human cases, 3 excluded synthetic examples, and 88 coverage gaps;
+  `npm run qa:calibrate:check` exited 1 as expected; changed server/CLI files passed
+  `node --check`; `git diff --check` passed. No live model call, production data access, audio
+  retention, merge, or deployment occurred.
+
 ### 2026-07-16 - Call QA calibration, coverage, and shadow automation readiness (PR 3)
 - **Goal:** add an honest measuring instrument around the PR #31 evidence/model protections and PR
   #32 server-authoritative capture state machine without enabling automatic final pass/fail.

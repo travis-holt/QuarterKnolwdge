@@ -4,6 +4,7 @@ import {
   callQaAutomationMode,
   evaluateCleanPassCandidate,
 } from './_qa-automation-policy.js';
+import { rubricCriteria } from '../src/data/qaRubric.js';
 
 const POPULATION = [
   'gemini-2.5-flash',
@@ -16,13 +17,19 @@ const POPULATION = [
 
 function readyReport(state = 'READY_FOR_CLEAN_PASS_CONSIDERATION') {
   return {
+    policyVersion: 'call-qa-calibration-policy-v2',
     approvedPopulation: POPULATION,
-    readiness: { state, approvedPopulation: POPULATION },
+    readiness: {
+      state,
+      approvedPopulation: POPULATION,
+      policyVersion: 'call-qa-calibration-policy-v2',
+    },
   };
 }
 
 function cleanAttempt() {
   return {
+    id: 'attempt-1',
     assessmentType: 'call-qa',
     captureAuthority: 'server',
     captureStatus: 'captured',
@@ -32,11 +39,20 @@ function cleanAttempt() {
     gradingStatus: 'graded',
     qa: {
       pass: true,
-      criteria: [{ id: 'open-greet', verdict: 'MET' }],
+      criteria: rubricCriteria().map((criterion) => ({ id: criterion.id, verdict: 'MET' })),
       autoFails: [],
       unverifiedAutoFails: [],
       deterministicFindings: [],
       repairs: [],
+      metadataIntegrity: { verified: true, status: 'verified' },
+      transcriptMetadata: {
+        authority: 'server',
+        attemptId: 'attempt-1',
+        captureStatus: 'captured',
+        captureComplete: true,
+        captureVersion: 'call-qa-live-transcript-v1',
+        liveModel: 'gemini-live-v1',
+      },
       review: {
         recommendation: 'pass',
         confidence: 'high',
@@ -70,6 +86,18 @@ const disqualifiers = [
   ['deterministic finding', (attempt) => { attempt.qa.deterministicFindings = [{ id: 'x' }]; }, 'deterministic-finding'],
   ['fairness repair', (attempt) => { attempt.qa.repairs = [{ rule: 'x' }]; }, 'fairness-repair'],
   ['review flag', (attempt) => { attempt.qa.review.reviewFlags = [{ id: 'x' }]; }, 'review-flag'],
+  ['unverified metadata', (attempt) => { attempt.qa.metadataIntegrity.verified = false; }, 'metadata-integrity-unverified'],
+  ['missing metadata integrity', (attempt) => { delete attempt.qa.metadataIntegrity; }, 'metadata-integrity-unverified'],
+  ['missing transcript metadata', (attempt) => { delete attempt.qa.transcriptMetadata; }, 'transcript-not-server-authoritative'],
+  ['non-server transcript', (attempt) => { attempt.qa.transcriptMetadata.authority = 'local'; }, 'transcript-not-server-authoritative'],
+  ['transcript attempt mismatch', (attempt) => { attempt.qa.transcriptMetadata.attemptId = 'other'; }, 'transcript-attempt-mismatch'],
+  ['transcript status mismatch', (attempt) => { attempt.qa.transcriptMetadata.captureStatus = 'capture_incomplete'; }, 'transcript-capture-status-mismatch'],
+  ['transcript capture-version mismatch', (attempt) => { attempt.qa.transcriptMetadata.captureVersion = 'other'; }, 'transcript-capture-version-mismatch'],
+  ['transcript live-model mismatch', (attempt) => { attempt.qa.transcriptMetadata.liveModel = 'other'; }, 'transcript-live-model-mismatch'],
+  ['transcript completeness mismatch', (attempt) => { attempt.qa.transcriptMetadata.captureComplete = false; }, 'transcript-capture-complete-mismatch'],
+  ['incomplete rubric result', (attempt) => { attempt.qa.criteria.pop(); }, 'incomplete-rubric-result'],
+  ['duplicate rubric result', (attempt) => { attempt.qa.criteria.at(-1).id = attempt.qa.criteria[0].id; }, 'incomplete-rubric-result'],
+  ['unknown rubric result', (attempt) => { attempt.qa.criteria.at(-1).id = 'unknown'; }, 'incomplete-rubric-result'],
   ['missing grading metadata', (attempt) => { delete attempt.qa.gradingMetadata; }, 'missing-grading-provenance'],
   ['wrong model', (attempt) => { attempt.qa.gradingMetadata.model = 'other'; }, 'wrong-model-version'],
   ['wrong rubric', (attempt) => { attempt.qa.gradingMetadata.rubricVersion = 'other'; }, 'wrong-rubric-version'],
@@ -86,7 +114,7 @@ describe('evaluateCleanPassCandidate', () => {
     const before = structuredClone(attempt);
     expect(evaluateCleanPassCandidate(attempt, readyReport())).toEqual({
       eligible: true,
-      policyVersion: 'call-qa-clean-pass-shadow-v1',
+      policyVersion: 'call-qa-clean-pass-shadow-v2',
       reasons: [],
     });
     expect(attempt).toEqual(before);
@@ -104,6 +132,20 @@ describe('evaluateCleanPassCandidate', () => {
   it('calibration not ready blocks eligibility', () => {
     expect(evaluateCleanPassCandidate(cleanAttempt(), readyReport('READY_FOR_SHADOW')).reasons)
       .toContain('calibration-not-ready');
+  });
+
+  it('unsupported or missing calibration policy versions block eligibility', () => {
+    const report = readyReport();
+    report.readiness.policyVersion = 'call-qa-calibration-policy-v1';
+    expect(evaluateCleanPassCandidate(cleanAttempt(), report).reasons)
+      .toContain('unsupported-calibration-policy');
+    delete report.readiness.policyVersion;
+    expect(evaluateCleanPassCandidate(cleanAttempt(), report).reasons)
+      .toContain('unsupported-calibration-policy');
+    report.readiness.policyVersion = 'call-qa-calibration-policy-v2';
+    report.policyVersion = 'call-qa-calibration-policy-v1';
+    expect(evaluateCleanPassCandidate(cleanAttempt(), report).reasons)
+      .toContain('unsupported-calibration-policy');
   });
 });
 

@@ -39,6 +39,21 @@ These rules measure the existing pipeline without weakening §§0–0d:
    actions, capability/history scoring, training, or coaching.
 8. **No audio or production-data collection is introduced.** Calibration
    fixtures are local sanitized text; there is no Firestore export/downloader.
+9. **Calibration labels are complete and internally consistent.** Every human
+   reviewer, adjudication, and model result labels the complete rubric exactly
+   once (`NA` when inapplicable). Human recommendation/finalPass/reviewRequired
+   and model recommendation/pass relationships fail closed when contradictory.
+10. **Operational failures remain in readiness.** PR #32 capture/grading state
+    combinations and transcript role counts are validated. Incomplete,
+    abandoned, and grade-failed attempts remain in capture metrics and mixed
+    version-population reports even without model output.
+11. **Clean-pass consideration requires outcome diversity.** Calibration policy
+    v2 requires meaningful pass, fail, and review-required populations; zero-
+    denominator Wilson intervals are unavailable and cannot pass.
+12. **Shadow v2 requires the full server trust chain.** Eligibility requires
+    calibration policy v2, verified scenario metadata, complete rubric output,
+    and server transcript metadata consistent with the attempt. It remains
+    diagnostic-only and never writes a final verdict.
 
 ## 0d. Call QA checkpoint write serialization (PR 2 final merge blocker, 2026-07-15)
 

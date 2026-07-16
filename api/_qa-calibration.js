@@ -78,6 +78,11 @@ function validateCriteria(criteria, path, errors) {
     if (!CRITERION_IDS.has(id)) addError(errors, `${path}.${id}`, 'unknown rubric criterion');
     if (!VERDICTS.has(verdict)) addError(errors, `${path}.${id}`, 'invalid verdict');
   }
+  for (const id of CRITERION_IDS) {
+    if (!Object.prototype.hasOwnProperty.call(criteria, id)) {
+      addError(errors, `${path}.${id}`, 'missing rubric criterion; use NA when inapplicable');
+    }
+  }
 }
 
 function validateAutoFails(autoFails, path, errors) {
@@ -146,6 +151,17 @@ function validateHumanReview(fixture, errors) {
   if (typeof adjudicated.reviewRequired !== 'boolean') {
     addError(errors, 'humanReview.adjudicated.reviewRequired', 'must be boolean');
   }
+  const expected = {
+    pass: { finalPass: true, reviewRequired: false },
+    fail: { finalPass: false, reviewRequired: false },
+    needs_review: { finalPass: null, reviewRequired: true },
+  }[adjudicated.recommendation];
+  if (expected && (
+    adjudicated.finalPass !== expected.finalPass ||
+    adjudicated.reviewRequired !== expected.reviewRequired
+  )) {
+    addError(errors, 'humanReview.adjudicated', 'recommendation, finalPass, and reviewRequired are inconsistent');
+  }
 }
 
 function validateModelRun(fixture, errors) {
@@ -175,6 +191,10 @@ function validateModelRun(fixture, errors) {
     addError(errors, 'modelRun.recommendation', 'invalid recommendation');
   }
   if (typeof run.pass !== 'boolean') addError(errors, 'modelRun.pass', 'must be boolean');
+  if ((run.recommendation === 'pass' && run.pass !== true) ||
+      (run.recommendation === 'fail' && run.pass !== false)) {
+    addError(errors, 'modelRun', 'pass must be true for pass and false for fail recommendations');
+  }
   if (!Number.isFinite(run.score)) addError(errors, 'modelRun.score', 'must be numeric');
   if (!Array.isArray(run.criteria)) {
     addError(errors, 'modelRun.criteria', 'must be an array');
@@ -190,6 +210,9 @@ function validateModelRun(fixture, errors) {
       if (ids.has(criterion?.id)) addError(errors, `modelRun.criteria[${index}].id`, 'duplicate criterion');
       ids.add(criterion?.id);
     });
+    for (const id of CRITERION_IDS) {
+      if (!ids.has(id)) addError(errors, `modelRun.criteria.${id}`, 'missing rubric criterion; use NA when inapplicable');
+    }
   }
   validateAutoFails(run.autoFails, 'modelRun.autoFails', errors);
   if (!Array.isArray(run.reviewFlags)) addError(errors, 'modelRun.reviewFlags', 'must be an array');
@@ -229,6 +252,20 @@ export function validateCalibrationFixture(fixture) {
     if (typeof capture.captureComplete !== 'boolean') {
       addError(errors, 'capture.captureComplete', 'must be boolean');
     }
+    const expectedComplete = capture.captureStatus === 'captured';
+    if (CALIBRATION_CAPTURE_STATUSES.has(capture.captureStatus) &&
+        capture.captureComplete !== expectedComplete) {
+      addError(errors, 'capture.captureComplete', `must be ${expectedComplete} for ${capture.captureStatus}`);
+    }
+    const allowedGradingStates = {
+      active: new Set(['not_started']),
+      abandoned: new Set(['not_started']),
+      captured: CALIBRATION_GRADING_STATUSES,
+      capture_incomplete: CALIBRATION_GRADING_STATUSES,
+    }[capture.captureStatus];
+    if (allowedGradingStates && !allowedGradingStates.has(capture.gradingStatus)) {
+      addError(errors, 'capture.gradingStatus', `is inconsistent with ${capture.captureStatus}`);
+    }
     if (!String(capture.captureVersion ?? '').trim()) {
       addError(errors, 'capture.captureVersion', 'is required');
     } else if (capture.captureVersion !== CALL_QA_CAPTURE_VERSION) {
@@ -247,14 +284,22 @@ export function validateCalibrationFixture(fixture) {
     addError(errors, 'transcript', 'must be a non-empty array');
   } else {
     let navigatorTurns = 0;
+    let callerTurns = 0;
     fixture.transcript.forEach((turn, index) => {
       if (!['patient', 'navigator'].includes(turn?.role)) {
         addError(errors, `transcript[${index}].role`, 'unknown transcript role');
       }
       if (turn?.role === 'navigator') navigatorTurns += 1;
+      if (turn?.role === 'patient') callerTurns += 1;
       if (!String(turn?.text ?? '').trim()) addError(errors, `transcript[${index}].text`, 'must be non-empty');
     });
     if (navigatorTurns === 0) addError(errors, 'transcript', 'missing navigator turns');
+    if (capture && capture.navigatorTurnCount !== navigatorTurns) {
+      addError(errors, 'capture.navigatorTurnCount', 'must match navigator transcript turns');
+    }
+    if (capture && capture.callerTurnCount !== callerTurns) {
+      addError(errors, 'capture.callerTurnCount', 'must match patient transcript turns');
+    }
   }
 
   validateHumanReview(fixture, errors);
@@ -468,6 +513,11 @@ function buildCaptureMetrics(items) {
   const incomplete = count((item) => item.fixture.capture.captureStatus === 'capture_incomplete');
   const abandoned = count((item) => item.fixture.capture.captureStatus === 'abandoned');
   const gradeFailed = count((item) => item.fixture.capture.gradingStatus === 'grade_failed');
+  const criticalCaptureFailure = count((item) =>
+    item.fixture.capture.captureComplete !== true ||
+    item.fixture.capture.captureStatus === 'capture_incomplete' ||
+    item.fixture.capture.captureStatus === 'abandoned' ||
+    item.fixture.capture.gradingStatus === 'grade_failed');
   const criticalOmission = count((item) =>
     item.fixture.capture.captureStatus === 'capture_incomplete' ||
     hasWarning(item, 'drain-timeout') ||
@@ -486,6 +536,9 @@ function buildCaptureMetrics(items) {
     abandonedRate: rate(abandoned, total),
     gradeFailureCount: gradeFailed,
     gradeFailureRate: rate(gradeFailed, total),
+    criticalCaptureFailureCount: criticalCaptureFailure,
+    criticalCaptureFailureRate: rate(criticalCaptureFailure, total),
+    criticalCaptureFailureInterval: wilsonInterval(criticalCaptureFailure, total),
     turnCountCappedCount: count((item) => hasWarning(item, 'turn-count-capped')),
     turnCountCappedRate: rate(count((item) => hasWarning(item, 'turn-count-capped')), total),
     turnLengthCappedCount: count((item) => hasWarning(item, 'turn-length-capped')),
@@ -608,6 +661,11 @@ function buildCalibrationReportInternal(fixtures, includePopulations) {
       correctEscalationToReviewCount: confusionMatrix.review.review,
       supervisorReviewRate: rate(modelReview, total),
       confidentDecisionRate: rate(total - modelReview, total),
+      humanOutcomeCounts: {
+        pass: humanPass,
+        fail: humanFail,
+        review: humanReview,
+      },
     },
     criterionMetrics: criterion,
     autoFailMetrics: autoFail,
@@ -620,7 +678,8 @@ function buildCalibrationReportInternal(fixtures, includePopulations) {
       workflowType: groupBreakdown(cases, (item) => item.workflowType),
       difficulty: groupBreakdown(cases, (item) => item.difficulty),
       humanFinalVerdict: groupBreakdown(cases, (item) => item.humanOutcome),
-      captureStatus: groupBreakdown(cases, (item) => item.fixture.capture.captureStatus),
+      captureStatus: groupBreakdown(human, (item) => item.fixture.capture.captureStatus),
+      gradingStatus: groupBreakdown(human, (item) => item.fixture.capture.gradingStatus),
       gradingPopulation: groupBreakdown(cases, populationKey),
     },
     coverage: buildScenarioCoverageReport(CALL_QA_SCENARIOS, fixtures),
@@ -632,7 +691,8 @@ function buildCalibrationReportInternal(fixtures, includePopulations) {
         value,
         buildCalibrationReportInternal(
           fixtures.filter((fixture) => fixture.source !== 'human-pilot' ||
-            (fixture.modelRun && populationKey(evaluateCalibrationCase(fixture)) === value)),
+            !fixture.modelRun ||
+            populationKey(evaluateCalibrationCase(fixture)) === value),
           false,
         ),
       ]),
@@ -653,6 +713,24 @@ function sampleCoverageFailures(report, gates) {
   if (report.evidenceSummary.humanPilotFixtureCount > 0 &&
       report.evidenceSummary.minimumReviewerCount < gates.minimumReviewersPerHumanCase) {
     reasons.push(`minimumReviewers:${report.evidenceSummary.minimumReviewerCount}/${gates.minimumReviewersPerHumanCase}`);
+  }
+  const total = report.evidenceSummary.evaluatedHumanCaseCount;
+  for (const outcomeName of ['pass', 'fail', 'review']) {
+    const count = report.finalOutcomes.humanOutcomeCounts[outcomeName];
+    const minimum = gates.minimumHumanOutcomeCases[outcomeName];
+    if (count < minimum) reasons.push(`humanOutcome:${outcomeName}:${count}/${minimum}`);
+    if (total > 0 && count / total < gates.minimumHumanOutcomeClassRate) {
+      reasons.push(`humanOutcomeRate:${outcomeName}:${round(count / total)}/${gates.minimumHumanOutcomeClassRate}`);
+    }
+  }
+  if (report.finalOutcomes.falsePassInterval.denominator === 0) {
+    reasons.push('falsePassWilson:unavailable');
+  }
+  if (report.finalOutcomes.falseFailInterval.denominator === 0) {
+    reasons.push('falseFailWilson:unavailable');
+  }
+  if (report.criterionMetrics.safetyCriticalDisagreementInterval.denominator === 0) {
+    reasons.push('safetyCriticalWilson:unavailable');
   }
   for (const department of ASSESSED_DEPTS) {
     const count = report.operationalBreakdowns.department[department]?.count ?? 0;
@@ -695,6 +773,9 @@ function safetyFailures(report, gates) {
   }
   if (report.captureMetrics.criticalTranscriptOmissionRate > gates.maximumCriticalTranscriptOmissionRate) {
     failures.push('critical-transcript-omission');
+  }
+  if (report.captureMetrics.criticalCaptureFailureRate > gates.maximumCriticalCaptureFailureRate) {
+    failures.push('critical-capture-failure');
   }
   return failures;
 }
@@ -744,11 +825,16 @@ export function evaluateCalibrationReadiness(report, gates = CALL_QA_CALIBRATION
     };
   }
 
-  const statisticallyBounded =
-    report.finalOutcomes.falsePassInterval.upper95 <= gates.maximumFalsePassRate &&
-    report.finalOutcomes.falseFailInterval.upper95 <= gates.maximumFalseFailRate &&
-    report.criterionMetrics.safetyCriticalDisagreementInterval.upper95 <=
-      1 - gates.minimumSafetyCriticalAgreement;
+  const upperBounds = [
+    [report.finalOutcomes.falsePassInterval.upper95, gates.maximumFalsePassRate],
+    [report.finalOutcomes.falseFailInterval.upper95, gates.maximumFalseFailRate],
+    [
+      report.criterionMetrics.safetyCriticalDisagreementInterval.upper95,
+      1 - gates.minimumSafetyCriticalAgreement,
+    ],
+  ];
+  const statisticallyBounded = upperBounds.every(([upper, maximum]) =>
+    Number.isFinite(upper) && upper <= maximum);
   return {
     state: statisticallyBounded ? 'READY_FOR_CLEAN_PASS_CONSIDERATION' : 'READY_FOR_SHADOW',
     policyVersion: CALL_QA_CALIBRATION_POLICY_VERSION,
@@ -901,6 +987,7 @@ export function formatCalibrationMarkdown(report) {
     `- Missed human auto-fails: ${report.autoFailMetrics.totalMissedHumanAutoFails}`,
     `- Clean capture rate: ${percent(report.captureMetrics.cleanCaptureRate)}`,
     `- Capture-incomplete rate: ${percent(report.captureMetrics.captureIncompleteRate)}`,
+    `- Critical capture failure rate: ${percent(report.captureMetrics.criticalCaptureFailureRate)}`,
     `- Critical transcript omission rate: ${percent(report.captureMetrics.criticalTranscriptOmissionRate)}`,
     '',
     '## Coverage gaps',

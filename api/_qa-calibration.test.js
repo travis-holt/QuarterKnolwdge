@@ -7,11 +7,17 @@ import {
   wilsonInterval,
 } from './_qa-calibration.js';
 import { CALL_QA_SCENARIOS } from '../src/data/callQaScenarios.js';
+import { rubricCriteria } from '../src/data/qaRubric.js';
 
 const example = JSON.parse(readFileSync(
   new URL('./fixtures/call-qa-calibration/example-pass.json', import.meta.url),
   'utf8',
 ));
+const RUBRIC_IDS = rubricCriteria().map((criterion) => criterion.id);
+
+function completeCriteria(overrides = {}, fallback = 'NA') {
+  return Object.fromEntries(RUBRIC_IDS.map((id) => [id, overrides[id] ?? fallback]));
+}
 
 function calibrationFixture({
   caseId = 'cal-test-001',
@@ -20,7 +26,7 @@ function calibrationFixture({
   human = 'pass',
   model = human,
   humanCriteria = { 'open-greet': 'MET', 'know-rule': 'MET' },
-  modelCriteria = humanCriteria,
+  modelCriteria,
   humanAutoFails = [],
   modelAutoFails = [],
   modelName = 'gemini-2.5-flash',
@@ -28,9 +34,11 @@ function calibrationFixture({
   modelRun = {},
 } = {}) {
   const reviewRequired = human === 'needs_review';
+  const humanLabels = completeCriteria(humanCriteria);
+  const modelLabels = completeCriteria(modelCriteria ?? humanCriteria);
   const reviewer = (id) => ({
     reviewerId: id,
-    criteria: humanCriteria,
+    criteria: humanLabels,
     autoFails: humanAutoFails,
     recommendation: human,
   });
@@ -66,14 +74,14 @@ function calibrationFixture({
       adjudicationStatus: 'complete',
       reviewers: [reviewer('reviewer-a'), reviewer('reviewer-b')],
       adjudicated: {
-        criteria: humanCriteria,
+        criteria: humanLabels,
         autoFails: humanAutoFails,
         recommendation: human,
         finalPass: reviewRequired ? null : human === 'pass',
         reviewRequired,
       },
     },
-    modelRun: {
+    modelRun: modelRun === null ? null : {
       model: modelName,
       rubricVersion: 'qa-rubric-v1',
       promptVersion: 'call-qa-grader-v1',
@@ -81,7 +89,7 @@ function calibrationFixture({
       recommendation: model,
       pass: model !== 'fail',
       score: model === 'fail' ? 70 : 92,
-      criteria: Object.entries(modelCriteria).map(([id, verdict]) => ({ id, verdict })),
+      criteria: Object.entries(modelLabels).map(([id, verdict]) => ({ id, verdict })),
       autoFails: modelAutoFails,
       reviewFlags: [],
       correctedTurns: 0,
@@ -125,6 +133,41 @@ describe('validateCalibrationFixture', () => {
       .toMatch(/scenario belongs to another department/);
   });
 
+  it('requires every rubric criterion exactly once for reviewers, adjudication, and model output', () => {
+    expect(invalid((fixture) => {
+      delete fixture.humanReview.reviewers[0].criteria['open-greet'];
+    }).errors.join(' ')).toMatch(/missing rubric criterion/);
+    expect(invalid((fixture) => {
+      delete fixture.humanReview.adjudicated.criteria['open-greet'];
+    }).errors.join(' ')).toMatch(/missing rubric criterion/);
+    expect(invalid((fixture) => {
+      fixture.modelRun.criteria.pop();
+    }).errors.join(' ')).toMatch(/missing rubric criterion/);
+    expect(invalid((fixture) => {
+      fixture.modelRun.criteria.push({ ...fixture.modelRun.criteria[0] });
+    }).errors.join(' ')).toMatch(/duplicate criterion/);
+  });
+
+  it('enforces adjudicated outcome consistency and model pass relationships', () => {
+    expect(invalid((fixture) => {
+      fixture.humanReview.adjudicated.finalPass = false;
+    }).errors.join(' ')).toMatch(/inconsistent/);
+    expect(invalid((fixture) => {
+      fixture.humanReview.adjudicated.recommendation = 'needs_review';
+    }).errors.join(' ')).toMatch(/inconsistent/);
+    expect(invalid((fixture) => {
+      fixture.modelRun.pass = false;
+    }).errors.join(' ')).toMatch(/pass must be true/);
+    expect(invalid((fixture) => {
+      fixture.modelRun.recommendation = 'fail';
+    }).errors.join(' ')).toMatch(/false for fail/);
+    expect(validateCalibrationFixture(calibrationFixture({
+      human: 'needs_review',
+      model: 'needs_review',
+      modelRun: { pass: false },
+    })).valid).toBe(true);
+  });
+
   it('rejects invalid transcript roles, empty transcripts, and unsanitized fixtures', () => {
     expect(invalid((fixture) => { fixture.transcript[0].role = 'caller'; }).errors.join(' '))
       .toMatch(/unknown transcript role/);
@@ -160,6 +203,36 @@ describe('validateCalibrationFixture', () => {
       .toMatch(/unsupported prompt version/);
     expect(invalid((fixture) => { fixture.modelRun.scenarioVersion = 'scenario-v999'; }).errors.join(' '))
       .toMatch(/unsupported scenario version/);
+  });
+
+  it('enforces capture/grading state and transcript-count integrity', () => {
+    expect(invalid((fixture) => {
+      fixture.capture.captureComplete = false;
+    }).errors.join(' ')).toMatch(/must be true for captured/);
+    expect(invalid((fixture) => {
+      fixture.capture.captureStatus = 'active';
+      fixture.capture.captureComplete = false;
+    }).errors.join(' ')).toMatch(/inconsistent with active/);
+    expect(invalid((fixture) => {
+      fixture.capture.captureStatus = 'abandoned';
+      fixture.capture.captureComplete = false;
+    }).errors.join(' ')).toMatch(/inconsistent with abandoned/);
+    expect(invalid((fixture) => {
+      fixture.capture.gradingStatus = 'grade_failed';
+    }).errors.join(' ')).toMatch(/must be null unless gradingStatus is graded/);
+    expect(invalid((fixture) => {
+      fixture.capture.navigatorTurnCount += 1;
+    }).errors.join(' ')).toMatch(/must match navigator transcript turns/);
+    expect(invalid((fixture) => {
+      fixture.capture.callerTurnCount += 1;
+    }).errors.join(' ')).toMatch(/must match patient transcript turns/);
+    expect(validateCalibrationFixture(calibrationFixture({
+      capture: { captureStatus: 'capture_incomplete', captureComplete: false },
+    })).valid).toBe(true);
+    expect(validateCalibrationFixture(calibrationFixture({
+      capture: { gradingStatus: 'grade_failed' },
+      modelRun: null,
+    })).valid).toBe(true);
   });
 });
 
@@ -206,10 +279,24 @@ describe('calibration metrics', () => {
         captureComplete: false,
         captureVersion: 'call-qa-live-transcript-v1',
         liveModel: 'gemini-live-v1',
-        gradingStatus: 'grade_failed',
+        gradingStatus: 'not_started',
         warnings: ['drain-timeout', 'missing-turn-complete'],
-        navigatorTurnCount: 1,
-        callerTurnCount: 1,
+        navigatorTurnCount: 3,
+        callerTurnCount: 2,
+      },
+      modelRun: null,
+    },
+    {
+      ...calibrationFixture({ caseId: 'c7' }),
+      capture: {
+        captureStatus: 'captured',
+        captureComplete: true,
+        captureVersion: 'call-qa-live-transcript-v1',
+        liveModel: 'gemini-live-v1',
+        gradingStatus: 'grade_failed',
+        warnings: [],
+        navigatorTurnCount: 3,
+        callerTurnCount: 2,
       },
       modelRun: null,
     },
@@ -261,9 +348,10 @@ describe('calibration metrics', () => {
     expect(report.autoFailMetrics.totalFalseAutomaticAutoFails).toBe(1);
     expect(report.autoFailMetrics.totalMissedHumanAutoFails).toBe(1);
     expect(report.captureMetrics).toMatchObject({
-      totalAttempts: 6,
+      totalAttempts: 7,
       abandonedCount: 1,
       gradeFailureCount: 1,
+      criticalCaptureFailureCount: 2,
       turnCountCappedCount: 1,
       turnLengthCappedCount: 1,
       drainTimeoutCount: 1,
@@ -276,10 +364,12 @@ describe('calibration metrics', () => {
     expect(report.operationalBreakdowns.department.pediatrics.count).toBe(5);
     expect(report.operationalBreakdowns.scenario['qa-peds-scheduling-001'].count).toBe(5);
     expect(report.operationalBreakdowns.workflowType.new_appointment_scheduling.count).toBe(5);
+    expect(report.operationalBreakdowns.captureStatus.abandoned.count).toBe(1);
+    expect(report.operationalBreakdowns.gradingStatus.grade_failed.count).toBe(1);
     expect(report.versionBreakdowns.graderModel).toEqual([
       { value: 'gemini-2.5-flash', count: 5 },
     ]);
-    expect(report.coverage.departments.pediatrics.humanCalibrationCaseCount).toBe(6);
+    expect(report.coverage.departments.pediatrics.humanCalibrationCaseCount).toBe(7);
   });
 
   it('calculates Wilson intervals without dependencies', () => {
@@ -296,6 +386,13 @@ describe('calibration metrics', () => {
       observedRate: 0.5,
       lower95: 0.236593,
       upper95: 0.763407,
+    });
+    expect(wilsonInterval(0, 0)).toEqual({
+      count: 0,
+      denominator: 0,
+      observedRate: null,
+      lower95: null,
+      upper95: null,
     });
   });
 });
@@ -395,5 +492,79 @@ describe('calibration readiness', () => {
   it('a fully sufficient authored population reaches clean-pass consideration', () => {
     const result = evaluateCalibrationReadiness(buildCalibrationReport(sufficientFixtures()));
     expect(result.state).toBe('READY_FOR_CLEAN_PASS_CONSIDERATION');
+  });
+
+  it.each([
+    ['all-pass', () => sufficientFixtures().map((fixture) => calibrationFixture({
+      caseId: fixture.caseId,
+      scenario: CALL_QA_SCENARIOS.find((scenario) => scenario.id === fixture.scenarioId),
+      human: 'pass',
+      model: 'pass',
+    }))],
+    ['all-fail', () => sufficientFixtures().map((fixture) => calibrationFixture({
+      caseId: fixture.caseId,
+      scenario: CALL_QA_SCENARIOS.find((scenario) => scenario.id === fixture.scenarioId),
+      human: 'fail',
+      model: 'fail',
+    }))],
+    ['all-review', () => sufficientFixtures().map((fixture) => calibrationFixture({
+      caseId: fixture.caseId,
+      scenario: CALL_QA_SCENARIOS.find((scenario) => scenario.id === fixture.scenarioId),
+      human: 'needs_review',
+      model: 'needs_review',
+    }))],
+  ])('%s populations remain insufficient', (_name, build) => {
+    expect(evaluateCalibrationReadiness(buildCalibrationReport(build())).state)
+      .toBe('INSUFFICIENT_DATA');
+  });
+
+  it('severely imbalanced outcome populations remain insufficient', () => {
+    const fixtures = sufficientFixtures().map((fixture, index) => {
+      const human = index < 500 ? 'pass' : index < 580 ? 'fail' : 'needs_review';
+      return calibrationFixture({
+        caseId: fixture.caseId,
+        scenario: CALL_QA_SCENARIOS.find((scenario) => scenario.id === fixture.scenarioId),
+        human,
+        model: human,
+      });
+    });
+    expect(evaluateCalibrationReadiness(buildCalibrationReport(fixtures)).state)
+      .toBe('INSUFFICIENT_DATA');
+  });
+
+  it('zero-denominator Wilson bounds are unavailable and cannot pass readiness', () => {
+    const report = buildCalibrationReport(sufficientFixtures().map((fixture) =>
+      calibrationFixture({
+        caseId: fixture.caseId,
+        scenario: CALL_QA_SCENARIOS.find((scenario) => scenario.id === fixture.scenarioId),
+        human: 'pass',
+        model: 'pass',
+      })));
+    expect(report.finalOutcomes.falsePassInterval.upper95).toBeNull();
+    expect(evaluateCalibrationReadiness(report).state).toBe('INSUFFICIENT_DATA');
+  });
+
+  it('failed and abandoned captures cannot hide behind enough successful graded cases', () => {
+    const fixtures = sufficientFixtures();
+    for (let index = 0; index < 20; index += 1) {
+      const abandoned = calibrationFixture({ caseId: `abandoned-${index}` });
+      abandoned.capture.captureStatus = 'abandoned';
+      abandoned.capture.captureComplete = false;
+      abandoned.capture.gradingStatus = 'not_started';
+      abandoned.modelRun = null;
+      fixtures.push(abandoned);
+
+      const gradeFailed = calibrationFixture({ caseId: `grade-failed-${index}` });
+      gradeFailed.capture.gradingStatus = 'grade_failed';
+      gradeFailed.modelRun = null;
+      fixtures.push(gradeFailed);
+    }
+    const report = buildCalibrationReport(fixtures);
+    expect(report.captureMetrics).toMatchObject({
+      abandonedCount: 20,
+      gradeFailureCount: 20,
+      criticalCaptureFailureCount: 40,
+    });
+    expect(evaluateCalibrationReadiness(report).state).toBe('FAILS_SAFETY_GATE');
   });
 });

@@ -39,6 +39,20 @@ Fixtures live under `api/fixtures/call-qa-calibration/` and use
 - independent reviewer labels plus adjudication
 - for graded cases, model result and model/rubric/prompt/scenario provenance
 
+Every reviewer, the adjudicated result, and the model run must label every
+rubric criterion exactly once. Use `NA` when a criterion is inapplicable.
+Partial criterion maps, unknown criteria, and duplicate model criteria are
+invalid. Adjudicated outcomes are also exact:
+
+- `pass` => `finalPass: true`, `reviewRequired: false`
+- `fail` => `finalPass: false`, `reviewRequired: false`
+- `needs_review` => `finalPass: null`, `reviewRequired: true`
+
+Model `recommendation: pass` requires `pass: true`; `recommendation: fail`
+requires `pass: false`. A `needs_review` recommendation may accompany either
+underlying rubric outcome because the review layer can escalate a numerical
+pass or fail.
+
 `source` is either:
 
 - `synthetic-example`: documentation/test data, excluded from human metrics.
@@ -48,6 +62,13 @@ The validator fails closed on unknown scenarios, department mismatch, unknown
 criteria/auto-fails, invalid verdicts, duplicate reviewers, incomplete human
 adjudication, unsupported capture/grading states, missing provenance, and
 recursive sensitive fields.
+
+Capture state follows PR #32 exactly. `captured` requires
+`captureComplete: true`; every other capture state requires `false`.
+`active` and `abandoned` may only be `not_started`. `captured` and
+`capture_incomplete` may be not started, grading, graded, or grade failed.
+Only graded fixtures may contain `modelRun`. Recorded navigator/caller counts
+must exactly match the transcript roles.
 
 Fixtures must not contain navigator or patient IDs, employee full names,
 Firebase document IDs, email addresses, phone numbers, real patient
@@ -93,12 +114,26 @@ one version population independently satisfies every gate.
 
 ## Readiness policy
 
-The versioned policy is `call-qa-calibration-policy-v1` in
+The versioned policy is `call-qa-calibration-policy-v2` in
 `api/_qa-calibration-gates.js`. Its minimums include 200 total human cases, 80
 per assessed department, 8 per scenario, 10 per workflow, 95% final agreement,
 at most 2% observed false passes, at most 5% observed false fails, zero review
 misses, zero false automatic auto-fails, 100% auto-fail precision, at least 98%
-safety-critical agreement, and at most 1% critical transcript omissions.
+safety-critical agreement, and at most 1% critical transcript omissions or
+critical capture failures.
+
+The v2 policy also requires at least 60 human passes, 60 human fails, and 40
+human review-required cases, with every outcome class representing at least
+15% of the evaluated population. All-pass, all-fail, all-review, and severely
+imbalanced datasets remain insufficient regardless of total size. A Wilson
+interval with a zero denominator is reported as unavailable and can never
+satisfy readiness.
+
+Critical capture failures include any human fixture with `captureComplete`
+false, `capture_incomplete`, `abandoned`, or `grade_failed`. These attempts
+remain in operational metrics and in every relevant version-population
+readiness evaluation; they cannot disappear merely because they have no model
+run.
 
 States:
 
@@ -170,6 +205,12 @@ pass, high-confidence pass recommendation, no safety risk, auto-fails,
 unverified auto-fails, unresolved criteria, deterministic findings, fairness
 repairs, review flags, capture warnings/caps, missing provenance, version
 mismatch, prior final supervisor review, or calibration shortfall.
+
+The shadow policy is `call-qa-clean-pass-shadow-v2`. It additionally requires
+the supported calibration policy version, `qa.metadataIntegrity.verified ===
+true`, a complete 20-criterion rubric result, and server-authoritative
+`qa.transcriptMetadata` whose attempt ID, capture status, capture-complete flag,
+capture version, and live model match the attempt.
 
 A shadow diagnostic may be stored as `qa.automationAssessment`, but it is
 non-final. It must not alter `qa.pass`, `qaFinalReview`, completion, supervisor

@@ -10,4 +10,9 @@ copy production Firestore documents into this directory. Remove names, contact
 details, document IDs, credentials, tokens, and real patient information before
 creating a fixture.
 
+Every reviewer, the adjudicated result, and the model run must include all 20
+rubric criteria exactly once. Use `NA` for inapplicable criteria; partial label
+sets are rejected. Capture/grading fields and transcript role counts must match
+the PR #32 state machine.
+
 See `docs/CALL_QA_CALIBRATION.md` for the schema and reviewer workflow.
