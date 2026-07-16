@@ -1,5 +1,36 @@
 # Development History - Knowledge Check
 
+### 2026-07-15 (part 2) - Call QA capture integration fixes (PR 2 final merge-review)
+- **Context:** the final merge-review of draft PR #32 found three integration defects in the
+  server-authoritative Call QA capture. Fixed on the same branch in one follow-up commit; no
+  merge/deploy.
+- **Fixes:**
+  1. **Active-call late transcriptions + turn-scoped ordering (`api/live-relay.js`).** An ordinary
+     active-call `turnComplete` no longer flushes immediately (a transcription can arrive after
+     `turnComplete` at any point, not just after End). Each exchange now waits a short
+     `CALL_QA_ACTIVE_TURN_SETTLE_MS` window before committing; late fragments stay with their
+     exchange (never merged into the next), flushed navigator-first. End Call absorbs any pending
+     active exchange before draining, with no duplicate lines. Active and drain settle share one
+     mechanism.
+  2. **Durable + bounded staged checkpoints (`api/live-relay.js`, `api/_call-qa-transcript.js`).**
+     Post-boundary/drain fragments force an immediate durable checkpoint; debounced writes mark the
+     checkpoint dirty and guarantee one trailing durable write, so a crash mid-settle can't strand a
+     late fragment in memory. Staged strings are bounded by the SAME `boundedAppend` used by the
+     coalescer (shared, not two implementations) — `MAX_QA_TURN_CHARS` per turn (non-silent
+     `turn-length-capped`), and the durable snapshot is capped at `MAX_QA_TURNS`.
+  3. **Aligned browser/server finalization timeouts (`api/live-relay.js`, `src/components/VoiceCall.jsx`).**
+     The server computes a safe client guard from its actual drain+settle config plus a
+     persistence/network margin (`clientFinalizeGuardMs`, bounded 20–90s) and sends it in the trusted
+     `ready.finalization.clientGuardMs`. The browser applies a defensive clamp and uses it (no more
+     hardcoded 15s that could abandon a valid 30s drain); a ≥60s fallback covers a missing value.
+     Client timings are never trusted.
+- **Tests:** +17 (1040 total, 51 files) — relay active-turn-settle/ordering/absorb-on-End/no-dup,
+  durable-late-checkpoint, staged-content bounds + warnings, finalization-timing metadata; a
+  `boundedAppend` unit test; and two client guard tests (server value applied, fallback ≥ server max).
+- **Docs:** [GRADING_INVARIANTS.md](GRADING_INVARIANTS.md) §0c (7 new binding statements),
+  `.env.local.example` (`CALL_QA_ACTIVE_TURN_SETTLE_MS`, `CALL_QA_FINALIZE_MARGIN_MS`), CLAUDE.md
+  F25 + counts.
+
 ### 2026-07-15 - Call QA capture/finalization hardening (PR 2 merge-review follow-up)
 - **Context:** merge-review of draft PR #32 surfaced correctness blockers in the PR-2 server-
   authoritative Call QA capture. Addressed on the same branch in one follow-up commit; no merge/deploy.

@@ -39,6 +39,18 @@ export function appendTranscriptFragment(existing, fragment) {
 }
 
 /**
+ * Append a fragment and enforce the per-turn character cap. Returns
+ * `{ text, capped }` so BOTH the coalescer and the relay's staged strings share
+ * one truncation implementation (never two that could drift). `capped` lets the
+ * caller record a `turn-length-capped` warning — truncation is never silent.
+ */
+export function boundedAppend(existing, fragment, maxChars = MAX_QA_TURN_CHARS) {
+  const merged = appendTranscriptFragment(existing, fragment);
+  if (merged.length > maxChars) return { text: merged.slice(0, maxChars), capped: true };
+  return { text: merged, capped: false };
+}
+
+/**
  * Stateful accumulator for a single call. The relay feeds it fragments as they
  * arrive; it coalesces consecutive same-role fragments, preserves speaking
  * order, bounds each turn's length, and caps the number of turns.
@@ -66,29 +78,31 @@ export class TranscriptCapture {
     const last = this._turns[this._turns.length - 1];
     if (last && last.role === normalized) {
       if (last.text.length >= this.maxTurnChars) {
-        this._warn('turn-length-capped');
+        this.warn('turn-length-capped');
         return false;
       }
-      // Record the truncation BEFORE slicing so a capped turn is never silent.
-      const merged = appendTranscriptFragment(last.text, fragment);
-      if (merged.length > this.maxTurnChars) this._warn('turn-length-capped');
-      last.text = merged.slice(0, this.maxTurnChars);
+      // Shared bounded-append: records the cap BEFORE slicing (never silent).
+      const { text: next, capped } = boundedAppend(last.text, fragment, this.maxTurnChars);
+      if (capped) this.warn('turn-length-capped');
+      last.text = next;
       return true;
     }
 
     if (this._turns.length >= this.maxTurns) {
-      this._warn('turn-count-capped');
+      this.warn('turn-count-capped');
       return false;
     }
-    const built = appendTranscriptFragment('', fragment);
-    if (built.length > this.maxTurnChars) this._warn('turn-length-capped');
-    this._turns.push({ role: normalized, text: built.slice(0, this.maxTurnChars) });
+    const { text: built, capped } = boundedAppend('', fragment, this.maxTurnChars);
+    if (capped) this.warn('turn-length-capped');
+    this._turns.push({ role: normalized, text: built });
     if (normalized === 'navigator') this._navigatorTurns += 1;
     else this._callerTurns += 1;
     return true;
   }
 
-  _warn(warning) {
+  /** Record a capture warning once (deduplicated). Public: the relay records
+   *  staged-content caps against the same warning list. */
+  warn(warning) {
     if (!this.warnings.includes(warning)) this.warnings.push(warning);
   }
 

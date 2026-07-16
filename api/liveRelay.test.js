@@ -3,10 +3,14 @@
 // so we can drive the exact capture + two-stage End Call drain state machine.
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { handleConnection, CALL_QA_DRAIN_TIMEOUT_MS, CALL_QA_TRANSCRIPT_SETTLE_MS } from './live-relay.js';
+import {
+  handleConnection, CALL_QA_DRAIN_TIMEOUT_MS, CALL_QA_TRANSCRIPT_SETTLE_MS,
+  CALL_QA_ACTIVE_TURN_SETTLE_MS, clientFinalizeGuardMs,
+} from './live-relay.js';
 import { createFakeFirestore } from './fixtures/fakeFirestore.js';
 import { getCallQaScenarioById } from '../src/data/callQaScenarios.js';
 import { CAPTURE_STATUS } from './_call-qa-attempts.js';
+import { MAX_QA_TURN_CHARS } from './_call-qa-transcript.js';
 
 const SCENARIO = getCallQaScenarioById('qa-peds-refill-001');
 const flush = () => new Promise((r) => setTimeout(r, 0));
@@ -64,7 +68,9 @@ function harness(overrides = {}) {
     db, deps, client, timers, upstreamRef,
     fireDrainTimer: () => fireByMs(CALL_QA_DRAIN_TIMEOUT_MS),
     fireSettleTimer: () => fireByMs(CALL_QA_TRANSCRIPT_SETTLE_MS),
+    fireActiveSettleTimer: () => fireByMs(CALL_QA_ACTIVE_TURN_SETTLE_MS),
     settleTimer: () => timers.find((r) => r.ms === CALL_QA_TRANSCRIPT_SETTLE_MS),
+    activeSettleTimer: () => timers.find((r) => r.ms === CALL_QA_ACTIVE_TURN_SETTLE_MS),
   };
 }
 
@@ -328,5 +334,192 @@ describe('unexpected disconnect', () => {
     expect(attempt.captureStatus).toBe(CAPTURE_STATUS.ABANDONED);
     expect(attempt.captureMetadata.endedBy).toBe('client_disconnect');
     expect(h.client.lastByType('captured')).toBeUndefined();
+  });
+});
+
+// ── Active-call turn settle (Fix 1) ─────────────────────────────────────────
+// An active-call turnComplete no longer flushes immediately; the exchange waits
+// a short settle for late/out-of-order transcriptions before it is committed.
+describe('active-call turn settle', () => {
+  it('a navigator transcription AFTER an active turnComplete stays in the SAME exchange', async () => {
+    const h = harness();
+    await startTest(h);
+    upstreamNav(h, 'First part.');
+    upstreamTurnComplete(h);        // boundary — do NOT flush yet
+    await flush();
+    upstreamNav(h, 'late tail.');   // late, arrives after turnComplete
+    await flush();
+    h.fireActiveSettleTimer();       // active exchange commits
+    await flush();
+    // One navigator turn containing both the pre- and post-boundary text.
+    const nav = storedAttempt(h).transcript.filter((t) => t.role === 'navigator');
+    expect(nav.length).toBe(1);
+    expect(nav[0].text).toBe('First part. late tail.');
+  });
+
+  it('a caller transcription AFTER an active turnComplete stays in the SAME exchange', async () => {
+    const h = harness();
+    await startTest(h);
+    upstreamNav(h, 'Nav says hi.');
+    upstreamTurnComplete(h);
+    await flush();
+    upstreamCaller(h, 'Caller answers late.');
+    await flush();
+    h.fireActiveSettleTimer();
+    await flush();
+    expect(storedAttempt(h).transcript).toEqual([
+      { role: 'navigator', text: 'Nav says hi.' },
+      { role: 'patient', text: 'Caller answers late.' },
+    ]);
+  });
+
+  it('output arrives before input, both after the boundary — still navigator-first', async () => {
+    const h = harness();
+    await startTest(h);
+    upstreamTurnComplete(h);                 // boundary with empty stage
+    await flush();
+    upstreamCaller(h, 'Caller (late, first on wire).');
+    upstreamNav(h, 'Navigator (late, second on wire).');
+    await flush();
+    h.fireActiveSettleTimer();
+    await flush();
+    expect(storedAttempt(h).transcript.map((t) => t.role)).toEqual(['navigator', 'patient']);
+  });
+
+  it('a late transcription RESETS the active settle timer', async () => {
+    const h = harness();
+    await startTest(h);
+    upstreamNav(h, 'A.');
+    upstreamTurnComplete(h);
+    await flush();
+    const before = h.activeSettleTimer().id;
+    upstreamNav(h, 'more.');
+    await flush();
+    expect(h.timers.find((t) => t.id === before)).toBeUndefined(); // reset
+    expect(h.activeSettleTimer().id).not.toBe(before);
+  });
+
+  it('exchange N stays separate from exchange N+1', async () => {
+    const h = harness();
+    await startTest(h);
+    // Exchange N
+    upstreamNav(h, 'N nav.');
+    upstreamCaller(h, 'N caller.');
+    upstreamTurnComplete(h);
+    await flush();
+    h.fireActiveSettleTimer();  // commit N
+    await flush();
+    // Exchange N+1
+    upstreamNav(h, 'N+1 nav.');
+    upstreamCaller(h, 'N+1 caller.');
+    upstreamTurnComplete(h);
+    await flush();
+    h.fireActiveSettleTimer();  // commit N+1
+    await flush();
+    expect(storedAttempt(h).transcript).toEqual([
+      { role: 'navigator', text: 'N nav.' },
+      { role: 'patient', text: 'N caller.' },
+      { role: 'navigator', text: 'N+1 nav.' },
+      { role: 'patient', text: 'N+1 caller.' },
+    ]);
+  });
+
+  it('a pending active exchange is absorbed when End Call begins (no duplicates)', async () => {
+    const h = harness();
+    await startTest(h);
+    upstreamNav(h, 'Pending nav.');
+    upstreamCaller(h, 'Pending caller.');
+    upstreamTurnComplete(h);   // boundary — active settle running, NOT yet committed
+    await flush();
+    // End Call before the active settle fires.
+    await h.client.emit('message', JSON.stringify({ type: 'end' }));
+    await flush();
+    // Even if the (now-cancelled) active settle timer were fired, no double flush.
+    h.fireActiveSettleTimer?.();
+    await flush();
+    // Drain deadline finalizes.
+    h.fireDrainTimer();
+    await flush();
+    const nav = storedAttempt(h).transcript.filter((t) => t.role === 'navigator');
+    const caller = storedAttempt(h).transcript.filter((t) => t.role === 'patient');
+    expect(nav).toEqual([{ role: 'navigator', text: 'Pending nav.' }]);
+    expect(caller).toEqual([{ role: 'patient', text: 'Pending caller.' }]);
+  });
+});
+
+// ── Durable + bounded staged checkpoints (Fix 2) ────────────────────────────
+describe('durable + bounded staged checkpoints', () => {
+  it('a late transcription during settle is durably checkpointed BEFORE finalization (crash-safe)', async () => {
+    const h = harness();
+    await startTest(h);
+    upstreamNav(h, 'Boundary line.');
+    upstreamTurnComplete(h);        // boundary → durable checkpoint occurs
+    await flush();
+    const afterBoundary = storedAttempt(h).transcript.map((t) => t.text).join(' ');
+    expect(afterBoundary).toContain('Boundary line.');
+    // A late fragment arrives during the settle window.
+    upstreamNav(h, 'late durable fragment.');
+    await flush();
+    // WITHOUT firing settle/finalize, the durable checkpoint already has it.
+    const durable = storedAttempt(h).transcript.map((t) => t.text).join(' ');
+    expect(durable).toContain('late durable fragment.');
+  });
+
+  it('an oversized staged navigator fragment is bounded and warns turn-length-capped', async () => {
+    const h = harness();
+    await startTest(h);
+    upstreamNav(h, 'x'.repeat(MAX_QA_TURN_CHARS + 500));
+    upstreamTurnComplete(h);
+    await flush();
+    const navTurn = storedAttempt(h).transcript.find((t) => t.role === 'navigator');
+    expect(navTurn.text.length).toBe(MAX_QA_TURN_CHARS);
+    expect(storedAttempt(h).captureMetadata.warnings).toContain('turn-length-capped');
+  });
+
+  it('an oversized staged caller fragment is bounded and warns turn-length-capped', async () => {
+    const h = harness();
+    await startTest(h);
+    upstreamCaller(h, 'y'.repeat(MAX_QA_TURN_CHARS + 500));
+    upstreamTurnComplete(h);
+    await flush();
+    const callerTurn = storedAttempt(h).transcript.find((t) => t.role === 'patient');
+    expect(callerTurn.text.length).toBe(MAX_QA_TURN_CHARS);
+    expect(storedAttempt(h).captureMetadata.warnings).toContain('turn-length-capped');
+  });
+
+  it('finalization includes the latest staged content exactly once', async () => {
+    const h = harness();
+    await startTest(h);
+    await h.client.emit('message', JSON.stringify({ type: 'end' }));
+    await flush();
+    upstreamTurnComplete(h);                 // post-end boundary
+    await flush();
+    upstreamNav(h, 'Final words.');
+    await flush();
+    h.fireSettleTimer();                      // clean finalize
+    await flush();
+    const occurrences = storedAttempt(h).transcript.filter((t) => t.text.includes('Final words.')).length;
+    expect(occurrences).toBe(1);
+    expect(storedAttempt(h).captureStatus).toBe(CAPTURE_STATUS.CAPTURED);
+  });
+});
+
+// ── Finalization timing metadata (Fix 3) ────────────────────────────────────
+describe('finalization timing (client guard)', () => {
+  it('ready includes a server-computed clientGuardMs that exceeds drain + settle', async () => {
+    const h = harness();
+    await startTest(h);
+    const ready = h.client.lastByType('ready');
+    expect(ready.finalization).toBeTruthy();
+    expect(ready.finalization.drainTimeoutMs).toBe(CALL_QA_DRAIN_TIMEOUT_MS);
+    expect(ready.finalization.settleTimeoutMs).toBe(CALL_QA_TRANSCRIPT_SETTLE_MS);
+    expect(ready.finalization.clientGuardMs).toBe(clientFinalizeGuardMs());
+    expect(ready.finalization.clientGuardMs).toBeGreaterThan(CALL_QA_DRAIN_TIMEOUT_MS + CALL_QA_TRANSCRIPT_SETTLE_MS);
+  });
+
+  it('clientFinalizeGuardMs is bounded to a safe range', () => {
+    const g = clientFinalizeGuardMs();
+    expect(g).toBeGreaterThanOrEqual(20_000);
+    expect(g).toBeLessThanOrEqual(90_000);
   });
 });

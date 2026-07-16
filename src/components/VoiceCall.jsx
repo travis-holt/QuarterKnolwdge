@@ -30,7 +30,17 @@ import { getFirebaseIdToken } from '../lib/firebase.js';
 
 const GRADE_TIMEOUT_MS = 30_000;
 const QA_GRADE_TIMEOUT_MS = 60_000; // rubric grading is a bigger prompt + server-side retry
-const FINALIZE_TIMEOUT_MS = 15_000; // client-side guard on the server drain handshake
+// The client finalization guard MUST always exceed the server's maximum possible
+// drain + settle + persistence/network window, or the browser could abandon a
+// valid drain and show "retake" before the server's real deadline. The server
+// computes a safe guard from its ACTUAL config (api/live-relay.js
+// clientFinalizeGuardMs: drain 2–30s + settle 0.25–10s + margin 2–20s, clamped to
+// 20–60s) and sends it in the trusted `ready.finalization.clientGuardMs`. This
+// FALLBACK is used only if that value is missing/invalid and must stay ≥ the
+// server maximum (60s). Client-supplied timings are never trusted.
+const FINALIZE_FALLBACK_MS = 60_000;
+const FINALIZE_GUARD_MIN_MS = 10_000;   // defensive clamp on the server value
+const FINALIZE_GUARD_MAX_MS = 120_000;
 const TARGET_IN_RATE = 16000;
 const OUT_RATE = 24000;
 
@@ -137,6 +147,7 @@ export default function VoiceCall({ navigatorId, name, department = 'pediatrics'
   const finalRef     = useRef(null);        // practice-mode { transcript, docId } for grade retries
   const attemptIdRef = useRef(null);        // test-mode server attempt id (authoritative)
   const finalizeTimerRef = useRef(null);
+  const finalizeGuardRef = useRef(FINALIZE_FALLBACK_MS); // server-provided guard (ms)
   const qaScenarioMetadataRef = useRef({});
   const caseFileRef = useRef(null);
   const domain = DOMAINS.find((d) => d.id === domainId);
@@ -328,6 +339,15 @@ export default function VoiceCall({ navigatorId, name, department = 'pediatrics'
         try { m = JSON.parse(ev.data); } catch { return; }
         if (m.type === 'ready') {
           if (isTest && m.attemptId) attemptIdRef.current = m.attemptId;
+          if (isTest) {
+            // Trust the SERVER-computed finalize guard (defensively clamped); it
+            // is sized to always exceed the server's real drain deadline. Fall
+            // back to a value ≥ the server maximum if it is missing/invalid.
+            const g = Number(m.finalization?.clientGuardMs);
+            finalizeGuardRef.current = Number.isFinite(g) && g >= FINALIZE_GUARD_MIN_MS && g <= FINALIZE_GUARD_MAX_MS
+              ? g
+              : FINALIZE_FALLBACK_MS;
+          }
           setPhase('active');
           processor.onaudioprocess = (e) => {
             if (ws.readyState !== 1) return;
@@ -447,9 +467,10 @@ export default function VoiceCall({ navigatorId, name, department = 'pediatrics'
         return onCaptureFailed('The connection to the call server was lost before finalizing.');
       }
       // Client-side guard: if the server never acknowledges, fail gracefully.
+      // Sized from the server-provided guard so we never abandon a valid drain.
       finalizeTimerRef.current = setTimeout(() => {
         if (finalizingRef.current) onCaptureFailed('Finalizing the transcript timed out.');
-      }, FINALIZE_TIMEOUT_MS);
+      }, finalizeGuardRef.current);
       return;
     }
 

@@ -50,7 +50,7 @@ import { getFirebaseAdmin } from './_firebase-admin.js';
 import { clientIp } from './_rate-limit.js';
 import { buildSystemInstruction } from './interview-turn.js';
 import { getCallQaScenarioById } from '../src/data/callQaScenarios.js';
-import { TranscriptCapture, appendTranscriptFragment } from './_call-qa-transcript.js';
+import { TranscriptCapture, boundedAppend } from './_call-qa-transcript.js';
 import {
   buildAttemptDoc, createAttempt, checkpointTranscript, finalizeCapture,
   CAPTURE_STATUS,
@@ -79,9 +79,31 @@ export const CALL_QA_DRAIN_TIMEOUT_MS = clampEnvMs(process.env.CALL_QA_DRAIN_TIM
 // Quiet window after a post-End turnComplete boundary with NO new transcription,
 // after which the capture is considered clean. Reset by any transcription event.
 export const CALL_QA_TRANSCRIPT_SETTLE_MS = clampEnvMs(process.env.CALL_QA_TRANSCRIPT_SETTLE_MS, 1_500, 250, 10_000);
+// Quiet window after an ORDINARY active-call turnComplete boundary before the
+// exchange is committed. Gemini transcription order is not guaranteed at ANY
+// point in the call (a transcription can arrive after turnComplete), so an active
+// boundary also waits briefly for late fragments before flushing. Short so live
+// transcript latency stays low. Reset by any transcription during the window.
+export const CALL_QA_ACTIVE_TURN_SETTLE_MS = clampEnvMs(process.env.CALL_QA_ACTIVE_TURN_SETTLE_MS, 800, 200, 5_000);
 // Minimum spacing between transcript checkpoints so we do not write Firestore on
-// every fragment; a turn boundary / drain always flushes regardless.
+// every fragment; a turn boundary / drain / late fragment flushes regardless.
 export const CALL_QA_CHECKPOINT_INTERVAL_MS = clampEnvMs(process.env.CALL_QA_CHECKPOINT_INTERVAL_MS, 3_000, 500, 30_000);
+// Extra margin (terminal Firestore persistence + captured-ack network delivery)
+// added on top of the server's full drain+settle window to size the CLIENT
+// finalization guard. See clientFinalizeGuardMs().
+export const CALL_QA_FINALIZE_MARGIN_MS = clampEnvMs(process.env.CALL_QA_FINALIZE_MARGIN_MS, 7_000, 2_000, 20_000);
+
+/**
+ * The client-side finalization guard, computed SERVER-SIDE from the server's
+ * actual drain+settle config plus a persistence/network margin, so the browser
+ * can never abandon a valid drain before the server's real deadline. Sent in the
+ * trusted `ready` message; the browser applies a defensive clamp and never trusts
+ * a client-supplied value. Bounded so a misconfiguration can't make it absurd.
+ */
+export function clientFinalizeGuardMs() {
+  const raw = CALL_QA_DRAIN_TIMEOUT_MS + CALL_QA_TRANSCRIPT_SETTLE_MS + CALL_QA_FINALIZE_MARGIN_MS;
+  return Math.min(90_000, Math.max(20_000, raw));
+}
 
 const ASSESSED_DEPTS = ['pediatrics', 'obgyn'];
 
@@ -166,10 +188,13 @@ export function handleConnection(client, req, depsInput) {
     finalizing: false,      // terminal Firestore write in progress
     finalized: false,       // terminal Firestore write SUCCEEDED
     postEndBoundary: false, // a post-End turnComplete has been observed
+    boundaryObserved: false,// an active-call turnComplete is pending its settle
     turnCompleteObserved: false,
     lastCheckpointAt: 0,
+    checkpointDirty: false, // staged content changed since the last durable write
+    trailingCheckpointTimer: null, // guarantees a late fragment is written durably
     drainTimer: null,       // overall drain deadline
-    settleTimer: null,      // quiet-transcription window
+    settleTimer: null,      // quiet-transcription window (active OR drain)
     scenario: null,
     department: 'pediatrics',
     navigatorId: null,
@@ -193,6 +218,7 @@ export function handleConnection(client, req, depsInput) {
   function clearDrainTimers() {
     if (session.drainTimer) { deps.clearTimer(session.drainTimer); session.drainTimer = null; }
     if (session.settleTimer) { deps.clearTimer(session.settleTimer); session.settleTimer = null; }
+    if (session.trailingCheckpointTimer) { deps.clearTimer(session.trailingCheckpointTimer); session.trailingCheckpointTimer = null; }
   }
 
   function shutdown(reason) {
@@ -207,6 +233,15 @@ export function handleConnection(client, req, depsInput) {
   }
 
   // ── Transcript staging (per exchange, flushed navigator-first) ─────────────
+  // Staged strings are bounded by the SAME per-turn cap as committed turns, so a
+  // runaway fragment can't grow a staged string without limit; a cap records a
+  // (non-silent) warning on the shared capture warning list.
+  function stageAppend(key, text) {
+    const { text: next, capped } = boundedAppend(session.stage[key], text, session.capture.maxTurnChars);
+    session.stage[key] = next;
+    if (capped) session.capture.warn('turn-length-capped');
+  }
+
   function stagedTurns() {
     const turns = [];
     const nav = session.stage.nav.trim();
@@ -227,15 +262,26 @@ export function handleConnection(client, req, depsInput) {
     session.stage = { nav: '', caller: '' };
   }
 
-  // Checkpoint the server transcript, INCLUDING the still-staged exchange, so a
-  // process crash mid-settle can't leave the durable copy behind the in-memory
-  // one. Bounded/debounced unless forced.
-  async function checkpoint({ force = false } = {}) {
+  // The durable snapshot = committed capture + the still-staged exchange, bounded
+  // to the max turn count so a staged tail can never push the durable transcript
+  // past MAX_QA_TURNS.
+  function boundedSnapshot() {
+    const merged = [...session.capture.toArray(), ...stagedTurns()];
+    if (merged.length > session.capture.maxTurns) {
+      session.capture.warn('turn-count-capped');
+      return merged.slice(0, session.capture.maxTurns);
+    }
+    return merged;
+  }
+
+  // Write the durable checkpoint NOW (bounded snapshot). Clears the dirty flag +
+  // any trailing timer.
+  async function doCheckpoint() {
     if (session.mode !== 'test' || !session.attemptId || !session.capture) return;
-    const now = deps.now();
-    if (!force && now - session.lastCheckpointAt < CALL_QA_CHECKPOINT_INTERVAL_MS) return;
-    session.lastCheckpointAt = now;
-    const transcript = [...session.capture.toArray(), ...stagedTurns()];
+    session.checkpointDirty = false;
+    if (session.trailingCheckpointTimer) { deps.clearTimer(session.trailingCheckpointTimer); session.trailingCheckpointTimer = null; }
+    session.lastCheckpointAt = deps.now();
+    const transcript = boundedSnapshot();
     try {
       await checkpointTranscript(deps.db(), session.attemptId, {
         transcript,
@@ -243,10 +289,31 @@ export function handleConnection(client, req, depsInput) {
         callerTurnCount: transcript.filter((t) => t.role === 'patient').length,
         turnCompleteObserved: session.turnCompleteObserved,
         warnings: session.capture.warnings,
-        now,
+        now: session.lastCheckpointAt,
       });
     } catch (err) {
       console.warn(`[live-relay] checkpoint failed for attempt ${session.attemptId}: ${err?.message ?? err}`);
+    }
+  }
+
+  // Request a checkpoint. Forced writes (turn boundaries, post-boundary/drain
+  // fragments) go durable immediately. Debounced writes never DROP a late
+  // fragment: they mark the checkpoint dirty and guarantee ONE trailing durable
+  // write, so a crash mid-settle can't leave the durable copy behind memory.
+  function requestCheckpoint({ force = false } = {}) {
+    if (session.mode !== 'test' || !session.attemptId || !session.capture) return;
+    const now = deps.now();
+    if (force || now - session.lastCheckpointAt >= CALL_QA_CHECKPOINT_INTERVAL_MS) {
+      doCheckpoint();
+      return;
+    }
+    session.checkpointDirty = true;
+    if (!session.trailingCheckpointTimer) {
+      session.trailingCheckpointTimer = deps.setTimer(() => {
+        session.trailingCheckpointTimer = null;
+        if (session.checkpointDirty) doCheckpoint();
+      }, CALL_QA_CHECKPOINT_INTERVAL_MS);
+      session.trailingCheckpointTimer?.unref?.();
     }
   }
 
@@ -499,6 +566,14 @@ export function handleConnection(client, req, depsInput) {
           department: session.department,
           version: session.scenario.version ?? null,
         };
+        // Trusted, server-computed finalization timing. The browser sizes its
+        // finalize guard from clientGuardMs so it can never abandon a valid drain
+        // before the server's real deadline. Client-supplied timings are ignored.
+        ready.finalization = {
+          drainTimeoutMs: CALL_QA_DRAIN_TIMEOUT_MS,
+          settleTimeoutMs: CALL_QA_TRANSCRIPT_SETTLE_MS,
+          clientGuardMs: clientFinalizeGuardMs(),
+        };
       }
       send(client, ready);
       return;
@@ -520,51 +595,66 @@ export function handleConnection(client, req, depsInput) {
 
   function onNavigatorTranscription(text) {
     if (session.mode === 'test') {
-      session.stage.nav = appendTranscriptFragment(session.stage.nav, text);
-      onDrainTranscription();
+      stageAppend('nav', text);
+      onExchangeTranscription();
     }
     send(client, { type: 'transcript', role: 'navigator', text }); // caption mirror only
   }
 
   function onCallerTranscription(text) {
     if (session.mode === 'test') {
-      session.stage.caller = appendTranscriptFragment(session.stage.caller, text);
-      onDrainTranscription();
+      stageAppend('caller', text);
+      onExchangeTranscription();
     }
     send(client, { type: 'transcript', role: 'patient', text }); // caption mirror only
   }
 
-  // A transcription arrived while draining: checkpoint the provisional (staged)
-  // transcript so a crash can't lose it, and — once we're past the post-End
-  // boundary — reset the settle timer (any transcription restarts the quiet
-  // window, since transcriptions can arrive out of order and after turnComplete).
-  function onDrainTranscription() {
-    if (session.mode !== 'test' || !session.ended) return;
-    checkpoint();
-    if (session.postEndBoundary) resetSettleTimer();
+  // A transcription arrived. If a settle window is running (an active OR post-End
+  // boundary is pending), restart it — any transcription can arrive after its
+  // turnComplete and must stay with its exchange — and force a durable checkpoint
+  // so the late fragment can't be lost to a crash before finalization. Otherwise
+  // (normal pre-boundary streaming) use a debounced-but-guaranteed checkpoint.
+  function onExchangeTranscription() {
+    if (session.settleTimer) {
+      scheduleSettle();
+      requestCheckpoint({ force: true });
+    } else {
+      requestCheckpoint();
+    }
   }
 
   function onTurnComplete() {
     session.turnCompleteObserved = true;
     send(client, { type: 'turnComplete' });
     if (session.mode !== 'test') return;
-    if (!session.ended) {
-      // Active call: an exchange completed — flush it (nav-first) and checkpoint.
-      flushStage();
-      checkpoint();
-      return;
-    }
-    // Drain: a post-End boundary. Do NOT finalize here — a transcription can
-    // still arrive after turnComplete. Start/reset the settle timer; the capture
-    // finalizes cleanly only if that quiet window fully elapses.
-    session.postEndBoundary = true;
-    resetSettleTimer();
+    // turnComplete is a boundary, NOT a commit — a transcription can still arrive
+    // after it (Gemini delivers transcription independently and out of order).
+    // Record a durable boundary checkpoint, then wait a short settle for late
+    // fragments before committing (active) or finalizing (drain).
+    if (session.ended) session.postEndBoundary = true;
+    else session.boundaryObserved = true;
+    requestCheckpoint({ force: true });
+    scheduleSettle();
   }
 
-  function resetSettleTimer() {
+  function scheduleSettle() {
     if (session.settleTimer) deps.clearTimer(session.settleTimer);
-    session.settleTimer = deps.setTimer(() => finishDrain('settled'), CALL_QA_TRANSCRIPT_SETTLE_MS);
+    const ms = session.ended ? CALL_QA_TRANSCRIPT_SETTLE_MS : CALL_QA_ACTIVE_TURN_SETTLE_MS;
+    session.settleTimer = deps.setTimer(onSettleExpiry, ms);
     session.settleTimer?.unref?.();
+  }
+
+  async function onSettleExpiry() {
+    session.settleTimer = null;
+    if (session.ended) {
+      // Drain settle elapsed quietly → finalize.
+      return finishDrain('settled');
+    }
+    // Active exchange settled quietly → commit it (nav-first) and start fresh.
+    // A LATER late fragment becomes a NEW exchange, never merged into this one.
+    session.boundaryObserved = false;
+    flushStage();
+    await doCheckpoint();
   }
 
   // ── End Call handshake (test mode) ───────────────────────────────────────
@@ -576,7 +666,14 @@ export function handleConnection(client, req, depsInput) {
     if (session.ended) return;
     session.ended = true;
     session.postEndBoundary = false; // watch for a NEW post-end boundary
+    session.boundaryObserved = false;
     session.turnCompleteObserved = false;
+    // Absorb any pending active exchange still waiting to settle: cancel its
+    // active settle so it can't finalize prematurely, and commit it now
+    // (nav-first) so the drain starts from a clean stage — no duplicate flush.
+    if (session.settleTimer) { deps.clearTimer(session.settleTimer); session.settleTimer = null; }
+    flushStage();
+    requestCheckpoint({ force: true });
     // Signal end-of-audio upstream so the model finishes its final turn.
     session.upstream.send(AUDIO_STREAM_END);
     // Overall drain deadline: finalize as incomplete if the transcript never

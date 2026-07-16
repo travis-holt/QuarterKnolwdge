@@ -1,8 +1,24 @@
 import { describe, it, expect } from 'vitest';
 import {
-  TranscriptCapture, normalizeTranscriptRole, appendTranscriptFragment,
+  TranscriptCapture, normalizeTranscriptRole, appendTranscriptFragment, boundedAppend,
   MAX_QA_TURNS,
 } from './_call-qa-transcript.js';
+
+describe('boundedAppend (shared truncation)', () => {
+  it('appends within the cap without capping', () => {
+    expect(boundedAppend('Hi', 'there', 100)).toEqual({ text: 'Hi there', capped: false });
+  });
+  it('caps at maxChars and flags capped', () => {
+    const r = boundedAppend('ab', 'cdefghij', 5);
+    expect(r.capped).toBe(true);
+    expect(r.text.length).toBe(5);
+  });
+  it('caps a single oversized fragment appended to empty', () => {
+    const r = boundedAppend('', 'x'.repeat(20), 8);
+    expect(r.text).toBe('x'.repeat(8));
+    expect(r.capped).toBe(true);
+  });
+});
 
 describe('normalizeTranscriptRole', () => {
   it('maps navigator to navigator and everything else to patient', () => {

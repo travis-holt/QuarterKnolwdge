@@ -807,6 +807,18 @@ training assignments.
   `captureComplete:true`); accurate `endedBy` provenance; non-silent truncation warnings; `attemptId`
   validation; staged-transcript checkpointing. (8) `VoiceCall.jsx`: an unacknowledged finalization
   routes to RETAKE with no grade retry.
+- **PR 2 capture integration fixes (2026-07-15, final merge review):** see
+  [docs/GRADING_INVARIANTS.md](docs/GRADING_INVARIANTS.md) §0c. (1) Transcription ordering is not
+  guaranteed at ANY point in the call, so an ordinary active-call `turnComplete` no longer flushes
+  immediately — each exchange waits a short `CALL_QA_ACTIVE_TURN_SETTLE_MS` window; late fragments
+  stay with their exchange (never merged into the next), and End Call absorbs any pending active
+  exchange without duplication. (2) Late staged content gets a guaranteed durable checkpoint
+  (forced post-boundary/drain, dirty-tracked trailing write otherwise), and staged strings use the
+  SAME `boundedAppend`/`MAX_QA_TURN_CHARS`/`MAX_QA_TURNS` bounds as committed turns (non-silent
+  `turn-length-capped`). (3) The server computes a safe finalization guard from its actual
+  drain+settle config plus a persistence/network margin (`clientFinalizeGuardMs`) and sends it in
+  `ready.finalization`; the browser applies it (no hardcoded 15s) with a ≥60s fallback, so it can
+  never abandon a valid drain before the server's real deadline.
 - **Supervisor final review (2026-07-09):** Call QA Test attempts now support a supervisor final
   verdict stored on the interview doc as `qaFinalReview`. The AI rubric result remains preserved on
   `qa`; supervisors can confirm AI pass/fail or override to final pass/fail with a required reason
@@ -1597,7 +1609,7 @@ of this file on 2026-07-07 to cut per-session context cost (it was ~55% of the f
 - **Experimental / mockup:**
   - Training **content** is mockup (flagged in UI). Logic is real.
   - **Adult Medicine and Behavioural Health** are not assessed; **Pediatrics and OB/GYN** are live.
-- **Test coverage:** **1023 tests** across **51 test files** (PR 2 merge-review adds
+- **Test coverage:** **1040 tests** across **51 test files** (PR 2 final merge-review adds active-turn-settle/ordering/durability/bounds/finalization-timing relay tests, `boundedAppend` + client finalize-guard tests; PR 2 merge-review adds
   `src/components/voiceCall.component.test.jsx` — the End-Call handshake + capture-vs-grade-retry
   distinctions with fake browser APIs — and expands `api/liveRelay.test.js` (two-stage drain,
   transcript ordering, roster-member gate, ack-after-write), `api/_call-qa-attempts.test.js` (exact
@@ -1710,7 +1722,7 @@ of this file on 2026-07-07 to cut per-session context cost (it was ~55% of the f
   OB/GYN = **37** seed questions (offline fallback) + the **48-item MCQ v2 operating-model bank**
   (24 Pediatrics + 24 OB/GYN) that replaces the weak active bank via a marker-gated
   archive-and-replace migration (bank grows in Firestore per dept) · 4 departments (**Pediatrics
-  + OB/GYN live**, 2 mockup) · **1023** unit tests (51 test files) + two committed Firestore Rules
+  + OB/GYN live**, 2 mockup) · **1040** unit tests (51 test files) + two committed Firestore Rules
   emulator suites (`npm run test:rules` — the 51-assertion result-authorization suite + the PR-2
   Call QA interviews suite; require Java, run in CI, not part of the unit-test count) ·
   **13** Firestore collections
@@ -1946,7 +1958,7 @@ npm run test:e2e     # run the Playwright browser tests (auto-builds + starts th
 - Heatmap intensity toggle (show % inside matrix cells).
 
 ### Technical Debt
-- **1023 tests** across 51 test files as of 2026-07-15 (plus two committed Firestore Rules emulator
+- **1040 tests** across 51 test files as of 2026-07-15 (plus two committed Firestore Rules emulator
   suites, `npm run test:rules`, run separately from the unit-test gate). **Role-app
   coverage** (`App`, `Start`,
   `SupervisorApp`, `NavigatorApp`) now includes both shell smoke tests (mount + gate/session routing)
@@ -2316,7 +2328,7 @@ npm run test:e2e     # run the Playwright browser tests (auto-builds + starts th
   transcript/grade; `firestore.rules` blocks navigators from creating/mutating server Call QA
   attempts (new `tests/firestore-rules/call-qa-interviews.rules.mjs`, chained into `test:rules`); new
   pure server modules `api/_call-qa-transcript.js` + `api/_call-qa-attempts.js` and a DI-testable
-  relay (1023 tests, 51 test files). **Does NOT** cover server-authoritative MCQ/Spot scoring (still
+  relay (1040 tests, 51 test files). **Does NOT** cover server-authoritative MCQ/Spot scoring (still
   the separate future project below) and does not prove perfect speech recognition; real-microphone
   and Firestore-rules (Java) validation remain post-deploy steps not runnable in the container.
 

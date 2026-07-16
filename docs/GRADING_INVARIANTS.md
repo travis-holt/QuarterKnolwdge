@@ -8,7 +8,42 @@
 > [`api/_qa-grading-corpus.test.js`](../api/_qa-grading-corpus.test.js) — if one of
 > those tests fails after your change, re-read this document before "fixing" the test.
 >
-> Last updated: 2026-07-15 (PR 2 merge-review hardening).
+> Last updated: 2026-07-15 (PR 2 final merge-review — capture integration fixes).
+
+## 0c. Call QA capture integration fixes (PR 2 final merge review, 2026-07-15)
+
+These strengthen §0a/§0b. All are binding for the SCORED Call QA test.
+
+1. **Transcription ordering is not guaranteed at ANY point in the call**, not only
+   after End Call. An input/output transcription can arrive after its
+   `turnComplete`. The relay never treats raw WebSocket arrival order as speaking
+   order at any point.
+2. **An ordinary active-call boundary also requires a short transcription-settle
+   window before the exchange is committed** (`CALL_QA_ACTIVE_TURN_SETTLE_MS`).
+   `turnComplete` marks a boundary but never immediately flushes; any transcription
+   during the window is added to the pending exchange and resets the window.
+3. **A late transcription stays with its correct exchange.** A fragment that
+   arrives after exchange N's boundary is committed as part of N (never merged into
+   N+1). Each exchange is flushed navigator-first. End Call absorbs any pending
+   active exchange before draining, with no duplicated lines.
+4. **Staged transcript content follows the SAME bounds as committed content**
+   (`MAX_QA_TURN_CHARS`, `MAX_QA_TURNS`), via one shared `boundedAppend`. Oversized
+   staged strings are truncated (never silently — `turn-length-capped` is recorded)
+   and a staged tail can never push the durable snapshot past the max turn count.
+5. **Late staged content receives a guaranteed trailing durable checkpoint.**
+   Post-boundary/drain fragments force an immediate durable checkpoint; debounced
+   writes mark the checkpoint dirty and guarantee one trailing durable write, so a
+   crash mid-settle cannot leave the durable copy behind memory. Before `captured`
+   is sent, all pending transcript state is bounded and included in the successful
+   terminal write.
+6. **The browser finalization guard always exceeds the server's maximum drain +
+   settle + persistence/network window.** The server computes the guard from its
+   actual config (`clientFinalizeGuardMs`) and sends it in the trusted
+   `ready.finalization.clientGuardMs`; the browser applies a defensive clamp and
+   never trusts a client-supplied timing. A client fallback (≥ the server maximum)
+   is used only if the value is missing/invalid.
+7. **`captured` means the final BOUNDED transcript was successfully persisted** —
+   including the latest staged content, exactly once.
 
 ## 0b. Call QA capture/finalization hardening (PR 2 merge review, 2026-07-15)
 

@@ -47,13 +47,13 @@ const QA = {
 };
 const GRADE = { score: 90, summary: 'Solid.', strengths: [], improvements: [] };
 
-async function startAndActivate() {
+async function startAndActivate(readyExtra = {}) {
   fireEvent.click(screen.getByRole('button', { name: /start the test call/i }));
   await waitFor(() => expect(FakeWS.instances.length).toBe(1));
   const ws = FakeWS.instances[0];
   await act(async () => { ws.onopen?.(); });
   await act(async () => {
-    ws.onmessage?.({ data: JSON.stringify({ type: 'ready', attemptId: 'att-1', scenario: { id: 'x', callerName: 'Sam', department: 'pediatrics' } }) });
+    ws.onmessage?.({ data: JSON.stringify({ type: 'ready', attemptId: 'att-1', scenario: { id: 'x', callerName: 'Sam', department: 'pediatrics' }, ...readyExtra }) });
   });
   return ws;
 }
@@ -152,5 +152,37 @@ describe('VoiceCall test mode — server-authoritative handshake', () => {
       ws.onmessage?.({ data: JSON.stringify({ type: 'captured', attemptId: 'att-1', captureComplete: false, warning: 'partial' }) });
     });
     await waitFor(() => expect(apiFetchMock).toHaveBeenCalledWith('/api/grade-call-qa', { attemptId: 'att-1' }, expect.any(Number)));
+  });
+
+  // ── Finalization guard timing (Fix 3) ──────────────────────────────────────
+  it('sizes the finalize guard from the SERVER-provided clientGuardMs (not a hardcoded 15s)', async () => {
+    const setTimeoutSpy = vi.spyOn(global, 'setTimeout');
+    render(<VoiceCall navigatorId="nav-a" name="Ada" department="pediatrics" mode="test" onQaResult={vi.fn()} />);
+    const ws = await startAndActivate({ finalization: { drainTimeoutMs: 30000, settleTimeoutMs: 10000, clientGuardMs: 47000 } });
+    setTimeoutSpy.mockClear();
+    fireEvent.click(screen.getByRole('button', { name: /end & get graded/i }));
+    // The finalize guard uses the server value, and NEVER the old 15s.
+    const delays = setTimeoutSpy.mock.calls.map((c) => c[1]);
+    expect(delays).toContain(47000);
+    expect(delays).not.toContain(15000);
+    // A captured ack that arrives "late" (after 15s would have elapsed) is accepted.
+    apiFetchMock.mockResolvedValue({ qa: QA, grade: GRADE });
+    await act(async () => {
+      ws.onmessage?.({ data: JSON.stringify({ type: 'captured', attemptId: 'att-1', captureComplete: true }) });
+    });
+    await waitFor(() => expect(apiFetchMock).toHaveBeenCalledWith('/api/grade-call-qa', { attemptId: 'att-1' }, expect.any(Number)));
+    setTimeoutSpy.mockRestore();
+  });
+
+  it('falls back to a guard >= the server maximum when finalization metadata is missing', async () => {
+    const setTimeoutSpy = vi.spyOn(global, 'setTimeout');
+    render(<VoiceCall navigatorId="nav-a" name="Ada" department="pediatrics" mode="test" onQaResult={vi.fn()} />);
+    await startAndActivate(); // ready without finalization
+    setTimeoutSpy.mockClear();
+    fireEvent.click(screen.getByRole('button', { name: /end & get graded/i }));
+    const delays = setTimeoutSpy.mock.calls.map((c) => c[1]);
+    // Fallback must exceed the server max drain(30s)+settle(10s)+margin(20s) = 60s.
+    expect(delays.some((d) => d >= 60000)).toBe(true);
+    setTimeoutSpy.mockRestore();
   });
 });
