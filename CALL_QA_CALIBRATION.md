@@ -8,6 +8,7 @@ Current committed evidence:
 
 - 3 synthetic examples
 - 0 human pilot fixtures
+- 0 operational pilot fixtures
 - readiness: `INSUFFICIENT_DATA`
 
 That result is expected. Synthetic fixtures and the deterministic regression
@@ -18,12 +19,23 @@ states, meaningful pass/fail/review populations, and non-zero statistical
 denominators. Shadow policy v2 remains diagnostic-only and requires verified
 server metadata plus a complete rubric result.
 
+Real terminal operational failures may be added as sanitized
+`source: "operational-pilot"` fixtures. They affect capture reliability and
+safety gates only; they do not increase grading-accuracy or automation sample
+counts.
+
 Run:
 
 ```bash
 npm run qa:calibrate
 npm run qa:coverage
+npm run qa:pilot-smoke
 ```
+
+`qa:pilot-smoke` is a separate 15-case synthetic/rehearsed Monday management
+check. Its `PILOT_SMOKE_VERIFIED` status has no calibration or automation
+authority. The future production automation gate remains the independently
+human-reviewed 200-call policy.
 
 Reports are written to the gitignored
 `artifacts/call-qa-calibration/` directory. The full operating procedure,

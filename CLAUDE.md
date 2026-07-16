@@ -11,7 +11,10 @@
 > [§8 Current System State](#8-current-system-state) and [§15 Current Priorities](#15-current-priorities)
 > accurate at all times.
 >
-> **Last updated:** 2026-07-16 (PR 3 merge-blocker follow-up — calibration policy v2 now requires
+> **Last updated:** 2026-07-16 (PR #33 operational-calibration and pilot-smoke follow-up —
+> capture-only failures now affect reliability/safety gates without becoming accuracy evidence,
+> and the separate 15-case management rehearsal has no automation authority. Prior: PR 3
+> merge-blocker follow-up — calibration policy v2 now requires
 > complete rubric labels, valid capture/grading states, meaningful pass/fail/review populations,
 > available Wilson denominators, and visible critical operational failures; shadow policy v2
 > requires verified scenario/transcript authority and complete rubric output. Prior: PR 3 — Call QA calibration, coverage, statistical readiness, and
@@ -891,14 +894,17 @@ training assignments.
   candidates without enabling automatic final verdicts.
 - **Evidence separation:** deterministic synthetic corpus, captured model replay, committed
   `source:'synthetic-example'` calibration examples, adjudicated `source:'human-pilot'` fixtures,
-  optional live model runs, and automation readiness remain separate populations. Only valid,
-  sanitized, completed human-pilot adjudications count toward accuracy/readiness.
+  terminal `source:'operational-pilot'` capture failures, optional live model runs, and automation
+  readiness remain separate populations. Only valid, sanitized, completed human-pilot
+  adjudications count toward grading accuracy and automation sample minimums.
 - **Merge-blocker hardening:** calibration policy v2 requires complete 20-criterion labels for
   every reviewer/adjudication/model run, exact recommendation/final-outcome consistency, PR #32
   capture/grading-state and transcript-count consistency, minimum pass/fail/review populations
   (60/60/40 and at least 15% each), available non-zero Wilson denominators, and a maximum 1%
-  critical capture-failure rate. Ungraded failed/abandoned captures remain in operational and
-  per-version readiness metrics.
+  critical capture-failure rate. Terminal operational-pilot abandoned, capture-incomplete, and
+  grade-failed fixtures may omit transcript/human/model data but remain in capture reliability and
+  safety gates; they are excluded from grading accuracy, criterion metrics, coverage sample volume,
+  and automation minimums.
 - **Technical implementation:** `api/_qa-calibration.js` provides pure fixture validation,
   confusion/criterion/auto-fail/capture metrics, Wilson intervals, version and operational
   breakdowns, richer scenario coverage, readiness evaluation, and deterministic Markdown output.
@@ -912,7 +918,14 @@ training assignments.
   `INSUFFICIENT_DATA` with zero human fixtures. Optional live mode requires
   `CALL_QA_CALIBRATION_LIVE=true`, Gemini keys, `--live`, and `--confirm-live`; it runs sequentially
   through the existing pinned `gradeCallQaTranscript()` path with static local SOP context and
-  never reads/writes Firestore or edits fixtures.
+  never reads/writes Firestore or edits fixtures. Operational-only failures stay in capture reports
+  but are never sent to Gemini.
+- **Management pilot smoke:** `scripts/call-qa/pilot-smoke.mjs` powers `qa:pilot-smoke`, a separate
+  non-production 15-case synthetic/rehearsed Monday check covering pass, fail, safety violation,
+  needs review, incomplete/abandoned/grade-failed capture, both departments, and Phase 3 behavior.
+  It prints `PILOT_SMOKE_VERIFIED` or `PILOT_SMOKE_FAILED` but has no calibration authority and
+  cannot unlock shadow eligibility or finalization. The future production automation gate remains
+  the separate policy-v2 minimum of 200 independently human-reviewed adjudicated calls.
 - **Shadow policy:** `api/_qa-automation-policy.js` is a pure fail-closed evaluator. Only `off` and
   `shadow` environment modes exist; unknown values act as `off`. Eligibility requires a clean
   server-authoritative capture, high-confidence pass recommendation, no auto-fails/unresolved
@@ -925,13 +938,14 @@ training assignments.
   capture-complete flag, capture version, and live model.
 - **Privacy:** no production export/downloader and no audio storage. Audio retention remains an
   unimplemented management/privacy decision in `docs/CALL_QA_AUDIO_RETENTION_DECISION.md`.
-- **Current evidence/readiness:** 3 synthetic examples, 0 human pilot fixtures,
+- **Current evidence/readiness:** 3 synthetic examples, 0 human pilot fixtures, 0 operational pilot
+  fixtures,
   `INSUFFICIENT_DATA`. This is the intended initial state.
-- **Tests:** 78 PR-3 tests cover fixture privacy/schema failures, exact confusion/criterion/auto-fail/
+- **Tests:** 83 PR-3 tests cover fixture privacy/schema failures, exact confusion/criterion/auto-fail/
   capture/Wilson metrics, readiness gates and sufficient populations, every shadow disqualifier,
   homogeneous/imbalanced populations, contradictory capture states, complete labels and provenance,
-  offline determinism/no-network behavior, live double opt-in, sequential repeat stability, and
-  ignored artifacts.
+  operational-only failure evidence, offline determinism/no-network behavior, live double opt-in,
+  sequential repeat stability, ignored artifacts, and pilot-smoke coverage/non-authority.
 - **Status:** Complete in code; real human pilot collection and adjudication remain operational work.
 
 ### F14 — Question Bank + Gemini Scenario Generation (review gate)
@@ -1583,7 +1597,10 @@ of this file on 2026-07-07 to cut per-session context cost (it was ~55% of the f
   never accesses Firestore. Shadow clean-pass assessment is pure/non-final; automatic
   `qaFinalReview` remains impossible in PR 3. Policy v2 prevents homogeneous or severely imbalanced
   human outcome populations, unavailable Wilson denominators, contradictory PR #32 states, and
-  incomplete rubric labels from appearing ready; shadow v2 requires the complete server trust chain.
+  incomplete rubric labels from appearing ready; shadow v2 requires the complete server trust
+  chain. Sanitized operational-pilot failures now feed only capture reliability/safety gates, while
+  `qa:pilot-smoke` separately verifies 15 rehearsed management-test cases without contributing any
+  automation evidence.
 - **Audit remediation (2026-07-12):** live access is no longer anonymous or role-by-localStorage.
   Server-issued Firebase claims protect REST, WebSocket, and Firestore; PIN material stays
   server-side; peer mentor data is a minimized protected projection. Assessment saves are atomic
@@ -1688,7 +1705,7 @@ of this file on 2026-07-07 to cut per-session context cost (it was ~55% of the f
 - **Experimental / mockup:**
   - Training **content** is mockup (flagged in UI). Logic is real.
   - **Adult Medicine and Behavioural Health** are not assessed; **Pediatrics and OB/GYN** are live.
-- **Test coverage:** **1123 tests** across **54 test files** (PR 3 adds 78 fixture/metrics/readiness/
+- **Test coverage:** **1128 tests** across **55 test files** (PR 3 adds 83 fixture/metrics/readiness/
   coverage/CLI/shadow-policy tests; PR 2 final merge blocker adds 5 serialized-checkpoint race tests + controllable-write-order fake Firestore; PR 2 final merge-review adds active-turn-settle/ordering/durability/bounds/finalization-timing relay tests, `boundedAppend` + client finalize-guard tests; PR 2 merge-review adds
   `src/components/voiceCall.component.test.jsx` — the End-Call handshake + capture-vs-grade-retry
   distinctions with fake browser APIs — and expands `api/liveRelay.test.js` (two-stage drain,
@@ -1802,7 +1819,7 @@ of this file on 2026-07-07 to cut per-session context cost (it was ~55% of the f
   OB/GYN = **37** seed questions (offline fallback) + the **48-item MCQ v2 operating-model bank**
   (24 Pediatrics + 24 OB/GYN) that replaces the weak active bank via a marker-gated
   archive-and-replace migration (bank grows in Firestore per dept) · 4 departments (**Pediatrics
-  + OB/GYN live**, 2 mockup) · **1123** unit tests (54 test files) + two committed Firestore Rules
+  + OB/GYN live**, 2 mockup) · **1128** unit tests (55 test files) + two committed Firestore Rules
   emulator suites (`npm run test:rules` — the 51-assertion result-authorization suite + the PR-2
   Call QA interviews suite; require Java, run in CI, not part of the unit-test count) ·
   **13** Firestore collections
@@ -2038,7 +2055,7 @@ npm run test:e2e     # run the Playwright browser tests (auto-builds + starts th
 - Heatmap intensity toggle (show % inside matrix cells).
 
 ### Technical Debt
-- **1123 tests** across 54 test files as of 2026-07-16 (plus two committed Firestore Rules emulator
+- **1128 tests** across 55 test files as of 2026-07-16 (plus two committed Firestore Rules emulator
   suites, `npm run test:rules`, run separately from the unit-test gate). **Role-app
   coverage** (`App`, `Start`,
   `SupervisorApp`, `NavigatorApp`) now includes both shell smoke tests (mount + gate/session routing)

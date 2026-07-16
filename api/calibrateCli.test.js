@@ -102,6 +102,18 @@ describe('Call QA calibration CLI', () => {
     const fixtureFile = path.join(workspace.fixtures, 'example.json');
     const original = JSON.stringify(fixture);
     await writeFile(fixtureFile, original);
+    const operational = {
+      ...fixture,
+      caseId: 'operational-grade-failed',
+      source: 'operational-pilot',
+      capture: { ...fixture.capture, gradingStatus: 'grade_failed' },
+      transcript: [],
+    };
+    delete operational.humanReview;
+    delete operational.modelRun;
+    operational.capture.navigatorTurnCount = 0;
+    operational.capture.callerTurnCount = 0;
+    await writeFile(path.join(workspace.fixtures, 'operational.json'), JSON.stringify(operational));
     let active = 0;
     let maximumActive = 0;
     const grader = vi.fn(async () => {

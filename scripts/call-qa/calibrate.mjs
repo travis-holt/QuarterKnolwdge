@@ -138,7 +138,9 @@ async function runLive(fixtures, options, deps, io) {
   const keyText = String(env.GEMINI_API_KEYS || env.GEMINI_API_KEY || '').trim();
   if (!keyText) throw new Error('--live requires GEMINI_API_KEYS or GEMINI_API_KEY');
   const keys = keyText.split(',').map((key) => key.trim()).filter(Boolean);
-  const requestCount = fixtures.length * options.repeat;
+  const gradingFixtures = fixtures.filter((fixture) => fixture.source !== 'operational-pilot');
+  const operationalFixtures = fixtures.filter((fixture) => fixture.source === 'operational-pilot');
+  const requestCount = gradingFixtures.length * options.repeat;
   io.log(`Live calibration grading runs: ${requestCount} (up to ${requestCount * 2} model requests if malformed-response retries occur)`);
   const [
     { gradeCallQaTranscript, resolveQaScenarioContext },
@@ -153,7 +155,7 @@ async function runLive(fixtures, options, deps, io) {
   const liveCases = [];
   const calibratedFixtures = [];
 
-  for (const fixture of fixtures) {
+  for (const fixture of gradingFixtures) {
     const scenario = getCallQaScenarioById(fixture.scenarioId);
     const scenarioContext = resolveQaScenarioContext({
       scenario: scenario.scenario,
@@ -190,7 +192,7 @@ async function runLive(fixtures, options, deps, io) {
     });
   }
   return {
-    report: buildCalibrationReport(calibratedFixtures),
+    report: buildCalibrationReport([...calibratedFixtures, ...operationalFixtures]),
     liveRuns: {
       requestCount,
       repeat: options.repeat,
@@ -204,6 +206,7 @@ function summary(report) {
   return [
     `Call QA calibration: ${readiness.state}`,
     `Human cases: ${report.evidenceSummary.evaluatedHumanCaseCount}`,
+    `Operational capture fixtures: ${report.evidenceSummary.operationalPilotFixtureCount}`,
     `Synthetic examples excluded: ${report.evidenceSummary.syntheticExampleCount}`,
     `Coverage gaps: ${report.coverage.flags.length}`,
     report.evidenceSummary.note,

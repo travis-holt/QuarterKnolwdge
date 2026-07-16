@@ -1,5 +1,34 @@
 # Development History - Knowledge Check
 
+### 2026-07-16 - PR #33 operational calibration and management pilot smoke
+- **Capture-only evidence:** added sanitized `source:'operational-pilot'` fixtures for terminal
+  abandoned, capture-incomplete, and grade-failed attempts. They may omit transcript, turn counts,
+  human review, model output, and rubric labels; any transcript/count data that exists is still
+  validated against allowed roles and counts. Non-failure or graded operational fixtures fail
+  closed.
+- **Metric boundary:** operational-pilot fixtures feed capture reliability, capture/grading
+  breakdowns, mixed-population capture evidence, and the critical capture-failure safety gate.
+  They are excluded from final-outcome agreement, human pass/fail/review counts, criterion and
+  auto-fail accuracy, scenario/workflow calibration volume, and every automation sample minimum.
+  Grading fixtures now remain fully graded/labeled; live calibration retains operational failures
+  in reports but never sends them to Gemini.
+- **Monday smoke workflow:** added `qa:pilot-smoke`, a separate non-production 15-case local
+  synthetic/rehearsed suite covering pass, fail, safety violation, needs review, incomplete
+  capture, abandoned capture, grade failure, Pediatrics, OB/GYN, and Phase 3 complete/incomplete
+  behavior. It prints `PILOT_SMOKE_VERIFIED` or `PILOT_SMOKE_FAILED`, exposes no readiness or
+  approved population, and cannot unlock shadow eligibility or automatic finalization.
+- **Policy separation:** the production gate remains calibration policy v2 with at least 200
+  independently human-reviewed adjudicated calls plus all outcome, coverage, safety, and version
+  gates. Committed evidence remains 3 synthetic examples, 0 human pilots, and 0 operational pilots;
+  readiness remains intentionally `INSUFFICIENT_DATA`.
+- **Verification:** `npm test` 1128/1128 across 55 files; `npm run test:rules` 51/51 + 16/16 using
+  the existing portable Temurin 21 runtime; `npm run build` passed with the existing Firebase
+  chunk-size warning; `npm run qa:calibrate` and `npm run qa:coverage` reported
+  `INSUFFICIENT_DATA`, 0 human cases, 0 operational fixtures, 3 excluded synthetic examples, and
+  88 coverage gaps; `npm run qa:pilot-smoke` reported `PILOT_SMOKE_VERIFIED` for 15 cases;
+  `npm run qa:calibrate:check` exited 1 as expected. No live model call, production data access,
+  audio storage, merge, or deployment occurred.
+
 ### 2026-07-16 - PR #33 calibration/readiness merge-blocker hardening
 - **Population integrity:** bumped the calibration policy to
   `call-qa-calibration-policy-v2`. Readiness now requires at least 60 human passes, 60 fails, and

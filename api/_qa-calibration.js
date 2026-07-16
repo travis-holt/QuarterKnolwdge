@@ -21,7 +21,11 @@ import {
 } from './_qa-calibration-gates.js';
 
 export const CALL_QA_CALIBRATION_FORMAT_VERSION = 1;
-export const CALIBRATION_SOURCES = new Set(['synthetic-example', 'human-pilot']);
+export const CALIBRATION_SOURCES = new Set([
+  'synthetic-example',
+  'human-pilot',
+  'operational-pilot',
+]);
 export const CALIBRATION_RECOMMENDATIONS = new Set(['pass', 'fail', 'needs_review']);
 export const CALIBRATION_CAPTURE_STATUSES = new Set([
   'active', 'captured', 'capture_incomplete', 'abandoned',
@@ -218,6 +222,10 @@ function validateModelRun(fixture, errors) {
   if (!Array.isArray(run.reviewFlags)) addError(errors, 'modelRun.reviewFlags', 'must be an array');
 }
 
+function isOperationalPilot(fixture) {
+  return fixture?.source === 'operational-pilot';
+}
+
 export function validateCalibrationFixture(fixture) {
   const errors = [];
   if (!fixture || typeof fixture !== 'object' || Array.isArray(fixture)) {
@@ -240,6 +248,7 @@ export function validateCalibrationFixture(fixture) {
   }
 
   const capture = fixture.capture;
+  const operationalPilot = isOperationalPilot(fixture);
   if (!capture || typeof capture !== 'object') {
     addError(errors, 'capture', 'is required');
   } else {
@@ -274,15 +283,33 @@ export function validateCalibrationFixture(fixture) {
     if (!String(capture.liveModel ?? '').trim()) addError(errors, 'capture.liveModel', 'is required');
     if (!Array.isArray(capture.warnings)) addError(errors, 'capture.warnings', 'must be an array');
     for (const field of ['navigatorTurnCount', 'callerTurnCount']) {
-      if (!Number.isInteger(capture[field]) || capture[field] < 0) {
+      if ((!operationalPilot || capture[field] != null) &&
+          (!Number.isInteger(capture[field]) || capture[field] < 0)) {
         addError(errors, `capture.${field}`, 'must be a non-negative integer');
       }
     }
+    if (operationalPilot) {
+      const isOperationalFailure =
+        capture.captureStatus === 'abandoned' ||
+        capture.captureStatus === 'capture_incomplete' ||
+        capture.gradingStatus === 'grade_failed';
+      if (!isOperationalFailure) {
+        addError(errors, 'capture', 'operational-pilot fixtures must represent an abandoned, capture-incomplete, or grade-failed attempt');
+      }
+      if (['grading', 'graded'].includes(capture.gradingStatus)) {
+        addError(errors, 'capture.gradingStatus', 'operational-pilot fixtures must be terminal and ungraded');
+      }
+    } else if (capture.gradingStatus !== 'graded') {
+      addError(errors, 'capture.gradingStatus', 'grading fixtures must be graded; use operational-pilot for capture or grading failures');
+    }
   }
 
-  if (!Array.isArray(fixture.transcript) || fixture.transcript.length === 0) {
+  const hasTranscript = Object.prototype.hasOwnProperty.call(fixture, 'transcript');
+  if (!operationalPilot && (!Array.isArray(fixture.transcript) || fixture.transcript.length === 0)) {
     addError(errors, 'transcript', 'must be a non-empty array');
-  } else {
+  } else if (hasTranscript && !Array.isArray(fixture.transcript)) {
+    addError(errors, 'transcript', 'must be an array when provided');
+  } else if (Array.isArray(fixture.transcript)) {
     let navigatorTurns = 0;
     let callerTurns = 0;
     fixture.transcript.forEach((turn, index) => {
@@ -293,17 +320,28 @@ export function validateCalibrationFixture(fixture) {
       if (turn?.role === 'patient') callerTurns += 1;
       if (!String(turn?.text ?? '').trim()) addError(errors, `transcript[${index}].text`, 'must be non-empty');
     });
-    if (navigatorTurns === 0) addError(errors, 'transcript', 'missing navigator turns');
-    if (capture && capture.navigatorTurnCount !== navigatorTurns) {
+    if (!operationalPilot && navigatorTurns === 0) addError(errors, 'transcript', 'missing navigator turns');
+    if (capture && capture.navigatorTurnCount != null &&
+        capture.navigatorTurnCount !== navigatorTurns) {
       addError(errors, 'capture.navigatorTurnCount', 'must match navigator transcript turns');
     }
-    if (capture && capture.callerTurnCount !== callerTurns) {
+    if (capture && capture.callerTurnCount != null &&
+        capture.callerTurnCount !== callerTurns) {
       addError(errors, 'capture.callerTurnCount', 'must match patient transcript turns');
     }
   }
 
-  validateHumanReview(fixture, errors);
-  validateModelRun(fixture, errors);
+  if (operationalPilot) {
+    if (fixture.humanReview != null) {
+      addError(errors, 'humanReview', 'must be omitted for operational-pilot fixtures');
+    }
+    if (fixture.modelRun != null) {
+      addError(errors, 'modelRun', 'must be omitted for operational-pilot fixtures');
+    }
+  } else {
+    validateHumanReview(fixture, errors);
+    validateModelRun(fixture, errors);
+  }
   scanProhibited(fixture, 'fixture', errors);
   return { valid: errors.length === 0, errors };
 }
@@ -331,8 +369,8 @@ export function evaluateCalibrationCase(fixture) {
     error.validationErrors = validation.errors;
     throw error;
   }
-  const human = fixture.humanReview.adjudicated;
-  const evaluable = fixture.capture.gradingStatus === 'graded' && fixture.modelRun;
+  const human = fixture.humanReview?.adjudicated;
+  const evaluable = Boolean(human && fixture.capture.gradingStatus === 'graded' && fixture.modelRun);
   return {
     caseId: fixture.caseId,
     source: fixture.source,
@@ -340,11 +378,11 @@ export function evaluateCalibrationCase(fixture) {
     scenarioId: fixture.scenarioId,
     workflowType: fixture.workflowType,
     difficulty: fixture.difficulty,
-    humanOutcome: outcome(human),
+    humanOutcome: human ? outcome(human) : null,
     modelOutcome: evaluable ? outcome(fixture.modelRun) : null,
-    humanCriteria: criterionMap(human.criteria),
+    humanCriteria: criterionMap(human?.criteria),
     modelCriteria: criterionMap(fixture.modelRun?.criteria),
-    humanAutoFails: autoFailSet(human.autoFails),
+    humanAutoFails: autoFailSet(human?.autoFails),
     modelAutoFails: autoFailSet(fixture.modelRun?.autoFails),
     evaluable: Boolean(evaluable),
     fixture,
@@ -548,9 +586,13 @@ function buildCaptureMetrics(items) {
     missingTurnCompleteCount: count((item) => hasWarning(item, 'missing-turn-complete')),
     missingTurnCompleteRate: rate(count((item) => hasWarning(item, 'missing-turn-complete')), total),
     lowTurnCountCount: count((item) =>
-      item.fixture.capture.navigatorTurnCount < 3 || item.fixture.transcript.length < 4),
+      (Number.isInteger(item.fixture.capture.navigatorTurnCount) &&
+        item.fixture.capture.navigatorTurnCount < 3) ||
+      (Array.isArray(item.fixture.transcript) && item.fixture.transcript.length < 4)),
     lowTurnCountRate: rate(count((item) =>
-      item.fixture.capture.navigatorTurnCount < 3 || item.fixture.transcript.length < 4), total),
+      (Number.isInteger(item.fixture.capture.navigatorTurnCount) &&
+        item.fixture.capture.navigatorTurnCount < 3) ||
+      (Array.isArray(item.fixture.transcript) && item.fixture.transcript.length < 4)), total),
     glossaryCorrectedAttemptCount: correctedAttempts,
     glossaryCorrectedAttemptRate: rate(correctedAttempts, total),
     averageCorrectedTurnCount: rate(corrected.reduce((sum, value) => sum + value, 0), total),
@@ -567,7 +609,7 @@ function groupBreakdown(cases, getter) {
     const key = String(getter(item) ?? 'unknown');
     const group = groups.get(key) ?? { count: 0, human: { pass: 0, fail: 0, review: 0 }, model: { pass: 0, fail: 0, review: 0 } };
     group.count += 1;
-    group.human[item.humanOutcome] += 1;
+    if (item.humanOutcome) group.human[item.humanOutcome] += 1;
     if (item.modelOutcome) group.model[item.modelOutcome] += 1;
     groups.set(key, group);
   }
@@ -602,6 +644,8 @@ function buildCalibrationReportInternal(fixtures, includePopulations) {
     return item;
   });
   const human = all.filter((item) => item.source === 'human-pilot');
+  const operational = all.filter((item) => item.source === 'operational-pilot');
+  const captureEvidence = [...human, ...operational];
   const cases = human.filter((item) => item.evaluable);
   const confusionMatrix = emptyConfusionMatrix();
   cases.forEach((item) => { confusionMatrix[item.humanOutcome][item.modelOutcome] += 1; });
@@ -635,6 +679,8 @@ function buildCalibrationReportInternal(fixtures, includePopulations) {
       fixtureCount: all.length,
       syntheticExampleCount: all.filter((item) => item.source === 'synthetic-example').length,
       humanPilotFixtureCount: human.length,
+      operationalPilotFixtureCount: operational.length,
+      captureEvidenceFixtureCount: captureEvidence.length,
       evaluatedHumanCaseCount: cases.length,
       excludedUngradedHumanCaseCount: human.length - cases.length,
       minimumReviewerCount: human.length
@@ -669,7 +715,7 @@ function buildCalibrationReportInternal(fixtures, includePopulations) {
     },
     criterionMetrics: criterion,
     autoFailMetrics: autoFail,
-    captureMetrics: buildCaptureMetrics(human),
+    captureMetrics: buildCaptureMetrics(captureEvidence),
     versionBreakdowns: versions,
     populationWarning: mixed ? 'MIXED CALIBRATION POPULATION' : null,
     operationalBreakdowns: {
@@ -678,8 +724,8 @@ function buildCalibrationReportInternal(fixtures, includePopulations) {
       workflowType: groupBreakdown(cases, (item) => item.workflowType),
       difficulty: groupBreakdown(cases, (item) => item.difficulty),
       humanFinalVerdict: groupBreakdown(cases, (item) => item.humanOutcome),
-      captureStatus: groupBreakdown(human, (item) => item.fixture.capture.captureStatus),
-      gradingStatus: groupBreakdown(human, (item) => item.fixture.capture.gradingStatus),
+      captureStatus: groupBreakdown(captureEvidence, (item) => item.fixture.capture.captureStatus),
+      gradingStatus: groupBreakdown(captureEvidence, (item) => item.fixture.capture.gradingStatus),
       gradingPopulation: groupBreakdown(cases, populationKey),
     },
     coverage: buildScenarioCoverageReport(CALL_QA_SCENARIOS, fixtures),
@@ -968,6 +1014,7 @@ export function formatCalibrationMarkdown(report) {
     '## Evidence',
     '',
     `- Human pilot fixtures: ${report.evidenceSummary.humanPilotFixtureCount}`,
+    `- Operational pilot fixtures: ${report.evidenceSummary.operationalPilotFixtureCount}`,
     `- Synthetic examples excluded from accuracy: ${report.evidenceSummary.syntheticExampleCount}`,
     `- Evaluated human cases: ${report.evidenceSummary.evaluatedHumanCaseCount}`,
     `- ${report.evidenceSummary.note}`,

@@ -98,6 +98,36 @@ function calibrationFixture({
   };
 }
 
+function operationalFixture({
+  caseId = 'operational-test-001',
+  scenario = CALL_QA_SCENARIOS[0],
+  captureStatus = 'abandoned',
+  gradingStatus = captureStatus === 'abandoned' ? 'not_started' : 'grade_failed',
+  transcript,
+  capture = {},
+} = {}) {
+  return {
+    formatVersion: 1,
+    caseId,
+    source: 'operational-pilot',
+    sanitized: true,
+    department: scenario.department,
+    scenarioId: scenario.id,
+    workflowType: scenario.workflowType,
+    difficulty: scenario.difficulty,
+    capture: {
+      captureStatus,
+      captureComplete: captureStatus === 'captured',
+      captureVersion: 'call-qa-live-transcript-v1',
+      liveModel: 'gemini-live-v1',
+      gradingStatus,
+      warnings: [],
+      ...capture,
+    },
+    ...(transcript === undefined ? {} : { transcript }),
+  };
+}
+
 function invalid(mutator) {
   const fixture = structuredClone(calibrationFixture());
   mutator(fixture);
@@ -105,9 +135,20 @@ function invalid(mutator) {
 }
 
 describe('validateCalibrationFixture', () => {
-  it('accepts the committed synthetic example and a human pilot fixture', () => {
+  it('accepts grading fixtures and terminal operational-pilot failures', () => {
     expect(validateCalibrationFixture(example)).toEqual({ valid: true, errors: [] });
     expect(validateCalibrationFixture(calibrationFixture())).toEqual({ valid: true, errors: [] });
+    expect(validateCalibrationFixture(operationalFixture())).toEqual({ valid: true, errors: [] });
+    expect(validateCalibrationFixture(operationalFixture({
+      captureStatus: 'capture_incomplete',
+      gradingStatus: 'not_started',
+      transcript: [],
+      capture: { navigatorTurnCount: 0, callerTurnCount: 0 },
+    }))).toEqual({ valid: true, errors: [] });
+    expect(validateCalibrationFixture(operationalFixture({
+      captureStatus: 'captured',
+      gradingStatus: 'grade_failed',
+    }))).toEqual({ valid: true, errors: [] });
   });
 
   it('rejects missing adjudication and one human reviewer', () => {
@@ -232,7 +273,47 @@ describe('validateCalibrationFixture', () => {
     expect(validateCalibrationFixture(calibrationFixture({
       capture: { gradingStatus: 'grade_failed' },
       modelRun: null,
+    })).errors.join(' ')).toMatch(/use operational-pilot/);
+  });
+
+  it('validates operational transcript data when present and rejects non-failure evidence', () => {
+    const validTranscript = [
+      { role: 'patient', text: 'The call disconnected.' },
+      { role: 'navigator', text: 'I will reconnect.' },
+    ];
+    expect(validateCalibrationFixture(operationalFixture({
+      captureStatus: 'capture_incomplete',
+      gradingStatus: 'not_started',
+      transcript: validTranscript,
+      capture: { navigatorTurnCount: 1, callerTurnCount: 1 },
     })).valid).toBe(true);
+    const badRole = operationalFixture({
+      captureStatus: 'capture_incomplete',
+      gradingStatus: 'not_started',
+      transcript: validTranscript,
+      capture: { navigatorTurnCount: 1, callerTurnCount: 1 },
+    });
+    badRole.transcript[0].role = 'caller';
+    expect(validateCalibrationFixture(badRole).errors.join(' ')).toMatch(/unknown transcript role/);
+    expect(validateCalibrationFixture(operationalFixture({
+      captureStatus: 'capture_incomplete',
+      gradingStatus: 'not_started',
+      transcript: validTranscript,
+      capture: { navigatorTurnCount: 2, callerTurnCount: 1 },
+    })).errors.join(' ')).toMatch(/must match navigator transcript turns/);
+    expect(validateCalibrationFixture(operationalFixture({
+      captureStatus: 'captured',
+      gradingStatus: 'not_started',
+    })).errors.join(' ')).toMatch(/must represent an abandoned, capture-incomplete, or grade-failed attempt/);
+    expect(validateCalibrationFixture(operationalFixture({
+      captureStatus: 'capture_incomplete',
+      gradingStatus: 'graded',
+    })).errors.join(' ')).toMatch(/terminal and ungraded/);
+    const withLabels = operationalFixture();
+    withLabels.humanReview = calibrationFixture().humanReview;
+    withLabels.modelRun = calibrationFixture().modelRun;
+    expect(validateCalibrationFixture(withLabels).errors.join(' '))
+      .toMatch(/humanReview.*omitted.*modelRun.*omitted/);
   });
 });
 
@@ -272,34 +353,16 @@ describe('calibration metrics', () => {
       modelCriteria: { 'open-greet': 'NA', 'know-rule': 'NA' },
       modelRun: { reviewFlags: ['low-transcript-confidence'], correctedTurns: 2 },
     }),
-    {
-      ...calibrationFixture({ caseId: 'c6' }),
-      capture: {
-        captureStatus: 'abandoned',
-        captureComplete: false,
-        captureVersion: 'call-qa-live-transcript-v1',
-        liveModel: 'gemini-live-v1',
-        gradingStatus: 'not_started',
-        warnings: ['drain-timeout', 'missing-turn-complete'],
-        navigatorTurnCount: 3,
-        callerTurnCount: 2,
-      },
-      modelRun: null,
-    },
-    {
-      ...calibrationFixture({ caseId: 'c7' }),
-      capture: {
-        captureStatus: 'captured',
-        captureComplete: true,
-        captureVersion: 'call-qa-live-transcript-v1',
-        liveModel: 'gemini-live-v1',
-        gradingStatus: 'grade_failed',
-        warnings: [],
-        navigatorTurnCount: 3,
-        callerTurnCount: 2,
-      },
-      modelRun: null,
-    },
+    operationalFixture({
+      caseId: 'c6',
+      captureStatus: 'abandoned',
+      capture: { warnings: ['drain-timeout', 'missing-turn-complete'] },
+    }),
+    operationalFixture({
+      caseId: 'c7',
+      captureStatus: 'captured',
+      gradingStatus: 'grade_failed',
+    }),
   ];
   const report = buildCalibrationReport(fixtures);
 
@@ -358,6 +421,12 @@ describe('calibration metrics', () => {
       missingTurnCompleteCount: 1,
       glossaryCorrectedAttemptCount: 1,
     });
+    expect(report.evidenceSummary).toMatchObject({
+      evaluatedHumanCaseCount: 5,
+      operationalPilotFixtureCount: 2,
+      captureEvidenceFixtureCount: 7,
+    });
+    expect(report.finalOutcomes.totalEvaluatedCases).toBe(5);
   });
 
   it('reports department/scenario/workflow and version breakdowns', () => {
@@ -369,7 +438,7 @@ describe('calibration metrics', () => {
     expect(report.versionBreakdowns.graderModel).toEqual([
       { value: 'gemini-2.5-flash', count: 5 },
     ]);
-    expect(report.coverage.departments.pediatrics.humanCalibrationCaseCount).toBe(7);
+    expect(report.coverage.departments.pediatrics.humanCalibrationCaseCount).toBe(5);
   });
 
   it('calculates Wilson intervals without dependencies', () => {
@@ -547,17 +616,12 @@ describe('calibration readiness', () => {
   it('failed and abandoned captures cannot hide behind enough successful graded cases', () => {
     const fixtures = sufficientFixtures();
     for (let index = 0; index < 20; index += 1) {
-      const abandoned = calibrationFixture({ caseId: `abandoned-${index}` });
-      abandoned.capture.captureStatus = 'abandoned';
-      abandoned.capture.captureComplete = false;
-      abandoned.capture.gradingStatus = 'not_started';
-      abandoned.modelRun = null;
-      fixtures.push(abandoned);
-
-      const gradeFailed = calibrationFixture({ caseId: `grade-failed-${index}` });
-      gradeFailed.capture.gradingStatus = 'grade_failed';
-      gradeFailed.modelRun = null;
-      fixtures.push(gradeFailed);
+      fixtures.push(operationalFixture({ caseId: `abandoned-${index}` }));
+      fixtures.push(operationalFixture({
+        caseId: `grade-failed-${index}`,
+        captureStatus: 'captured',
+        gradingStatus: 'grade_failed',
+      }));
     }
     const report = buildCalibrationReport(fixtures);
     expect(report.captureMetrics).toMatchObject({
@@ -565,6 +629,9 @@ describe('calibration readiness', () => {
       gradeFailureCount: 20,
       criticalCaptureFailureCount: 40,
     });
+    expect(report.evidenceSummary.evaluatedHumanCaseCount).toBe(640);
+    expect(report.finalOutcomes.totalEvaluatedCases).toBe(640);
+    expect(report.evidenceSummary.operationalPilotFixtureCount).toBe(40);
     expect(evaluateCalibrationReadiness(report).state).toBe('FAILS_SAFETY_GATE');
   });
 });

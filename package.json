@@ -24,6 +24,7 @@
     "qa:calibrate": "node scripts/call-qa/calibrate.mjs",
     "qa:calibrate:check": "node scripts/call-qa/calibrate.mjs --require-ready",
     "qa:coverage": "node scripts/call-qa/calibrate.mjs --coverage-only",
+    "qa:pilot-smoke": "node scripts/call-qa/pilot-smoke.mjs",
     "start": "node server.js"
   },
   "dependencies": {

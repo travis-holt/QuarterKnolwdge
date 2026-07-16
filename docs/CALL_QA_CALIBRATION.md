@@ -10,6 +10,7 @@ pass/fail decisions, write `qaFinalReview`, or change Phase 3 completion.
 | Synthetic corpus | Deterministic code-regression protection against authored grader profiles. |
 | Captured model fixture | Offline replay of a previously stored model response. |
 | Human calibration set | Sanitized transcript compared with independent experienced human judgment. |
+| Operational pilot fixture | Sanitized terminal capture/grading failure used only for reliability and safety gates. |
 | Live calibration run | Explicitly paid, opt-in re-grading of sanitized local fixtures. |
 | Automation readiness | Operational decision based only on sufficient adjudicated human evidence. |
 
@@ -35,14 +36,15 @@ Fixtures live under `api/fixtures/call-qa-calibration/` and use
 - `caseId`, `source`, and `sanitized: true`
 - trusted department/scenario/workflow/difficulty metadata
 - server capture state and versions
-- a non-empty patient/navigator transcript with at least one navigator turn
-- independent reviewer labels plus adjudication
-- for graded cases, model result and model/rubric/prompt/scenario provenance
+- for grading fixtures, a non-empty patient/navigator transcript, independent
+  reviewer labels/adjudication, and model provenance
+- for operational fixtures, a terminal capture or grading failure with whatever
+  sanitized transcript/count evidence is available
 
-Every reviewer, the adjudicated result, and the model run must label every
-rubric criterion exactly once. Use `NA` when a criterion is inapplicable.
-Partial criterion maps, unknown criteria, and duplicate model criteria are
-invalid. Adjudicated outcomes are also exact:
+For grading fixtures, every reviewer, the adjudicated result, and the model run
+must label every rubric criterion exactly once. Use `NA` when a criterion is
+inapplicable. Partial criterion maps, unknown criteria, and duplicate model
+criteria are invalid. Adjudicated outcomes are also exact:
 
 - `pass` => `finalPass: true`, `reviewRequired: false`
 - `fail` => `finalPass: false`, `reviewRequired: false`
@@ -57,6 +59,8 @@ pass or fail.
 
 - `synthetic-example`: documentation/test data, excluded from human metrics.
 - `human-pilot`: real pilot evidence after sanitization and adjudication.
+- `operational-pilot`: real sanitized `abandoned`, `capture_incomplete`, or
+  `grade_failed` evidence used only for capture reliability and safety gates.
 
 The validator fails closed on unknown scenarios, department mismatch, unknown
 criteria/auto-fails, invalid verdicts, duplicate reviewers, incomplete human
@@ -67,8 +71,10 @@ Capture state follows PR #32 exactly. `captured` requires
 `captureComplete: true`; every other capture state requires `false`.
 `active` and `abandoned` may only be `not_started`. `captured` and
 `capture_incomplete` may be not started, grading, graded, or grade failed.
-Only graded fixtures may contain `modelRun`. Recorded navigator/caller counts
-must exactly match the transcript roles.
+Grading fixtures must be graded and contain the complete human/model labels.
+Operational fixtures must be terminal and ungraded, contain no human/model
+labels, and may omit the transcript and turn counts. When operational transcript
+or count data is present, roles and counts are validated against each other.
 
 Fixtures must not contain navigator or patient IDs, employee full names,
 Firebase document IDs, email addresses, phone numbers, real patient
@@ -100,7 +106,10 @@ automatic auto-fail fails the safety gate.
 Capture reporting uses PR #32 metadata: clean/incomplete/abandoned capture,
 grade failure, transcript caps, drain timeout, missing turn completion,
 low-turn-count, glossary corrections, low-transcript-confidence flags, and
-capture-integrity flags.
+capture-integrity flags. It includes both adjudicated human grading fixtures and
+`operational-pilot` failures. Operational fixtures are excluded from final
+outcome counts, criterion/auto-fail accuracy, scenario calibration volume, and
+every automation sample minimum.
 
 Key proportions include dependency-free 95% Wilson intervals. A perfect small
 sample is not described as zero true risk.
@@ -129,11 +138,11 @@ imbalanced datasets remain insufficient regardless of total size. A Wilson
 interval with a zero denominator is reported as unavailable and can never
 satisfy readiness.
 
-Critical capture failures include any human fixture with `captureComplete`
-false, `capture_incomplete`, `abandoned`, or `grade_failed`. These attempts
-remain in operational metrics and in every relevant version-population
-readiness evaluation; they cannot disappear merely because they have no model
-run.
+Critical capture failures include any human or operational fixture with
+`captureComplete` false, `capture_incomplete`, `abandoned`, or `grade_failed`.
+These attempts remain in operational metrics and in every relevant
+version-population readiness evaluation; they cannot disappear merely because
+they have no transcript, human labels, or model run.
 
 States:
 
@@ -174,6 +183,24 @@ With no human fixtures, the report remains `INSUFFICIENT_DATA`, shows curated
 scenario coverage, and states that no real-world accuracy conclusion is
 possible.
 
+## Monday management pilot smoke
+
+```bash
+npm run qa:pilot-smoke
+```
+
+This separate non-production workflow validates 15 local synthetic/rehearsed
+cases across pass, fail, safety violation, needs review, incomplete capture,
+abandoned capture, grade failure, both assessed departments, and Phase 3
+completion/non-completion behavior. It prints `PILOT_SMOKE_VERIFIED` or
+`PILOT_SMOKE_FAILED`.
+
+Pilot smoke is a management-test readiness check only. It produces no
+calibration readiness state or approved version population and can never unlock
+shadow eligibility or automatic finalization. The production automation gate
+remains the separate policy-v2 requirement for at least 200 independently
+human-reviewed, adjudicated calls with all outcome and coverage minimums met.
+
 ## Optional live calibration
 
 Live mode requires all of:
@@ -192,7 +219,9 @@ Live mode uses the pinned `CALL_QA_GRADER_MODEL` and the existing
 static local SOP context, runs sequentially, prints the request count before
 execution, writes only ignored artifacts, and never reads/writes Firestore,
 mutates interviews, starts the voice relay, captures a microphone, overwrites
-human labels, or edits fixtures. Unit tests and CI never invoke Gemini.
+human labels, or edits fixtures. Operational-only failures are retained in
+capture reporting but are not sent to Gemini. Unit tests and CI never invoke
+Gemini.
 
 ## Shadow automation
 

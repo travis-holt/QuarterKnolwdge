@@ -8,7 +8,7 @@
 > [`api/_qa-grading-corpus.test.js`](../api/_qa-grading-corpus.test.js) — if one of
 > those tests fails after your change, re-read this document before "fixing" the test.
 >
-> Last updated: 2026-07-16 (PR 3 — Call QA calibration and shadow readiness).
+> Last updated: 2026-07-16 (PR #33 operational calibration and pilot-smoke follow-up).
 
 ## 0e. Call QA calibration and shadow automation (PR 3, 2026-07-16)
 
@@ -17,9 +17,10 @@ These rules measure the existing pipeline without weakening §§0–0d:
 1. **Synthetic regression is not human accuracy evidence.** Synthetic examples,
    deterministic corpus runs, captured model replay, adjudicated human pilots,
    optional live runs, and automation readiness are reported as separate layers.
-2. **Only sanitized, adjudicated human-pilot fixtures count toward readiness.**
-   Each requires at least two independent pseudonymous reviewers; incomplete or
-   malformed fixtures fail validation and are never silently skipped.
+2. **Only sanitized, adjudicated human-pilot fixtures count toward grading
+   accuracy and automation sample minimums.** Each requires at least two
+   independent pseudonymous reviewers; incomplete or malformed fixtures fail
+   validation and are never silently skipped.
 3. **Calibration is offline by default.** The normal CLI performs no model or
    Firestore call. Live grading requires `CALL_QA_CALIBRATION_LIVE=true`,
    `--live`, `--confirm-live`, and Gemini keys, and uses only local sanitized
@@ -43,10 +44,13 @@ These rules measure the existing pipeline without weakening §§0–0d:
    reviewer, adjudication, and model result labels the complete rubric exactly
    once (`NA` when inapplicable). Human recommendation/finalPass/reviewRequired
    and model recommendation/pass relationships fail closed when contradictory.
-10. **Operational failures remain in readiness.** PR #32 capture/grading state
-    combinations and transcript role counts are validated. Incomplete,
-    abandoned, and grade-failed attempts remain in capture metrics and mixed
-    version-population reports even without model output.
+10. **Operational failures remain in capture readiness without becoming grading
+    evidence.** Sanitized `operational-pilot` fixtures may omit transcript,
+    human labels, and model output only for terminal abandoned,
+    capture-incomplete, or grade-failed attempts. Any transcript/count data that
+    exists is validated. These fixtures affect capture reliability and critical
+    capture-failure gates, but never final-outcome, criterion, auto-fail accuracy,
+    coverage sample, or automation minimum counts.
 11. **Clean-pass consideration requires outcome diversity.** Calibration policy
     v2 requires meaningful pass, fail, and review-required populations; zero-
     denominator Wilson intervals are unavailable and cannot pass.
@@ -54,6 +58,10 @@ These rules measure the existing pipeline without weakening §§0–0d:
     calibration policy v2, verified scenario metadata, complete rubric output,
     and server transcript metadata consistent with the attempt. It remains
     diagnostic-only and never writes a final verdict.
+13. **Pilot smoke has no readiness authority.** `qa:pilot-smoke` validates only
+    local synthetic/rehearsed management-test cases and Phase 3 behavior. Its
+    `PILOT_SMOKE_VERIFIED` status cannot supply an approved calibration
+    population, unlock shadow eligibility, or enable automatic finalization.
 
 ## 0d. Call QA checkpoint write serialization (PR 2 final merge blocker, 2026-07-15)
 
