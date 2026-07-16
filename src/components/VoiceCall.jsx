@@ -343,9 +343,15 @@ export default function VoiceCall({ navigatorId, name, department = 'pediatrics'
         } else if (m.type === 'captured') {
           onCaptured(m);
         } else if (m.type === 'error') {
-          setError(m.message || 'The call dropped.');
-          teardown();
-          setPhase('setup');
+          // A capture-finalize failure during the drain must route to the retake
+          // path — never a generic reset that hides the lost recording.
+          if (isTest && (finalizingRef.current || m.code === 'capture-finalize-failed')) {
+            onCaptureFailed(m.message || 'Your call recording could not be finalized. Please retake the test.');
+          } else {
+            setError(m.message || 'The call dropped.');
+            teardown();
+            setPhase('setup');
+          }
         }
       };
       ws.onerror = () => {
@@ -394,15 +400,12 @@ export default function VoiceCall({ navigatorId, name, department = 'pediatrics'
     finalizingRef.current = false;
     if (finalizeTimerRef.current) { clearTimeout(finalizeTimerRef.current); finalizeTimerRef.current = null; }
     teardown();
-    if (attemptIdRef.current) {
-      // The attempt exists server-side (as abandoned/incomplete) — allow a grade
-      // retry, which will surface the capture-integrity flag or "no transcript".
-      setCaptureError(message || 'Transcript capture could not be finalized.');
-      setPhase('captureError');
-    } else {
-      setError(message || 'Transcript capture could not be finalized.');
-      setPhase('setup');
-    }
+    // An unacknowledged finalization (socket closed / timed out / capture-finalize
+    // error) is NOT grade-retryable: the server never confirmed a durable,
+    // gradeable capture (it may be abandoned/incomplete server-side). The
+    // navigator must retake — we never offer to grade an unconfirmed capture.
+    setCaptureError(message || 'Your call recording could not be finalized. Please retake the test.');
+    setPhase('captureError');
   };
 
   const gradeAttempt = async () => {
@@ -601,11 +604,11 @@ export default function VoiceCall({ navigatorId, name, department = 'pediatrics'
           <h2 className="overview__panel-title">Recording not finalized</h2>
           <p className="readoff__sub">{captureError}</p>
           <div className="interview__end-actions" style={{ justifyContent: 'center' }}>
-            {attemptIdRef.current && (
-              <button className="btn btn--primary btn--sm" disabled={gradeBusy} onClick={retryGrading} type="button">
-                {gradeBusy ? 'Grading…' : 'Retry grading the saved transcript'}
-              </button>
-            )}
+            {/* No grade retry: the server never confirmed a gradeable capture, so
+                the only safe path is to retake the test. */}
+            <button className="btn btn--primary btn--sm" onClick={() => setPhase('setup')} type="button">
+              Take the test again
+            </button>
             <button className="btn btn--ghost btn--sm" onClick={exitTestFlow} type="button">Exit</button>
           </div>
         </div>

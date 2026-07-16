@@ -229,7 +229,10 @@ export async function commitGrade(db, attemptId, { leaseId, grade, qa, now = Dat
     if (data.gradingStatus === GRADING_STATUS.GRADED && data.qa) {
       return { status: 'already_graded', attempt: { id: attemptId, ...data } };
     }
-    if (data.gradingLeaseId && data.gradingLeaseId !== leaseId) {
+    // Strict ownership: a request may write the grade ONLY when it still holds the
+    // exact lease. A null/missing lease id (cleared or reclaimed) is NOT ownership,
+    // so a stale request whose lease expired can never overwrite anything.
+    if (data.gradingLeaseId !== leaseId) {
       return { status: 'lease_lost' };
     }
     tx.update(ref, {
@@ -252,7 +255,11 @@ export async function markGradeFailed(db, attemptId, { leaseId, now = Date.now()
     if (!snap.exists) return { status: 'not_found' };
     const data = snap.data();
     if (data.gradingStatus === GRADING_STATUS.GRADED) return { status: 'already_graded' };
-    if (data.gradingLeaseId && data.gradingLeaseId !== leaseId) return { status: 'lease_lost' };
+    // Strict ownership (same rule as commitGrade): only the exact lease holder may
+    // move the attempt to grade_failed and clear the lease. A stale request whose
+    // lease was cleared/replaced (gradingLeaseId is null or someone else's) must
+    // not clobber the current lease holder's grading.
+    if (data.gradingLeaseId !== leaseId) return { status: 'lease_lost' };
     tx.update(ref, {
       gradingStatus: GRADING_STATUS.FAILED,
       gradingLeaseId: null,

@@ -28,6 +28,9 @@ export function createFakeFirestore(seed = {}) {
   }
   let autoId = 0;
   const stats = { geminiCalls: 0, txCount: 0 };
+  // Test control: when set, doc().update() rejects (to exercise write-failure
+  // paths such as a failed capture finalization).
+  const control = { failUpdates: false, failUpdatesError: new Error('simulated Firestore update failure') };
 
   function docRef(coll, id) {
     const key = `${coll}/${id}`;
@@ -41,6 +44,7 @@ export function createFakeFirestore(seed = {}) {
       },
       async set(data) { store.set(key, applyUpdate({}, data)); },
       async update(patch) {
+        if (control.failUpdates) throw control.failUpdatesError;
         if (!store.has(key)) throw new Error(`No document to update: ${key}`);
         store.set(key, applyUpdate(store.get(key), patch));
       },
@@ -55,6 +59,7 @@ export function createFakeFirestore(seed = {}) {
   return {
     _store: store,
     _stats: stats,
+    _control: control,
     collection(coll) {
       return { doc: (id) => docRef(coll, id ?? `auto-${++autoId}`) };
     },

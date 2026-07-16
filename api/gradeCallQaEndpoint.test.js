@@ -20,7 +20,7 @@ vi.mock('./_gemini-client.js', async (importOriginal) => {
   const actual = await importOriginal();
   return {
     ...actual,
-    getApiKeys: () => ['k1', 'k2'],
+    getApiKeys: () => state.keys,
     geminiWithRotation: (...args) => geminiWithRotation(...args),
   };
 });
@@ -30,8 +30,8 @@ vi.mock('./_sop-context.js', () => ({
 }));
 
 // Auth + Firebase Admin doubles. A shared `state` holds the current fake db +
-// identity so each test can reconfigure them.
-const state = { db: null, identity: { role: 'navigator', navigatorId: 'nav-a' } };
+// identity + configured Gemini keys so each test can reconfigure them.
+const state = { db: null, identity: { role: 'navigator', navigatorId: 'nav-a' }, keys: ['k1', 'k2'] };
 vi.mock('./_auth.js', () => ({
   validateSecret: vi.fn(async () => false),
   readFirebaseIdentity: vi.fn(async () => state.identity),
@@ -77,6 +77,7 @@ beforeEach(() => {
   geminiWithRotation.mockReset();
   state.db = createFakeFirestore();
   state.identity = { role: 'navigator', navigatorId: 'nav-a' };
+  state.keys = ['k1', 'k2'];
   delete process.env.CALL_QA_GRADER_MODEL;
 });
 afterEach(() => { delete process.env.CALL_QA_GRADER_MODEL; });
@@ -133,6 +134,49 @@ describe('gradeCallQaTranscript — pinned model + metadata', () => {
     );
     expect(qa.review.recommendation).toBe('needs_review');
     expect(qa.review.reviewFlags.some((f) => f.id === 'capture-integrity-incomplete')).toBe(true);
+  });
+
+  // Capture integrity FAILS CLOSED (item 7): clean requires BOTH captureStatus
+  // 'captured' AND captureComplete === true. Every inconsistent shape → review.
+  describe('capture-metadata fail-closed', () => {
+    const flagged = (qa) => qa.review.reviewFlags.some((f) => f.id === 'capture-integrity-incomplete');
+
+    it('captured status with MISSING captureComplete → needs_review', async () => {
+      geminiWithRotation.mockResolvedValue(OK(validText));
+      const { qa } = await gradeCallQaTranscript(
+        { transcript: fixture.transcript, scenarioContext: scenarioContext(), captureMetadata: {}, transcriptMetadata: { captureStatus: 'captured' } },
+        { keys: ['k'] },
+      );
+      expect(flagged(qa)).toBe(true);
+      expect(qa.review.recommendation).toBe('needs_review');
+    });
+
+    it('captured status with captureComplete:false → needs_review', async () => {
+      geminiWithRotation.mockResolvedValue(OK(validText));
+      const { qa } = await gradeCallQaTranscript(
+        { transcript: fixture.transcript, scenarioContext: scenarioContext(), captureMetadata: { captureComplete: false }, transcriptMetadata: { captureStatus: 'captured' } },
+        { keys: ['k'] },
+      );
+      expect(flagged(qa)).toBe(true);
+    });
+
+    it('capture_incomplete status with captureComplete:true → needs_review (contradictory)', async () => {
+      geminiWithRotation.mockResolvedValue(OK(validText));
+      const { qa } = await gradeCallQaTranscript(
+        { transcript: fixture.transcript, scenarioContext: scenarioContext(), captureMetadata: { captureComplete: true }, transcriptMetadata: { captureStatus: 'capture_incomplete' } },
+        { keys: ['k'] },
+      );
+      expect(flagged(qa)).toBe(true);
+    });
+
+    it('a genuinely clean capture (captured + captureComplete:true) is NOT flagged by capture integrity', async () => {
+      geminiWithRotation.mockResolvedValue(OK(validText));
+      const { qa } = await gradeCallQaTranscript(
+        { transcript: fixture.transcript, scenarioContext: scenarioContext(), captureMetadata: { captureComplete: true }, transcriptMetadata: { captureStatus: 'captured' } },
+        { keys: ['k'] },
+      );
+      expect(flagged(qa)).toBe(false);
+    });
   });
 });
 
@@ -247,5 +291,79 @@ describe('POST /api/grade-call-qa (attempt-id)', () => {
     const res = makeRes();
     await handler(makeReq(), res);
     expect(res.statusCode).toBe(200);
+  });
+
+  // ── Attempt-id validation (item 7) ──────────────────────────────────────────
+  it('rejects a malformed attempt id (slash / too long) with 400, no DB call', async () => {
+    const slash = makeRes();
+    await handler(makeReq({ attemptId: 'a/b' }), slash);
+    expect(slash.statusCode).toBe(400);
+    const long = makeRes();
+    await handler(makeReq({ attemptId: 'x'.repeat(500) }), long);
+    expect(long.statusCode).toBe(400);
+    expect(geminiWithRotation).not.toHaveBeenCalled();
+  });
+
+  // ── Already-graded readable during a grader outage (item 5) ─────────────────
+  it('an already-graded attempt returns 200 even with ZERO Gemini keys (no model call)', async () => {
+    seedAttempt(state.db, {
+      gradingStatus: GRADING_STATUS.GRADED,
+      qa: { score: 84, pass: false }, grade: { score: 84 },
+    });
+    state.keys = []; // grader unavailable
+    const res = makeRes();
+    await handler(makeReq(), res);
+    expect(res.statusCode).toBe(200);
+    expect(res.body.qa.score).toBe(84);
+    expect(geminiWithRotation).not.toHaveBeenCalled();
+  });
+
+  it('a captured-but-ungraded attempt with ZERO keys returns a config error, keeps the transcript, and leaves no live lease', async () => {
+    seedAttempt(state.db);
+    state.keys = [];
+    const res = makeRes();
+    await handler(makeReq(), res);
+    expect(res.statusCode).toBe(500);
+    expect(geminiWithRotation).not.toHaveBeenCalled();
+    const stored = state.db._store.get('interviews/att-1');
+    expect(stored.transcript.length).toBeGreaterThan(0); // transcript retained
+    expect(stored.gradingLeaseId ?? null).toBeNull();     // no stuck live lease
+    expect(stored.gradingStatus).toBe(GRADING_STATUS.FAILED); // retryable
+  });
+
+  // ── Lease loss never returns an unpersisted local grade (item 4) ────────────
+  it('after losing the lease with no durable result, it does NOT return 200 with the local grade', async () => {
+    seedAttempt(state.db);
+    // While this request is "grading", a newer request usurps the lease. The
+    // fresh attempt has NO durable qa/grade yet (still GRADING under a new lease).
+    geminiWithRotation.mockImplementation(async () => {
+      const stored = state.db._store.get('interviews/att-1');
+      stored.gradingLeaseId = 'usurper-lease';
+      stored.gradingStatus = GRADING_STATUS.GRADING;
+      return OK(validText);
+    });
+    const res = makeRes();
+    await handler(makeReq(), res);
+    // Must be a retryable conflict, NEVER 200 with this request's local grade.
+    expect(res.statusCode).toBe(409);
+    expect(res.body.qa).toBeUndefined();
+    expect(res.body.grade).toBeUndefined();
+  });
+
+  it('after losing the lease when a DURABLE grade now exists, returns that stored grade', async () => {
+    seedAttempt(state.db);
+    // The usurper finishes and durably persists a grade before this request commits.
+    geminiWithRotation.mockImplementation(async () => {
+      const stored = state.db._store.get('interviews/att-1');
+      stored.gradingLeaseId = null;
+      stored.gradingStatus = GRADING_STATUS.GRADED;
+      stored.qa = { score: 77, pass: false };
+      stored.grade = { score: 77 };
+      return OK(validText);
+    });
+    const res = makeRes();
+    await handler(makeReq(), res);
+    expect(res.statusCode).toBe(200);
+    expect(res.body.qa.score).toBe(77); // the DURABLE grade, not this request's local one
   });
 });

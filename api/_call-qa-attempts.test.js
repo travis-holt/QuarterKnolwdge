@@ -194,4 +194,53 @@ describe('grading lease + idempotency', () => {
     // A retry can re-claim.
     expect((await claimGradingLease(db, 'a1', { leaseId: 'lease-2', now: 3 })).status).toBe('claimed');
   });
+
+  // ── Exact-ownership race regressions (item 3) ──────────────────────────────
+  it('a null/missing lease id is NOT ownership: commit and markGradeFailed both lose', async () => {
+    const db = createFakeFirestore({ interviews: { a1: captured() } });
+    // No lease claimed → gradingLeaseId is undefined/null.
+    const commit = await commitGrade(db, 'a1', { leaseId: 'lease-x', grade: { score: 5 }, qa: { score: 5 }, now: 1 });
+    expect(commit.status).toBe('lease_lost');
+    const failed = await markGradeFailed(db, 'a1', { leaseId: 'lease-x', now: 2 });
+    expect(failed.status).toBe('lease_lost');
+    // Nothing persisted.
+    const doc = await loadAttempt(db, 'a1');
+    expect(doc.gradingStatus).toBe(GRADING_STATUS.NOT_STARTED);
+    expect(doc.qa).toBeNull();
+  });
+
+  it('expired-lease race: A cannot commit after B reclaims-and-clears the lease', async () => {
+    const db = createFakeFirestore({ interviews: { a1: captured() } });
+    // 1. Request A claims lease A with a short TTL.
+    const a = await claimGradingLease(db, 'a1', { leaseId: 'lease-A', now: 100, ttlMs: 1_000 });
+    expect(a.status).toBe('claimed');
+    // 2. Lease A expires (now advances past 1100).
+    // 3. Request B claims lease B.
+    const b = await claimGradingLease(db, 'a1', { leaseId: 'lease-B', now: 2_000, ttlMs: 1_000 });
+    expect(b.status).toBe('claimed');
+    // 4. Request B fails and clears its lease.
+    const bFail = await markGradeFailed(db, 'a1', { leaseId: 'lease-B', now: 2_100 });
+    expect(bFail.status).toBe('failed');
+    // 5. Request A (finished Gemini first) attempts to commit.
+    const aCommit = await commitGrade(db, 'a1', { leaseId: 'lease-A', grade: { score: 99 }, qa: { score: 99 }, now: 2_200 });
+    // 6. A must lose and persist NOTHING.
+    expect(aCommit.status).toBe('lease_lost');
+    const doc = await loadAttempt(db, 'a1');
+    expect(doc.gradingStatus).toBe(GRADING_STATUS.FAILED);
+    expect(doc.qa).toBeNull();
+    expect(doc.grade).toBeNull();
+  });
+
+  it('a stale markGradeFailed after the lease was replaced does not clobber the new holder', async () => {
+    const db = createFakeFirestore({ interviews: { a1: captured() } });
+    await claimGradingLease(db, 'a1', { leaseId: 'lease-A', now: 100, ttlMs: 1_000 });
+    const b = await claimGradingLease(db, 'a1', { leaseId: 'lease-B', now: 2_000, ttlMs: 10_000 });
+    expect(b.status).toBe('claimed');
+    // Stale A tries to fail the attempt while B legitimately holds the lease.
+    const stale = await markGradeFailed(db, 'a1', { leaseId: 'lease-A', now: 2_100 });
+    expect(stale.status).toBe('lease_lost');
+    const doc = await loadAttempt(db, 'a1');
+    expect(doc.gradingStatus).toBe(GRADING_STATUS.GRADING); // B still owns it
+    expect(doc.gradingLeaseId).toBe('lease-B');
+  });
 });

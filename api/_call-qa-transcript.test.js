@@ -75,6 +75,22 @@ describe('TranscriptCapture', () => {
     expect(cap.warnings).toContain('turn-length-capped');
   });
 
+  it('records turn-length-capped when APPENDING crosses the cap (not silently truncated)', () => {
+    const cap = new TranscriptCapture({ maxTurnChars: 10 });
+    cap.add('navigator', 'abcde');  // 5 chars, under cap
+    expect(cap.warnings).not.toContain('turn-length-capped');
+    cap.add('navigator', 'fghijklmn'); // append → 5 + 1 space + 9 = 15 > 10 → truncated
+    expect(cap.toArray()[0].text.length).toBe(10);
+    expect(cap.warnings).toContain('turn-length-capped');
+  });
+
+  it('records turn-length-capped when a SINGLE fragment exceeds the cap', () => {
+    const cap = new TranscriptCapture({ maxTurnChars: 5 });
+    cap.add('navigator', 'abcdefghij'); // 10 > 5 → truncated on first insert
+    expect(cap.toArray()[0].text.length).toBe(5);
+    expect(cap.warnings).toContain('turn-length-capped');
+  });
+
   it('bounds total turn count and records a warning', () => {
     const cap = new TranscriptCapture({ maxTurns: 2 });
     cap.add('navigator', 'one');

@@ -1,5 +1,45 @@
 # Development History - Knowledge Check
 
+### 2026-07-15 - Call QA capture/finalization hardening (PR 2 merge-review follow-up)
+- **Context:** merge-review of draft PR #32 surfaced correctness blockers in the PR-2 server-
+  authoritative Call QA capture. Addressed on the same branch in one follow-up commit; no merge/deploy.
+- **Fixes:**
+  1. **Final-transcription ordering + two-stage drain (`api/live-relay.js`).** Gemini Live delivers
+     `input`/`outputTranscription` independently and can deliver a transcription AFTER `turnComplete`,
+     so `turnComplete` no longer immediately closes the capture. End Call now runs a bounded two-stage
+     drain: an overall `CALL_QA_DRAIN_TIMEOUT_MS` deadline plus a `CALL_QA_TRANSCRIPT_SETTLE_MS` quiet
+     window that only elapses after a post-End boundary with no further transcription (any
+     transcription resets it). Each exchange is staged and flushed navigator-first so out-of-order
+     input/output events are stored in speaking order. Env values are parsed + clamped.
+  2. **Never acknowledge before the terminal write (`api/live-relay.js`).** `finalizing`/`finalized`
+     states; `finalized` is set only after `finalizeCapture` resolves; a failed terminal write sends
+     an explicit `capture-finalize-failed` error (not `captured`) and preserves the attempt.
+  3. **Exact grading-lease ownership (`api/_call-qa-attempts.js`).** `commitGrade`/`markGradeFailed`
+     require `gradingLeaseId === leaseId`; a null/missing/different lease id is not ownership.
+  4. **No unpersisted grade after lease loss (`api/grade-call-qa.js`).** On `lease_lost` the endpoint
+     returns a stored grade only if one is durably persisted, else a retryable 409/503 — never the
+     losing request's local model output.
+  5. **Already-graded readable during grader outage (`api/grade-call-qa.js`).** Gemini keys are
+     required only when new grading must run; an already-graded attempt returns its stored result
+     with zero keys; a missing-keys claim releases the lease (transcript retained).
+  6. **Roster-member gate (`api/live-relay.js`).** `loadRosterMember` replaces `loadRosterName`;
+     a start is rejected (no attempt created) unless the roster doc exists, matches the token, and is
+     not `inactive`.
+  7. **Integrity hardening:** capture integrity FAILS CLOSED (needs both `captureStatus:'captured'`
+     and `captureComplete:true`); accurate `endedBy` provenance (`navigator`/`client_disconnect`/
+     `upstream_service`/`server_timeout`); non-silent `turn-length-capped` truncation warnings;
+     `attemptId` validation (400, not a 500 path exception); staged-transcript checkpointing.
+  8. **Client (`VoiceCall.jsx`).** An unacknowledged finalization (socket close / timeout /
+     capture-finalize error) routes to a RETAKE screen with no grade retry; grade retry is preserved
+     only after a confirmed `captured` ack; a `captured` incomplete ack still grades (with mandatory
+     review).
+- **Tests:** +26 (1023 total, 51 files) — relay two-stage-drain/ordering/roster/ack-after-write,
+  attempts lease-race regressions, transcript truncation warnings, endpoint fail-closed / keys-after-
+  claim / lease-loss-no-fallback / attemptId-validation, and a new `voiceCall.component.test.jsx`
+  driving the End-Call handshake + capture-vs-grade-retry distinctions with fake browser APIs.
+- **Docs:** [GRADING_INVARIANTS.md](GRADING_INVARIANTS.md) §0b (10 new binding statements),
+  `.env.local.example` (`CALL_QA_TRANSCRIPT_SETTLE_MS`), CLAUDE.md F25 + counts.
+
 ### 2026-07-14 (part 6) - Server-authoritative Call QA transcript capture (PR 2)
 - **Context:** PR 1 hardened the Call QA *grading* pipeline but left the scored transcript
   browser-authoritative — `VoiceCall.jsx` coalesced transcript fragments in browser memory, saved

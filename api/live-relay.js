@@ -7,17 +7,32 @@
 // browser talks only to us; we hold the key and open the upstream Live socket.
 //
 // PR 2 — SERVER-AUTHORITATIVE CALL QA TRANSCRIPT. For a scored Call QA test
-// (mode:'test') the relay is now the single source of truth for the transcript:
+// (mode:'test') the relay is the single source of truth for the transcript:
 //   • Navigator identity comes from the verified Firebase token (never the body).
-//   • The curated scenario is loaded and validated server-side (never trusted
-//     from the browser).
+//   • The curated scenario is loaded and validated server-side, and the roster
+//     member must still exist and be active before an attempt is created.
 //   • A server-owned attempt document is created BEFORE the call starts.
 //   • Gemini Live's inputTranscription (navigator) / outputTranscription (caller)
 //     are captured HERE, coalesced, checkpointed to Firestore, and finalized.
-//   • Ending the call runs a bounded drain handshake so the final utterance is
-//     not lost to an immediate socket teardown.
 //   • Browser transcript messages are IGNORED. Captions forwarded to the browser
 //     are a NON-AUTHORITATIVE visual mirror only.
+//
+// TRANSCRIPTION ORDERING (official Gemini Live limitation): inputTranscription
+// and outputTranscription are delivered INDEPENDENTLY with NO guaranteed order,
+// and a transcription may arrive AFTER the associated turnComplete. Therefore:
+//   • Raw WebSocket arrival order is NOT speaking order. Each exchange is staged
+//     (navigator + caller text buffered per turn) and flushed navigator-first, so
+//     a caller output that arrives before its navigator input is still stored
+//     after it.
+//   • End Call runs a BOUNDED TWO-STAGE drain: an overall drain deadline, plus a
+//     short transcription-settle window that only elapses once a post-End
+//     turnComplete boundary has been seen AND no transcription has arrived for the
+//     full settle interval. turnComplete alone is NOT proof every transcription
+//     has arrived, so it never immediately closes the capture.
+//
+// A capture is only acknowledged to the browser AFTER the terminal Firestore
+// write succeeds. If that write fails, the browser is told the capture could not
+// be finalized (and must retake) — never that it succeeded.
 //
 // Practice mode (mode:'practice', the default) keeps its prior generated-scenario
 // behavior — advisory only, browser-graded, no server attempt/capture.
@@ -35,7 +50,7 @@ import { getFirebaseAdmin } from './_firebase-admin.js';
 import { clientIp } from './_rate-limit.js';
 import { buildSystemInstruction } from './interview-turn.js';
 import { getCallQaScenarioById } from '../src/data/callQaScenarios.js';
-import { TranscriptCapture } from './_call-qa-transcript.js';
+import { TranscriptCapture, appendTranscriptFragment } from './_call-qa-transcript.js';
 import {
   buildAttemptDoc, createAttempt, checkpointTranscript, finalizeCapture,
   CAPTURE_STATUS,
@@ -50,13 +65,23 @@ const MAX_CALL_MS = 10 * 60 * 1000;
 const START_TIMEOUT_MS = 10_000;
 const UPSTREAM_SETUP_TIMEOUT_MS = 12_000;
 
-// Bounded transcript-drain window after the navigator clicks End Call. The relay
-// signals end-of-audio upstream, then waits at most this long for a final
-// transcription boundary before finalizing. Configurable so ops can tune it.
-export const CALL_QA_DRAIN_TIMEOUT_MS = Number(process.env.CALL_QA_DRAIN_TIMEOUT_MS) || 8_000;
+// Parse + clamp a millisecond env value to a safe [min,max]; fall back to dflt on
+// anything non-numeric or non-positive.
+function clampEnvMs(raw, dflt, min, max) {
+  const n = Number(raw);
+  if (!Number.isFinite(n) || n <= 0) return dflt;
+  return Math.min(max, Math.max(min, Math.floor(n)));
+}
+
+// Overall bound on the End-Call drain: the relay signals end-of-audio upstream,
+// then finalizes no later than this even if the transcript never settles.
+export const CALL_QA_DRAIN_TIMEOUT_MS = clampEnvMs(process.env.CALL_QA_DRAIN_TIMEOUT_MS, 8_000, 2_000, 30_000);
+// Quiet window after a post-End turnComplete boundary with NO new transcription,
+// after which the capture is considered clean. Reset by any transcription event.
+export const CALL_QA_TRANSCRIPT_SETTLE_MS = clampEnvMs(process.env.CALL_QA_TRANSCRIPT_SETTLE_MS, 1_500, 250, 10_000);
 // Minimum spacing between transcript checkpoints so we do not write Firestore on
-// every fragment; a turn boundary always flushes regardless.
-export const CALL_QA_CHECKPOINT_INTERVAL_MS = 3_000;
+// every fragment; a turn boundary / drain always flushes regardless.
+export const CALL_QA_CHECKPOINT_INTERVAL_MS = clampEnvMs(process.env.CALL_QA_CHECKPOINT_INTERVAL_MS, 3_000, 500, 30_000);
 
 const ASSESSED_DEPTS = ['pediatrics', 'obgyn'];
 
@@ -99,9 +124,12 @@ export function productionDeps() {
     getApiKeys,
     buildSystemInstruction,
     resolveScenario: getCallQaScenarioById,
-    loadRosterName: async (navigatorId) => {
+    // Trusted roster-member lookup: the full doc (name + status), or null if the
+    // navigator no longer exists. A valid-but-old token must not let a deleted or
+    // deactivated navigator begin a new scored assessment.
+    loadRosterMember: async (navigatorId) => {
       const snap = await getFirebaseAdmin().db.collection('roster').doc(navigatorId).get();
-      return snap.exists ? String(snap.data().name ?? '') : '';
+      return snap.exists ? { id: snap.id, ...snap.data() } : null;
     },
     db: () => getFirebaseAdmin().db,
     createUpstream: realCreateUpstream,
@@ -132,12 +160,16 @@ export function handleConnection(client, req, depsInput) {
     mode: 'practice',
     // Test-mode capture state
     attemptId: null,
-    capture: null,          // TranscriptCapture
+    capture: null,          // TranscriptCapture (authoritative, coalesced)
+    stage: { nav: '', caller: '' }, // current exchange, flushed navigator-first
     ended: false,           // navigator clicked End; stop forwarding audio
-    finalized: false,       // capture terminal state written
+    finalizing: false,      // terminal Firestore write in progress
+    finalized: false,       // terminal Firestore write SUCCEEDED
+    postEndBoundary: false, // a post-End turnComplete has been observed
     turnCompleteObserved: false,
     lastCheckpointAt: 0,
-    drainTimer: null,
+    drainTimer: null,       // overall drain deadline
+    settleTimer: null,      // quiet-transcription window
     scenario: null,
     department: 'pediatrics',
     navigatorId: null,
@@ -149,7 +181,8 @@ export function handleConnection(client, req, depsInput) {
   }, START_TIMEOUT_MS);
   const callTimer = deps.setTimer(() => {
     send(client, { type: 'error', message: 'Voice call time limit reached.' });
-    endTestCapture('call-timeout', false).finally(() => shutdown('call-timeout'));
+    terminateCapture('call-timeout', { captureComplete: false, endedBy: 'server_timeout' })
+      .finally(() => shutdown('call-timeout'));
   }, MAX_CALL_MS);
 
   function releaseIp() {
@@ -157,28 +190,57 @@ export function handleConnection(client, req, depsInput) {
     if ((activeByIp.get(ip) ?? 0) === 0) activeByIp.delete(ip);
   }
 
+  function clearDrainTimers() {
+    if (session.drainTimer) { deps.clearTimer(session.drainTimer); session.drainTimer = null; }
+    if (session.settleTimer) { deps.clearTimer(session.settleTimer); session.settleTimer = null; }
+  }
+
   function shutdown(reason) {
     if (session.closed) return;
     session.closed = true;
     deps.clearTimer(startTimer);
     deps.clearTimer(callTimer);
-    if (session.drainTimer) deps.clearTimer(session.drainTimer);
+    clearDrainTimers();
     releaseIp();
     try { session.upstream?.close(); } catch {}
     try { client.close(); } catch {}
   }
 
-  // Checkpoint the server transcript at a turn boundary (bounded/debounced).
+  // ── Transcript staging (per exchange, flushed navigator-first) ─────────────
+  function stagedTurns() {
+    const turns = [];
+    const nav = session.stage.nav.trim();
+    const caller = session.stage.caller.trim();
+    if (nav) turns.push({ role: 'navigator', text: nav });
+    if (caller) turns.push({ role: 'patient', text: caller });
+    return turns;
+  }
+
+  // Flush the staged exchange into the authoritative capture: NAVIGATOR FIRST,
+  // then caller — regardless of the order the transcription events arrived in.
+  function flushStage() {
+    if (!session.capture) return;
+    const nav = session.stage.nav.trim();
+    const caller = session.stage.caller.trim();
+    if (nav) session.capture.add('navigator', nav);
+    if (caller) session.capture.add('patient', caller);
+    session.stage = { nav: '', caller: '' };
+  }
+
+  // Checkpoint the server transcript, INCLUDING the still-staged exchange, so a
+  // process crash mid-settle can't leave the durable copy behind the in-memory
+  // one. Bounded/debounced unless forced.
   async function checkpoint({ force = false } = {}) {
     if (session.mode !== 'test' || !session.attemptId || !session.capture) return;
     const now = deps.now();
     if (!force && now - session.lastCheckpointAt < CALL_QA_CHECKPOINT_INTERVAL_MS) return;
     session.lastCheckpointAt = now;
+    const transcript = [...session.capture.toArray(), ...stagedTurns()];
     try {
       await checkpointTranscript(deps.db(), session.attemptId, {
-        transcript: session.capture.toArray(),
-        navigatorTurnCount: session.capture.navigatorTurnCount,
-        callerTurnCount: session.capture.callerTurnCount,
+        transcript,
+        navigatorTurnCount: transcript.filter((t) => t.role === 'navigator').length,
+        callerTurnCount: transcript.filter((t) => t.role === 'patient').length,
         turnCompleteObserved: session.turnCompleteObserved,
         warnings: session.capture.warnings,
         now,
@@ -188,23 +250,26 @@ export function handleConnection(client, req, depsInput) {
     }
   }
 
-  // Finalize a test-mode capture exactly once. `captureComplete` distinguishes a
-  // clean drain from an uncertain/interrupted one; `abandoned` marks a call the
-  // navigator never ended cleanly.
-  async function endTestCapture(drainReason, captureComplete, { abandoned = false } = {}) {
-    if (session.mode !== 'test' || !session.attemptId || session.finalized) return;
-    session.finalized = true;
-    if (session.drainTimer) { deps.clearTimer(session.drainTimer); session.drainTimer = null; }
+  // ── Terminal capture (single path, guarded, ack only after durable write) ──
+  // Sets `finalized` ONLY after the terminal Firestore write succeeds. Returns
+  // { ok }. Duplicate calls while a write is in flight return { inProgress }.
+  async function terminateCapture(reason, { captureComplete = false, abandoned = false, endedBy = 'navigator' } = {}) {
+    if (session.mode !== 'test' || !session.attemptId) return { ok: false, skipped: true };
+    if (session.finalized) return { ok: false, alreadyFinalized: true };
+    if (session.finalizing) return { ok: false, inProgress: true };
+    session.finalizing = true;
+    clearDrainTimers();
+    flushStage();
     const transcript = session.capture ? session.capture.toArray() : [];
     const captureStatus = abandoned
       ? CAPTURE_STATUS.ABANDONED
       : (captureComplete ? CAPTURE_STATUS.CAPTURED : CAPTURE_STATUS.INCOMPLETE);
     const captureMetadata = {
-      endedBy: abandoned ? 'disconnect' : 'navigator',
-      drainReason,
+      endedBy,
+      drainReason: reason,
       turnCompleteObserved: session.turnCompleteObserved,
-      navigatorTurnCount: session.capture?.navigatorTurnCount ?? 0,
-      callerTurnCount: session.capture?.callerTurnCount ?? 0,
+      navigatorTurnCount: transcript.filter((t) => t.role === 'navigator').length,
+      callerTurnCount: transcript.filter((t) => t.role === 'patient').length,
       transcriptTurnCount: transcript.length,
       captureComplete,
       warnings: session.capture?.warnings ?? [],
@@ -213,8 +278,15 @@ export function handleConnection(client, req, depsInput) {
       await finalizeCapture(deps.db(), session.attemptId, {
         transcript, captureStatus, captureMetadata, now: deps.now(),
       });
+      session.finalized = true;
+      return { ok: true, captureStatus, captureComplete };
     } catch (err) {
+      // Terminal write FAILED: do not mark finalized. Leave the attempt for
+      // supervisor recovery (server-side it stays active/incomplete with no qa,
+      // so it never counts as a completed Phase 3). Never swallow this silently.
+      session.finalizing = false;
       console.warn(`[live-relay] finalize failed for attempt ${session.attemptId}: ${err?.message ?? err}`);
+      return { ok: false, error: true };
     }
   }
 
@@ -255,9 +327,10 @@ export function handleConnection(client, req, depsInput) {
 
   client.on('close', () => {
     // Unexpected browser disappearance without a clean End handshake: persist the
-    // latest checkpoint as an abandoned/incomplete capture; never auto-grade it.
+    // latest checkpoint as an abandoned capture; never auto-grade it.
     if (session.mode === 'test' && session.attemptId && !session.finalized) {
-      endTestCapture('client-disconnect', false, { abandoned: true }).finally(() => shutdown('client-close'));
+      terminateCapture('client-disconnect', { abandoned: true, endedBy: 'client_disconnect' })
+        .finally(() => shutdown('client-close'));
       return;
     }
     shutdown('client-close');
@@ -292,18 +365,24 @@ export function handleConnection(client, req, depsInput) {
         return shutdown('bad-scenario');
       }
 
+      // The roster member must still exist and be active. A valid but stale token
+      // cannot let a deleted/deactivated navigator start a new scored attempt.
+      let member = null;
+      try { member = await deps.loadRosterMember(identity.navigatorId); } catch { member = null; }
+      if (!member || member.id !== identity.navigatorId || member.status === 'inactive') {
+        send(client, { type: 'error', message: 'Your navigator account is not active. Contact your supervisor.' });
+        return shutdown('roster-invalid');
+      }
+
       session.navigatorId = identity.navigatorId;
       session.department = department;
       session.scenario = scenario;
-
-      let name = '';
-      try { name = await deps.loadRosterName(identity.navigatorId); } catch { name = ''; }
 
       // Create the server-owned attempt BEFORE the call starts.
       try {
         const attemptDoc = buildAttemptDoc({
           navigatorId: identity.navigatorId,
-          name,
+          name: String(member.name ?? ''),
           department,
           scenario,
           liveModel: deps.liveModel ?? LIVE_MODEL,
@@ -359,7 +438,8 @@ export function handleConnection(client, req, depsInput) {
         send(client, { type: 'error', message: 'Lost connection to the voice service.' });
         // A mid-call upstream drop in test mode is an incomplete capture.
         if (session.mode === 'test' && session.attemptId && !session.finalized) {
-          endTestCapture('upstream-closed', false).finally(() => shutdown('upstream-closed'));
+          terminateCapture('upstream-closed', { captureComplete: false, endedBy: 'upstream_service' })
+            .finally(() => shutdown('upstream-closed'));
         } else {
           shutdown('upstream-closed');
         }
@@ -430,28 +510,61 @@ export function handleConnection(client, req, depsInput) {
     for (const part of sc.modelTurn?.parts || []) {
       if (part.inlineData?.data) send(client, { type: 'audio', data: part.inlineData.data });
     }
-    // Caller (patient) transcription.
-    if (sc.outputTranscription?.text) {
-      if (session.mode === 'test' && session.capture) session.capture.add('patient', sc.outputTranscription.text);
-      send(client, { type: 'transcript', role: 'patient', text: sc.outputTranscription.text });
-    }
-    // Navigator transcription.
-    if (sc.inputTranscription?.text) {
-      if (session.mode === 'test' && session.capture) session.capture.add('navigator', sc.inputTranscription.text);
-      send(client, { type: 'transcript', role: 'navigator', text: sc.inputTranscription.text });
-    }
+    // Navigator transcription (input) — staged first for nav-before-caller order.
+    if (sc.inputTranscription?.text) onNavigatorTranscription(sc.inputTranscription.text);
+    // Caller (patient) transcription (output).
+    if (sc.outputTranscription?.text) onCallerTranscription(sc.outputTranscription.text);
     if (sc.interrupted) send(client, { type: 'interrupted' });
-    if (sc.turnComplete) {
-      session.turnCompleteObserved = true;
-      send(client, { type: 'turnComplete' });
-      // Turn boundary → checkpoint the server transcript (debounced).
-      checkpoint();
-      // If the navigator has already ended, a post-end turnComplete means the
-      // final utterance has drained — finalize now.
-      if (session.mode === 'test' && session.ended && !session.finalized) {
-        finishDrain('turn-complete');
-      }
+    if (sc.turnComplete) onTurnComplete();
+  }
+
+  function onNavigatorTranscription(text) {
+    if (session.mode === 'test') {
+      session.stage.nav = appendTranscriptFragment(session.stage.nav, text);
+      onDrainTranscription();
     }
+    send(client, { type: 'transcript', role: 'navigator', text }); // caption mirror only
+  }
+
+  function onCallerTranscription(text) {
+    if (session.mode === 'test') {
+      session.stage.caller = appendTranscriptFragment(session.stage.caller, text);
+      onDrainTranscription();
+    }
+    send(client, { type: 'transcript', role: 'patient', text }); // caption mirror only
+  }
+
+  // A transcription arrived while draining: checkpoint the provisional (staged)
+  // transcript so a crash can't lose it, and — once we're past the post-End
+  // boundary — reset the settle timer (any transcription restarts the quiet
+  // window, since transcriptions can arrive out of order and after turnComplete).
+  function onDrainTranscription() {
+    if (session.mode !== 'test' || !session.ended) return;
+    checkpoint();
+    if (session.postEndBoundary) resetSettleTimer();
+  }
+
+  function onTurnComplete() {
+    session.turnCompleteObserved = true;
+    send(client, { type: 'turnComplete' });
+    if (session.mode !== 'test') return;
+    if (!session.ended) {
+      // Active call: an exchange completed — flush it (nav-first) and checkpoint.
+      flushStage();
+      checkpoint();
+      return;
+    }
+    // Drain: a post-End boundary. Do NOT finalize here — a transcription can
+    // still arrive after turnComplete. Start/reset the settle timer; the capture
+    // finalizes cleanly only if that quiet window fully elapses.
+    session.postEndBoundary = true;
+    resetSettleTimer();
+  }
+
+  function resetSettleTimer() {
+    if (session.settleTimer) deps.clearTimer(session.settleTimer);
+    session.settleTimer = deps.setTimer(() => finishDrain('settled'), CALL_QA_TRANSCRIPT_SETTLE_MS);
+    session.settleTimer?.unref?.();
   }
 
   // ── End Call handshake (test mode) ───────────────────────────────────────
@@ -462,18 +575,32 @@ export function handleConnection(client, req, depsInput) {
     }
     if (session.ended) return;
     session.ended = true;
-    // Signal end-of-audio upstream so the model finishes its final turn, then
-    // wait (bounded) for a final transcription boundary before finalizing.
+    session.postEndBoundary = false; // watch for a NEW post-end boundary
+    session.turnCompleteObserved = false;
+    // Signal end-of-audio upstream so the model finishes its final turn.
     session.upstream.send(AUDIO_STREAM_END);
-    session.turnCompleteObserved = false; // watch for a NEW post-end boundary
+    // Overall drain deadline: finalize as incomplete if the transcript never
+    // reaches a quiet post-End boundary in time.
     session.drainTimer = deps.setTimer(() => finishDrain('drain-timeout'), CALL_QA_DRAIN_TIMEOUT_MS);
     session.drainTimer?.unref?.();
   }
 
   async function finishDrain(reason) {
-    if (session.finalized) return;
-    const clean = reason === 'turn-complete';
-    await endTestCapture(reason, clean);
+    // Clean ONLY when a quiet settle elapsed after an observed post-End boundary.
+    const clean = reason === 'settled' && session.postEndBoundary;
+    const result = await terminateCapture(reason, { captureComplete: clean, endedBy: 'navigator' });
+    // Another path already owns/completed finalization — nothing more to do.
+    if (result.skipped || result.alreadyFinalized || result.inProgress) return;
+    if (!result.ok) {
+      // Terminal write failed: never tell the browser the capture succeeded, and
+      // never let it grade. It must retake; the attempt is kept for recovery.
+      send(client, {
+        type: 'error',
+        code: 'capture-finalize-failed',
+        message: 'We could not save your call recording. Please retake the test.',
+      });
+      return shutdown('finalize-failed');
+    }
     send(client, {
       type: 'captured',
       attemptId: session.attemptId,

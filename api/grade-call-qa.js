@@ -34,7 +34,7 @@ import { getCallQaScenarioById } from '../src/data/callQaScenarios.js';
 import { readFirebaseIdentity } from './_auth.js';
 import { FirebaseAdminConfigError, getFirebaseAdmin } from './_firebase-admin.js';
 import {
-  CALL_QA_ASSESSMENT_TYPE, CALL_QA_CAPTURE_AUTHORITY, CAPTURE_STATUS,
+  CALL_QA_ASSESSMENT_TYPE, CALL_QA_CAPTURE_AUTHORITY, CAPTURE_STATUS, GRADING_STATUS,
   claimGradingLease, commitGrade, markGradeFailed, loadAttempt,
 } from './_call-qa-attempts.js';
 import { randomUUID } from 'node:crypto';
@@ -483,7 +483,17 @@ export async function gradeCallQaTranscript({ transcript: rawTranscript, scenari
     scenarioVersion: scenarioContext.scenarioVersion ?? null,
     gradedAt: new Date().toISOString(),
   };
-  const captureIntegrity = { complete: captureMetadata.captureComplete !== false, reason: captureMetadata.drainReason };
+  // Capture integrity FAILS CLOSED: a clean capture requires BOTH a 'captured'
+  // terminal status AND an explicit captureComplete === true. Missing,
+  // contradictory, or malformed metadata (e.g. captureStatus 'captured' with no /
+  // false captureComplete, or 'capture_incomplete' with captureComplete true) is
+  // treated as incomplete → forces supervisor review. It never defaults to clean.
+  const captureIntegrity = {
+    complete:
+      transcriptMetadata?.captureStatus === CAPTURE_STATUS.CAPTURED &&
+      captureMetadata?.captureComplete === true,
+    reason: captureMetadata?.drainReason,
+  };
   const { qa, grade } = finalizeQaResult(
     scored, boundedTranscript, correctedTurns, repaired.repairs, scenarioContext,
     repaired.reviewReasons, deterministicFindings, gradingMetadata, captureIntegrity, transcriptMetadata,
@@ -515,17 +525,28 @@ export function buildTranscriptMetadata(attempt) {
   };
 }
 
+// A Firestore document id: non-empty, bounded, and free of path separators /
+// reserved forms. Reject malformed ids with a 400 rather than letting the Admin
+// SDK throw a path exception that would surface as a 500.
+export function isValidAttemptId(id) {
+  return typeof id === 'string'
+    && id.length > 0 && id.length <= 200
+    && !id.includes('/')
+    && id !== '.' && id !== '..'
+    && !/^__.*__$/.test(id);
+}
+
 export default async function handler(req, res) {
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
 
   if (await validateSecret(req, res)) return;
 
-  const keys = getApiKeys();
-  if (!keys.length) return res.status(500).json({ error: 'Grading is not configured on the server.' });
-
   const attemptId = String(req.body?.attemptId ?? '').trim();
   if (!attemptId) {
     return res.status(400).json({ error: 'A server attempt id is required.' });
+  }
+  if (!isValidAttemptId(attemptId)) {
+    return res.status(400).json({ error: 'That attempt id is not valid.' });
   }
 
   let db;
@@ -555,7 +576,9 @@ export default async function handler(req, res) {
     return res.status(403).json({ error: 'You do not have access to this attempt.' });
   }
 
-  // Idempotency + capture-state gate via a transactional grading lease.
+  // Idempotency + capture-state gate via a transactional grading lease. NOTE:
+  // Gemini keys are intentionally NOT required to reach this point — an
+  // already-graded attempt must remain readable during a grader outage.
   const leaseId = randomUUID();
   const claim = await claimGradingLease(db, attemptId, { leaseId });
   if (claim.status === 'already_graded') {
@@ -572,6 +595,15 @@ export default async function handler(req, res) {
   }
   if (claim.status !== 'claimed') {
     return res.status(409).json({ error: 'This attempt is not ready for grading.' });
+  }
+
+  // Gemini keys are required ONLY now that we must actually invoke the grader. If
+  // they are missing, release the lease (mark grade_failed keeps the transcript
+  // for a later retry) so the attempt never gets stuck in a live lease.
+  const keys = getApiKeys();
+  if (!keys.length) {
+    await markGradeFailed(db, attemptId, { leaseId }).catch(() => {});
+    return res.status(500).json({ error: 'Grading is not configured on the server.' });
   }
 
   const claimed = claim.attempt;
@@ -606,10 +638,17 @@ export default async function handler(req, res) {
     return res.status(200).json({ qa: commit.attempt.qa, grade: commit.attempt.grade, attemptId });
   }
   if (commit.status === 'lease_lost') {
-    // Another request finished first; return the freshly graded result anyway —
-    // the durable transcript is identical so the outcome matches.
+    // This request lost its lease to a newer one. We must NEVER return this
+    // request's local (unpersisted) grade as success. Only a DURABLY-persisted
+    // grade may be returned; otherwise the browser must retry.
     const fresh = await loadAttempt(db, attemptId);
-    return res.status(200).json({ qa: fresh?.qa ?? graded.qa, grade: fresh?.grade ?? graded.grade, attemptId });
+    if (fresh?.gradingStatus === GRADING_STATUS.GRADED && fresh.qa && fresh.grade) {
+      return res.status(200).json({ qa: fresh.qa, grade: fresh.grade, attemptId });
+    }
+    if (fresh?.gradingStatus === GRADING_STATUS.GRADING) {
+      return res.status(409).json({ error: 'This attempt is being graded by another request. Try again shortly.' });
+    }
+    return res.status(503).json({ error: 'Grading could not be saved. Please retry.' });
   }
 
   return res.status(200).json({ qa: graded.qa, grade: graded.grade, attemptId });

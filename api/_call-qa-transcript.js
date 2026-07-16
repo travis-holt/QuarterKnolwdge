@@ -66,21 +66,30 @@ export class TranscriptCapture {
     const last = this._turns[this._turns.length - 1];
     if (last && last.role === normalized) {
       if (last.text.length >= this.maxTurnChars) {
-        if (!this.warnings.includes('turn-length-capped')) this.warnings.push('turn-length-capped');
+        this._warn('turn-length-capped');
         return false;
       }
-      last.text = appendTranscriptFragment(last.text, fragment).slice(0, this.maxTurnChars);
+      // Record the truncation BEFORE slicing so a capped turn is never silent.
+      const merged = appendTranscriptFragment(last.text, fragment);
+      if (merged.length > this.maxTurnChars) this._warn('turn-length-capped');
+      last.text = merged.slice(0, this.maxTurnChars);
       return true;
     }
 
     if (this._turns.length >= this.maxTurns) {
-      if (!this.warnings.includes('turn-count-capped')) this.warnings.push('turn-count-capped');
+      this._warn('turn-count-capped');
       return false;
     }
-    this._turns.push({ role: normalized, text: appendTranscriptFragment('', fragment).slice(0, this.maxTurnChars) });
+    const built = appendTranscriptFragment('', fragment);
+    if (built.length > this.maxTurnChars) this._warn('turn-length-capped');
+    this._turns.push({ role: normalized, text: built.slice(0, this.maxTurnChars) });
     if (normalized === 'navigator') this._navigatorTurns += 1;
     else this._callerTurns += 1;
     return true;
+  }
+
+  _warn(warning) {
+    if (!this.warnings.includes(warning)) this.warnings.push(warning);
   }
 
   /** The coalesced transcript as a plain array (trimmed, empties dropped). */
