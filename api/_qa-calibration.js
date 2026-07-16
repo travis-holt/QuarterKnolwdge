@@ -1,0 +1,920 @@
+import { ASSESSED_DEPTS } from '../src/data/departments.js';
+import { DOMAINS } from '../src/data/questions.js';
+import { COMPETENCIES } from '../src/data/competencies.js';
+import {
+  CALL_QA_SCENARIOS,
+  CALL_QA_SCENARIO_BANK_VERSION,
+  getCallQaScenarioById,
+} from '../src/data/callQaScenarios.js';
+import {
+  QA_AUTO_FAILS,
+  QA_RUBRIC_VERSION,
+  rubricCriteria,
+  VERDICTS,
+} from '../src/data/qaRubric.js';
+import { SAFETY_CRITICAL_CRITERIA } from './_qa-rubric.js';
+import { CALL_QA_CAPTURE_VERSION } from './_call-qa-attempts.js';
+import { CALL_QA_PROMPT_VERSION } from './_qa-grading-versions.js';
+import {
+  CALL_QA_CALIBRATION_GATES,
+  CALL_QA_CALIBRATION_POLICY_VERSION,
+} from './_qa-calibration-gates.js';
+
+export const CALL_QA_CALIBRATION_FORMAT_VERSION = 1;
+export const CALIBRATION_SOURCES = new Set(['synthetic-example', 'human-pilot']);
+export const CALIBRATION_RECOMMENDATIONS = new Set(['pass', 'fail', 'needs_review']);
+export const CALIBRATION_CAPTURE_STATUSES = new Set([
+  'active', 'captured', 'capture_incomplete', 'abandoned',
+]);
+export const CALIBRATION_GRADING_STATUSES = new Set([
+  'not_started', 'grading', 'graded', 'grade_failed',
+]);
+
+const CRITERIA = rubricCriteria();
+const CRITERION_IDS = new Set(CRITERIA.map((criterion) => criterion.id));
+const AUTO_FAIL_IDS = new Set(QA_AUTO_FAILS.map((autoFail) => autoFail.id));
+const PROHIBITED_KEYS = new Set([
+  'navigatorid', 'patientid', 'employeeid', 'firebaseid', 'firebasedocumentid',
+  'firestoredocumentid', 'documentid', 'email', 'emailaddress', 'phone',
+  'phonenumber', 'supervisorpasscode', 'apikey', 'apikeys', 'authtoken',
+  'accesstoken', 'refreshtoken', 'privatekey', 'serviceaccount',
+  'serviceaccountjson', 'credentials', 'firebasetoken', 'navigatorname',
+  'patientname', 'employeename', 'fullname', 'firstname', 'lastname',
+  'dateofbirth', 'dob', 'address', 'streetaddress',
+]);
+const EMAIL = /\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/i;
+const PHONE = /(?:\+?\d[\s().-]*){10,}/;
+
+const rate = (count, denominator) => denominator ? count / denominator : 0;
+const round = (value) => Number(value.toFixed(6));
+
+function addError(errors, path, message) {
+  errors.push(`${path}: ${message}`);
+}
+
+function scanProhibited(value, path, errors, seen = new Set()) {
+  if (!value || typeof value !== 'object') {
+    if (typeof value === 'string') {
+      if (EMAIL.test(value)) addError(errors, path, 'email addresses are prohibited');
+      if (PHONE.test(value)) addError(errors, path, 'phone numbers are prohibited');
+    }
+    return;
+  }
+  if (seen.has(value)) return;
+  seen.add(value);
+  for (const [key, child] of Object.entries(value)) {
+    const normalized = key.toLowerCase().replace(/[^a-z0-9]/g, '');
+    if (PROHIBITED_KEYS.has(normalized)) addError(errors, `${path}.${key}`, 'prohibited field');
+    scanProhibited(child, `${path}.${key}`, errors, seen);
+  }
+}
+
+function validateCriteria(criteria, path, errors) {
+  if (!criteria || typeof criteria !== 'object' || Array.isArray(criteria)) {
+    addError(errors, path, 'must be an object keyed by rubric criterion id');
+    return;
+  }
+  for (const [id, verdict] of Object.entries(criteria)) {
+    if (!CRITERION_IDS.has(id)) addError(errors, `${path}.${id}`, 'unknown rubric criterion');
+    if (!VERDICTS.has(verdict)) addError(errors, `${path}.${id}`, 'invalid verdict');
+  }
+}
+
+function validateAutoFails(autoFails, path, errors) {
+  if (!Array.isArray(autoFails)) {
+    addError(errors, path, 'must be an array');
+    return;
+  }
+  for (const [index, item] of autoFails.entries()) {
+    const id = typeof item === 'string' ? item : item?.id;
+    if (!AUTO_FAIL_IDS.has(id)) addError(errors, `${path}[${index}]`, 'unknown auto-fail id');
+  }
+}
+
+function validateReviewer(reviewer, index, errors) {
+  const path = `humanReview.reviewers[${index}]`;
+  if (!/^reviewer-[a-z0-9-]+$/.test(String(reviewer?.reviewerId ?? ''))) {
+    addError(errors, `${path}.reviewerId`, 'must be a pseudonymous reviewer-* id');
+  }
+  validateCriteria(reviewer?.criteria, `${path}.criteria`, errors);
+  validateAutoFails(reviewer?.autoFails, `${path}.autoFails`, errors);
+  if (!CALIBRATION_RECOMMENDATIONS.has(reviewer?.recommendation)) {
+    addError(errors, `${path}.recommendation`, 'invalid recommendation');
+  }
+}
+
+function validateHumanReview(fixture, errors) {
+  const review = fixture?.humanReview;
+  if (!review || typeof review !== 'object') {
+    addError(errors, 'humanReview', 'is required');
+    return;
+  }
+  if (!Array.isArray(review.reviewers)) {
+    addError(errors, 'humanReview.reviewers', 'must be an array');
+  } else {
+    review.reviewers.forEach((reviewer, index) => validateReviewer(reviewer, index, errors));
+    const ids = review.reviewers.map((reviewer) => reviewer?.reviewerId);
+    if (new Set(ids).size !== ids.length) {
+      addError(errors, 'humanReview.reviewers', 'duplicate reviewer ids');
+    }
+    if (review.reviewerCount !== review.reviewers.length) {
+      addError(errors, 'humanReview.reviewerCount', 'must match the reviewers array length');
+    }
+  }
+  if (fixture.source === 'human-pilot' && (review.reviewers?.length ?? 0) < 2) {
+    addError(errors, 'humanReview.reviewers', 'human-pilot fixtures require at least two reviewers');
+  }
+  if (fixture.source === 'human-pilot' && review.adjudicationStatus !== 'complete') {
+    addError(errors, 'humanReview.adjudicationStatus', 'human-pilot adjudication must be complete');
+  }
+  if (!['pending', 'complete'].includes(review.adjudicationStatus)) {
+    addError(errors, 'humanReview.adjudicationStatus', 'unsupported adjudication status');
+  }
+  const adjudicated = review.adjudicated;
+  if (!adjudicated || typeof adjudicated !== 'object') {
+    addError(errors, 'humanReview.adjudicated', 'is required');
+    return;
+  }
+  validateCriteria(adjudicated.criteria, 'humanReview.adjudicated.criteria', errors);
+  validateAutoFails(adjudicated.autoFails, 'humanReview.adjudicated.autoFails', errors);
+  if (!CALIBRATION_RECOMMENDATIONS.has(adjudicated.recommendation)) {
+    addError(errors, 'humanReview.adjudicated.recommendation', 'invalid recommendation');
+  }
+  if (typeof adjudicated.finalPass !== 'boolean' && adjudicated.finalPass !== null) {
+    addError(errors, 'humanReview.adjudicated.finalPass', 'must be boolean or null');
+  }
+  if (typeof adjudicated.reviewRequired !== 'boolean') {
+    addError(errors, 'humanReview.adjudicated.reviewRequired', 'must be boolean');
+  }
+}
+
+function validateModelRun(fixture, errors) {
+  const gradingStatus = fixture?.capture?.gradingStatus;
+  const run = fixture?.modelRun;
+  if (gradingStatus !== 'graded') {
+    if (run != null) addError(errors, 'modelRun', 'must be null unless gradingStatus is graded');
+    return;
+  }
+  if (!run || typeof run !== 'object') {
+    addError(errors, 'modelRun', 'is required for graded fixtures');
+    return;
+  }
+  for (const field of ['model', 'rubricVersion', 'promptVersion', 'scenarioVersion']) {
+    if (!String(run[field] ?? '').trim()) addError(errors, `modelRun.${field}`, 'provenance is required');
+  }
+  if (run.rubricVersion && run.rubricVersion !== QA_RUBRIC_VERSION) {
+    addError(errors, 'modelRun.rubricVersion', 'unsupported rubric version');
+  }
+  if (run.promptVersion && run.promptVersion !== CALL_QA_PROMPT_VERSION) {
+    addError(errors, 'modelRun.promptVersion', 'unsupported prompt version');
+  }
+  if (run.scenarioVersion && run.scenarioVersion !== CALL_QA_SCENARIO_BANK_VERSION) {
+    addError(errors, 'modelRun.scenarioVersion', 'unsupported scenario version');
+  }
+  if (!CALIBRATION_RECOMMENDATIONS.has(run.recommendation)) {
+    addError(errors, 'modelRun.recommendation', 'invalid recommendation');
+  }
+  if (typeof run.pass !== 'boolean') addError(errors, 'modelRun.pass', 'must be boolean');
+  if (!Number.isFinite(run.score)) addError(errors, 'modelRun.score', 'must be numeric');
+  if (!Array.isArray(run.criteria)) {
+    addError(errors, 'modelRun.criteria', 'must be an array');
+  } else {
+    const ids = new Set();
+    run.criteria.forEach((criterion, index) => {
+      if (!CRITERION_IDS.has(criterion?.id)) {
+        addError(errors, `modelRun.criteria[${index}].id`, 'unknown rubric criterion');
+      }
+      if (!VERDICTS.has(criterion?.verdict)) {
+        addError(errors, `modelRun.criteria[${index}].verdict`, 'invalid verdict');
+      }
+      if (ids.has(criterion?.id)) addError(errors, `modelRun.criteria[${index}].id`, 'duplicate criterion');
+      ids.add(criterion?.id);
+    });
+  }
+  validateAutoFails(run.autoFails, 'modelRun.autoFails', errors);
+  if (!Array.isArray(run.reviewFlags)) addError(errors, 'modelRun.reviewFlags', 'must be an array');
+}
+
+export function validateCalibrationFixture(fixture) {
+  const errors = [];
+  if (!fixture || typeof fixture !== 'object' || Array.isArray(fixture)) {
+    return { valid: false, errors: ['fixture: must be an object'] };
+  }
+  if (fixture.formatVersion !== CALL_QA_CALIBRATION_FORMAT_VERSION) {
+    addError(errors, 'formatVersion', 'unsupported format version');
+  }
+  if (!String(fixture.caseId ?? '').trim()) addError(errors, 'caseId', 'is required');
+  if (!CALIBRATION_SOURCES.has(fixture.source)) addError(errors, 'source', 'unsupported source');
+  if (fixture.sanitized !== true) addError(errors, 'sanitized', 'must be true');
+  if (!ASSESSED_DEPTS.includes(fixture.department)) addError(errors, 'department', 'unknown department');
+
+  const scenario = getCallQaScenarioById(fixture.scenarioId);
+  if (!scenario) addError(errors, 'scenarioId', 'unknown scenario id');
+  else {
+    if (scenario.department !== fixture.department) addError(errors, 'scenarioId', 'scenario belongs to another department');
+    if (fixture.workflowType !== scenario.workflowType) addError(errors, 'workflowType', 'does not match scenario');
+    if (fixture.difficulty !== scenario.difficulty) addError(errors, 'difficulty', 'does not match scenario');
+  }
+
+  const capture = fixture.capture;
+  if (!capture || typeof capture !== 'object') {
+    addError(errors, 'capture', 'is required');
+  } else {
+    if (!CALIBRATION_CAPTURE_STATUSES.has(capture.captureStatus)) {
+      addError(errors, 'capture.captureStatus', 'unsupported capture status');
+    }
+    if (!CALIBRATION_GRADING_STATUSES.has(capture.gradingStatus)) {
+      addError(errors, 'capture.gradingStatus', 'unsupported grading status');
+    }
+    if (typeof capture.captureComplete !== 'boolean') {
+      addError(errors, 'capture.captureComplete', 'must be boolean');
+    }
+    if (!String(capture.captureVersion ?? '').trim()) {
+      addError(errors, 'capture.captureVersion', 'is required');
+    } else if (capture.captureVersion !== CALL_QA_CAPTURE_VERSION) {
+      addError(errors, 'capture.captureVersion', 'unsupported capture version');
+    }
+    if (!String(capture.liveModel ?? '').trim()) addError(errors, 'capture.liveModel', 'is required');
+    if (!Array.isArray(capture.warnings)) addError(errors, 'capture.warnings', 'must be an array');
+    for (const field of ['navigatorTurnCount', 'callerTurnCount']) {
+      if (!Number.isInteger(capture[field]) || capture[field] < 0) {
+        addError(errors, `capture.${field}`, 'must be a non-negative integer');
+      }
+    }
+  }
+
+  if (!Array.isArray(fixture.transcript) || fixture.transcript.length === 0) {
+    addError(errors, 'transcript', 'must be a non-empty array');
+  } else {
+    let navigatorTurns = 0;
+    fixture.transcript.forEach((turn, index) => {
+      if (!['patient', 'navigator'].includes(turn?.role)) {
+        addError(errors, `transcript[${index}].role`, 'unknown transcript role');
+      }
+      if (turn?.role === 'navigator') navigatorTurns += 1;
+      if (!String(turn?.text ?? '').trim()) addError(errors, `transcript[${index}].text`, 'must be non-empty');
+    });
+    if (navigatorTurns === 0) addError(errors, 'transcript', 'missing navigator turns');
+  }
+
+  validateHumanReview(fixture, errors);
+  validateModelRun(fixture, errors);
+  scanProhibited(fixture, 'fixture', errors);
+  return { valid: errors.length === 0, errors };
+}
+
+function criterionMap(criteria) {
+  if (Array.isArray(criteria)) {
+    return new Map(criteria.map((criterion) => [criterion.id, criterion]));
+  }
+  return new Map(Object.entries(criteria ?? {}).map(([id, verdict]) => [id, { id, verdict }]));
+}
+
+function autoFailSet(autoFails) {
+  return new Set((autoFails ?? []).map((item) => typeof item === 'string' ? item : item?.id).filter(Boolean));
+}
+
+function outcome(review) {
+  if (review?.reviewRequired || review?.recommendation === 'needs_review') return 'review';
+  return review?.recommendation === 'pass' ? 'pass' : 'fail';
+}
+
+export function evaluateCalibrationCase(fixture) {
+  const validation = validateCalibrationFixture(fixture);
+  if (!validation.valid) {
+    const error = new Error(`Invalid calibration fixture ${fixture?.caseId ?? '<unknown>'}:\n${validation.errors.join('\n')}`);
+    error.validationErrors = validation.errors;
+    throw error;
+  }
+  const human = fixture.humanReview.adjudicated;
+  const evaluable = fixture.capture.gradingStatus === 'graded' && fixture.modelRun;
+  return {
+    caseId: fixture.caseId,
+    source: fixture.source,
+    department: fixture.department,
+    scenarioId: fixture.scenarioId,
+    workflowType: fixture.workflowType,
+    difficulty: fixture.difficulty,
+    humanOutcome: outcome(human),
+    modelOutcome: evaluable ? outcome(fixture.modelRun) : null,
+    humanCriteria: criterionMap(human.criteria),
+    modelCriteria: criterionMap(fixture.modelRun?.criteria),
+    humanAutoFails: autoFailSet(human.autoFails),
+    modelAutoFails: autoFailSet(fixture.modelRun?.autoFails),
+    evaluable: Boolean(evaluable),
+    fixture,
+  };
+}
+
+export function wilsonInterval(count, denominator, z = 1.959963984540054) {
+  if (!denominator) {
+    return { count, denominator, observedRate: null, lower95: null, upper95: null };
+  }
+  const p = count / denominator;
+  const z2 = z * z;
+  const center = (p + z2 / (2 * denominator)) / (1 + z2 / denominator);
+  const margin = z * Math.sqrt((p * (1 - p) + z2 / (4 * denominator)) / denominator)
+    / (1 + z2 / denominator);
+  return {
+    count,
+    denominator,
+    observedRate: round(p),
+    lower95: round(Math.max(0, center - margin)),
+    upper95: round(Math.min(1, center + margin)),
+  };
+}
+
+function emptyConfusionMatrix() {
+  return Object.fromEntries(['pass', 'fail', 'review'].map((human) => [
+    human,
+    { pass: 0, fail: 0, review: 0 },
+  ]));
+}
+
+function ratioMetric(tp, fp, fn, tn) {
+  return {
+    truePositives: tp,
+    falsePositives: fp,
+    falseNegatives: fn,
+    trueNegatives: tn,
+    precision: rate(tp, tp + fp),
+    recall: rate(tp, tp + fn),
+    agreement: rate(tp + tn, tp + fp + fn + tn),
+  };
+}
+
+function buildCriterionMetrics(cases) {
+  const metrics = {};
+  let applicableCorrect = 0;
+  let applicableTotal = 0;
+  let weightedCorrect = 0;
+  let weightedTotal = 0;
+  let safetyCorrect = 0;
+  let safetyTotal = 0;
+  let nonSafetyCorrect = 0;
+  let nonSafetyTotal = 0;
+
+  for (const definition of CRITERIA) {
+    const comparisons = cases.flatMap((item) => {
+      const human = item.humanCriteria.get(definition.id);
+      const model = item.modelCriteria.get(definition.id);
+      return human && model ? [{ item, human, model }] : [];
+    });
+    const applicable = comparisons.filter(({ human }) => human.verdict !== 'NA');
+    const agreementCount = comparisons.filter(({ human, model }) => human.verdict === model.verdict).length;
+    const applicableAgreement = applicable.filter(({ human, model }) => human.verdict === model.verdict).length;
+    const binary = (positive) => {
+      let tp = 0; let fp = 0; let fn = 0; let tn = 0;
+      for (const { human, model } of comparisons) {
+        if (human.verdict === positive && model.verdict === positive) tp += 1;
+        else if (human.verdict !== positive && model.verdict === positive) fp += 1;
+        else if (human.verdict === positive && model.verdict !== positive) fn += 1;
+        else tn += 1;
+      }
+      return ratioMetric(tp, fp, fn, tn);
+    };
+    const naHuman = comparisons.filter(({ human }) => human.verdict === 'NA');
+    const unresolved = comparisons.filter(({ model }) => model.unresolved || model.unverified).length;
+    const escalated = comparisons.filter(({ item }) => item.modelOutcome === 'review').length;
+    const disagreementExamples = comparisons
+      .filter(({ human, model }) => human.verdict !== model.verdict)
+      .map(({ item }) => item.caseId)
+      .sort();
+    metrics[definition.id] = {
+      applicableCaseCount: applicable.length,
+      comparedCaseCount: comparisons.length,
+      agreementCount,
+      agreement: rate(agreementCount, comparisons.length),
+      met: binary('MET'),
+      notMet: binary('NOT_MET'),
+      naAgreement: rate(naHuman.filter(({ model }) => model.verdict === 'NA').length, naHuman.length),
+      evidenceUnresolvedCount: unresolved,
+      reviewEscalationCount: escalated,
+      disagreementExamples,
+      safetyCritical: SAFETY_CRITICAL_CRITERIA.has(definition.id),
+    };
+    applicableCorrect += applicableAgreement;
+    applicableTotal += applicable.length;
+    weightedCorrect += applicableAgreement * definition.points;
+    weightedTotal += applicable.length * definition.points;
+    if (SAFETY_CRITICAL_CRITERIA.has(definition.id)) {
+      safetyCorrect += applicableAgreement;
+      safetyTotal += applicable.length;
+    } else {
+      nonSafetyCorrect += applicableAgreement;
+      nonSafetyTotal += applicable.length;
+    }
+  }
+  const agreements = Object.values(metrics)
+    .filter((metric) => metric.comparedCaseCount > 0)
+    .map((metric) => metric.agreement);
+  return {
+    criteria: metrics,
+    macroAgreement: rate(agreements.reduce((sum, value) => sum + value, 0), agreements.length),
+    weightedAgreement: rate(weightedCorrect, weightedTotal),
+    applicableAgreement: rate(applicableCorrect, applicableTotal),
+    safetyCriticalAgreement: rate(safetyCorrect, safetyTotal),
+    safetyCriticalComparedCount: safetyTotal,
+    safetyCriticalDisagreementInterval: wilsonInterval(safetyTotal - safetyCorrect, safetyTotal),
+    nonSafetyAgreement: rate(nonSafetyCorrect, nonSafetyTotal),
+  };
+}
+
+function buildAutoFailMetrics(cases) {
+  const metrics = {};
+  let aggregateTp = 0; let aggregateFp = 0; let aggregateFn = 0; let aggregateTn = 0;
+  for (const definition of QA_AUTO_FAILS) {
+    let tp = 0; let fp = 0; let fn = 0; let tn = 0; let escalated = 0;
+    for (const item of cases) {
+      const human = item.humanAutoFails.has(definition.id);
+      const model = item.modelAutoFails.has(definition.id);
+      if (human && model) tp += 1;
+      else if (!human && model) fp += 1;
+      else if (human && !model) fn += 1;
+      else tn += 1;
+      if (model && item.modelOutcome === 'review') escalated += 1;
+    }
+    metrics[definition.id] = { ...ratioMetric(tp, fp, fn, tn), escalatedToReview: escalated };
+    aggregateTp += tp; aggregateFp += fp; aggregateFn += fn; aggregateTn += tn;
+  }
+  const aggregate = ratioMetric(aggregateTp, aggregateFp, aggregateFn, aggregateTn);
+  return {
+    autoFails: metrics,
+    totalFalseAutomaticAutoFails: aggregateFp,
+    totalMissedHumanAutoFails: aggregateFn,
+    precision: aggregate.precision,
+    recall: aggregate.recall,
+    agreement: aggregate.agreement,
+    falsePositiveInterval: wilsonInterval(aggregateFp, aggregateFp + aggregateTn),
+  };
+}
+
+function hasWarning(item, warning) {
+  return (item.fixture.capture.warnings ?? []).includes(warning);
+}
+
+function hasReviewFlag(item, flag) {
+  return (item.fixture.modelRun?.reviewFlags ?? []).some((itemFlag) =>
+    (typeof itemFlag === 'string' ? itemFlag : itemFlag?.id) === flag);
+}
+
+function buildCaptureMetrics(items) {
+  const total = items.length;
+  const count = (predicate) => items.filter(predicate).length;
+  const clean = count((item) =>
+    item.fixture.capture.captureStatus === 'captured' &&
+    item.fixture.capture.captureComplete === true &&
+    (item.fixture.capture.warnings ?? []).length === 0);
+  const incomplete = count((item) => item.fixture.capture.captureStatus === 'capture_incomplete');
+  const abandoned = count((item) => item.fixture.capture.captureStatus === 'abandoned');
+  const gradeFailed = count((item) => item.fixture.capture.gradingStatus === 'grade_failed');
+  const criticalOmission = count((item) =>
+    item.fixture.capture.captureStatus === 'capture_incomplete' ||
+    hasWarning(item, 'drain-timeout') ||
+    hasWarning(item, 'missing-turn-complete') ||
+    hasReviewFlag(item, 'capture-integrity-incomplete'));
+  const corrected = items.map((item) => Number(item.fixture.modelRun?.correctedTurns ?? 0));
+  const correctedAttempts = corrected.filter((value) => value > 0).length;
+  return {
+    totalAttempts: total,
+    cleanCaptureCount: clean,
+    cleanCaptureRate: rate(clean, total),
+    captureIncompleteCount: incomplete,
+    captureIncompleteRate: rate(incomplete, total),
+    captureIncompleteInterval: wilsonInterval(incomplete, total),
+    abandonedCount: abandoned,
+    abandonedRate: rate(abandoned, total),
+    gradeFailureCount: gradeFailed,
+    gradeFailureRate: rate(gradeFailed, total),
+    turnCountCappedCount: count((item) => hasWarning(item, 'turn-count-capped')),
+    turnCountCappedRate: rate(count((item) => hasWarning(item, 'turn-count-capped')), total),
+    turnLengthCappedCount: count((item) => hasWarning(item, 'turn-length-capped')),
+    turnLengthCappedRate: rate(count((item) => hasWarning(item, 'turn-length-capped')), total),
+    drainTimeoutCount: count((item) => hasWarning(item, 'drain-timeout')),
+    drainTimeoutRate: rate(count((item) => hasWarning(item, 'drain-timeout')), total),
+    missingTurnCompleteCount: count((item) => hasWarning(item, 'missing-turn-complete')),
+    missingTurnCompleteRate: rate(count((item) => hasWarning(item, 'missing-turn-complete')), total),
+    lowTurnCountCount: count((item) =>
+      item.fixture.capture.navigatorTurnCount < 3 || item.fixture.transcript.length < 4),
+    lowTurnCountRate: rate(count((item) =>
+      item.fixture.capture.navigatorTurnCount < 3 || item.fixture.transcript.length < 4), total),
+    glossaryCorrectedAttemptCount: correctedAttempts,
+    glossaryCorrectedAttemptRate: rate(correctedAttempts, total),
+    averageCorrectedTurnCount: rate(corrected.reduce((sum, value) => sum + value, 0), total),
+    lowTranscriptConfidenceCount: count((item) => hasReviewFlag(item, 'low-transcript-confidence')),
+    captureIntegrityReviewCount: count((item) => hasReviewFlag(item, 'capture-integrity-incomplete')),
+    criticalTranscriptOmissionCount: criticalOmission,
+    criticalTranscriptOmissionRate: rate(criticalOmission, total),
+  };
+}
+
+function groupBreakdown(cases, getter) {
+  const groups = new Map();
+  for (const item of cases) {
+    const key = String(getter(item) ?? 'unknown');
+    const group = groups.get(key) ?? { count: 0, human: { pass: 0, fail: 0, review: 0 }, model: { pass: 0, fail: 0, review: 0 } };
+    group.count += 1;
+    group.human[item.humanOutcome] += 1;
+    if (item.modelOutcome) group.model[item.modelOutcome] += 1;
+    groups.set(key, group);
+  }
+  return Object.fromEntries([...groups.entries()].sort(([a], [b]) => a.localeCompare(b)));
+}
+
+function versionBreakdown(cases, getter) {
+  return Object.entries(groupBreakdown(cases, getter)).map(([value, group]) => ({
+    value,
+    count: group.count,
+  }));
+}
+
+function populationKey(item) {
+  const run = item.fixture.modelRun ?? {};
+  return [
+    run.model,
+    run.rubricVersion,
+    run.promptVersion,
+    run.scenarioVersion,
+    item.fixture.capture.captureVersion,
+    item.fixture.capture.liveModel,
+  ].map((value) => value ?? 'unknown').join(' | ');
+}
+
+function buildCalibrationReportInternal(fixtures, includePopulations) {
+  const seen = new Set();
+  const all = fixtures.map((fixture) => {
+    const item = evaluateCalibrationCase(fixture);
+    if (seen.has(item.caseId)) throw new Error(`Duplicate calibration caseId: ${item.caseId}`);
+    seen.add(item.caseId);
+    return item;
+  });
+  const human = all.filter((item) => item.source === 'human-pilot');
+  const cases = human.filter((item) => item.evaluable);
+  const confusionMatrix = emptyConfusionMatrix();
+  cases.forEach((item) => { confusionMatrix[item.humanOutcome][item.modelOutcome] += 1; });
+  const total = cases.length;
+  const humanFail = cases.filter((item) => item.humanOutcome === 'fail').length;
+  const humanPass = cases.filter((item) => item.humanOutcome === 'pass').length;
+  const humanReview = cases.filter((item) => item.humanOutcome === 'review').length;
+  const falsePasses = confusionMatrix.fail.pass;
+  const falseFails = confusionMatrix.pass.fail;
+  const reviewMisses = confusionMatrix.review.pass + confusionMatrix.review.fail;
+  const exactAgreement = cases.filter((item) => item.humanOutcome === item.modelOutcome).length;
+  const modelReview = cases.filter((item) => item.modelOutcome === 'review').length;
+  const criterion = buildCriterionMetrics(cases);
+  const autoFail = buildAutoFailMetrics(cases);
+  const versions = {
+    graderModel: versionBreakdown(cases, (item) => item.fixture.modelRun.model),
+    rubricVersion: versionBreakdown(cases, (item) => item.fixture.modelRun.rubricVersion),
+    promptVersion: versionBreakdown(cases, (item) => item.fixture.modelRun.promptVersion),
+    scenarioVersion: versionBreakdown(cases, (item) => item.fixture.modelRun.scenarioVersion),
+    captureVersion: versionBreakdown(cases, (item) => item.fixture.capture.captureVersion),
+    liveVoiceModel: versionBreakdown(cases, (item) => item.fixture.capture.liveModel),
+    populations: versionBreakdown(cases, populationKey),
+  };
+  const mixed = versions.graderModel.length > 1 ||
+    versions.rubricVersion.length > 1 ||
+    versions.promptVersion.length > 1;
+  const report = {
+    formatVersion: 1,
+    policyVersion: CALL_QA_CALIBRATION_POLICY_VERSION,
+    evidenceSummary: {
+      fixtureCount: all.length,
+      syntheticExampleCount: all.filter((item) => item.source === 'synthetic-example').length,
+      humanPilotFixtureCount: human.length,
+      evaluatedHumanCaseCount: cases.length,
+      excludedUngradedHumanCaseCount: human.length - cases.length,
+      minimumReviewerCount: human.length
+        ? Math.min(...human.map((item) => item.fixture.humanReview.reviewers.length))
+        : 0,
+      accuracyConclusionAvailable: cases.length > 0,
+      note: cases.length
+        ? 'Accuracy metrics use adjudicated human-pilot fixtures only.'
+        : 'No real-world accuracy conclusion is possible without adjudicated human-pilot fixtures.',
+    },
+    confusionMatrix,
+    finalOutcomes: {
+      totalEvaluatedCases: total,
+      agreementCount: exactAgreement,
+      finalVerdictAgreement: rate(exactAgreement, total),
+      falsePassCount: falsePasses,
+      falsePassRate: rate(falsePasses, humanFail),
+      falsePassInterval: wilsonInterval(falsePasses, humanFail),
+      falseFailCount: falseFails,
+      falseFailRate: rate(falseFails, humanPass),
+      falseFailInterval: wilsonInterval(falseFails, humanPass),
+      reviewMissCount: reviewMisses,
+      reviewMissRate: rate(reviewMisses, humanReview),
+      correctEscalationToReviewCount: confusionMatrix.review.review,
+      supervisorReviewRate: rate(modelReview, total),
+      confidentDecisionRate: rate(total - modelReview, total),
+    },
+    criterionMetrics: criterion,
+    autoFailMetrics: autoFail,
+    captureMetrics: buildCaptureMetrics(human),
+    versionBreakdowns: versions,
+    populationWarning: mixed ? 'MIXED CALIBRATION POPULATION' : null,
+    operationalBreakdowns: {
+      department: groupBreakdown(cases, (item) => item.department),
+      scenario: groupBreakdown(cases, (item) => item.scenarioId),
+      workflowType: groupBreakdown(cases, (item) => item.workflowType),
+      difficulty: groupBreakdown(cases, (item) => item.difficulty),
+      humanFinalVerdict: groupBreakdown(cases, (item) => item.humanOutcome),
+      captureStatus: groupBreakdown(cases, (item) => item.fixture.capture.captureStatus),
+      gradingPopulation: groupBreakdown(cases, populationKey),
+    },
+    coverage: buildScenarioCoverageReport(CALL_QA_SCENARIOS, fixtures),
+    approvedPopulation: versions.populations.length === 1 ? versions.populations[0].value : null,
+  };
+  if (includePopulations && versions.populations.length > 1) {
+    report.populationReports = Object.fromEntries(
+      versions.populations.map(({ value }) => [
+        value,
+        buildCalibrationReportInternal(
+          fixtures.filter((fixture) => fixture.source !== 'human-pilot' ||
+            (fixture.modelRun && populationKey(evaluateCalibrationCase(fixture)) === value)),
+          false,
+        ),
+      ]),
+    );
+  }
+  return report;
+}
+
+export function buildCalibrationReport(fixtures) {
+  return buildCalibrationReportInternal(fixtures, true);
+}
+
+function sampleCoverageFailures(report, gates) {
+  const reasons = [];
+  if (report.evidenceSummary.evaluatedHumanCaseCount < gates.minimumCases) {
+    reasons.push(`minimumCases:${report.evidenceSummary.evaluatedHumanCaseCount}/${gates.minimumCases}`);
+  }
+  if (report.evidenceSummary.humanPilotFixtureCount > 0 &&
+      report.evidenceSummary.minimumReviewerCount < gates.minimumReviewersPerHumanCase) {
+    reasons.push(`minimumReviewers:${report.evidenceSummary.minimumReviewerCount}/${gates.minimumReviewersPerHumanCase}`);
+  }
+  for (const department of ASSESSED_DEPTS) {
+    const count = report.operationalBreakdowns.department[department]?.count ?? 0;
+    if (count < gates.minimumCasesPerDepartment) {
+      reasons.push(`department:${department}:${count}/${gates.minimumCasesPerDepartment}`);
+    }
+  }
+  for (const scenario of CALL_QA_SCENARIOS) {
+    const count = report.operationalBreakdowns.scenario[scenario.id]?.count ?? 0;
+    if (count < gates.minimumCasesPerScenario) {
+      reasons.push(`scenario:${scenario.id}:${count}/${gates.minimumCasesPerScenario}`);
+    }
+  }
+  const workflows = new Set(CALL_QA_SCENARIOS.map((scenario) => scenario.workflowType));
+  for (const workflow of workflows) {
+    const count = report.operationalBreakdowns.workflowType[workflow]?.count ?? 0;
+    if (count < gates.minimumCasesPerWorkflow) {
+      reasons.push(`workflow:${workflow}:${count}/${gates.minimumCasesPerWorkflow}`);
+    }
+  }
+  return reasons;
+}
+
+function performanceFailures(report, gates) {
+  const failures = [];
+  if (report.finalOutcomes.finalVerdictAgreement < gates.minimumFinalAgreement) failures.push('final-agreement');
+  if (report.finalOutcomes.falsePassRate > gates.maximumFalsePassRate) failures.push('false-pass-rate');
+  if (report.finalOutcomes.falseFailRate > gates.maximumFalseFailRate) failures.push('false-fail-rate');
+  return failures;
+}
+
+function safetyFailures(report, gates) {
+  const failures = [];
+  if (report.finalOutcomes.reviewMissCount > gates.maximumReviewMisses) failures.push('review-miss');
+  if (report.autoFailMetrics.totalFalseAutomaticAutoFails > gates.maximumFalseAutoFails) failures.push('false-auto-fail');
+  if (report.autoFailMetrics.precision < gates.minimumAutoFailPrecision &&
+      report.autoFailMetrics.totalFalseAutomaticAutoFails > 0) failures.push('auto-fail-precision');
+  if (report.criterionMetrics.safetyCriticalAgreement < gates.minimumSafetyCriticalAgreement) {
+    failures.push('safety-critical-agreement');
+  }
+  if (report.captureMetrics.criticalTranscriptOmissionRate > gates.maximumCriticalTranscriptOmissionRate) {
+    failures.push('critical-transcript-omission');
+  }
+  return failures;
+}
+
+export function evaluateCalibrationReadiness(report, gates = CALL_QA_CALIBRATION_GATES) {
+  const mixedRequired = (
+    (gates.requireSingleGraderModelVersion && report.versionBreakdowns.graderModel.length > 1) ||
+    (gates.requireSingleRubricVersion && report.versionBreakdowns.rubricVersion.length > 1) ||
+    (gates.requireSinglePromptVersion && report.versionBreakdowns.promptVersion.length > 1)
+  );
+  if (mixedRequired) {
+    for (const [population, populationReport] of Object.entries(report.populationReports ?? {})) {
+      const result = evaluateCalibrationReadiness(populationReport, gates);
+      if (['READY_FOR_SHADOW', 'READY_FOR_CLEAN_PASS_CONSIDERATION'].includes(result.state)) {
+        return { ...result, approvedPopulation: population, populationWarning: 'MIXED CALIBRATION POPULATION' };
+      }
+    }
+    return {
+      state: 'INSUFFICIENT_DATA',
+      policyVersion: CALL_QA_CALIBRATION_POLICY_VERSION,
+      reasons: ['MIXED CALIBRATION POPULATION: no single version population independently satisfies the gates'],
+    };
+  }
+
+  const sampleFailures = sampleCoverageFailures(report, gates);
+  if (sampleFailures.length) {
+    return {
+      state: 'INSUFFICIENT_DATA',
+      policyVersion: CALL_QA_CALIBRATION_POLICY_VERSION,
+      reasons: sampleFailures,
+    };
+  }
+  const safety = safetyFailures(report, gates);
+  if (safety.length) {
+    return {
+      state: 'FAILS_SAFETY_GATE',
+      policyVersion: CALL_QA_CALIBRATION_POLICY_VERSION,
+      reasons: safety,
+    };
+  }
+  const accuracy = performanceFailures(report, gates);
+  if (accuracy.length) {
+    return {
+      state: 'FAILS_ACCURACY_GATE',
+      policyVersion: CALL_QA_CALIBRATION_POLICY_VERSION,
+      reasons: accuracy,
+    };
+  }
+
+  const statisticallyBounded =
+    report.finalOutcomes.falsePassInterval.upper95 <= gates.maximumFalsePassRate &&
+    report.finalOutcomes.falseFailInterval.upper95 <= gates.maximumFalseFailRate &&
+    report.criterionMetrics.safetyCriticalDisagreementInterval.upper95 <=
+      1 - gates.minimumSafetyCriticalAgreement;
+  return {
+    state: statisticallyBounded ? 'READY_FOR_CLEAN_PASS_CONSIDERATION' : 'READY_FOR_SHADOW',
+    policyVersion: CALL_QA_CALIBRATION_POLICY_VERSION,
+    reasons: statisticallyBounded
+      ? []
+      : ['Observed gates pass, but 95% confidence bounds are not yet tight enough for clean-pass consideration'],
+    approvedPopulation: report.approvedPopulation,
+  };
+}
+
+function balance(fixtures) {
+  const counts = { pass: 0, fail: 0, review: 0 };
+  fixtures.forEach((fixture) => { counts[outcome(fixture.humanReview.adjudicated)] += 1; });
+  return counts;
+}
+
+export function buildScenarioCoverageReport(scenarios = CALL_QA_SCENARIOS, fixtures = []) {
+  const human = fixtures.filter((fixture) => fixture.source === 'human-pilot');
+  const departments = {};
+  const flags = [];
+  const safetyIds = [...SAFETY_CRITICAL_CRITERIA];
+
+  for (const department of ASSESSED_DEPTS) {
+    const departmentScenarios = scenarios.filter((scenario) => scenario.department === department);
+    const departmentFixtures = human.filter((fixture) => fixture.department === department);
+    const workflows = {};
+    for (const scenario of departmentScenarios) {
+      const workflow = workflows[scenario.workflowType] ?? { scenarioCount: 0, humanCaseCount: 0, scenarios: [] };
+      const scenarioFixtures = departmentFixtures.filter((fixture) => fixture.scenarioId === scenario.id);
+      workflow.scenarioCount += 1;
+      workflow.humanCaseCount += scenarioFixtures.length;
+      workflow.scenarios.push(scenario.id);
+      workflows[scenario.workflowType] = workflow;
+      if (scenarioFixtures.length < 8) flags.push({ id: 'scenario-low-volume', department, scenarioId: scenario.id, count: scenarioFixtures.length });
+    }
+    for (const [workflowType, workflow] of Object.entries(workflows)) {
+      if (workflow.scenarioCount === 1) flags.push({ id: 'workflow-single-scenario', department, workflowType });
+      if (workflow.humanCaseCount < 10) flags.push({ id: 'workflow-low-volume', department, workflowType, count: workflow.humanCaseCount });
+    }
+    if (departmentFixtures.length < 80) flags.push({ id: 'department-low-volume', department, count: departmentFixtures.length });
+
+    const difficultyDistribution = Object.fromEntries(['easy', 'medium', 'hard'].map((difficulty) => [
+      difficulty,
+      departmentScenarios.filter((scenario) => scenario.difficulty === difficulty).length,
+    ]));
+    for (const [difficulty, count] of Object.entries(difficultyDistribution)) {
+      if (!count) flags.push({ id: 'missing-difficulty', department, difficulty });
+    }
+    const domainCoverage = Object.fromEntries(DOMAINS.map((domain) => {
+      const matching = departmentScenarios.filter((scenario) => scenario.domainIds.includes(domain.id));
+      const humanCases = departmentFixtures.filter((fixture) =>
+        matching.some((scenario) => scenario.id === fixture.scenarioId)).length;
+      if (!matching.length || !humanCases) flags.push({ id: 'domain-not-meaningfully-exercised', department, domainId: domain.id, humanCases });
+      return [domain.id, { scenarioCount: matching.length, humanCaseCount: humanCases }];
+    }));
+    const competencyCoverage = Object.fromEntries(COMPETENCIES.map((competency) => {
+      const matching = departmentScenarios.filter((scenario) => scenario.competencyIds.includes(competency.id));
+      const humanCases = departmentFixtures.filter((fixture) =>
+        matching.some((scenario) => scenario.id === fixture.scenarioId)).length;
+      if (!matching.length || !humanCases) flags.push({ id: 'competency-not-meaningfully-exercised', department, competencyId: competency.id, humanCases });
+      return [competency.id, { scenarioCount: matching.length, humanCaseCount: humanCases }];
+    }));
+    const rubricCriterionCoverage = Object.fromEntries(CRITERIA.map((criterion) => {
+      const count = departmentFixtures.filter((fixture) =>
+        fixture.humanReview.adjudicated.criteria?.[criterion.id] &&
+        fixture.humanReview.adjudicated.criteria[criterion.id] !== 'NA').length;
+      if (SAFETY_CRITICAL_CRITERIA.has(criterion.id) && count < 8) {
+        flags.push({ id: 'safety-critical-low-volume', department, criterionId: criterion.id, count });
+      }
+      return [criterion.id, count];
+    }));
+    const safetyCriticalScenarioCoverage = Object.fromEntries(departmentScenarios.map((scenario) => {
+      const scenarioFixtures = departmentFixtures.filter((fixture) => fixture.scenarioId === scenario.id);
+      const applicableCriteria = safetyIds.filter((criterionId) =>
+        scenarioFixtures.some((fixture) =>
+          fixture.humanReview.adjudicated.criteria?.[criterionId] &&
+          fixture.humanReview.adjudicated.criteria[criterionId] !== 'NA'));
+      return [scenario.id, {
+        humanCaseCount: scenarioFixtures.length,
+        applicableSafetyCriteria: applicableCriteria,
+      }];
+    }));
+    const refillCount = departmentFixtures.filter((fixture) => fixture.workflowType === 'prescription_refill').length;
+    if (departmentFixtures.length && refillCount / departmentFixtures.length > 0.4) {
+      flags.push({ id: 'refill-concentration', department, rate: refillCount / departmentFixtures.length });
+    }
+    const maxScenario = Math.max(0, ...departmentScenarios.map((scenario) =>
+      departmentFixtures.filter((fixture) => fixture.scenarioId === scenario.id).length));
+    if (departmentFixtures.length && maxScenario / departmentFixtures.length > 0.25) {
+      flags.push({ id: 'scenario-concentration', department, rate: maxScenario / departmentFixtures.length });
+    }
+    departments[department] = {
+      totalCuratedScenarios: departmentScenarios.length,
+      workflowTypes: Object.keys(workflows).sort(),
+      workflows,
+      difficultyDistribution,
+      domainCoverage,
+      competencyCoverage,
+      rubricCriterionCoverage,
+      safetyCriticalScenarioCoverage,
+      safetyCriticalCriterionIds: safetyIds,
+      humanCalibrationCaseCount: departmentFixtures.length,
+      humanVerdictBalance: balance(departmentFixtures),
+    };
+  }
+  const maxDepartment = Math.max(0, ...Object.values(departments).map((department) => department.humanCalibrationCaseCount));
+  if (human.length && maxDepartment / human.length > 0.6) {
+    flags.push({ id: 'department-concentration', rate: maxDepartment / human.length });
+  }
+  return {
+    humanCalibrationCaseCount: human.length,
+    departments,
+    flags: flags.sort((a, b) => JSON.stringify(a).localeCompare(JSON.stringify(b))),
+  };
+}
+
+function percent(value) {
+  return value == null ? 'N/A' : `${(value * 100).toFixed(1)}%`;
+}
+
+export function formatCalibrationMarkdown(report) {
+  const readiness = report.readiness ?? evaluateCalibrationReadiness(report);
+  const lines = [
+    '# Call QA Calibration Report',
+    '',
+    `Policy: \`${readiness.policyVersion}\``,
+    `Readiness: **${readiness.state}**`,
+    '',
+    report.populationWarning ? `> **${report.populationWarning}**` : '',
+    report.populationWarning ? '' : '',
+    '## Evidence',
+    '',
+    `- Human pilot fixtures: ${report.evidenceSummary.humanPilotFixtureCount}`,
+    `- Synthetic examples excluded from accuracy: ${report.evidenceSummary.syntheticExampleCount}`,
+    `- Evaluated human cases: ${report.evidenceSummary.evaluatedHumanCaseCount}`,
+    `- ${report.evidenceSummary.note}`,
+    '',
+    '## Final outcomes',
+    '',
+    `- Agreement: ${percent(report.finalOutcomes.finalVerdictAgreement)}`,
+    `- False passes: ${report.finalOutcomes.falsePassCount} (${percent(report.finalOutcomes.falsePassRate)}, 95% upper ${percent(report.finalOutcomes.falsePassInterval.upper95)})`,
+    `- False fails: ${report.finalOutcomes.falseFailCount} (${percent(report.finalOutcomes.falseFailRate)}, 95% upper ${percent(report.finalOutcomes.falseFailInterval.upper95)})`,
+    `- Review misses: ${report.finalOutcomes.reviewMissCount}`,
+    `- Supervisor review rate: ${percent(report.finalOutcomes.supervisorReviewRate)}`,
+    '',
+    '## Safety and capture',
+    '',
+    `- Safety-critical criterion agreement: ${percent(report.criterionMetrics.safetyCriticalAgreement)}`,
+    `- False automatic auto-fails: ${report.autoFailMetrics.totalFalseAutomaticAutoFails}`,
+    `- Missed human auto-fails: ${report.autoFailMetrics.totalMissedHumanAutoFails}`,
+    `- Clean capture rate: ${percent(report.captureMetrics.cleanCaptureRate)}`,
+    `- Capture-incomplete rate: ${percent(report.captureMetrics.captureIncompleteRate)}`,
+    `- Critical transcript omission rate: ${percent(report.captureMetrics.criticalTranscriptOmissionRate)}`,
+    '',
+    '## Coverage gaps',
+    '',
+    ...(report.coverage.flags.length
+      ? report.coverage.flags.map((flag) => `- ${Object.values(flag).join(' · ')}`)
+      : ['- None']),
+    '',
+    '## Readiness reasons',
+    '',
+    ...(readiness.reasons.length ? readiness.reasons.map((reason) => `- ${reason}`) : ['- All configured gates passed.']),
+    '',
+    '> This report is calibration and shadow-readiness evidence only. It does not enable an automatic final verdict.',
+    '',
+  ];
+  return lines.filter((line, index) => line !== '' || lines[index - 1] !== '').join('\n');
+}

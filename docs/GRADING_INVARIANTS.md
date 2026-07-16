@@ -8,7 +8,37 @@
 > [`api/_qa-grading-corpus.test.js`](../api/_qa-grading-corpus.test.js) — if one of
 > those tests fails after your change, re-read this document before "fixing" the test.
 >
-> Last updated: 2026-07-15 (PR 2 final merge blocker — checkpoint write serialization).
+> Last updated: 2026-07-16 (PR 3 — Call QA calibration and shadow readiness).
+
+## 0e. Call QA calibration and shadow automation (PR 3, 2026-07-16)
+
+These rules measure the existing pipeline without weakening §§0–0d:
+
+1. **Synthetic regression is not human accuracy evidence.** Synthetic examples,
+   deterministic corpus runs, captured model replay, adjudicated human pilots,
+   optional live runs, and automation readiness are reported as separate layers.
+2. **Only sanitized, adjudicated human-pilot fixtures count toward readiness.**
+   Each requires at least two independent pseudonymous reviewers; incomplete or
+   malformed fixtures fail validation and are never silently skipped.
+3. **Calibration is offline by default.** The normal CLI performs no model or
+   Firestore call. Live grading requires `CALL_QA_CALIBRATION_LIVE=true`,
+   `--live`, `--confirm-live`, and Gemini keys, and uses only local sanitized
+   fixtures through the existing pinned `gradeCallQaTranscript()` path.
+4. **Version populations remain isolated.** Grader, rubric, prompt, scenario,
+   capture, and live voice versions are split. Mixed grader/rubric/prompt
+   populations cannot be approved unless one population independently satisfies
+   every gate.
+5. **Small perfect samples are insufficient.** Readiness enforces coverage
+   minimums and 95% Wilson intervals; observed 0/N errors are never described as
+   proof of zero true risk.
+6. **One false automatic auto-fail or one review miss fails the safety gate.**
+   Safety-critical criterion agreement is measured from the existing
+   `SAFETY_CRITICAL_CRITERIA` source.
+7. **Shadow eligibility fails closed and is non-final.** It cannot change
+   `qa.pass`, create/update `qaFinalReview`, alter Phase 3 completion, supervisor
+   actions, capability/history scoring, training, or coaching.
+8. **No audio or production-data collection is introduced.** Calibration
+   fixtures are local sanitized text; there is no Firestore export/downloader.
 
 ## 0d. Call QA checkpoint write serialization (PR 2 final merge blocker, 2026-07-15)
 

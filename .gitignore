@@ -3,6 +3,7 @@ dist
 .vite
 *.local
 migration-bundles/
+artifacts/call-qa-calibration/
 
 # Playwright e2e artifacts (browsers install to a user-level cache, not here)
 test-results/

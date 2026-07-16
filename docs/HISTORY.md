@@ -1,5 +1,48 @@
 # Development History - Knowledge Check
 
+### 2026-07-16 - Call QA calibration, coverage, and shadow automation readiness (PR 3)
+- **Goal:** add an honest measuring instrument around the PR #31 evidence/model protections and PR
+  #32 server-authoritative capture state machine without enabling automatic final pass/fail.
+- **Calibration fixtures:** added versioned sanitized local fixtures with a pure fail-closed
+  validator. It rejects unknown departments/scenarios/criteria/auto-fails, scenario mismatch,
+  invalid verdict/capture/grading states, duplicate/insufficient reviewers, incomplete human
+  adjudication, empty/malformed transcripts, missing model provenance, and recursive sensitive
+  fields. The 3 committed examples are explicitly `source:'synthetic-example'`; they do not count
+  as human evidence. No production Firestore downloader was added.
+- **Metrics/readiness:** `api/_qa-calibration.js` reports the 3×3 human/model outcome confusion
+  matrix, false passes/fails, review misses, criterion precision/recall and disagreements,
+  safety-critical agreement from the existing safety source, auto-fail TP/FP/FN/TN, capture
+  integrity, Wilson 95% intervals, version populations, operational breakdowns, and rich curated
+  scenario/workflow/domain/competency coverage. `api/_qa-calibration-gates.js` owns
+  `call-qa-calibration-policy-v1`; small perfect samples remain insufficient, mixed populations
+  must qualify independently, and false automatic auto-fails/review misses fail safety.
+- **CLI:** added `qa:calibrate`, `qa:calibrate:check`, and `qa:coverage`. Offline runs validate every
+  JSON fixture and deterministically write ignored `artifacts/call-qa-calibration/report.{json,md}`.
+  Empty/no-human data returns `INSUFFICIENT_DATA` and explicitly says no real-world accuracy
+  conclusion is possible. Optional live mode requires `CALL_QA_CALIBRATION_LIVE=true`, Gemini keys,
+  `--live`, and `--confirm-live`, prints request exposure first, runs sequentially through the
+  existing pinned `gradeCallQaTranscript()` service with static local SOP context, and never
+  reads/writes Firestore or edits fixtures.
+- **Shadow automation:** `api/_qa-automation-policy.js` adds a pure fail-closed eligibility check and
+  `off|shadow` environment parsing. It requires clean server capture, high-confidence pass, zero
+  auto-fails/unresolved evidence/deterministic findings/repairs/review flags/capture warnings,
+  complete matching provenance, clean-pass calibration readiness, and no final supervisor review.
+  It never changes `qa.pass`, creates `qaFinalReview`, changes Phase 3 completion, or affects
+  capability/history scoring, training, coaching, or supervisor actions.
+- **Privacy/docs:** no audio is stored. Added `docs/CALL_QA_CALIBRATION.md`,
+  `docs/CALL_QA_AUDIO_RETENTION_DECISION.md`, root `CALL_QA_CALIBRATION.md`, grading invariants,
+  README/env guidance, and F27 in CLAUDE.md. Current evidence is 0 human pilot cases and the expected
+  readiness result is `INSUFFICIENT_DATA`.
+- **Verification:** `npm ci` succeeded (864 packages; existing audit reports 3 moderate
+  vulnerabilities); `npm test` 1101/1101 across 54 files; `npm run test:rules` 51/51 result
+  authorization + 16/16 Call QA interview assertions using a temporary portable Temurin 21 JRE;
+  `npm run build` clean (existing >500 kB Firebase chunk warning only); `npm run qa:calibrate` and
+  `npm run qa:coverage` both generated deterministic `INSUFFICIENT_DATA` reports with 0 human cases,
+  3 excluded synthetic examples, and 88 visible coverage gaps; all six changed/new server or CLI
+  JavaScript files passed `node --check`; `git diff --check` clean. No Playwright run because
+  production UI was untouched. No live calibration, production data access, audio storage, merge,
+  or deploy.
+
 ### 2026-07-15 (part 3) - Call QA checkpoint write serialization (PR 2 final merge blocker)
 - **Context:** the final merge review of draft PR #32 found the server-authoritative transcript
   pipeline still permitted concurrent Firestore checkpoint writes: `requestCheckpoint({force})` called
