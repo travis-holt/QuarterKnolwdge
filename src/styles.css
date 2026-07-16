@@ -2448,6 +2448,19 @@ textarea:focus-visible {
   border-left: 3px solid var(--accent);
 }
 
+.interview-log__provenance {
+  font-size: 0.76rem;
+  color: var(--ink-soft);
+  margin: 0 0 12px;
+  padding: 8px 12px;
+  background: var(--surface-2);
+  border-radius: var(--radius-sm);
+  border-left: 3px solid var(--ink-faint, #c9c1b0);
+}
+.interview-log__provenance p { margin: 0 0 2px; }
+.interview-log__provenance-warn { color: var(--level-learning); font-weight: 600; }
+.qa-result__provenance { opacity: 0.85; }
+
 .interview-log__chat {
   display: flex;
   flex-direction: column;

@@ -1,6 +1,9 @@
-// Unit tests for VoiceCall's pure Call QA grading helpers. We mock the Firestore
-// and fetch layers so importing the component module never boots Firebase or the
+// Unit tests for VoiceCall's pure Call QA helpers. We mock the Firestore and
+// fetch layers so importing the component module never boots Firebase or the
 // browser audio stack — only the exported pure helpers are exercised.
+//
+// PR 2: the SCORED Call QA path is server-authoritative. The browser grades by
+// server ATTEMPT ID only — it never submits a transcript, scenario, or metadata.
 import { describe, it, expect, vi } from 'vitest';
 
 vi.mock('../lib/db.js', () => ({
@@ -11,7 +14,7 @@ vi.mock('../lib/apiFetch.js', () => ({ apiFetch: vi.fn() }));
 
 const {
   callQaScenarioMetadata,
-  gradeSavedAttempt,
+  gradeCallQaByAttemptId,
 } = await import('./VoiceCall.jsx');
 
 const curated = {
@@ -28,7 +31,7 @@ const curated = {
 };
 
 describe('callQaScenarioMetadata', () => {
-  it('keeps compact curated metadata for the saved supervisor record', () => {
+  it('keeps compact curated metadata for the local onQaResult callback', () => {
     expect(callQaScenarioMetadata(curated)).toMatchObject({
       qaScenarioId: curated.id,
       workflowType: 'prescription_refill',
@@ -37,27 +40,37 @@ describe('callQaScenarioMetadata', () => {
     });
   });
 
-  it('retains scenario provenance (scenarioVersion) on the saved attempt', () => {
+  it('retains scenario provenance (scenarioVersion) for display', () => {
     expect(callQaScenarioMetadata(curated).scenarioVersion).toBe('call-qa-scenarios-v1');
+  });
+
+  it('returns an empty object for a missing scenario', () => {
+    expect(callQaScenarioMetadata(null)).toEqual({});
   });
 });
 
-describe('gradeSavedAttempt sends only the trusted scenario id as grading authority', () => {
-  it('does not embed browser metadata into the grader scenario', async () => {
-    const gradeQaFn = vi.fn().mockResolvedValue({ grade: { score: 90 }, qa: { pass: true } });
-    const saveGradeFn = vi.fn().mockResolvedValue();
-    const metadata = callQaScenarioMetadata(curated);
+describe('gradeCallQaByAttemptId — attempt-id-only grading authority', () => {
+  it('sends ONLY { attemptId } to the scored endpoint', async () => {
+    const apiFetchFn = vi.fn().mockResolvedValue({ grade: { score: 90 }, qa: { pass: true } });
 
-    await gradeSavedAttempt(
-      { docId: 'doc1', scenario: 'base scenario', transcript: [{ role: 'navigator', text: 'hi' }], department: 'pediatrics', metadata },
-      { gradeQaFn, saveGradeFn },
-    );
+    await gradeCallQaByAttemptId('attempt-xyz', apiFetchFn);
 
-    expect(gradeQaFn).toHaveBeenCalledTimes(1);
-    expect(gradeQaFn).toHaveBeenCalledWith(expect.objectContaining({
-      scenario: 'base scenario',
-      qaScenarioId: curated.id,
-    }));
-    expect(gradeQaFn.mock.calls[0][0]).not.toHaveProperty('metadata');
+    expect(apiFetchFn).toHaveBeenCalledTimes(1);
+    const [endpoint, body] = apiFetchFn.mock.calls[0];
+    expect(endpoint).toBe('/api/grade-call-qa');
+    expect(body).toEqual({ attemptId: 'attempt-xyz' });
+    // The browser never becomes the grading source of truth again.
+    expect(body).not.toHaveProperty('transcript');
+    expect(body).not.toHaveProperty('scenario');
+    expect(body).not.toHaveProperty('department');
+    expect(body).not.toHaveProperty('metadata');
+    expect(body).not.toHaveProperty('qaScenarioId');
+  });
+
+  it('returns the server-persisted grade/qa', async () => {
+    const apiFetchFn = vi.fn().mockResolvedValue({ grade: { score: 77 }, qa: { pass: false }, attemptId: 'a2' });
+    const data = await gradeCallQaByAttemptId('a2', apiFetchFn);
+    expect(data.grade.score).toBe(77);
+    expect(data.qa.pass).toBe(false);
   });
 });

@@ -31,6 +31,13 @@ import {
 } from './_qa-rubric.js';
 import { qaDomainScoreSummary } from '../src/lib/qaDomainScoring.js';
 import { getCallQaScenarioById } from '../src/data/callQaScenarios.js';
+import { readFirebaseIdentity } from './_auth.js';
+import { FirebaseAdminConfigError, getFirebaseAdmin } from './_firebase-admin.js';
+import {
+  CALL_QA_ASSESSMENT_TYPE, CALL_QA_CAPTURE_AUTHORITY, CAPTURE_STATUS, GRADING_STATUS,
+  claimGradingLease, commitGrade, markGradeFailed, loadAttempt,
+} from './_call-qa-attempts.js';
+import { randomUUID } from 'node:crypto';
 
 const MAX_TURNS = 60;
 const MAX_TURN_CHARS = 2000;
@@ -270,7 +277,7 @@ function buildBody(systemInstruction, userMessage) {
   };
 }
 
-export function finalizeQaResult(scored, transcript, correctedTurns = 0, repairs = [], metadataIntegrity = { verified: true, status: 'verified' }, forcedReviewReasons = [], deterministicFindings = [], gradingMetadata = null) {
+export function finalizeQaResult(scored, transcript, correctedTurns = 0, repairs = [], metadataIntegrity = { verified: true, status: 'verified' }, forcedReviewReasons = [], deterministicFindings = [], gradingMetadata = null, captureIntegrity = { complete: true }, transcriptMetadata = null) {
   const review = assessQa(scored, transcript, { correctedTurns, repairs, deterministicFindings });
   // Deterministic conflict layer (NOT repairs): a model-positive verdict that
   // contradicts the authoritative routing policy, or a deterministic unsafe-
@@ -316,6 +323,20 @@ export function finalizeQaResult(scored, transcript, correctedTurns = 0, repairs
     });
     review.recommendation = 'needs_review';
   }
+  // Capture-integrity gate (PR 2): a scored transcript captured by the server
+  // relay may still have finalized under uncertainty (drain timeout, unexpected
+  // upstream closure). Such an attempt is retained for supervisor inspection but
+  // can never be a confident automatic PASS — it is graded with a mandatory
+  // supervisor-review flag. A clean capture (or a legacy attempt with no capture
+  // metadata) is unaffected.
+  if (captureIntegrity && captureIntegrity.complete === false) {
+    review.reviewFlags.push({
+      id: 'capture-integrity-incomplete',
+      label: 'Transcript capture did not finalize cleanly',
+      detail: `The call server could not confirm a clean end of the transcript (${captureIntegrity.reason || 'incomplete capture'}). The stored transcript may be missing the final turn(s); a supervisor must review this result.`,
+    });
+    review.recommendation = 'needs_review';
+  }
   const qa = {
     ...scored,
     ...qaDomainScoreSummary(scored),
@@ -331,57 +352,104 @@ export function finalizeQaResult(scored, transcript, correctedTurns = 0, repairs
       qaScenarioId: metadataIntegrity.qaScenarioId ?? null,
     },
     ...(gradingMetadata ? { gradingMetadata } : {}),
+    ...(transcriptMetadata ? { transcriptMetadata } : {}),
   };
   const grade = buildGradeProjection(qa);
   return { qa, grade };
 }
 
-export default async function handler(req, res) {
-  if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
+/**
+ * Rebuild the trusted grading context from a STORED server attempt. Grading uses
+ * the attempt's own immutable scenario snapshot + scenario id — never anything
+ * the browser sent — so a later scenario-bank revision or code deploy cannot
+ * change the context an already-captured attempt was graded against. The curated
+ * scenario id is still the metadata authority for repairs; if it is unknown
+ * (e.g. a scenario retired after capture), repairs are disabled and the result
+ * is forced to supervisor review.
+ */
+export function buildScenarioContextFromAttempt(attempt) {
+  const snapshot = attempt.scenarioSnapshot ?? {};
+  const department = attempt.department ?? 'pediatrics';
+  const trusted = attempt.qaScenarioId ? getCallQaScenarioById(attempt.qaScenarioId) : null;
+  const gradingScenario = buildTrustedGradingScenario({
+    scenario: snapshot.scenario ?? attempt.scenario ?? '',
+    title: attempt.qaScenarioTitle ?? '',
+    workflowType: attempt.workflowType ?? '',
+    difficulty: attempt.difficulty ?? '',
+    expectedActions: snapshot.expectedActions ?? attempt.expectedActions ?? [],
+    criticalMisses: snapshot.criticalMisses ?? attempt.criticalMisses ?? [],
+    scoringNotes: snapshot.scoringNotes ?? [],
+  });
+  return {
+    verified: Boolean(trusted),
+    status: trusted ? 'verified' : 'unknown-scenario-id',
+    qaScenarioId: attempt.qaScenarioId ?? null,
+    department,
+    scenarioVersion: attempt.scenarioVersion ?? trusted?.version ?? null,
+    gradingScenario,
+    repairContext: {
+      scenario: snapshot.scenario ?? attempt.scenario ?? '',
+      department,
+      metadata: {
+        qaScenarioId: attempt.qaScenarioId ?? null,
+        workflowType: attempt.workflowType ?? null,
+        difficulty: attempt.difficulty ?? null,
+        expectedActions: snapshot.expectedActions ?? attempt.expectedActions ?? [],
+        criticalMisses: snapshot.criticalMisses ?? attempt.criticalMisses ?? [],
+        scoringNotes: snapshot.scoringNotes ?? [],
+      },
+    },
+  };
+}
 
-  if (await validateSecret(req, res)) return;
-
-  const keys = getApiKeys();
-  if (!keys.length) return res.status(500).json({ error: 'Grading is not configured on the server.' });
-
-  const { scenario, transcript: rawTranscript, department = 'pediatrics', qaScenarioId, metadata = {} } = req.body ?? {};
-
-  if (!scenario || !Array.isArray(rawTranscript) || rawTranscript.length === 0) {
-    return res.status(400).json({ error: 'Missing required fields.' });
+class GradingServiceError extends Error {
+  constructor(status, error) {
+    super(error);
+    this.name = 'GradingServiceError';
+    this.httpStatus = status;
+    this.error = error;
   }
+}
 
-  const scenarioContext = resolveQaScenarioContext({ scenario, department, qaScenarioId, metadata });
+/**
+ * Reusable Call QA grading service. Given a transcript + a TRUSTED scenario
+ * context (both server-owned), it runs the pinned grader, all deterministic
+ * trust gates, fairness repairs, and the score/pass math, and returns
+ * { qa, grade }. This is the single place that grading happens — the attempt-ID
+ * endpoint below and any future caller share it. It preserves every PR #31
+ * invariant. Throws GradingServiceError({httpStatus, error}) on model failure.
+ *
+ * `deps` is injectable for tests: { keys, geminiWithRotation, sopContextForFresh,
+ * graderModel }.
+ */
+export async function gradeCallQaTranscript({ transcript: rawTranscript, scenarioContext, captureMetadata = {}, transcriptMetadata = null }, deps = {}) {
+  const keys = deps.keys ?? getApiKeys();
+  const runGemini = deps.geminiWithRotation ?? geminiWithRotation;
+  const sopFresh = deps.sopContextForFresh ?? sopContextForFresh;
+  const graderModel = deps.graderModel ?? callQaGraderModel();
 
   // Snap mis-transcribed SOP proper nouns/terms to their canonical form BEFORE
-  // grading, so both the model's judgment and the evidence-verification gate see
-  // what the navigator actually said (bounded to the glossary — never invents).
-  // The correction count doubles as a transcript-quality signal for the review layer.
+  // grading (bounded to the glossary — never invents). The correction count
+  // doubles as a transcript-quality signal for the review layer.
   const { transcript, correctedTurns } = correctTranscriptWithStats(rawTranscript, scenarioContext.department);
 
   const { systemInstruction, userMessage } = buildMessages(
     scenarioContext.gradingScenario,
     transcript,
     scenarioContext.department,
-    await sopContextForFresh(scenarioContext.department),
+    await sopFresh(scenarioContext.department),
   );
   const body = buildBody(systemInstruction, userMessage);
 
-  // Scored Call QA uses ONE pinned, auditable model — key rotation only, NO model
-  // fallback. If the pinned model is unavailable on every key, we return a grading
-  // failure and let the already-saved attempt be retried; we never silently drop
-  // to a lower-quality model for a scored assessment.
-  const graderModel = callQaGraderModel();
-
-  // One retry on malformed output: temp-0 structured JSON is almost always
-  // well-formed, but a missing criterion id would otherwise 502 a real test. The
-  // retry uses the SAME pinned model.
+  // Scored Call QA uses ONE pinned, auditable model — key rotation only, NO
+  // model fallback. A malformed-output retry reuses the SAME pinned model.
   let validated = null;
   let usedModel = graderModel;
   for (let attempt = 0; attempt < 2 && !validated; attempt++) {
-    const result = await geminiWithRotation(keys, body, { label: 'grade-call-qa', models: [graderModel] });
+    const result = await runGemini(keys, body, { label: 'grade-call-qa', models: [graderModel] });
     if (!result.ok) {
       const { status, error } = rotationFailure(result, { exhausted: 'The grader is busy right now. Try again shortly.' });
-      return res.status(status).json({ error });
+      throw new GradingServiceError(status, error);
     }
     usedModel = result.model ?? graderModel;
     let parsed;
@@ -395,7 +463,7 @@ export default async function handler(req, res) {
     else console.warn(`grade-call-qa: invalid response (attempt ${attempt + 1}): ${check.error}`);
   }
   if (!validated) {
-    return res.status(502).json({ error: 'The grader returned an unusable review. Try again.' });
+    throw new GradingServiceError(502, 'The grader returned an unusable review. Try again.');
   }
 
   const boundedTranscript = transcript
@@ -405,15 +473,9 @@ export default async function handler(req, res) {
     ? repairQaVerdictsForScenario(validated, boundedTranscript, scenarioContext.repairContext)
     : { criteria: validated.criteria, autoFails: validated.autoFails, repairs: [], reviewReasons: [] };
   const scored = scoreQa(repaired.criteria, repaired.autoFails, boundedTranscript);
-  // Post-trust-gate criteria: model-positive verdicts that survive evidence
-  // verification are checked against the deterministic routing/safety layer.
   const deterministicFindings = evaluateQaDeterministicFindings(
     scored.criteria, boundedTranscript, scenarioContext.repairContext,
   );
-  // Versioned, server-generated grading provenance. Every value is server-owned:
-  // the model is the one that actually answered, versions are pinned constants,
-  // the scenario version comes from the trusted curated scenario, and gradedAt is
-  // generated here — never trusted from the browser.
   const gradingMetadata = {
     model: usedModel,
     rubricVersion: QA_RUBRIC_VERSION,
@@ -421,9 +483,173 @@ export default async function handler(req, res) {
     scenarioVersion: scenarioContext.scenarioVersion ?? null,
     gradedAt: new Date().toISOString(),
   };
+  // Capture integrity FAILS CLOSED: a clean capture requires BOTH a 'captured'
+  // terminal status AND an explicit captureComplete === true. Missing,
+  // contradictory, or malformed metadata (e.g. captureStatus 'captured' with no /
+  // false captureComplete, or 'capture_incomplete' with captureComplete true) is
+  // treated as incomplete → forces supervisor review. It never defaults to clean.
+  const captureIntegrity = {
+    complete:
+      transcriptMetadata?.captureStatus === CAPTURE_STATUS.CAPTURED &&
+      captureMetadata?.captureComplete === true,
+    reason: captureMetadata?.drainReason,
+  };
   const { qa, grade } = finalizeQaResult(
-    scored, boundedTranscript, correctedTurns, repaired.repairs, scenarioContext, repaired.reviewReasons, deterministicFindings, gradingMetadata,
+    scored, boundedTranscript, correctedTurns, repaired.repairs, scenarioContext,
+    repaired.reviewReasons, deterministicFindings, gradingMetadata, captureIntegrity, transcriptMetadata,
   );
+  return { qa, grade };
+}
 
-  return res.status(200).json({ qa, grade });
+// ── Attempt-ID based scored endpoint (PR 2) ─────────────────────────────────
+//
+// The browser sends ONLY { attemptId }. It never sends a transcript, scenario,
+// department, grader metadata, or scenario metadata for a scored attempt. The
+// server loads the durable transcript + trusted scenario snapshot it captured,
+// grades that, and persists the result — so a tampered browser cannot alter what
+// is scored. Grading is idempotent (a grade already present is returned without
+// a second Gemini call) and retryable (a prior failure keeps the transcript).
+
+export function buildTranscriptMetadata(attempt) {
+  const meta = attempt.captureMetadata ?? {};
+  return {
+    authority: 'server',
+    captureVersion: attempt.captureVersion ?? null,
+    liveModel: attempt.liveModel ?? null,
+    attemptId: attempt.id,
+    captureStatus: attempt.captureStatus ?? null,
+    captureComplete: meta.captureComplete === true,
+    drainReason: meta.drainReason ?? null,
+    navigatorTurnCount: meta.navigatorTurnCount ?? 0,
+    callerTurnCount: meta.callerTurnCount ?? 0,
+  };
+}
+
+// A Firestore document id: non-empty, bounded, and free of path separators /
+// reserved forms. Reject malformed ids with a 400 rather than letting the Admin
+// SDK throw a path exception that would surface as a 500.
+export function isValidAttemptId(id) {
+  return typeof id === 'string'
+    && id.length > 0 && id.length <= 200
+    && !id.includes('/')
+    && id !== '.' && id !== '..'
+    && !/^__.*__$/.test(id);
+}
+
+export default async function handler(req, res) {
+  if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
+
+  if (await validateSecret(req, res)) return;
+
+  const attemptId = String(req.body?.attemptId ?? '').trim();
+  if (!attemptId) {
+    return res.status(400).json({ error: 'A server attempt id is required.' });
+  }
+  if (!isValidAttemptId(attemptId)) {
+    return res.status(400).json({ error: 'That attempt id is not valid.' });
+  }
+
+  let db;
+  try {
+    db = getFirebaseAdmin().db;
+  } catch (err) {
+    if (err instanceof FirebaseAdminConfigError || err?.code === 'firebase-admin-not-configured') {
+      return res.status(503).json({ error: 'Server authentication is not configured.' });
+    }
+    throw err;
+  }
+
+  const identity = req.identity ?? await readFirebaseIdentity(req);
+
+  const attempt = await loadAttempt(db, attemptId);
+  if (!attempt) return res.status(404).json({ error: 'Attempt not found.' });
+
+  // Only a server-authoritative Call QA attempt can be graded here.
+  if (attempt.assessmentType !== CALL_QA_ASSESSMENT_TYPE || attempt.captureAuthority !== CALL_QA_CAPTURE_AUTHORITY) {
+    return res.status(400).json({ error: 'This is not a server-recorded Call QA attempt.' });
+  }
+
+  // Ownership: the navigator who owns it, or any supervisor.
+  const isSupervisor = identity?.role === 'supervisor';
+  const isOwner = identity?.role === 'navigator' && identity.navigatorId === attempt.navigatorId;
+  if (!isSupervisor && !isOwner) {
+    return res.status(403).json({ error: 'You do not have access to this attempt.' });
+  }
+
+  // Idempotency + capture-state gate via a transactional grading lease. NOTE:
+  // Gemini keys are intentionally NOT required to reach this point — an
+  // already-graded attempt must remain readable during a grader outage.
+  const leaseId = randomUUID();
+  const claim = await claimGradingLease(db, attemptId, { leaseId });
+  if (claim.status === 'already_graded') {
+    return res.status(200).json({ qa: claim.attempt.qa, grade: claim.attempt.grade, attemptId });
+  }
+  if (claim.status === 'capture_active') {
+    return res.status(409).json({ error: 'This call is still being recorded. Finish the call before grading.' });
+  }
+  if (claim.status === 'abandoned') {
+    return res.status(409).json({ error: 'This attempt was interrupted and cannot be graded.' });
+  }
+  if (claim.status === 'busy') {
+    return res.status(409).json({ error: 'This attempt is already being graded. Try again shortly.' });
+  }
+  if (claim.status !== 'claimed') {
+    return res.status(409).json({ error: 'This attempt is not ready for grading.' });
+  }
+
+  // Gemini keys are required ONLY now that we must actually invoke the grader. If
+  // they are missing, release the lease (mark grade_failed keeps the transcript
+  // for a later retry) so the attempt never gets stuck in a live lease.
+  const keys = getApiKeys();
+  if (!keys.length) {
+    await markGradeFailed(db, attemptId, { leaseId }).catch(() => {});
+    return res.status(500).json({ error: 'Grading is not configured on the server.' });
+  }
+
+  const claimed = claim.attempt;
+  const transcript = Array.isArray(claimed.transcript) ? claimed.transcript : [];
+  if (transcript.length === 0) {
+    await markGradeFailed(db, attemptId, { leaseId });
+    return res.status(422).json({ error: 'This attempt has no recorded transcript to grade.' });
+  }
+
+  const scenarioContext = buildScenarioContextFromAttempt(claimed);
+  const transcriptMetadata = buildTranscriptMetadata(claimed);
+
+  let graded;
+  try {
+    graded = await gradeCallQaTranscript({
+      transcript,
+      scenarioContext,
+      captureMetadata: claimed.captureMetadata ?? {},
+      transcriptMetadata,
+    }, { keys });
+  } catch (err) {
+    await markGradeFailed(db, attemptId, { leaseId }).catch(() => {});
+    if (err instanceof GradingServiceError) {
+      return res.status(err.httpStatus).json({ error: err.error });
+    }
+    console.error('grade-call-qa:', err?.message ?? err);
+    return res.status(500).json({ error: 'Grading failed unexpectedly. Try again.' });
+  }
+
+  const commit = await commitGrade(db, attemptId, { leaseId, grade: graded.grade, qa: graded.qa });
+  if (commit.status === 'already_graded') {
+    return res.status(200).json({ qa: commit.attempt.qa, grade: commit.attempt.grade, attemptId });
+  }
+  if (commit.status === 'lease_lost') {
+    // This request lost its lease to a newer one. We must NEVER return this
+    // request's local (unpersisted) grade as success. Only a DURABLY-persisted
+    // grade may be returned; otherwise the browser must retry.
+    const fresh = await loadAttempt(db, attemptId);
+    if (fresh?.gradingStatus === GRADING_STATUS.GRADED && fresh.qa && fresh.grade) {
+      return res.status(200).json({ qa: fresh.qa, grade: fresh.grade, attemptId });
+    }
+    if (fresh?.gradingStatus === GRADING_STATUS.GRADING) {
+      return res.status(409).json({ error: 'This attempt is being graded by another request. Try again shortly.' });
+    }
+    return res.status(503).json({ error: 'Grading could not be saved. Please retry.' });
+  }
+
+  return res.status(200).json({ qa: graded.qa, grade: graded.grade, attemptId });
 }

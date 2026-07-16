@@ -8,7 +8,167 @@
 > [`api/_qa-grading-corpus.test.js`](../api/_qa-grading-corpus.test.js) — if one of
 > those tests fails after your change, re-read this document before "fixing" the test.
 >
-> Last updated: 2026-07-14.
+> Last updated: 2026-07-15 (PR 2 final merge blocker — checkpoint write serialization).
+
+## 0d. Call QA checkpoint write serialization (PR 2 final merge blocker, 2026-07-15)
+
+These strengthen §0a/§0b/§0c. All are binding for the SCORED Call QA test.
+
+1. **Call QA checkpoint writes are serialized per session.** At most one
+   `checkpointTranscript()` write is ever in flight for a call; concurrent requests
+   coalesce onto a single write loop rather than launching parallel Firestore
+   writes. An older checkpoint can therefore never overwrite a newer one.
+2. **Coalesced checkpoints always persist the newest pending bounded snapshot.**
+   The snapshot is generated when the queued write executes, so obsolete
+   intermediate snapshots are never written; when a write finishes, only the newest
+   pending state is re-written (not every stale intermediate).
+3. **Terminal capture finalization waits for and supersedes all checkpoint work.**
+   `terminateCapture()` sets `finalizing` (which blocks any new checkpoint from
+   starting), cancels the trailing-checkpoint timer, drains all in-flight
+   checkpoint writes, then performs `finalizeCapture()` as the LAST write.
+4. **No checkpoint can modify transcript data after terminal finalization.** Once
+   `finalizing`/`finalized` is set, checkpoint requests refuse to start a write, so
+   nothing can overwrite the finalized `transcript` / `lastTranscriptAt` /
+   `captureMetadata.*` after the terminal write.
+5. **A capture acknowledgement means the terminal write is both successful AND the
+   final transcript write.** `captured` is sent only after `finalizeCapture()`
+   succeeds, and no checkpoint write can begin or complete after it. A checkpoint
+   failure preserves dirty state (never silently forgotten) so a later checkpoint
+   or the terminal finalization still persists the newest transcript; a failed
+   terminal write keeps the retake behavior and never sends `captured`.
+
+## 0c. Call QA capture integration fixes (PR 2 final merge review, 2026-07-15)
+
+These strengthen §0a/§0b. All are binding for the SCORED Call QA test.
+
+1. **Transcription ordering is not guaranteed at ANY point in the call**, not only
+   after End Call. An input/output transcription can arrive after its
+   `turnComplete`. The relay never treats raw WebSocket arrival order as speaking
+   order at any point.
+2. **An ordinary active-call boundary also requires a short transcription-settle
+   window before the exchange is committed** (`CALL_QA_ACTIVE_TURN_SETTLE_MS`).
+   `turnComplete` marks a boundary but never immediately flushes; any transcription
+   during the window is added to the pending exchange and resets the window.
+3. **A late transcription stays with its correct exchange.** A fragment that
+   arrives after exchange N's boundary is committed as part of N (never merged into
+   N+1). Each exchange is flushed navigator-first. End Call absorbs any pending
+   active exchange before draining, with no duplicated lines.
+4. **Staged transcript content follows the SAME bounds as committed content**
+   (`MAX_QA_TURN_CHARS`, `MAX_QA_TURNS`), via one shared `boundedAppend`. Oversized
+   staged strings are truncated (never silently — `turn-length-capped` is recorded)
+   and a staged tail can never push the durable snapshot past the max turn count.
+5. **Late staged content receives a guaranteed trailing durable checkpoint.**
+   Post-boundary/drain fragments force an immediate durable checkpoint; debounced
+   writes mark the checkpoint dirty and guarantee one trailing durable write, so a
+   crash mid-settle cannot leave the durable copy behind memory. Before `captured`
+   is sent, all pending transcript state is bounded and included in the successful
+   terminal write.
+6. **The browser finalization guard always exceeds the server's maximum drain +
+   settle + persistence/network window.** The server computes the guard from its
+   actual config (`clientFinalizeGuardMs`) and sends it in the trusted
+   `ready.finalization.clientGuardMs`; the browser applies a defensive clamp and
+   never trusts a client-supplied timing. A client fallback (≥ the server maximum)
+   is used only if the value is missing/invalid.
+7. **`captured` means the final BOUNDED transcript was successfully persisted** —
+   including the latest staged content, exactly once.
+
+## 0b. Call QA capture/finalization hardening (PR 2 merge review, 2026-07-15)
+
+These strengthen §0a. All are binding for the SCORED Call QA test.
+
+1. **Transcription delivery order is NOT guaranteed.** Gemini Live delivers
+   `inputTranscription` and `outputTranscription` independently, and a
+   transcription may arrive AFTER the associated `turnComplete`. The relay must
+   never treat raw WebSocket arrival order as speaking order. Each exchange is
+   staged and flushed navigator-first, so a caller output that arrives before its
+   navigator input is still stored after it.
+2. **Clean finalization requires a post-End boundary PLUS a quiet settle window.**
+   End Call runs a bounded two-stage drain: an overall `CALL_QA_DRAIN_TIMEOUT_MS`
+   deadline, and a `CALL_QA_TRANSCRIPT_SETTLE_MS` window that only elapses once a
+   post-End `turnComplete` boundary has been seen AND no transcription has arrived
+   for the full window (any transcription resets it). `turnComplete` alone never
+   closes the capture. Hitting the overall deadline finalizes `capture_incomplete`.
+3. **A capture is acknowledged only AFTER the terminal Firestore write succeeds.**
+   The relay sets `finalized` only after `finalizeCapture` resolves. If that write
+   fails, the browser is told the capture could not be finalized (retake) — never
+   `captured`. The attempt is preserved for supervisor recovery; the failure is
+   never silently swallowed.
+4. **A grade returned to the browser must be the PERSISTED grade.** After losing a
+   grading lease, the endpoint returns a stored grade only if the fresh attempt is
+   actually `graded` with `qa`+`grade`; otherwise it returns a retryable
+   409/503. It never returns the losing request's local, unpersisted model output.
+5. **Grading leases require EXACT ownership.** `commitGrade`/`markGradeFailed`
+   mutate grading state only when `gradingLeaseId === leaseId`. A null/missing/
+   different lease id is not ownership — a stale request can never clobber a newer
+   one.
+6. **Existing stored grades remain readable during a grader outage.** The scored
+   endpoint requires Gemini keys ONLY when it must actually invoke the model; an
+   already-graded attempt returns its stored result with zero keys configured. If
+   keys are missing when new grading is needed, the claimed lease is released
+   (grade_failed, transcript retained) so no attempt is left in a live lease.
+7. **Inactive/deleted roster members cannot start a new scored attempt.** The
+   relay loads the trusted roster member (existence + `status !== 'inactive'` +
+   id match) before creating an attempt. A valid-but-stale token cannot let a
+   deactivated navigator begin a scored assessment; no attempt doc is created on
+   rejection.
+8. **Capture integrity FAILS CLOSED.** A clean capture requires BOTH
+   `captureStatus === 'captured'` AND `captureMetadata.captureComplete === true`.
+   Missing, contradictory, or malformed capture metadata forces `needs_review`
+   (`capture-integrity-incomplete`) — it never defaults to complete.
+9. **Termination provenance is accurate.** `captureMetadata.endedBy` records the
+   real cause (`navigator` / `client_disconnect` / `upstream_service` /
+   `server_timeout`); `drainReason` is recorded separately.
+10. **Transcript truncation is never silent.** Capping a turn at
+    `MAX_QA_TURN_CHARS` records a `turn-length-capped` warning before slicing, and
+    the still-staged final exchange is checkpointed through the settle/debounce
+    mechanism so a crash cannot leave the durable copy behind the in-memory one.
+
+## 0a. Server-authoritative Call QA transcript (PR 2, 2026-07-14)
+
+These ten statements are binding for the SCORED Call QA test (`mode: 'test'`).
+They govern where a graded transcript comes from and who may write it; they do
+not weaken any §0 evidence/model invariant, which still runs on that transcript.
+
+1. **A scored Call QA transcript originates from the authenticated server relay**
+   (`api/live-relay.js`), captured from Gemini Live's `inputTranscription`
+   (navigator) / `outputTranscription` (caller). The browser never supplies it.
+2. **Browser captions are a non-authoritative mirror.** The relay forwards
+   `transcript` messages to the browser for live display only; a `transcript`
+   message *from* the browser is ignored entirely.
+3. **The scored endpoint loads the transcript by server attempt id.**
+   `POST /api/grade-call-qa` accepts only `{ attemptId }`; it loads the stored
+   transcript + scenario snapshot via Firebase Admin and ignores any transcript,
+   scenario, department, or grader metadata a client includes alongside the id.
+4. **The browser cannot write or replace a scored transcript or QA result.**
+   `firestore.rules` forbids a navigator from creating a document with
+   `assessmentType:'call-qa'`, `captureAuthority:'server'`, or a curated QA
+   scenario id, and from mutating any field (transcript, capture state, scenario
+   snapshot, grade, qa, server metadata) of a server-created attempt. All server
+   writes go through Admin, which bypasses client rules.
+5. **Trusted scenario snapshots are chosen and stored server-side.** The relay
+   loads the curated scenario with `getCallQaScenarioById()`, validates the
+   department, and stores an immutable `scenarioSnapshot`. Grading uses that
+   stored snapshot, so a later scenario-bank revision cannot change the context an
+   already-captured attempt was graded against.
+6. **Finalization has a bounded drain protocol.** End Call signals end-of-audio
+   upstream and waits at most `CALL_QA_DRAIN_TIMEOUT_MS` for a final transcription
+   boundary so the last navigator utterance is not lost to socket teardown.
+7. **Incomplete capture is explicit and never silently treated as complete.** A
+   drain timeout, upstream drop, or unexpected browser disconnect finalizes the
+   attempt as `capture_incomplete` / `abandoned` with recorded metadata. An
+   `abandoned` attempt is never auto-graded; a `capture_incomplete` attempt graded
+   later is forced to `needs_review` via the `capture-integrity-incomplete` flag.
+8. **Legacy browser-captured attempts remain labelled legacy.** Attempts without
+   `captureAuthority` are treated as legacy browser capture, never relabelled
+   server-authoritative, and never bulk-migrated.
+9. **Server authority protects against browser tampering — not speech-recognition
+   error.** "Server-captured" means the transcript came from the trusted relay, not
+   that transcription was perfect. UI wording says "captured by the call server,"
+   never "perfect," and the §0 non-final supervisor-review rule still applies.
+10. **Grading is idempotent and retryable via a lease.** An already-graded attempt
+    returns its stored result without a second Gemini call; a prior failure keeps
+    the transcript for retry; a Firestore grading lease prevents two concurrent
+    requests from invoking the grader twice.
 
 ## 0. Evidence integrity & model auditability (PR-1, 2026-07-14)
 

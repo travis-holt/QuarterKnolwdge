@@ -46,7 +46,9 @@ export async function apiFetch(endpoint, body, timeoutMs = 30_000) {
     });
     if (!res.ok) {
       const err = await res.json().catch(() => ({}));
-      throw new Error(err.error || `Request failed (${res.status})`);
+      const error = new Error(err.error || `Request failed (${res.status})`);
+      error.status = res.status; // let callers branch on the HTTP status (e.g. 422)
+      throw error;
     }
     return await res.json();
   } finally {

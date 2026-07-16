@@ -1,5 +1,161 @@
 # Development History - Knowledge Check
 
+### 2026-07-15 (part 3) - Call QA checkpoint write serialization (PR 2 final merge blocker)
+- **Context:** the final merge review of draft PR #32 found the server-authoritative transcript
+  pipeline still permitted concurrent Firestore checkpoint writes: `requestCheckpoint({force})` called
+  the async `doCheckpoint()` without serializing it, so (a) an older in-flight checkpoint could
+  complete after a newer one and overwrite it, and (b) an in-flight checkpoint could land AFTER the
+  terminal `finalizeCapture()` and overwrite the finalized transcript/metadata while `captureStatus`
+  stayed `captured`. Fixed on the same branch in one commit; no merge/deploy.
+- **Fix (`api/live-relay.js`):** all checkpoint writes now go through ONE session-owned serialized
+  loop (`runCheckpointQueue` + `buildCheckpointPayload` + `drainCheckpointQueue`).
+  - At most one `checkpointTranscript()` is ever in flight; concurrent requests set a dirty flag and
+    coalesce onto the running loop, which re-writes the NEWEST bounded snapshot (generated at write
+    time) when the current write finishes — an older snapshot can never overwrite a newer one, and it
+    never does one write per fragment.
+  - `terminateCapture()` sets `finalizing` first (which blocks any new checkpoint from starting),
+    cancels the trailing-checkpoint timer, **awaits `drainCheckpointQueue()`**, then runs
+    `finalizeCapture()` as the LAST write. `requestCheckpoint`/`runCheckpointQueue`/the trailing timer
+    all refuse to start once `finalizing`/`finalized`/`closed`, so no checkpoint can modify transcript
+    data after finalization. Durability points (active-turn settle expiry, End Call, terminal
+    finalization) `await` the queue.
+  - A checkpoint failure preserves dirty state (re-set on the caught error, loop breaks to avoid a hot
+    retry) so a later checkpoint or the terminal finalization still persists the newest transcript;
+    transcript content is never logged; a failed terminal write keeps the retake behavior.
+- **Tests:** +5 (1045 total, 51 files) in `api/liveRelay.test.js`, with a new controllable-write-order
+  fake Firestore (`_deferred`/`settleDeferred`/`failDeferred`/`_applied` in
+  `api/fixtures/fakeFirestore.js`): older-checkpoint-can't-overwrite-newer, one-trailing-write-per-late-
+  fragment, checkpoint-can't-overwrite-terminal-finalization (finalize is the last write, no checkpoint
+  after), checkpoint-failure-preserves-dirty (+ no transcript in logs), and finalization-ownership (no
+  new checkpoint + no double-finalize after `finalizing`).
+- **Docs:** [GRADING_INVARIANTS.md](GRADING_INVARIANTS.md) §0d (5 new binding statements), CLAUDE.md
+  F25 + counts.
+
+### 2026-07-15 (part 2) - Call QA capture integration fixes (PR 2 final merge-review)
+- **Context:** the final merge-review of draft PR #32 found three integration defects in the
+  server-authoritative Call QA capture. Fixed on the same branch in one follow-up commit; no
+  merge/deploy.
+- **Fixes:**
+  1. **Active-call late transcriptions + turn-scoped ordering (`api/live-relay.js`).** An ordinary
+     active-call `turnComplete` no longer flushes immediately (a transcription can arrive after
+     `turnComplete` at any point, not just after End). Each exchange now waits a short
+     `CALL_QA_ACTIVE_TURN_SETTLE_MS` window before committing; late fragments stay with their
+     exchange (never merged into the next), flushed navigator-first. End Call absorbs any pending
+     active exchange before draining, with no duplicate lines. Active and drain settle share one
+     mechanism.
+  2. **Durable + bounded staged checkpoints (`api/live-relay.js`, `api/_call-qa-transcript.js`).**
+     Post-boundary/drain fragments force an immediate durable checkpoint; debounced writes mark the
+     checkpoint dirty and guarantee one trailing durable write, so a crash mid-settle can't strand a
+     late fragment in memory. Staged strings are bounded by the SAME `boundedAppend` used by the
+     coalescer (shared, not two implementations) — `MAX_QA_TURN_CHARS` per turn (non-silent
+     `turn-length-capped`), and the durable snapshot is capped at `MAX_QA_TURNS`.
+  3. **Aligned browser/server finalization timeouts (`api/live-relay.js`, `src/components/VoiceCall.jsx`).**
+     The server computes a safe client guard from its actual drain+settle config plus a
+     persistence/network margin (`clientFinalizeGuardMs`, bounded 20–90s) and sends it in the trusted
+     `ready.finalization.clientGuardMs`. The browser applies a defensive clamp and uses it (no more
+     hardcoded 15s that could abandon a valid 30s drain); a ≥60s fallback covers a missing value.
+     Client timings are never trusted.
+- **Tests:** +17 (1040 total, 51 files) — relay active-turn-settle/ordering/absorb-on-End/no-dup,
+  durable-late-checkpoint, staged-content bounds + warnings, finalization-timing metadata; a
+  `boundedAppend` unit test; and two client guard tests (server value applied, fallback ≥ server max).
+- **Docs:** [GRADING_INVARIANTS.md](GRADING_INVARIANTS.md) §0c (7 new binding statements),
+  `.env.local.example` (`CALL_QA_ACTIVE_TURN_SETTLE_MS`, `CALL_QA_FINALIZE_MARGIN_MS`), CLAUDE.md
+  F25 + counts.
+
+### 2026-07-15 - Call QA capture/finalization hardening (PR 2 merge-review follow-up)
+- **Context:** merge-review of draft PR #32 surfaced correctness blockers in the PR-2 server-
+  authoritative Call QA capture. Addressed on the same branch in one follow-up commit; no merge/deploy.
+- **Fixes:**
+  1. **Final-transcription ordering + two-stage drain (`api/live-relay.js`).** Gemini Live delivers
+     `input`/`outputTranscription` independently and can deliver a transcription AFTER `turnComplete`,
+     so `turnComplete` no longer immediately closes the capture. End Call now runs a bounded two-stage
+     drain: an overall `CALL_QA_DRAIN_TIMEOUT_MS` deadline plus a `CALL_QA_TRANSCRIPT_SETTLE_MS` quiet
+     window that only elapses after a post-End boundary with no further transcription (any
+     transcription resets it). Each exchange is staged and flushed navigator-first so out-of-order
+     input/output events are stored in speaking order. Env values are parsed + clamped.
+  2. **Never acknowledge before the terminal write (`api/live-relay.js`).** `finalizing`/`finalized`
+     states; `finalized` is set only after `finalizeCapture` resolves; a failed terminal write sends
+     an explicit `capture-finalize-failed` error (not `captured`) and preserves the attempt.
+  3. **Exact grading-lease ownership (`api/_call-qa-attempts.js`).** `commitGrade`/`markGradeFailed`
+     require `gradingLeaseId === leaseId`; a null/missing/different lease id is not ownership.
+  4. **No unpersisted grade after lease loss (`api/grade-call-qa.js`).** On `lease_lost` the endpoint
+     returns a stored grade only if one is durably persisted, else a retryable 409/503 — never the
+     losing request's local model output.
+  5. **Already-graded readable during grader outage (`api/grade-call-qa.js`).** Gemini keys are
+     required only when new grading must run; an already-graded attempt returns its stored result
+     with zero keys; a missing-keys claim releases the lease (transcript retained).
+  6. **Roster-member gate (`api/live-relay.js`).** `loadRosterMember` replaces `loadRosterName`;
+     a start is rejected (no attempt created) unless the roster doc exists, matches the token, and is
+     not `inactive`.
+  7. **Integrity hardening:** capture integrity FAILS CLOSED (needs both `captureStatus:'captured'`
+     and `captureComplete:true`); accurate `endedBy` provenance (`navigator`/`client_disconnect`/
+     `upstream_service`/`server_timeout`); non-silent `turn-length-capped` truncation warnings;
+     `attemptId` validation (400, not a 500 path exception); staged-transcript checkpointing.
+  8. **Client (`VoiceCall.jsx`).** An unacknowledged finalization (socket close / timeout /
+     capture-finalize error) routes to a RETAKE screen with no grade retry; grade retry is preserved
+     only after a confirmed `captured` ack; a `captured` incomplete ack still grades (with mandatory
+     review).
+- **Tests:** +26 (1023 total, 51 files) — relay two-stage-drain/ordering/roster/ack-after-write,
+  attempts lease-race regressions, transcript truncation warnings, endpoint fail-closed / keys-after-
+  claim / lease-loss-no-fallback / attemptId-validation, and a new `voiceCall.component.test.jsx`
+  driving the End-Call handshake + capture-vs-grade-retry distinctions with fake browser APIs.
+- **Docs:** [GRADING_INVARIANTS.md](GRADING_INVARIANTS.md) §0b (10 new binding statements),
+  `.env.local.example` (`CALL_QA_TRANSCRIPT_SETTLE_MS`), CLAUDE.md F25 + counts.
+
+### 2026-07-14 (part 6) - Server-authoritative Call QA transcript capture (PR 2)
+- **Context:** PR 1 hardened the Call QA *grading* pipeline but left the scored transcript
+  browser-authoritative — `VoiceCall.jsx` coalesced transcript fragments in browser memory, saved
+  them through the client Firestore SDK, and sent the same browser-built transcript to
+  `/api/grade-call-qa`. A modified browser could alter or replace its own transcript before grading,
+  and clicking End closed the socket immediately, which could drop the final transcription event.
+- **Change:** the scored Call QA test is now captured, finalized, loaded, graded, and persisted by
+  the server.
+  - **New `api/_call-qa-transcript.js`** — pure, testable transcript coalescer (`TranscriptCapture`)
+    that normalizes roles to `patient`/`navigator`, coalesces consecutive same-role fragments,
+    bounds turn length + count, and ignores empties.
+  - **New `api/_call-qa-attempts.js`** — server-owned Call QA attempt state machine over the
+    existing `interviews` collection (Firebase Admin). Explicit `captureStatus`
+    (`active`/`captured`/`capture_incomplete`/`abandoned`) and `gradingStatus`
+    (`not_started`/`grading`/`graded`/`grade_failed`) axes, an immutable server `scenarioSnapshot`,
+    checkpoint/finalize writes, and a transactional grading **lease** for idempotency. All functions
+    take `db` for DI so the machine is unit-testable against an in-memory Firestore double.
+  - **`api/live-relay.js` rewritten with dependency injection.** Test-mode `start` now carries only
+    `{ idToken, mode:'test', department, qaScenarioId }`; the relay derives `navigatorId` from the
+    verified token, loads + validates the curated scenario server-side, creates the attempt BEFORE
+    `ready`, captures the transcript from Gemini Live's `inputTranscription`/`outputTranscription`,
+    checkpoints at turn boundaries, IGNORES any browser transcript message, and runs a bounded
+    **End Call drain handshake** (signal end-of-audio upstream → wait `CALL_QA_DRAIN_TIMEOUT_MS` for
+    a final boundary → finalize `captured` vs `capture_incomplete` → send `{type:'captured'}`). An
+    unexpected disconnect persists the partial transcript as `abandoned`. Practice mode is unchanged.
+  - **`api/grade-call-qa.js`** — the grading orchestration is extracted into a reusable
+    `gradeCallQaTranscript()` service (all PR-1 invariants preserved); the public endpoint now takes
+    ONLY `{ attemptId }`, loads the stored transcript + snapshot, grades that, and persists via the
+    lease. Idempotent (already-graded returns the stored result with no second Gemini call),
+    retryable (a failure keeps the transcript), and adds server-owned `qa.transcriptMetadata`
+    provenance separate from `qa.gradingMetadata`.
+  - **`VoiceCall.jsx` test mode** no longer calls `saveInterview`/`updateInterviewGrade` or submits a
+    transcript. It keeps only the attempt id + a caption mirror, runs the End→`finalizing`→`captured`
+    handshake, and grades by `{ attemptId }`. `apiFetch` now surfaces the HTTP status so the client
+    can show the "no speech captured" (422) case distinctly. Practice mode unchanged.
+  - **`firestore.rules`** — navigators may still create/read their own practice interviews and attach
+    the advisory grade, but may NOT create a server-authoritative Call QA attempt (`assessmentType:
+    'call-qa'`, `captureAuthority:'server'`, or a curated QA scenario id) nor mutate any field of a
+    server-created attempt. New emulator suite `tests/firestore-rules/call-qa-interviews.rules.mjs`
+    (chained into `npm run test:rules`).
+  - **Supervisor UI** (`NavigatorDetail.jsx`) shows transcript provenance: "Server-captured live
+    transcript" + capture status (with an incomplete-capture warning) vs "Legacy browser-captured
+    transcript." Navigator result screen says "Transcript captured by the call server" — never
+    "perfect."
+- **Tests:** +44 unit tests (997 total, 50 files) — `api/_call-qa-transcript.test.js`,
+  `api/_call-qa-attempts.test.js`, rewritten `api/gradeCallQaEndpoint.test.js` (attempt-id +
+  service), new `api/liveRelay.test.js` (DI capture + drain + disconnect), and rewritten
+  `voiceCall.test.js` / `components.test.jsx` QA blocks. Rules suite requires a Java-equipped
+  environment (run in CI); not runnable in the container. Build clean.
+- **Explicitly NOT in scope:** server-authoritative MCQ/Spot scoring (separate future project); real
+  microphone/acoustic validation (post-deploy manual step). No migration or deployment performed.
+- **Docs:** [GRADING_INVARIANTS.md](GRADING_INVARIANTS.md) §0a (ten new binding invariants);
+  CLAUDE.md F25 + counts.
+
 ### 2026-07-14 (part 5) - Call QA evidence integrity + model auditability (PR 1)
 - **Context:** hardening pass on the existing Call QA grading pipeline (F25). The pipeline was
   reliable but had three trust gaps: (1) evidence verification (`verifyEvidence`) matched against

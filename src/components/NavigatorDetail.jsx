@@ -606,6 +606,33 @@ export default function NavigatorDetail({ rows, name, deptName, dept, deptMatrix
                       <div className="interview-log__body">
                         <p className="interview-log__scenario">{session.scenario}</p>
 
+                        {/* Transcript provenance (PR 2): server authority vs legacy browser capture */}
+                        {(session.assessmentType === 'call-qa' || session.captureAuthority || session.qa?.transcriptMetadata) && (
+                          <div className="interview-log__provenance">
+                            {(session.captureAuthority === 'server' || session.qa?.transcriptMetadata?.authority === 'server') ? (
+                              <>
+                                <p>Transcript source: <strong>Server-captured live transcript</strong></p>
+                                <p>
+                                  Capture status:{' '}
+                                  <strong>
+                                    {(session.qa?.transcriptMetadata?.captureComplete === false || session.captureStatus === 'capture_incomplete')
+                                      ? 'Incomplete'
+                                      : 'Complete'}
+                                  </strong>
+                                  {session.qa?.transcriptMetadata?.captureVersion && <> · Capture version: {session.qa.transcriptMetadata.captureVersion}</>}
+                                </p>
+                                {session.qa?.transcriptMetadata?.captureComplete === false && (
+                                  <p className="interview-log__provenance-warn">
+                                    ⚠ The call server could not confirm a clean end of the transcript — this result requires supervisor review.
+                                  </p>
+                                )}
+                              </>
+                            ) : (
+                              <p>Transcript source: <strong>Legacy browser-captured transcript</strong></p>
+                            )}
+                          </div>
+                        )}
+
                         {/* Grade breakdown (if available) */}
                         {g && (
                           <div className="interview-log__grade">

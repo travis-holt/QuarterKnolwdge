@@ -9,15 +9,20 @@ import { selectPracticeDomain } from '../lib/practiceDomain.js';
 import { getFirebaseIdToken } from '../lib/firebase.js';
 
 // ─────────────────────────────────────────────────────────────────────────────
-// VoiceCall — real-time voice practice call (Gemini Live API via /api/live).
+// VoiceCall — real-time voice call (Gemini Live API via /api/live).
 //
-// Unlike the chat Interview, this is a live phone-call experience: the caller
-// speaks, the navigator speaks back, both in real time. No chat bubbles, no
-// send button. A running transcript is captured under the hood purely so the
-// call can be saved + graded by the same /api/grade-interview endpoint.
+// TWO MODES:
+//   practice ('practice') — advisory holistic review. The browser owns the
+//     generated scenario and transcript, saves the interview, and grades it via
+//     /api/grade-interview. Unchanged by PR 2.
+//   test ('test')         — SCORED Call QA test. The SERVER is authoritative:
+//     the relay captures the transcript, creates + finalizes a server attempt,
+//     and /api/grade-call-qa grades that stored transcript by attempt id. The
+//     browser shows captions (a non-authoritative mirror) and NEVER submits a
+//     transcript or writes the grade. See api/live-relay.js + grade-call-qa.js.
 //
-// Flow: setup → connecting → active → (end) → grading → reviewed
-//                                   ↘ (discard) → discarded
+// Test flow: setup → connecting → active → (End) → finalizing → grading →
+//            reviewed  (or captureError / gradeError on failure)
 //
 // Audio: mic → ScriptProcessor → downsample to 16kHz PCM16 → relay → Gemini.
 //        Gemini → 24kHz PCM16 → scheduled AudioBufferSources for gapless playback.
@@ -25,20 +30,24 @@ import { getFirebaseIdToken } from '../lib/firebase.js';
 
 const GRADE_TIMEOUT_MS = 30_000;
 const QA_GRADE_TIMEOUT_MS = 60_000; // rubric grading is a bigger prompt + server-side retry
+// The client finalization guard MUST always exceed the server's maximum possible
+// drain + settle + persistence/network window, or the browser could abandon a
+// valid drain and show "retake" before the server's real deadline. The server
+// computes a safe guard from its ACTUAL config (api/live-relay.js
+// clientFinalizeGuardMs: drain 2–30s + settle 0.25–10s + margin 2–20s, clamped to
+// 20–60s) and sends it in the trusted `ready.finalization.clientGuardMs`. This
+// FALLBACK is used only if that value is missing/invalid and must stay ≥ the
+// server maximum (60s). Client-supplied timings are never trusted.
+const FINALIZE_FALLBACK_MS = 60_000;
+const FINALIZE_GUARD_MIN_MS = 10_000;   // defensive clamp on the server value
+const FINALIZE_GUARD_MAX_MS = 120_000;
 const TARGET_IN_RATE = 16000;
 const OUT_RATE = 24000;
 
-class VoiceCallPersistenceError extends Error {
-  constructor(stage, message, extra = {}) {
-    super(message);
-    this.name = 'VoiceCallPersistenceError';
-    this.stage = stage;
-    Object.assign(this, extra);
-  }
-}
-
-async function gradeQaRequest({ scenario, transcript, department, qaScenarioId }) {
-  return apiFetch('/api/grade-call-qa', { scenario, transcript, department, qaScenarioId }, QA_GRADE_TIMEOUT_MS);
+// Grade a SCORED Call QA attempt by its server attempt id. The browser sends ONLY
+// the attempt id — never a transcript, scenario, department, or grader metadata.
+export async function gradeCallQaByAttemptId(attemptId, apiFetchFn = apiFetch, timeout = QA_GRADE_TIMEOUT_MS) {
+  return apiFetchFn('/api/grade-call-qa', { attemptId }, timeout);
 }
 
 export function callQaScenarioMetadata(selectedScenario) {
@@ -47,8 +56,6 @@ export function callQaScenarioMetadata(selectedScenario) {
     scenarioSource: 'curated',
     qaScenarioId: selectedScenario.id,
     qaScenarioTitle: selectedScenario.title,
-    // Retain scenario provenance on the saved (possibly not-yet-graded) attempt.
-    // The server-trusted scenario version stays authoritative for qa.gradingMetadata.
     scenarioVersion: selectedScenario.version,
     workflowType: selectedScenario.workflowType,
     difficulty: selectedScenario.difficulty,
@@ -58,84 +65,6 @@ export function callQaScenarioMetadata(selectedScenario) {
     criticalMisses: selectedScenario.criticalMisses,
     scoringNotes: selectedScenario.scoringNotes ?? [],
   };
-}
-
-export async function saveCallAttempt(payload, saveInterviewFn = saveInterview) {
-  let docId;
-  try {
-    docId = await saveInterviewFn(
-      payload.navigatorId,
-      payload.name,
-      payload.domainId,
-      payload.scenario,
-      payload.callerName,
-      payload.transcript,
-      payload.department,
-      payload.metadata
-    );
-  } catch (cause) {
-    throw new VoiceCallPersistenceError(
-      'save',
-      'We could not save this Call QA attempt.',
-      { cause }
-    );
-  }
-  if (!docId) {
-    throw new VoiceCallPersistenceError('save', 'We could not save this Call QA attempt.');
-  }
-  return docId;
-}
-
-export async function saveGradeToAttempt(docId, grade, qa, saveGradeFn = updateInterviewGrade) {
-  try {
-    await saveGradeFn(docId, grade, qa);
-  } catch (cause) {
-    throw new VoiceCallPersistenceError(
-      'gradeSave',
-      'The call was graded, but the grade could not be saved.',
-      { cause, docId, grade, qa }
-    );
-  }
-}
-
-export async function gradeSavedAttempt(
-  { docId, scenario, transcript, department, metadata },
-  { gradeQaFn = gradeQaRequest, saveGradeFn = updateInterviewGrade } = {}
-) {
-  let data;
-  try {
-    data = await gradeQaFn({
-      scenario,
-      transcript,
-      department,
-      qaScenarioId: metadata?.qaScenarioId,
-    });
-  } catch (cause) {
-    throw new VoiceCallPersistenceError(
-      'grade',
-      'The call was saved, but grading failed.',
-      { cause, docId }
-    );
-  }
-  if (!data?.grade || !data?.qa) {
-    throw new VoiceCallPersistenceError('grade', 'The call was saved, but grading failed.', { docId });
-  }
-  await saveGradeToAttempt(docId, data.grade, data.qa, saveGradeFn);
-  return { docId, grade: data.grade, qa: data.qa };
-}
-
-export async function runQaPersistenceSequence(payload, deps = {}) {
-  const docId = await saveCallAttempt(payload, deps.saveInterviewFn);
-  return gradeSavedAttempt(
-    {
-      docId,
-      scenario: payload.scenario,
-      transcript: payload.transcript,
-      department: payload.department,
-      metadata: payload.metadata,
-    },
-    deps
-  );
 }
 
 // ── Audio helpers (module-level, pure) ───────────────────────────────────────
@@ -183,12 +112,12 @@ function appendTranscriptFragment(existing, fragment) {
   return `${existing}${needsSpace ? ' ' : ''}${next}`;
 }
 
-// mode: 'practice' (advisory holistic review) | 'test' (hard rubric-based QA
-// test graded criterion-by-criterion against the call quality guide).
+// mode: 'practice' (advisory holistic review) | 'test' (server-authoritative,
+// hard rubric-based QA test graded against the call quality guide).
 export default function VoiceCall({ navigatorId, name, department = 'pediatrics', preferredDomain = null, onExit, onDone, onQaResult, mode = 'practice', priorQaAttempts = [] }) {
   const isTest = mode === 'test';
-  // phases: setup | connecting | active | grading | reviewed | discarded |
-  //         saveError | gradeError | gradeSaveError
+  // phases: setup | connecting | active | finalizing | grading | reviewed |
+  //         discarded | saveError | gradeError | gradeSaveError | captureError
   const [phase, setPhase]         = useState('setup');
   const [callerName, setCallerName] = useState('');
   const [scenario, setScenario]   = useState('');
@@ -197,14 +126,15 @@ export default function VoiceCall({ navigatorId, name, department = 'pediatrics'
   const [error, setError]         = useState('');
   const [grade, setGrade]         = useState(null);
   const [qa, setQa]               = useState(null);  // full QA scorecard (test mode)
-  const [gradeBusy, setGradeBusy] = useState(false);  // retrying a failed grade from the reviewed screen
-  const [captions, setCaptions]   = useState([]);     // [{role, text}] shown live during the call
-  const [persistedInterviewId, setPersistedInterviewId] = useState(null);
+  const [gradeBusy, setGradeBusy] = useState(false);  // retrying a failed grade
+  const [captions, setCaptions]   = useState([]);     // [{role, text}] mirror only
+  const [captureComplete, setCaptureComplete] = useState(true);
+  // Practice-mode persistence state
   const [pendingTranscript, setPendingTranscript] = useState(null);
-  const [pendingGradePayload, setPendingGradePayload] = useState(null);
   const [saveError, setSaveError] = useState('');
-  const [gradeError, setGradeError] = useState('');
   const [gradeSaveError, setGradeSaveError] = useState('');
+  const [gradeError, setGradeError] = useState('');
+  const [captureError, setCaptureError] = useState('');
 
   const wsRef        = useRef(null);
   const streamRef    = useRef(null);
@@ -212,20 +142,23 @@ export default function VoiceCall({ navigatorId, name, department = 'pediatrics'
   const outCtxRef    = useRef(null);
   const processorRef = useRef(null);
   const playheadRef  = useRef(0);
-  const sourcesRef   = useRef([]);          // scheduled playback sources (for barge-in flush)
-  const segmentsRef  = useRef([]);          // [{role, text}] transcript, coalesced by role
-  const finalRef     = useRef(null);        // { transcript, docId } kept after teardown for grade retries
+  const sourcesRef   = useRef([]);          // scheduled playback sources (barge-in flush)
+  const segmentsRef  = useRef([]);          // caption mirror; ALSO practice-mode transcript
+  const finalRef     = useRef(null);        // practice-mode { transcript, docId } for grade retries
+  const attemptIdRef = useRef(null);        // test-mode server attempt id (authoritative)
+  const finalizeTimerRef = useRef(null);
+  const finalizeGuardRef = useRef(FINALIZE_FALLBACK_MS); // server-provided guard (ms)
   const qaScenarioMetadataRef = useRef({});
-  const caseFileRef = useRef(null); // hidden case file from a generated practice scenario, forwarded to the relay for a consistent caller
+  const caseFileRef = useRef(null);
   const domain = DOMAINS.find((d) => d.id === domainId);
 
   function clearPersistenceState() {
-    setPersistedInterviewId(null);
     setPendingTranscript(null);
-    setPendingGradePayload(null);
     setSaveError('');
-    setGradeError('');
     setGradeSaveError('');
+    setGradeError('');
+    setCaptureError('');
+    attemptIdRef.current = null;
   }
 
   function exitTestFlow() {
@@ -239,10 +172,10 @@ export default function VoiceCall({ navigatorId, name, department = 'pediatrics'
   useEffect(() => () => teardown(), []);    // stop everything on unmount
 
   // ── Teardown ────────────────────────────────────────────────────────────────
-  function teardown() {
-    const ws = wsRef.current;
-    wsRef.current = null;
-    try { ws?.close(); } catch {}
+  function stopAudio() {
+    // Stop the mic + audio graph but LEAVE the WebSocket open — used during the
+    // test-mode End Call drain handshake so the socket can still receive the
+    // final transcription + 'captured' acknowledgement.
     if (processorRef.current) processorRef.current.onaudioprocess = null;
     try { processorRef.current?.disconnect(); } catch {}
     streamRef.current?.getTracks().forEach((t) => t.stop());
@@ -251,6 +184,14 @@ export default function VoiceCall({ navigatorId, name, department = 'pediatrics'
     try { outCtxRef.current?.close(); } catch {}
     streamRef.current = inCtxRef.current = outCtxRef.current = processorRef.current = null;
     sourcesRef.current = [];
+  }
+
+  function teardown() {
+    const ws = wsRef.current;
+    wsRef.current = null;
+    if (finalizeTimerRef.current) { clearTimeout(finalizeTimerRef.current); finalizeTimerRef.current = null; }
+    try { ws?.close(); } catch {}
+    stopAudio();
   }
 
   // ── Playback ──────────────────────────────────────────────────────────────
@@ -282,13 +223,15 @@ export default function VoiceCall({ navigatorId, name, department = 'pediatrics'
     setSpeaking(false);
   }
 
-  // ── Transcript (coalesce consecutive same-role fragments) ─────────────────
+  // ── Captions (coalesce consecutive same-role fragments) ──────────────────
+  // In test mode this is a DISPLAY MIRROR ONLY — the server captures the
+  // authoritative transcript. In practice mode this doubles as the transcript.
   function addTranscript(role, text) {
     const segs = segmentsRef.current;
     const last = segs[segs.length - 1];
     if (last && last.role === role) last.text = appendTranscriptFragment(last.text, text);
     else segs.push({ role, text: appendTranscriptFragment('', text) });
-    setCaptions(segs.map((s) => ({ role: s.role, text: s.text }))); // mirror to UI
+    setCaptions(segs.map((s) => ({ role: s.role, text: s.text })));
   }
 
   // ── Start ───────────────────────────────────────────────────────────────────
@@ -301,14 +244,14 @@ export default function VoiceCall({ navigatorId, name, department = 'pediatrics'
     setQa(null);
     setGradeBusy(false);
     setCaptions([]);
+    setCaptureComplete(true);
     clearPersistenceState();
     qaScenarioMetadataRef.current = {};
     caseFileRef.current = null;
 
-    // 1) Set up the scenario + caller. Test mode uses the curated bank; practice stays generated.
     const pick = selectPracticeDomain(preferredDomain);
     setDomainId(pick);
-    let scen, caller, opener = '';
+    let scen, caller, opener = '', qaScenarioId = null;
     if (isTest) {
       const selectedScenario = selectCallQaScenario({ department, priorAttempts: priorQaAttempts });
       if (!selectedScenario) {
@@ -318,9 +261,10 @@ export default function VoiceCall({ navigatorId, name, department = 'pediatrics'
       const primaryDomainId = selectedScenario.primaryDomainId ?? selectedScenario.domainIds[0];
       setDomainId(primaryDomainId);
       qaScenarioMetadataRef.current = callQaScenarioMetadata(selectedScenario);
+      qaScenarioId = selectedScenario.id;
+      // Local copies are for DISPLAY only; the server loads the trusted scenario.
       scen = selectedScenario.scenario;
       caller = selectedScenario.callerName;
-      opener = selectedScenario.openingLine;
       setScenario(scen);
       setCallerName(caller);
     } else {
@@ -343,7 +287,6 @@ export default function VoiceCall({ navigatorId, name, department = 'pediatrics'
       return setPhase('setup');
     }
 
-    // 2) Mic access.
     let stream;
     try {
       stream = await navigator.mediaDevices.getUserMedia({
@@ -355,17 +298,9 @@ export default function VoiceCall({ navigatorId, name, department = 'pediatrics'
     }
     streamRef.current = stream;
 
-    // 3) Audio graph + relay. Any constructor/setup failure after mic permission
-    // must tear the stream down; otherwise the browser can keep recording while
-    // the UI has already returned to setup.
     try {
       const inCtx = new AudioContext();
       const outCtx = new AudioContext({ sampleRate: OUT_RATE });
-    // By now we've awaited a network round-trip + the mic permission prompt, so
-    // Chrome's autoplay policy may have started both contexts 'suspended' (no
-    // audio renders at all in that state — silent mic AND silent playback).
-    // resume() still succeeds because we're inside the gesture chain from the
-    // "Start voice call" click, even with awaits in between.
       inCtxRef.current = inCtx;
       outCtxRef.current = outCtx;
       await Promise.all([inCtx.resume(), outCtx.resume()]).catch(() => {});
@@ -376,64 +311,82 @@ export default function VoiceCall({ navigatorId, name, department = 'pediatrics'
       }
       playheadRef.current = outCtx.currentTime;
       const source = inCtx.createMediaStreamSource(stream);
-    // ponytail: ScriptProcessorNode is deprecated but zero-setup; upgrade to an
-    // AudioWorklet if capture proves choppy on the demo machine.
       const processor = inCtx.createScriptProcessor(4096, 1, 1);
       processorRef.current = processor;
-      const mute = inCtx.createGain();         // route processor → muted node so it runs without echoing
+      const mute = inCtx.createGain();
       mute.gain.value = 0;
       source.connect(processor);
       processor.connect(mute);
       mute.connect(inCtx.destination);
 
-    // 4) Open the relay socket.
       const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
       const ws = new WebSocket(`${proto}//${window.location.host}/api/live`);
       wsRef.current = ws;
 
       ws.onopen = () => {
-        ws.send(JSON.stringify({
-          type: 'start',
-          idToken,
-          navigatorId,
-          callerName: caller,
-          scenario: scen,
-          department,
-          openingLine: opener,
-          caseFile: caseFileRef.current,
-        }));
+        // Test mode sends the MINIMUM: the server derives identity + scenario.
+        const startMsg = isTest
+          ? { type: 'start', idToken, mode: 'test', department, qaScenarioId }
+          : {
+              type: 'start', idToken, mode: 'practice', navigatorId,
+              callerName: caller, scenario: scen, department, openingLine: opener,
+              caseFile: caseFileRef.current,
+            };
+        ws.send(JSON.stringify(startMsg));
       };
       ws.onmessage = (ev) => {
         let m;
         try { m = JSON.parse(ev.data); } catch { return; }
-      if (m.type === 'ready') {
-        setPhase('active');
-        processor.onaudioprocess = (e) => {
-          if (ws.readyState !== 1) return;
-          const ds = downsample(e.inputBuffer.getChannelData(0), inCtx.sampleRate);
-          ws.send(JSON.stringify({ type: 'audio', data: f32ToB64Pcm16(ds) }));
-        };
-      } else if (m.type === 'audio') {
-        playChunk(b64ToInt16(m.data));
-      } else if (m.type === 'transcript') {
-        addTranscript(m.role, m.text);
-      } else if (m.type === 'interrupted') {
-        flushPlayback();
-      } else if (m.type === 'error') {
-        setError(m.message || 'The call dropped.');
-        teardown();
-        setPhase('setup');
-      }
+        if (m.type === 'ready') {
+          if (isTest && m.attemptId) attemptIdRef.current = m.attemptId;
+          if (isTest) {
+            // Trust the SERVER-computed finalize guard (defensively clamped); it
+            // is sized to always exceed the server's real drain deadline. Fall
+            // back to a value ≥ the server maximum if it is missing/invalid.
+            const g = Number(m.finalization?.clientGuardMs);
+            finalizeGuardRef.current = Number.isFinite(g) && g >= FINALIZE_GUARD_MIN_MS && g <= FINALIZE_GUARD_MAX_MS
+              ? g
+              : FINALIZE_FALLBACK_MS;
+          }
+          setPhase('active');
+          processor.onaudioprocess = (e) => {
+            if (ws.readyState !== 1) return;
+            const ds = downsample(e.inputBuffer.getChannelData(0), inCtx.sampleRate);
+            ws.send(JSON.stringify({ type: 'audio', data: f32ToB64Pcm16(ds) }));
+          };
+        } else if (m.type === 'audio') {
+          playChunk(b64ToInt16(m.data));
+        } else if (m.type === 'transcript') {
+          addTranscript(m.role, m.text);
+        } else if (m.type === 'interrupted') {
+          flushPlayback();
+        } else if (m.type === 'captured') {
+          onCaptured(m);
+        } else if (m.type === 'error') {
+          // A capture-finalize failure during the drain must route to the retake
+          // path — never a generic reset that hides the lost recording.
+          if (isTest && (finalizingRef.current || m.code === 'capture-finalize-failed')) {
+            onCaptureFailed(m.message || 'Your call recording could not be finalized. Please retake the test.');
+          } else {
+            setError(m.message || 'The call dropped.');
+            teardown();
+            setPhase('setup');
+          }
+        }
       };
       ws.onerror = () => {
+        if (isTest && phaseIsFinalizing()) return; // handled by the finalize guard
         setError('Connection to the voice service failed.');
         teardown();
         setPhase('setup');
       };
       ws.onclose = () => {
-      // Intentional teardown clears wsRef before the close event arrives. If the
-      // live service closes first, stop the mic/audio graph and tell the user.
         if (wsRef.current !== ws) return;
+        if (isTest && phaseIsFinalizing()) {
+          // Socket closed before a 'captured' ack — treat as a capture failure.
+          onCaptureFailed('The call server closed before confirming the recording.');
+          return;
+        }
         setError('The voice service closed the connection. Your microphone has been stopped.');
         teardown();
         setPhase('setup');
@@ -446,57 +399,87 @@ export default function VoiceCall({ navigatorId, name, department = 'pediatrics'
     }
   };
 
+  // A ref-readable flag so the ws event handlers (closing over stale state) can
+  // tell whether we're mid-finalize.
+  const finalizingRef = useRef(false);
+  function phaseIsFinalizing() { return finalizingRef.current; }
+
+  // ── Test-mode: End Call handshake ─────────────────────────────────────────
+  const onCaptured = async (msg) => {
+    if (!isTest) return;
+    finalizingRef.current = false;
+    if (finalizeTimerRef.current) { clearTimeout(finalizeTimerRef.current); finalizeTimerRef.current = null; }
+    if (msg.attemptId) attemptIdRef.current = msg.attemptId;
+    setCaptureComplete(msg.captureComplete !== false);
+    // The server has the durable transcript; the socket is no longer needed.
+    teardown();
+    await gradeAttempt();
+  };
+
+  const onCaptureFailed = (message) => {
+    finalizingRef.current = false;
+    if (finalizeTimerRef.current) { clearTimeout(finalizeTimerRef.current); finalizeTimerRef.current = null; }
+    teardown();
+    // An unacknowledged finalization (socket closed / timed out / capture-finalize
+    // error) is NOT grade-retryable: the server never confirmed a durable,
+    // gradeable capture (it may be abandoned/incomplete server-side). The
+    // navigator must retake — we never offer to grade an unconfirmed capture.
+    setCaptureError(message || 'Your call recording could not be finalized. Please retake the test.');
+    setPhase('captureError');
+  };
+
+  const gradeAttempt = async () => {
+    const attemptId = attemptIdRef.current;
+    if (!attemptId) return onCaptureFailed('No recorded attempt to grade.');
+    setPhase('grading');
+    try {
+      const data = await gradeCallQaByAttemptId(attemptId);
+      if (!data?.qa || !data?.grade) {
+        setGradeError('The call was captured, but grading failed. You can retry grading this saved attempt.');
+        return setPhase('gradeError');
+      }
+      setQa(data.qa);
+      setGrade(data.grade);
+      await onQaResult?.(data.qa, qaScenarioMetadataRef.current);
+      setPhase('reviewed');
+    } catch (err) {
+      if (err?.status === 422) {
+        setCaptureError('The call server did not capture any of your speech. Nothing was scored. Please take the test again.');
+        return setPhase('captureError');
+      }
+      setGradeError('The call was captured, but grading failed. You can retry grading this saved attempt.');
+      setPhase('gradeError');
+    }
+  };
+
   // ── End + grade ───────────────────────────────────────────────────────────
   const endCall = async () => {
+    if (isTest) {
+      // Server-authoritative: request finalization and WAIT for the 'captured'
+      // acknowledgement. Do NOT close the socket yet.
+      const ws = wsRef.current;
+      stopAudio();               // stop mic; keep the socket open for the drain
+      finalizingRef.current = true;
+      setPhase('finalizing');
+      if (ws && ws.readyState === 1) {
+        try { ws.send(JSON.stringify({ type: 'end' })); } catch {}
+      } else {
+        return onCaptureFailed('The connection to the call server was lost before finalizing.');
+      }
+      // Client-side guard: if the server never acknowledges, fail gracefully.
+      // Sized from the server-provided guard so we never abandon a valid drain.
+      finalizeTimerRef.current = setTimeout(() => {
+        if (finalizingRef.current) onCaptureFailed('Finalizing the transcript timed out.');
+      }, finalizeGuardRef.current);
+      return;
+    }
+
+    // Practice mode (unchanged): browser-owned transcript + advisory grading.
     const transcript = segmentsRef.current
       .map((s) => ({ role: s.role, text: s.text.trim() }))
       .filter((s) => s.text);
     teardown();
-
-    if (transcript.length === 0) {
-      // Nothing said — treat like a discard rather than grading an empty call.
-      return setPhase('discarded');
-    }
-
-    if (isTest) {
-      setPhase('grading');
-      setPendingTranscript(transcript);
-      try {
-        const result = await runQaPersistenceSequence({
-          navigatorId,
-          name,
-          domainId,
-          scenario,
-          callerName,
-          transcript,
-          department,
-          metadata: qaScenarioMetadataRef.current,
-        });
-        setPersistedInterviewId(result.docId);
-        setPendingGradePayload({ docId: result.docId, grade: result.grade, qa: result.qa });
-        setQa(result.qa);
-        setGrade(result.grade);
-        await onQaResult?.(result.qa, qaScenarioMetadataRef.current);
-        setPhase('reviewed');
-      } catch (err) {
-        if (err?.stage === 'save') {
-          setSaveError('We could not save this Call QA attempt. Your supervisor will not see this attempt until it is saved.');
-          setPhase('saveError');
-        } else if (err?.stage === 'gradeSave') {
-          setPersistedInterviewId(err.docId ?? null);
-          setPendingGradePayload({ docId: err.docId, grade: err.grade, qa: err.qa });
-          setQa(err.qa ?? null);
-          setGrade(err.grade ?? null);
-          setGradeSaveError('The call was graded, but the grade could not be saved. Retry saving the grade.');
-          setPhase('gradeSaveError');
-        } else {
-          setPersistedInterviewId(err?.docId ?? null);
-          setGradeError('The call was saved, but grading failed. You can retry grading this saved attempt.');
-          setPhase('gradeError');
-        }
-      }
-      return;
-    }
+    if (transcript.length === 0) return setPhase('discarded');
 
     setPhase('grading');
     setPendingTranscript(transcript);
@@ -514,49 +497,25 @@ export default function VoiceCall({ navigatorId, name, department = 'pediatrics'
     setPhase(gradeDurable ? 'reviewed' : 'gradeSaveError');
   };
 
-  // Grades the saved transcript; also used to retry from the reviewed screen when
-  // the first attempt failed (e.g. the Gemini keys were rate-limited).
-  // Test mode grades against the fixed QA rubric (hard pass/fail); practice mode
-  // keeps the advisory holistic review.
+  // Practice-mode advisory grading (holistic /api/grade-interview).
   const runGrading = async () => {
     const { transcript, docId } = finalRef.current ?? {};
     if (!transcript) return true;
     try {
-      if (isTest) {
-        const data = await apiFetch('/api/grade-call-qa', {
-          scenario, transcript, department, qaScenarioId: qaScenarioMetadataRef.current.qaScenarioId,
-        }, QA_GRADE_TIMEOUT_MS);
-        if (data.qa && data.grade) {
-          setQa(data.qa);
-          setGrade(data.grade);
-          if (docId) {
-            try { await updateInterviewGrade(docId, data.grade, data.qa); }
-            catch (e) {
-              console.error('grade save failed:', e);
-              setPendingGradePayload({ docId, grade: data.grade, qa: data.qa });
-              setGradeSaveError('The call was graded, but the grade could not be saved. Retry saving the grade.');
-              return false;
-            }
-          }
-          await onQaResult?.(data.qa, qaScenarioMetadataRef.current);
-        }
-      } else {
-        const data = await apiFetch(
-          '/api/grade-interview',
-          { domain: domainId, department, scenario, transcript, name },
-          GRADE_TIMEOUT_MS,
-        );
-        if (data.grade) {
-          setGrade(data.grade);
-          if (docId) {
-            try {
-              await updateInterviewGrade(docId, data.grade);
-            } catch (e) {
-              console.error('grade save failed:', e);
-              setPendingGradePayload({ docId, grade: data.grade, qa: null });
-              setGradeSaveError('Your feedback was generated, but it could not be saved for your supervisor.');
-              return false;
-            }
+      const data = await apiFetch(
+        '/api/grade-interview',
+        { domain: domainId, department, scenario, transcript, name },
+        GRADE_TIMEOUT_MS,
+      );
+      if (data.grade) {
+        setGrade(data.grade);
+        if (docId) {
+          try {
+            await updateInterviewGrade(docId, data.grade);
+          } catch (e) {
+            console.error('grade save failed:', e);
+            setGradeSaveError('Your feedback was generated, but it could not be saved for your supervisor.');
+            return false;
           }
         }
       }
@@ -569,33 +528,7 @@ export default function VoiceCall({ navigatorId, name, department = 'pediatrics'
   const retryGrading = async () => {
     setGradeBusy(true);
     if (isTest) {
-      try {
-        const result = await gradeSavedAttempt({
-          docId: persistedInterviewId,
-          scenario,
-          transcript: pendingTranscript ?? [],
-          department,
-          metadata: qaScenarioMetadataRef.current,
-        });
-        setPendingGradePayload({ docId: result.docId, grade: result.grade, qa: result.qa });
-        setQa(result.qa);
-        setGrade(result.grade);
-        setGradeError('');
-        setGradeSaveError('');
-        await onQaResult?.(result.qa, qaScenarioMetadataRef.current);
-        setPhase('reviewed');
-      } catch (err) {
-        if (err?.stage === 'gradeSave') {
-          setPendingGradePayload({ docId: err.docId, grade: err.grade, qa: err.qa });
-          setQa(err.qa ?? null);
-          setGrade(err.grade ?? null);
-          setGradeSaveError('The call was graded, but the grade could not be saved. Retry saving the grade.');
-          setPhase('gradeSaveError');
-        } else {
-          setGradeError('The call was saved, but grading failed. You can retry grading this saved attempt.');
-          setPhase('gradeError');
-        }
-      }
+      await gradeAttempt();
     } else {
       const gradeDurable = await runGrading();
       setPhase(gradeDurable ? 'reviewed' : 'gradeSaveError');
@@ -604,89 +537,34 @@ export default function VoiceCall({ navigatorId, name, department = 'pediatrics'
   };
 
   const retrySaving = async () => {
-    if (!pendingTranscript) return;
+    if (isTest || !pendingTranscript) return;
     setGradeBusy(true);
-    if (!isTest) {
-      try {
-        const docId = await saveInterview(
-          navigatorId,
-          name,
-          domainId,
-          scenario,
-          callerName,
-          pendingTranscript,
-          department,
-        );
-        finalRef.current = { transcript: pendingTranscript, docId };
-        setSaveError('');
-        setPhase('grading');
-        const gradeDurable = await runGrading();
-        setPhase(gradeDurable ? 'reviewed' : 'gradeSaveError');
-      } catch {
-        setSaveError('We still could not save this practice call. Check the connection and try again.');
-        setPhase('saveError');
-      } finally {
-        setGradeBusy(false);
-      }
-      return;
-    }
     try {
-      const result = await runQaPersistenceSequence({
-        navigatorId,
-        name,
-        domainId,
-        scenario,
-        callerName,
-        transcript: pendingTranscript,
-        department,
-        metadata: qaScenarioMetadataRef.current,
-      });
-      setPersistedInterviewId(result.docId);
-      setPendingGradePayload({ docId: result.docId, grade: result.grade, qa: result.qa });
-      setQa(result.qa);
-      setGrade(result.grade);
+      const docId = await saveInterview(
+        navigatorId, name, domainId, scenario, callerName, pendingTranscript, department,
+      );
+      finalRef.current = { transcript: pendingTranscript, docId };
       setSaveError('');
-      await onQaResult?.(result.qa, qaScenarioMetadataRef.current);
-      setPhase('reviewed');
-    } catch (err) {
-      if (err?.stage === 'save') {
-        setSaveError('We could not save this Call QA attempt. Your supervisor will not see this attempt until it is saved.');
-        setPhase('saveError');
-      } else if (err?.stage === 'gradeSave') {
-        setPersistedInterviewId(err.docId ?? null);
-        setPendingGradePayload({ docId: err.docId, grade: err.grade, qa: err.qa });
-        setQa(err.qa ?? null);
-        setGrade(err.grade ?? null);
-        setGradeSaveError('The call was graded, but the grade could not be saved. Retry saving the grade.');
-        setPhase('gradeSaveError');
-      } else {
-        setPersistedInterviewId(err?.docId ?? null);
-        setGradeError('The call was saved, but grading failed. You can retry grading this saved attempt.');
-        setPhase('gradeError');
-      }
+      setPhase('grading');
+      const gradeDurable = await runGrading();
+      setPhase(gradeDurable ? 'reviewed' : 'gradeSaveError');
+    } catch {
+      setSaveError('We still could not save this practice call. Check the connection and try again.');
+      setPhase('saveError');
+    } finally {
+      setGradeBusy(false);
     }
-    setGradeBusy(false);
   };
 
   const retrySavingGrade = async () => {
-    if (!pendingGradePayload?.docId || !pendingGradePayload?.grade) return;
-    if (isTest && !pendingGradePayload.qa) return;
+    if (isTest || !finalRef.current?.docId || !grade) return;
     setGradeBusy(true);
     try {
-      if (isTest) {
-        await saveGradeToAttempt(
-          pendingGradePayload.docId,
-          pendingGradePayload.grade,
-          pendingGradePayload.qa
-        );
-      } else {
-        await updateInterviewGrade(pendingGradePayload.docId, pendingGradePayload.grade);
-      }
+      await updateInterviewGrade(finalRef.current.docId, grade);
       setGradeSaveError('');
-      if (isTest) await onQaResult?.(pendingGradePayload.qa, qaScenarioMetadataRef.current);
       setPhase('reviewed');
     } catch {
-      setGradeSaveError('The call was graded, but the grade could not be saved. Retry saving the grade.');
+      setGradeSaveError('Your feedback was generated, but it could not be saved for your supervisor.');
       setPhase('gradeSaveError');
     }
     setGradeBusy(false);
@@ -712,6 +590,18 @@ export default function VoiceCall({ navigatorId, name, department = 'pediatrics'
     );
   }
 
+  if (phase === 'finalizing') {
+    return (
+      <section className="interview view-enter">
+        <div className="card interview__done">
+          <div className="interview__grading-spinner" aria-hidden="true" />
+          <h2 className="overview__panel-title">Finalizing transcript…</h2>
+          <p className="readoff__sub">The call server is saving the last of your call before grading.</p>
+        </div>
+      </section>
+    );
+  }
+
   if (phase === 'grading') {
     return (
       <section className="interview view-enter">
@@ -720,9 +610,28 @@ export default function VoiceCall({ navigatorId, name, department = 'pediatrics'
           <h2 className="overview__panel-title">{isTest ? 'Grading your test…' : 'Reviewing your call…'}</h2>
           <p className="readoff__sub">
             {isTest
-              ? 'Auditing the call against every criterion on the quality scorecard.'
+              ? 'Auditing the server-captured call against every criterion on the quality scorecard.'
               : 'Scoring your performance against the SOP. A few seconds.'}
           </p>
+        </div>
+      </section>
+    );
+  }
+
+  if (phase === 'captureError') {
+    return (
+      <section className="interview view-enter">
+        <div className="card interview__done">
+          <h2 className="overview__panel-title">Recording not finalized</h2>
+          <p className="readoff__sub">{captureError}</p>
+          <div className="interview__end-actions" style={{ justifyContent: 'center' }}>
+            {/* No grade retry: the server never confirmed a gradeable capture, so
+                the only safe path is to retake the test. */}
+            <button className="btn btn--primary btn--sm" onClick={() => setPhase('setup')} type="button">
+              Take the test again
+            </button>
+            <button className="btn btn--ghost btn--sm" onClick={exitTestFlow} type="button">Exit</button>
+          </div>
         </div>
       </section>
     );
@@ -732,7 +641,7 @@ export default function VoiceCall({ navigatorId, name, department = 'pediatrics'
     return (
       <section className="interview view-enter">
         <div className="card interview__done">
-          <h2 className="overview__panel-title">{isTest ? 'Call QA not saved' : 'Practice call not saved'}</h2>
+          <h2 className="overview__panel-title">Practice call not saved</h2>
           <p className="readoff__sub">{saveError}</p>
           <div className="interview__end-actions" style={{ justifyContent: 'center' }}>
             <button className="btn btn--primary btn--sm" disabled={gradeBusy} onClick={retrySaving} type="button">
@@ -749,11 +658,11 @@ export default function VoiceCall({ navigatorId, name, department = 'pediatrics'
     return (
       <section className="interview view-enter">
         <div className="card interview__done">
-          <h2 className="overview__panel-title">Call saved, grading failed</h2>
+          <h2 className="overview__panel-title">Captured, grading failed</h2>
           <p className="readoff__sub">{gradeError}</p>
           <div className="interview__end-actions" style={{ justifyContent: 'center' }}>
             <button className="btn btn--primary btn--sm" disabled={gradeBusy} onClick={retryGrading} type="button">
-              {gradeBusy ? 'Grading…' : 'Retry grading'}
+              {gradeBusy ? 'Grading…' : 'Retry grading the saved server transcript'}
             </button>
             <button className="btn btn--ghost btn--sm" onClick={exitTestFlow} type="button">Exit</button>
           </div>
@@ -796,6 +705,7 @@ export default function VoiceCall({ navigatorId, name, department = 'pediatrics'
                   {qa.score}<span className="interview__score-denom">/100</span>
                 </p>
                 <p className="readoff__sub">Pass mark: {qa.passThreshold}. No partial credit — every criterion is met or missed. This is an AI recommendation pending supervisor review — not a final verdict.</p>
+                <p className="readoff__sub qa-result__provenance">Transcript captured by the call server{captureComplete ? '' : ' (capture flagged incomplete — sent for supervisor review)'}.</p>
                 {needsReview && (
                   <p className="readoff__sub qa-result__review-note">
                     This result is flagged for supervisor review — the score alone doesn&rsquo;t decide it.
@@ -806,7 +716,7 @@ export default function VoiceCall({ navigatorId, name, department = 'pediatrics'
               <>
                 <p className="interview__score-value interview__score-value--na">—</p>
                 <p className="readoff__sub" style={{ marginTop: '0.75rem' }}>
-                  Your call was saved, but the grading couldn&rsquo;t run — the grader may be busy right now.
+                  Your call was captured, but the grading couldn&rsquo;t run — the grader may be busy right now.
                 </p>
                 <button
                   className="btn btn--ghost btn--sm"
@@ -958,7 +868,7 @@ export default function VoiceCall({ navigatorId, name, department = 'pediatrics'
           <h1 className="overview__title">{isTest ? 'Call QA Test' : 'Voice Practice Call'}</h1>
           <p className="overview__lede">
             {isTest
-              ? 'A graded test call. You are scored on the full quality scorecard — greeting, verification, call control, communication, SOP knowledge, scheduling, and closing. Auto-fail rules apply.'
+              ? 'A graded test call. You are scored on the full quality scorecard — greeting, verification, call control, communication, SOP knowledge, scheduling, and closing. Auto-fail rules apply. The call server records the transcript that is graded.'
               : 'A simulated patient will call you. Talk to them as you would on a real call. For best results, use headphones so the mic doesn’t pick up the caller.'}
           </p>
         </div>
@@ -993,7 +903,7 @@ export default function VoiceCall({ navigatorId, name, department = 'pediatrics'
           <h2 className="overview__panel-title">Ready when you are</h2>
           <p className="readoff__sub">
             {isTest
-              ? 'One take, graded hard: every criterion is met or missed against the transcript — no partial credit, no benefit of the doubt. Your mic turns on when the call starts.'
+              ? 'One take, graded hard: every criterion is met or missed against the server-captured transcript — no partial credit, no benefit of the doubt. Your mic turns on when the call starts.'
               : 'A scenario is generated for you. Every call is different. Your mic turns on when the call starts.'}
           </p>
           {error && <p className="gate__error">{error}</p>}

@@ -12,7 +12,7 @@ import Footer     from './Footer.jsx';
 import Nav        from './Nav.jsx';
 import PhaseHub   from './PhaseHub.jsx';
 import Start      from './Start.jsx';
-import { callQaScenarioMetadata, runQaPersistenceSequence } from './VoiceCall.jsx';
+import { callQaScenarioMetadata, gradeCallQaByAttemptId } from './VoiceCall.jsx';
 import { CALL_QA_SCENARIOS } from '../data/callQaScenarios.js';
 
 const startMocks = vi.hoisted(() => ({
@@ -298,96 +298,29 @@ describe('PhaseHub', () => {
   });
 });
 
-describe('runQaPersistenceSequence', () => {
-  it('does not grade or save a grade when interview save fails', async () => {
-    const saveInterviewFn = vi.fn().mockRejectedValue(new Error('save failed'));
-    const gradeQaFn = vi.fn();
-    const saveGradeFn = vi.fn();
-
-    await expect(runQaPersistenceSequence({
-      navigatorId: 'nav-1',
-      name: 'Ada',
-      domainId: 'routing',
-      scenario: 'Scenario',
-      callerName: 'Caller',
-      transcript: [{ role: 'patient', text: 'Help' }],
-      department: 'pediatrics',
-    }, {
-      saveInterviewFn,
-      gradeQaFn,
-      saveGradeFn,
-    })).rejects.toMatchObject({ stage: 'save' });
-
-    expect(gradeQaFn).not.toHaveBeenCalled();
-    expect(saveGradeFn).not.toHaveBeenCalled();
+describe('gradeCallQaByAttemptId (PR 2 server-authoritative grading)', () => {
+  it('sends ONLY the server attempt id — never a transcript, scenario, or metadata', async () => {
+    const apiFetchFn = vi.fn().mockResolvedValue({ grade: { score: 90 }, qa: { pass: true } });
+    await gradeCallQaByAttemptId('attempt-123', apiFetchFn);
+    expect(apiFetchFn).toHaveBeenCalledTimes(1);
+    const [endpoint, body] = apiFetchFn.mock.calls[0];
+    expect(endpoint).toBe('/api/grade-call-qa');
+    expect(body).toEqual({ attemptId: 'attempt-123' });
+    expect(body).not.toHaveProperty('transcript');
+    expect(body).not.toHaveProperty('scenario');
+    expect(body).not.toHaveProperty('metadata');
+    expect(body).not.toHaveProperty('qaScenarioId');
   });
 
-  it('passes curated scenario metadata to the interview save helper', async () => {
-    const saveInterviewFn = vi.fn().mockResolvedValue('iv-1');
-    const gradeQaFn = vi.fn().mockResolvedValue({
-      grade: { score: 90 },
-      qa: { score: 90, pass: true },
-    });
-    const saveGradeFn = vi.fn().mockResolvedValue();
+  it('propagates the persisted grade/qa the server returns', async () => {
+    const apiFetchFn = vi.fn().mockResolvedValue({ grade: { score: 88 }, qa: { pass: true }, attemptId: 'a1' });
+    const data = await gradeCallQaByAttemptId('a1', apiFetchFn);
+    expect(data.qa.pass).toBe(true);
+    expect(data.grade.score).toBe(88);
+  });
+
+  it('still keeps compact curated metadata for the local onQaResult callback', () => {
     const metadata = callQaScenarioMetadata(CALL_QA_SCENARIOS[0]);
-
-    await runQaPersistenceSequence({
-      navigatorId: 'nav-1',
-      name: 'Ada',
-      domainId: 'routing',
-      scenario: 'Scenario',
-      callerName: 'Caller',
-      transcript: [{ role: 'patient', text: 'Help' }],
-      department: 'pediatrics',
-      metadata,
-    }, {
-      saveInterviewFn,
-      gradeQaFn,
-      saveGradeFn,
-    });
-
-    expect(saveInterviewFn).toHaveBeenCalledWith(
-      'nav-1',
-      'Ada',
-      'routing',
-      'Scenario',
-      'Caller',
-      [{ role: 'patient', text: 'Help' }],
-      'pediatrics',
-      metadata
-    );
-  });
-
-  it('sends only the curated scenario id as grading authority', async () => {
-    const saveInterviewFn = vi.fn().mockResolvedValue('iv-1');
-    const gradeQaFn = vi.fn().mockResolvedValue({
-      grade: { score: 90 },
-      qa: { score: 90, pass: true },
-    });
-    const saveGradeFn = vi.fn().mockResolvedValue();
-    const source = CALL_QA_SCENARIOS[0];
-    const metadata = callQaScenarioMetadata(source);
-
-    await runQaPersistenceSequence({
-      navigatorId: 'nav-1',
-      name: 'Ada',
-      domainId: 'routing',
-      scenario: 'Scenario',
-      callerName: 'Caller',
-      transcript: [{ role: 'patient', text: 'Help' }],
-      department: 'pediatrics',
-      metadata,
-    }, {
-      saveInterviewFn,
-      gradeQaFn,
-      saveGradeFn,
-    });
-
-    expect(gradeQaFn).toHaveBeenCalledTimes(1);
-    expect(gradeQaFn).toHaveBeenCalledWith(expect.objectContaining({
-      scenario: 'Scenario',
-      qaScenarioId: source.id,
-    }));
-    expect(gradeQaFn.mock.calls[0][0]).not.toHaveProperty('metadata');
+    expect(metadata).toMatchObject({ qaScenarioId: CALL_QA_SCENARIOS[0].id, scenarioSource: 'curated' });
   });
 });
