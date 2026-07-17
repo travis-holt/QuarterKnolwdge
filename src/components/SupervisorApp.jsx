@@ -61,6 +61,7 @@ import { ALL_SEED_QUESTIONS } from '../data/questions.js';
 import { DEFAULT_DEPT, isAssessed as deptIsAssessed, departmentName } from '../data/departments.js';
 import { apiFetch, runPooled } from '../lib/apiFetch.js';
 import { compareTimestampValues } from '../lib/time.js';
+import { currentContentVersionContext } from '../lib/contentVersion.js';
 
 // Views where the DeptBar appears. The Navigators tab is intentionally NOT here:
 // roster management is global (not department-scoped), so it always shows the
@@ -158,6 +159,8 @@ export default function SupervisorApp({ onSignOut }) {
 
   const isAssessedDept = deptIsAssessed(selectedDept);
   const deptName = departmentName(selectedDept);
+  const activeSop = sops.find((sop) => (sop.department ?? 'pediatrics') === selectedDept && sop.status === 'active') ?? null;
+  const contentVersionContext = currentContentVersionContext(selectedDept, activeSop);
 
   // Build a lookup: navigatorId → Set<domainId> for "Spot the Error" completions.
   const completionMap = {};
@@ -287,7 +290,7 @@ export default function SupervisorApp({ onSignOut }) {
     ));
     const plan = workflowType
       ? Array.from({ length: count }, () => workflowType)
-      : chooseBalancedWorkflowTypes(domainAudits, domainId, count);
+      : chooseBalancedWorkflowTypes(domainAudits, domainId, count, selectedDept);
     const results = await runPooled(plan, 2, (d) =>
       apiFetch('/api/generate-audit', {
         domain: domainId,
@@ -439,6 +442,7 @@ export default function SupervisorApp({ onSignOut }) {
                 answers={selectedResult?.answers}
                 questions={questions.filter((q) => q.status === 'active')}
                 onSaveFeedback={handleSaveFeedback}
+                contentVersionContext={contentVersionContext}
               />
             )}
 
@@ -512,6 +516,7 @@ export default function SupervisorApp({ onSignOut }) {
                   questions,
                   results: questionAttempts,
                   selectedDept,
+                  contentVersionContext,
                   onActivate: activateQuestion,
                   onArchive: archiveQuestion,
                   onDelete: deleteQuestion,
@@ -523,6 +528,7 @@ export default function SupervisorApp({ onSignOut }) {
                 auditBankProps={{
                   audits,
                   selectedDept,
+                  contentVersionContext,
                   onGenerate: handleGenerateAudits,
                   onActivate: activateAudit,
                   onArchive: archiveAudit,

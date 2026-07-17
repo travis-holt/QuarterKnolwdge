@@ -23,14 +23,21 @@ const REQUIRED_WORKFLOWS = {
     'wrong_department_unclear_request',
   ],
   obgyn: [
-    'new_gyn_visit',
-    'pregnancy_related_visit',
-    'mfm_related_request',
+    'vague_chart_review',
+    'annual_gyn_vs_gyn_ov',
+    'known_lmp_new_ob',
+    'unknown_lmp_confirmation',
+    'new_ob_pairing',
+    'missing_rto_order',
+    'transfer_ob',
+    'urgent_high_priority_intermedia',
+    'existing_te_take_action',
+    'mfm_owner',
+    'paired_reschedule',
     'prescription_refill',
-    'test_result_medical_advice_boundary',
-    'scheduling_change',
-    'records_forms',
-    'wrong_department_unclear_request',
+    'lab_boundary',
+    'dr_bank_waitlist',
+    'nurse_approved_ob_urgent',
   ],
 };
 
@@ -61,6 +68,19 @@ describe('CALL_QA_SCENARIOS', () => {
   it('has at least 8 scenarios for each live department', () => {
     for (const dept of ASSESSED_DEPTS) {
       expect(callQaScenarioCoverage(dept).count).toBeGreaterThanOrEqual(8);
+    }
+  });
+
+  it('has at least 15 current-floor OB/GYN scenarios with hidden chart and rule provenance', () => {
+    const scenarios = CALL_QA_SCENARIOS.filter((scenario) => scenario.department === 'obgyn');
+    expect(scenarios.length).toBeGreaterThanOrEqual(15);
+    for (const scenario of scenarios) {
+      expect(scenario.hiddenChartState).toBeTruthy();
+      expect(scenario.ruleIds.length).toBeGreaterThan(0);
+      expect(scenario.sourceSopVersion).toBeTruthy();
+      expect(scenario.sourceRuleVersion).toBeTruthy();
+      expect(scenario.sourceAuthority).toBe('owner-confirmed-current-floor');
+      expect(scenario.scoringNotes.join(' ')).toMatch(/silent ECW clicks/i);
     }
   });
 

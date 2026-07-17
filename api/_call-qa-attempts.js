@@ -59,6 +59,11 @@ export function buildScenarioSnapshot(scenario) {
     expectedActions: scenario.expectedActions ?? [],
     criticalMisses: scenario.criticalMisses ?? [],
     scoringNotes: scenario.scoringNotes ?? [],
+    hiddenChartState: scenario.hiddenChartState ?? null,
+    ruleIds: scenario.ruleIds ?? [],
+    sourceSopVersion: scenario.sourceSopVersion ?? null,
+    sourceRuleVersion: scenario.sourceRuleVersion ?? null,
+    sourceAuthority: scenario.sourceAuthority ?? null,
   };
 }
 
@@ -86,6 +91,10 @@ export function buildAttemptDoc({ navigatorId, name, department, scenario, liveM
     difficulty: scenario.difficulty ?? null,
     domainIds: scenario.domainIds ?? (primaryDomainId ? [primaryDomainId] : []),
     competencyIds: scenario.competencyIds ?? [],
+    ruleIds: scenario.ruleIds ?? [],
+    sourceSopVersion: scenario.sourceSopVersion ?? null,
+    sourceRuleVersion: scenario.sourceRuleVersion ?? null,
+    sourceAuthority: scenario.sourceAuthority ?? null,
 
     scenarioSnapshot: buildScenarioSnapshot(scenario),
 

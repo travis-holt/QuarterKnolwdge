@@ -1,5 +1,6 @@
 import { ASSESSED_DEPTS } from './departments.js';
 import { compareTimestampValues } from '../lib/time.js';
+import { OBGYN_CURRENT_FLOOR_CALL_QA_SCENARIOS } from './obgynCallQaScenarios.js';
 
 // Curated Call QA Test scenarios. These are assessment prompts, so keep them
 // stable, department-tagged, and free of real names, phone numbers, or PII.
@@ -13,7 +14,7 @@ const SHARED_SCORING_NOTES = [
 // through the factory below; an individual scenario may override `version` later
 // if it evolves independently. The trusted (server-resolved) version is recorded
 // on every stored QA result (qa.gradingMetadata.scenarioVersion).
-export const CALL_QA_SCENARIO_BANK_VERSION = 'call-qa-scenarios-v1';
+export const CALL_QA_SCENARIO_BANK_VERSION = 'call-qa-scenarios-v2';
 
 function scenario({
   id,
@@ -31,6 +32,11 @@ function scenario({
   criticalMisses,
   scoringNotes = SHARED_SCORING_NOTES,
   version = CALL_QA_SCENARIO_BANK_VERSION,
+  hiddenChartState = null,
+  ruleIds = [],
+  sourceSopVersion = null,
+  sourceRuleVersion = null,
+  sourceAuthority = null,
 }) {
   return {
     id,
@@ -48,10 +54,15 @@ function scenario({
     criticalMisses,
     scoringNotes,
     version,
+    hiddenChartState,
+    ruleIds,
+    sourceSopVersion,
+    sourceRuleVersion,
+    sourceAuthority,
   };
 }
 
-export const CALL_QA_SCENARIOS = [
+const LEGACY_CALL_QA_SCENARIOS = [
   scenario({
     id: 'qa-peds-scheduling-001',
     department: 'pediatrics',
@@ -460,6 +471,11 @@ export const CALL_QA_SCENARIOS = [
       'Ends the call without a next step.',
     ],
   }),
+];
+
+export const CALL_QA_SCENARIOS = [
+  ...LEGACY_CALL_QA_SCENARIOS.filter((item) => item.department === 'pediatrics'),
+  ...OBGYN_CURRENT_FLOOR_CALL_QA_SCENARIOS.map(scenario),
 ];
 
 export function getCallQaScenarios(department) {

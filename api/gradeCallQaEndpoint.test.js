@@ -120,6 +120,10 @@ describe('gradeCallQaTranscript — pinned model + metadata', () => {
       rubricVersion: QA_RUBRIC_VERSION,
       promptVersion: CALL_QA_PROMPT_VERSION,
       scenarioVersion: CURATED.version,
+      sourceSopVersion: CURATED.sourceSopVersion ?? null,
+      sourceRuleVersion: CURATED.sourceRuleVersion ?? null,
+      sourceAuthority: CURATED.sourceAuthority ?? null,
+      ruleIds: CURATED.ruleIds ?? [],
       gradedAt: expect.any(String),
     });
     expect(qa.transcriptMetadata.authority).toBe('server');

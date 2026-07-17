@@ -4,6 +4,7 @@ import { optionPoints } from '../lib/scoring.js';
 import { hasBlockingFlags, validateQuestionContent } from '../lib/contentGuards.js';
 import QuestionEditor from './QuestionEditor.jsx';
 import FeedbackControls from './FeedbackControls.jsx';
+import { contentVersionStatus } from '../lib/contentVersion.js';
 
 const MAX_VISIBLE_COMPETENCY_TAGS = 3;
 
@@ -46,6 +47,7 @@ function HealthSummary({ health }) {
  */
 export default function QuestionBankItem({
   question: q,
+  contentVersionContext,
   status, // 'draft' | 'active' | 'archived'
   health,
   isExpanded,
@@ -73,6 +75,7 @@ export default function QuestionBankItem({
   const panelId = `qbank-panel-${q.id}`;
   const headId = `qbank-head-${q.id}`;
   const anyPending = Boolean(pendingAction);
+  const versionStatus = contentVersionContext ? contentVersionStatus(q, contentVersionContext) : null;
 
   const stop = (fn) => (e) => {
     e.stopPropagation();
@@ -115,6 +118,7 @@ export default function QuestionBankItem({
               <span key={c} className="tag qbank__comp">{competencyName(c)}</span>
             ))}
             {extraCompCount > 0 && <span className="tag qbank__comp">+{extraCompCount}</span>}
+            {versionStatus && <span className="tag">{versionStatus.label}</span>}
             {blocked && <span className="qbank__warn" title="Blocked from activation">⚠ Blocked</span>}
           </span>
           <span className="qbank__preview">{q.scenario}</span>
@@ -176,6 +180,14 @@ export default function QuestionBankItem({
                   <strong>Blocked:</strong> {flag.message}
                 </div>
               ))}
+            </div>
+          )}
+
+          {versionStatus && !versionStatus.matchesActive && (
+            <div className="qhealth__alert">
+              <strong>Version review:</strong> {versionStatus.label}.
+              {versionStatus.unknownRuleIds.length > 0 && <> Unknown rule IDs: {versionStatus.unknownRuleIds.join(', ')}.</>}
+              {' '}Review against the active SOP and structured rules before activation or continued use.
             </div>
           )}
 

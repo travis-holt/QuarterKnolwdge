@@ -39,6 +39,11 @@ describe('buildScenarioSnapshot / buildAttemptDoc', () => {
       expectedActions: SCENARIO.expectedActions,
       criticalMisses: SCENARIO.criticalMisses,
       scoringNotes: SCENARIO.scoringNotes,
+      hiddenChartState: null,
+      ruleIds: [],
+      sourceSopVersion: null,
+      sourceRuleVersion: null,
+      sourceAuthority: null,
     });
   });
 

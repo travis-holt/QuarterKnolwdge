@@ -40,7 +40,7 @@ import QuestionBankGenerateDialog from './QuestionBankGenerateDialog.jsx';
 
 const DEFAULT_FILTERS = { search: '', domainId: 'all', competencyId: 'all', healthFilter: 'all' };
 
-export default function QuestionBank({ questions, results = [], selectedDept = 'pediatrics', onActivate, onArchive, onDelete, onSaveEdit, onGenerate, onSaveFeedback, onSaveProposal }) {
+export default function QuestionBank({ questions, results = [], selectedDept = 'pediatrics', contentVersionContext = null, onActivate, onArchive, onDelete, onSaveEdit, onGenerate, onSaveFeedback, onSaveProposal }) {
   const deptQuestions = useMemo(
     () => questions.filter((q) => (q.department ?? 'pediatrics') === selectedDept),
     [questions, selectedDept]
@@ -469,6 +469,7 @@ export default function QuestionBank({ questions, results = [], selectedDept = '
               <QuestionBankItem
                 key={q.id}
                 question={q}
+                contentVersionContext={contentVersionContext}
                 status={activeTab}
                 health={health[q.id]}
                 isExpanded={expandedQuestionId === q.id}

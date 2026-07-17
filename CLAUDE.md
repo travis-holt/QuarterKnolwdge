@@ -42,6 +42,11 @@
 > containment during generation, and Edit disabled during any pending action; then a top-level
 > Assessment Bank selector so Scenario Questions and Spot the Error no longer share one scrolling
 > page — implemented in PR #30) ·
+> **Current update (2026-07-17):** OB/GYN current-floor operating model v2 adds explicit source
+> authority, 24 executable workflow rules, versioned MCQ/audit/Call-QA content, a 14-workflow audit
+> taxonomy, 15 curated chart-grounded Call QA cases, deterministic guards, and non-destructive
+> stale/legacy review labels. See F14, F16, F25, and section 8.
+>
 > **Doc maintainer:** Claude (AI agent) + repo owner. Assumptions are explicitly marked **[ASSUMPTION]**.
 
 ---
@@ -346,6 +351,15 @@ training assignments.
   attributing overrides to a specific supervisor.
 
 ### F16 — "Spot the Error" QA Audit Assessment
+- **OB/GYN executable audit contract (2026-07-17):** OB/GYN generation uses the selected entries
+  from the 14-workflow taxonomy in `src/data/auditWorkflows.js`, resolves stable rule IDs from
+  `src/data/obgynWorkflowRules.js`, and sends only those rules plus resolved SOP grounding to
+  Gemini. Saved audits carry `sourceSopVersion`, `sourceRuleVersion`, `sourceAuthority`, `ruleIds`,
+  `workflowType`, `errorKind`, `expectedCorrection`, and `requiredChartFacts`. Validation requires
+  exactly ten alternating turns, an Agent `errorIndex`, and exactly one Agent statement/action that
+  deterministically contradicts a selected rule; it no longer silently moves a Patient index. The
+  human SOP remains the operational source and the structured table is its executable assessment
+  layer.
 - **Purpose:** A **scored** QA-audit assessment — navigators act as a QA auditor over AI-generated
   flawed agent transcripts, identifying each SOP violation. **Feeds the capability matrix** (changed
   2026-07-01 from advisory-only training). Offered as a top-level **alternative to the MCQ check** at
@@ -704,6 +718,18 @@ training assignments.
   generated roleplay scenarios. QA interview docs store compact scenario metadata including
   `qaScenarioId`, `workflowType`, `difficulty`, `domainIds`, and `competencyIds` so supervisors can
   review coverage and future dashboards can group attempts by workflow.
+- **OB/GYN current-floor bank v2 (2026-07-17):** the active OB/GYN bank is 15 curated workflows
+  grounded in the owner-confirmed current-floor SOP. Each scenario includes server-only hidden chart
+  state, expected observable actions, critical misses, scoring notes, rule IDs, and SOP/rule/source
+  versions; the relay gives chart facts to the caller persona without sending them to the browser,
+  and the immutable attempt snapshot preserves them for grading. Deterministic findings cover New
+  OB/Confirmation, paired visits, missing RTO/order, transfer review, High Priority OB Portal TE
+  plus Intermedia, existing-TE Take Action, Rebecca Wood MFM ownership, refill/lab boundaries, and
+  Dr. Bank waitlist. Historical routing policies remain solely for replay of old attempts. A
+  transcript cannot prove silent ECW clicks, so grading uses observable classification,
+  explanation, questions, and stated intent; outcome-determinative silent actions require
+  supervisor review. Call QA remains calibrated coaching/readiness evidence with mandatory human
+  review, not an automatic employment decision.
 - **Fairness hardening (2026-07-10):** QA grading resolves curated `scoringNotes` and workflow metadata server-side from the trusted scenario id, then applies narrow deterministic repairs after model validation but before scoring. Standard pediatric refills cannot lose Knowledge points solely for omitting caller-facing PE status, and natural safe message/routing wording does not require literal TE wording. Repairs are stored in `qa.repairs`, surfaced to supervisors, and never excuse missing refill details, wrong routing, overpromising, clinical advice, or privacy failures. Missing/unknown/mismatched scenario authority disables repairs and forces `needs_review`; browser-supplied workflow/scoring arrays are ignored by grading.
   Destination-only mentions, action questions, historical checks, and hypotheticals are not routing evidence; a repair requires committed navigator ownership or a committed future follow-up from the responsible team/person.
   **Owner-confirmed routing authority (2026-07-10):** deterministic routing follows this hierarchy:
@@ -891,6 +917,11 @@ training assignments.
   `src/components/{NavigatorApp,components.test}.jsx`, `src/styles.css`, `CLAUDE.md`.
 
 ### F14 — Question Bank + Gemini Scenario Generation (review gate)
+- **Versioned OB/GYN generation (2026-07-17):** the endpoint selects applicable executable rules by
+  domain/workflow/rule ID and includes only those rules plus the resolved SOP source. New questions
+  persist `sourceSopVersion`, `sourceRuleVersion`, `sourceAuthority`, `ruleIds`, and `workflowType`.
+  The supervisor bank derives Current/Stale/Legacy/unknown-rule review status without altering old
+  documents; active-SOP changes never retroactively bless prior content.
 - **Purpose:** Grow the check from the SOP; questions are live Firestore data, not a static file.
 - **User benefit:** Supervisors generate, review, and curate the assessment without a code change.
 - **Technical implementation:** Firestore `questions` collection (`draft`/`active`/`archived`);
@@ -1530,6 +1561,16 @@ of this file on 2026-07-07 to cut per-session context cost (it was ~55% of the f
 ---
 
 ## 8. Current System State
+
+- **OB/GYN source authority and executable content (2026-07-17):** assessment grounding is ordered
+  owner-confirmed current-floor rules > active supervisor-managed department SOP > current
+  hardcoded department fallback > generic navigator model. The active human SOP is the operational
+  source; `obgynWorkflowRules.js` is its versioned executable assessment representation. Generated
+  questions/audits and curated Call QA attempts persist SOP/rule/source provenance. Supervisor banks
+  and Call QA history derive Current/Stale/Legacy/unknown-rule labels without rewriting historical
+  documents. A newly activated SOP does not retroactively validate content authored under an older
+  version; review and regeneration are explicit. No automatic migration or production write is
+  part of this behavior.
 
 - **Audit remediation (2026-07-12):** live access is no longer anonymous or role-by-localStorage.
   Server-issued Firebase claims protect REST, WebSocket, and Firestore; PIN material stays
@@ -2271,6 +2312,11 @@ npm run test:e2e     # run the Playwright browser tests (auto-builds + starts th
    fix — see [§12](#12-bugs--known-issues) "Client-authoritative MCQ/Spot scoring".
 
 **Active work items:**
+- **OB/GYN v2 operational validation:** supervisors must review/activate newly generated versioned
+  MCQs/audits, run captured-model and live human calibration for the 15 Call QA workflows, verify
+  real-floor Intermedia/ECW behavior, and monitor deterministic review flags before relying on
+  readiness trends. Transcript-only grading cannot prove silent chart actions, and no score or AI
+  recommendation may be used as an automatic employment decision.
 - **Pilot-feedback follow-ups (2026-07-03):** after the 2026-07-07 content-quality fix, supervisors
   should regenerate and activate fresh audit transcripts so the balanced workflow taxonomy fully
   replaces older refill-heavy bank content; get the specifics of the colour-scheme feedback (item
@@ -2284,10 +2330,11 @@ npm run test:e2e     # run the Playwright browser tests (auto-builds + starts th
   generate + activate additional scenarios per new domain via the Question Bank UI (the
   generation prompt now enforces distractor quality — regenerating also addresses the
   "too obvious" pilot feedback).
-- **SOP content** — paste the real Pediatrics / OB/GYN SOPs (and later Behavioral Health /
-  Internal Medicine) into the new SOPs tab and activate, taking grounding control away from the
-  hardcoded `_sop-context.js` fallbacks. Note: live SOPs in Firestore may hold real provider
-  names (not in the public repo); keep the hardened rules deployed and continue to avoid patient PII.
+- **SOP content** — maintain the real Pediatrics / OB/GYN SOPs in the SOPs tab and add Behavioral
+  Health / Internal Medicine when available. OB/GYN owner-confirmed current-floor rules remain the
+  highest authority; the active supervisor SOP supplies the department layer beneath them. Approved
+  real provider names may be retained where operationally necessary; never add patient PII,
+  credentials, or private contact details.
 
 **Blockers:**
 - Adult Medicine and Behavioural Health remain mockup — each needs an owner-provided SOP before

@@ -1,7 +1,8 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { DOMAINS, domainName } from '../data/questions.js';
 import { workflowOptionsFor } from '../data/auditWorkflows.js';
 import { detectOverusedWorkflow, hasBlockingFlags, validateAuditContent } from '../lib/contentGuards.js';
+import { contentVersionStatus } from '../lib/contentVersion.js';
 
 // Audit Bank — the supervisor review gate for pre-generated "Spot the Error"
 // transcripts. Mirrors the Question Bank model: Gemini output lands as `draft`,
@@ -12,10 +13,10 @@ import { detectOverusedWorkflow, hasBlockingFlags, validateAuditContent } from '
 // Rendered inside the supervisor "Questions" tab, in its own "Spot the Error"
 // panel of the AssessmentBankSelector tablist (see AssessmentBankSelector.jsx).
 
-export default function AuditBank({ audits, selectedDept = 'pediatrics', onGenerate, onActivate, onArchive, onDelete }) {
+export default function AuditBank({ audits, selectedDept = 'pediatrics', contentVersionContext = null, onGenerate, onActivate, onArchive, onDelete }) {
   const [genDomain, setGenDomain] = useState(DOMAINS[0].id);
   const [genMode, setGenMode] = useState('balanced');
-  const [genWorkflow, setGenWorkflow] = useState(workflowOptionsFor(DOMAINS[0].id)[0] ?? 'general_workflow');
+  const [genWorkflow, setGenWorkflow] = useState(workflowOptionsFor(DOMAINS[0].id, selectedDept)[0] ?? 'general_workflow');
   const [genCount, setGenCount] = useState(3);
   const [generating, setGenerating] = useState(false);
   const [expandedId, setExpandedId] = useState(null);
@@ -26,7 +27,11 @@ export default function AuditBank({ audits, selectedDept = 'pediatrics', onGener
   const drafts = byStatus('draft');
   const active = byStatus('active');
   const archived = byStatus('archived');
-  const workflowOptions = workflowOptionsFor(genDomain);
+  const workflowOptions = workflowOptionsFor(genDomain, selectedDept);
+
+  useEffect(() => {
+    setGenWorkflow(workflowOptionsFor(genDomain, selectedDept)[0] ?? 'general_workflow');
+  }, [genDomain, selectedDept]);
 
   const coverage = DOMAINS.map((d) => ({
     ...d,
@@ -61,6 +66,7 @@ export default function AuditBank({ audits, selectedDept = 'pediatrics', onGener
     const patientOpener = a.transcript?.find((t) => t.speaker === 'Patient')?.message ?? '';
     const flags = validateAuditContent(a);
     const blocked = hasBlockingFlags(flags);
+    const versionStatus = contentVersionContext ? contentVersionStatus(a, contentVersionContext) : null;
     return (
       <li key={a.id} className="qbank__item">
         <div className="qbank__item-head">
@@ -69,6 +75,7 @@ export default function AuditBank({ audits, selectedDept = 'pediatrics', onGener
           <span className="tag">{a.errorKind ?? 'workflow_error'}</span>
           <span className="tag">{a.difficulty ?? 'medium'}</span>
           <span className="tag">{(a.transcript ?? []).length} turns</span>
+          {versionStatus && <span className="tag">{versionStatus.label}</span>}
         </div>
         <p className="qbank__scenario">“{patientOpener}”</p>
         {flags.map((flag) => (
@@ -76,6 +83,12 @@ export default function AuditBank({ audits, selectedDept = 'pediatrics', onGener
             <strong>Blocked:</strong> {flag.message}
           </div>
         ))}
+        {versionStatus && !versionStatus.matchesActive && (
+          <div className="qhealth__alert">
+            <strong>Version review:</strong> {versionStatus.label}.
+            {versionStatus.unknownRuleIds.length > 0 && <> Unknown rule IDs: {versionStatus.unknownRuleIds.join(', ')}.</>}
+          </div>
+        )}
         {expanded && (
           <>
             <div className="auditbank__transcript">
@@ -144,7 +157,7 @@ export default function AuditBank({ audits, selectedDept = 'pediatrics', onGener
               onChange={(e) => {
                 const next = e.target.value;
                 setGenDomain(next);
-                setGenWorkflow(workflowOptionsFor(next)[0] ?? 'general_workflow');
+                setGenWorkflow(workflowOptionsFor(next, selectedDept)[0] ?? 'general_workflow');
               }}
             >
               {DOMAINS.map((d) => (

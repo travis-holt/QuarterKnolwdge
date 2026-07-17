@@ -115,6 +115,33 @@ describe('sanitize', () => {
     expect(result).not.toBeNull();
     expect(result.competencies.length).toBeLessThanOrEqual(3);
   });
+
+  it('preserves validated OB/GYN workflow and source provenance', () => {
+    const raw = validRaw();
+    raw.scenario = 'A newly pregnant patient has a reliable known LMP.';
+    raw.workflowType = 'known_vs_unknown_lmp';
+    raw.ruleIds = ['new_ob_known_lmp'];
+    raw.options[0] = { id: 'a', text: 'Use the normal New OB workflow.', points: 100, rationale: 'A reliable LMP supports New OB scheduling.' };
+    const result = sanitize(raw, 'classification', {
+      department: 'obgyn',
+      allowedRuleIds: ['new_ob_known_lmp'],
+      sourceSopVersion: 'obgyn-current-floor-2026-07-17',
+      sourceRuleVersion: 'obgyn-workflow-rules-v2',
+      sourceAuthority: 'owner-confirmed-current-floor',
+    });
+    expect(result).toMatchObject({
+      department: 'obgyn', workflowType: 'known_vs_unknown_lmp', ruleIds: ['new_ob_known_lmp'],
+      sourceSopVersion: 'obgyn-current-floor-2026-07-17', sourceRuleVersion: 'obgyn-workflow-rules-v2',
+      sourceAuthority: 'owner-confirmed-current-floor',
+    });
+  });
+
+  it('rejects unselected or workflow-mismatched OB/GYN rule metadata', () => {
+    const raw = { ...validRaw(), workflowType: 'known_vs_unknown_lmp', ruleIds: ['unknown_rule'] };
+    const metadata = { department: 'obgyn', allowedRuleIds: ['new_ob_known_lmp'] };
+    expect(sanitize(raw, 'classification', metadata)).toBeNull();
+    expect(sanitize({ ...raw, ruleIds: ['new_ob_known_lmp'], workflowType: 'mfm_owner' }, 'classification', metadata)).toBeNull();
+  });
 });
 
 // ── buildDigest ──────────────────────────────────────────────────────────────

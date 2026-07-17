@@ -45,7 +45,7 @@ const MAX_TURN_CHARS = 2000;
 // Grader prompt version — bump whenever the grading INSTRUCTIONS materially
 // change. Recorded on qa.gradingMetadata.promptVersion. This version reflects the
 // judgment-basis (EVIDENCE / ABSENCE) grader contract introduced in this PR.
-export const CALL_QA_PROMPT_VERSION = 'call-qa-grader-v1';
+export const CALL_QA_PROMPT_VERSION = 'call-qa-grader-v2';
 
 /**
  * The single, pinned model used to SCORE a Call QA test. Scored grading must be
@@ -68,6 +68,10 @@ function trustedScenarioMetadata(scenario) {
     expectedActions: scenario.expectedActions,
     criticalMisses: scenario.criticalMisses,
     scoringNotes: scenario.scoringNotes ?? [],
+    ruleIds: scenario.ruleIds ?? [],
+    sourceSopVersion: scenario.sourceSopVersion ?? null,
+    sourceRuleVersion: scenario.sourceRuleVersion ?? null,
+    sourceAuthority: scenario.sourceAuthority ?? null,
   };
 }
 
@@ -82,6 +86,13 @@ export function buildTrustedGradingScenario(scenario) {
     'Critical misses (fail the relevant criteria if these occur):',
     ...scenario.criticalMisses.map((item) => `- ${item}`),
   ];
+  if (scenario.hiddenChartState) {
+    lines.push(
+      'HIDDEN CHART FACTS (server-authoritative; judge the navigator against these facts):',
+      JSON.stringify(scenario.hiddenChartState),
+      'Do not require the navigator to narrate silent chart clicks. Grade only observable questions, classifications, explanations, and stated actions; use supervisor review when a silent action is outcome-determinative.',
+    );
+  }
   if (scenario.scoringNotes?.length) {
     lines.push('Scenario-specific grading notes:', ...scenario.scoringNotes.map((item) => `- ${item}`));
   }
@@ -104,6 +115,10 @@ export function resolveQaScenarioContext({ scenario = '', department = 'pediatri
     department: trusted?.department ?? department,
     // Server-trusted scenario version; never a browser-supplied value.
     scenarioVersion: trusted?.version ?? null,
+    sourceSopVersion: trusted?.sourceSopVersion ?? null,
+    sourceRuleVersion: trusted?.sourceRuleVersion ?? null,
+    sourceAuthority: trusted?.sourceAuthority ?? null,
+    ruleIds: trusted?.ruleIds ?? [],
     gradingScenario: trusted ? buildTrustedGradingScenario(trusted) : String(scenario),
     repairContext: {
       scenario: trusted?.scenario ?? String(scenario),
@@ -379,6 +394,11 @@ export function buildScenarioContextFromAttempt(attempt) {
     expectedActions: snapshot.expectedActions ?? attempt.expectedActions ?? [],
     criticalMisses: snapshot.criticalMisses ?? attempt.criticalMisses ?? [],
     scoringNotes: snapshot.scoringNotes ?? [],
+    hiddenChartState: snapshot.hiddenChartState ?? null,
+    ruleIds: snapshot.ruleIds ?? attempt.ruleIds ?? [],
+    sourceSopVersion: snapshot.sourceSopVersion ?? attempt.sourceSopVersion ?? null,
+    sourceRuleVersion: snapshot.sourceRuleVersion ?? attempt.sourceRuleVersion ?? null,
+    sourceAuthority: snapshot.sourceAuthority ?? attempt.sourceAuthority ?? null,
   });
   return {
     verified: Boolean(trusted),
@@ -386,6 +406,10 @@ export function buildScenarioContextFromAttempt(attempt) {
     qaScenarioId: attempt.qaScenarioId ?? null,
     department,
     scenarioVersion: attempt.scenarioVersion ?? trusted?.version ?? null,
+    sourceSopVersion: snapshot.sourceSopVersion ?? attempt.sourceSopVersion ?? null,
+    sourceRuleVersion: snapshot.sourceRuleVersion ?? attempt.sourceRuleVersion ?? null,
+    sourceAuthority: snapshot.sourceAuthority ?? attempt.sourceAuthority ?? null,
+    ruleIds: snapshot.ruleIds ?? attempt.ruleIds ?? [],
     gradingScenario,
     repairContext: {
       scenario: snapshot.scenario ?? attempt.scenario ?? '',
@@ -397,6 +421,10 @@ export function buildScenarioContextFromAttempt(attempt) {
         expectedActions: snapshot.expectedActions ?? attempt.expectedActions ?? [],
         criticalMisses: snapshot.criticalMisses ?? attempt.criticalMisses ?? [],
         scoringNotes: snapshot.scoringNotes ?? [],
+        ruleIds: snapshot.ruleIds ?? attempt.ruleIds ?? [],
+        sourceSopVersion: snapshot.sourceSopVersion ?? attempt.sourceSopVersion ?? null,
+        sourceRuleVersion: snapshot.sourceRuleVersion ?? attempt.sourceRuleVersion ?? null,
+        sourceAuthority: snapshot.sourceAuthority ?? attempt.sourceAuthority ?? null,
       },
     },
   };
@@ -481,6 +509,10 @@ export async function gradeCallQaTranscript({ transcript: rawTranscript, scenari
     rubricVersion: QA_RUBRIC_VERSION,
     promptVersion: CALL_QA_PROMPT_VERSION,
     scenarioVersion: scenarioContext.scenarioVersion ?? null,
+    sourceSopVersion: scenarioContext.sourceSopVersion ?? null,
+    sourceRuleVersion: scenarioContext.sourceRuleVersion ?? null,
+    sourceAuthority: scenarioContext.sourceAuthority ?? null,
+    ruleIds: scenarioContext.ruleIds ?? [],
     gradedAt: new Date().toISOString(),
   };
   // Capture integrity FAILS CLOSED: a clean capture requires BOTH a 'captured'

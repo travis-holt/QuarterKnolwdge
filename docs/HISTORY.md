@@ -1,5 +1,45 @@
 # Development History - Knowledge Check
 
+### 2026-07-17 (part 4) - OB/GYN current-floor operating model v2
+- **Authority and source versioning:** replaced the active hardcoded OB/GYN grounding with the
+  owner-confirmed 2026-07-17 current-floor workflow and made source precedence explicit:
+  owner-confirmed current-floor rules, then the active supervisor-managed department SOP, then the
+  current hardcoded department fallback, then the generic navigator model. Active SOP records now
+  preserve version metadata while old body-only callers remain compatible. Real approved staff
+  names are retained where routing depends on them; credentials, phone numbers, and patient data are
+  excluded.
+- **Executable rules:** added `src/data/obgynWorkflowRules.js` with 24 versioned rules covering
+  Annual GYN/GYN OV, Dr. Bank waitlist, known/unknown LMP, New OB construction, documented RTO and
+  missing orders, OB sonography/provider pairs, postpartum/IUD variants (Dr. Stanislawski and Dr.
+  Klein), MFM/Rebecca Wood, transfer OB, High Priority + Intermedia escalation, Take Action,
+  refills, labs, late arrival, and pregnancy loss. Each rule carries triggers, chart checks,
+  required/prohibited actions, documentation, escalation, variants, domains, competencies, and
+  stable provenance.
+- **Generated assessment contracts:** MCQs and Spot-the-Error audits now select structured rules,
+  receive only those rules plus SOP grounding, and persist `sourceSopVersion`, `sourceRuleVersion`,
+  `sourceAuthority`, `ruleIds`, and `workflowType`. OB/GYN audits use a 14-workflow taxonomy and
+  additionally persist `errorKind`, `expectedCorrection`, and `requiredChartFacts`; validation
+  requires exactly 10 alternating turns, exactly one deterministically contradictory Agent error,
+  and an Agent `errorIndex` (no silent repair from a Patient turn). Data-driven guards reject stale
+  workflow contradictions before generated content can be saved.
+- **Call QA bank and grading:** replaced the active generic OB/GYN bank with 15 curated current-floor
+  workflows, each with a hidden chart state, expected actions, critical misses, scoring notes, rule
+  IDs, and source versions. Hidden chart facts stay server-side in the caller persona and immutable
+  attempt snapshot. The deterministic grader recognizes current OB Portal, Rebecca Wood, waitlist,
+  Take Action, paired-appointment, New OB, lab, transfer, and High Priority/Intermedia handling while
+  retaining legacy policies solely for historical attempt replay. Transcript grading evaluates
+  observable questions, classifications, explanations, and stated next steps; it never assumes
+  silent ECW actions and forces review where an unobservable action determines correctness.
+- **Drift/review UI:** a pure non-destructive helper labels question, audit, and Call QA content
+  Current, Stale, Legacy/unversioned, or unknown-rule review. Historical content is never rewritten,
+  and activating a new SOP never retroactively validates old content.
+- **Governance:** the human-readable active SOP remains the operational source; structured rules are
+  the executable assessment layer. Content still requires supervisor review, live-model calibration,
+  and operational monitoring. Scores/recommendations are coaching evidence, not an automatic
+  employment decision.
+- **Safety/scope:** no merge, deployment, production Firestore write, or destructive migration in
+  this branch.
+
 ### 2026-07-17 (part 3) - Spot the Error: deferred feedback + required explanation
 - **What changed (owner request):** the assessment's active phase no longer reveals correct/wrong
   after each pick, and every pick now requires a typed explanation of *why* that message is the

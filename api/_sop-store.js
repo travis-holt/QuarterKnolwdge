@@ -13,8 +13,15 @@ async function loadActiveSop(department) {
   // New activations maintain this deterministic pointer transactionally.
   const pointer = await db.collection('activeSops').doc(department).get();
   if (pointer.exists) {
-    const body = pointer.data()?.body;
-    return typeof body === 'string' && body.trim() ? body : null;
+    const data = pointer.data();
+    const body = data?.body;
+    return typeof body === 'string' && body.trim() ? {
+      body,
+      version: data?.version ?? null,
+      title: data?.title ?? null,
+      sopId: data?.sopId ?? null,
+      source: 'active-supervisor-sop',
+    } : null;
   }
 
   // Legacy fallback until each department is activated once under the new code.
@@ -26,24 +33,36 @@ async function loadActiveSop(department) {
     .map((doc) => doc.data())
     .sort((a, b) => compareTimestampValues(b.activatedAt, a.activatedAt))[0];
   const body = selected?.body;
-  return typeof body === 'string' && body.trim() ? body : null;
+  return typeof body === 'string' && body.trim() ? {
+    body,
+    version: selected?.version ?? null,
+    title: selected?.title ?? null,
+    sopId: selected?.id ?? null,
+    source: 'active-supervisor-sop',
+  } : null;
+}
+
+function normalizeRecord(value) {
+  if (typeof value === 'string') return value.trim() ? { body: value, version: null, source: 'active-supervisor-sop' } : null;
+  if (!value || typeof value.body !== 'string' || !value.body.trim()) return null;
+  return { ...value, body: value.body };
 }
 
 export function createSopStore(loader = loadActiveSop, ttlMs = TTL_MS) {
-  const cache = new Map(); // department -> { body, fetchedAt }
-  const inFlight = new Map(); // department -> Promise<body|null>
+  const cache = new Map(); // department -> { record, fetchedAt }
+  const inFlight = new Map(); // department -> Promise<record|null>
 
-  const refresh = (department) => {
+  const refreshRecord = (department) => {
     if (inFlight.has(department)) return inFlight.get(department);
     const promise = (async () => {
       try {
-        const body = await loader(department);
-        cache.set(department, { body: body ?? null, fetchedAt: Date.now() });
-        return body ?? null;
+        const record = normalizeRecord(await loader(department));
+        cache.set(department, { record, fetchedAt: Date.now() });
+        return record;
       } catch (err) {
         console.warn(`[sop-store] refresh(${department}) failed:`, err?.code ?? err?.message ?? err);
-        const previous = cache.get(department)?.body ?? null;
-        cache.set(department, { body: previous, fetchedAt: Date.now() });
+        const previous = cache.get(department)?.record ?? null;
+        cache.set(department, { record: previous, fetchedAt: Date.now() });
         return previous;
       } finally {
         inFlight.delete(department);
@@ -53,16 +72,28 @@ export function createSopStore(loader = loadActiveSop, ttlMs = TTL_MS) {
     return promise;
   };
 
+  const refresh = async (department) => (await refreshRecord(department))?.body ?? null;
+
   return {
     async get(department) {
       const entry = cache.get(department);
       if (!entry || Date.now() - entry.fetchedAt > ttlMs) return refresh(department);
-      return entry.body;
+      return entry.record?.body ?? null;
+    },
+    async getRecord(department) {
+      const entry = cache.get(department);
+      if (!entry || Date.now() - entry.fetchedAt > ttlMs) return refreshRecord(department);
+      return entry.record;
     },
     getSync(department) {
       const entry = cache.get(department);
-      if (!entry || Date.now() - entry.fetchedAt > ttlMs) void refresh(department);
-      return entry?.body ?? null;
+      if (!entry || Date.now() - entry.fetchedAt > ttlMs) void refreshRecord(department);
+      return entry?.record?.body ?? null;
+    },
+    getSyncRecord(department) {
+      const entry = cache.get(department);
+      if (!entry || Date.now() - entry.fetchedAt > ttlMs) void refreshRecord(department);
+      return entry?.record ?? null;
     },
     refresh,
     clear() {
@@ -76,3 +107,5 @@ const store = createSopStore();
 
 export const getLiveSop = (department) => store.get(department);
 export const getLiveSopSync = (department) => store.getSync(department);
+export const getLiveSopRecord = (department) => store.getRecord(department);
+export const getLiveSopSyncRecord = (department) => store.getSyncRecord(department);

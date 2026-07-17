@@ -22,4 +22,12 @@ describe('SOP store concurrency', () => {
     await store.refresh('obgyn');
     expect(store.getSync('obgyn')).toBe('v2');
   });
+
+  it('preserves version metadata while body-only callers remain compatible', async () => {
+    const store = createSopStore(vi.fn().mockResolvedValue({ body: 'current body', version: 12, title: 'OB SOP' }));
+    await expect(store.get('obgyn')).resolves.toBe('current body');
+    await expect(store.getRecord('obgyn')).resolves.toMatchObject({ body: 'current body', version: 12, title: 'OB SOP' });
+    expect(store.getSync('obgyn')).toBe('current body');
+    expect(store.getSyncRecord('obgyn').version).toBe(12);
+  });
 });

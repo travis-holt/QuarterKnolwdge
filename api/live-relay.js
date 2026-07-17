@@ -568,7 +568,15 @@ export function handleConnection(client, req, depsInput) {
         ? deps.buildSystemInstruction(session.scenario.callerName, session.scenario.scenario, {
             department: session.department,
             openingLine: session.scenario.openingLine || '',
-            caseFile: null,
+            caseFile: session.scenario.hiddenChartState ? {
+              workflowType: session.scenario.workflowType,
+              requestSummary: session.scenario.scenario,
+              requiredActions: session.scenario.expectedActions ?? [],
+              criticalMistakes: session.scenario.criticalMisses ?? [],
+              factsToReveal: Object.entries(session.scenario.hiddenChartState)
+                .map(([key, value]) => `${key}: ${String(value)}`),
+              difficulty: session.scenario.difficulty,
+            } : null,
           })
         : deps.buildSystemInstruction(startMsg.callerName || 'the caller', startMsg.scenario || '', {
             department: startMsg.department || 'pediatrics',

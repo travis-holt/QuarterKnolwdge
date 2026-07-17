@@ -234,6 +234,9 @@ export const ROUTING_DESTINATIONS = [
   ['ob-portal', /\b(?:ob\s+portal|pregnancy\s+portal)\b/i],
   ['ob-prevention', /\b(?:prevention|preventive)\s+coordinator\b/i],
   ['ob-mfm-owner', /\b(?:rebecca|mfm\s+owner\s*,?\s*rebecca)\b/i],
+  ['ob-waiting-list', /\b(?:waiting\s+list|waitlist)\s+(?:portal|te|telephone encounter)\b/i],
+  ['ob-take-action', /\btake action\b/i],
+  ['ob-urgent-channel', /\b(?:intermedia|women['â€™]s health ob urgent calls|ob urgent (?:calls )?channel)\b/i],
   ['ob-nursing', /\b(?:(?:ob(?:\s*\/\s*gyn)?|obstetrics?)\s+nurse|nursing team|clinical team)\b/i],
   ['labor-delivery', /\b(?:l\s*&\s*d|labor (?:and|&) delivery)\b/i],
   ['medical-records', /\b(?:medical records|records)\s+(?:team|department)\b/i],
@@ -259,11 +262,17 @@ export const ROUTING_POLICIES = {
     new_gyn_visit: { allowed: ['ob-pss'] },
     pregnancy_related_visit: { allowed: ['ob-portal'] },
     test_result_medical_advice_boundary: { allowed: ['ob-portal', 'ob-nursing'], messageRepair: true },
-    prescription_refill: { allowed: ['ob-nursing'], messageRepair: true },
     mfm_related_request: { allowed: ['ob-mfm-owner'] },
     records_forms: { allowed: ['medical-records'] },
     scheduling_change: { allowed: ['ob-pss'] },
     wrong_department_unclear_request: { allowed: [], reviewOnly: true },
+    missing_rto_order: { allowed: ['ob-portal'], messageRepair: true },
+    transfer_ob: { allowed: ['ob-portal'], messageRepair: true },
+    existing_te_take_action: { allowed: ['ob-take-action'], messageRepair: true },
+    mfm_owner: { allowed: ['ob-mfm-owner'], messageRepair: true },
+    prescription_refill: { allowed: ['ob-portal', 'ob-nursing'], messageRepair: true },
+    lab_boundary: { allowed: ['ob-portal'], messageRepair: true },
+    dr_bank_waitlist: { allowed: ['ob-waiting-list'], messageRepair: true },
   },
 };
 // Commitment syntax is separate from destination policy; both are required.
@@ -630,6 +639,46 @@ export function evaluateQaDeterministicFindings(criteria, transcript, context = 
       destinationId: null,
       affectedCriteria: ['know-rule'],
     });
+  }
+  const workflow = context?.metadata?.workflowType;
+  const navigatorText = navigatorLines(transcript).map((line) => line.text).join(' ');
+  const addWorkflowFinding = (reason, evidence = null) => {
+    if (!metRoutingCriteria.length || findings.some((finding) => finding.reason === reason)) return;
+    findings.push({
+      id: `obgyn-${reason}`,
+      type: 'routing',
+      reason,
+      evidence,
+      destinationId: null,
+      affectedCriteria: metRoutingCriteria,
+    });
+  };
+  if (context?.department === 'obgyn') {
+    if (workflow === 'urgent_high_priority_intermedia') {
+      if (!/high priority/i.test(navigatorText) || !/(?:telephone encounter|\bte\b)/i.test(navigatorText) || !/ob portal/i.test(navigatorText)) {
+        addWorkflowFinding('missing-high-priority-ob-portal-te');
+      }
+      if (!/(?:intermedia|ob urgent (?:calls )?channel|women['â€™]s health ob urgent calls)/i.test(navigatorText)) {
+        addWorkflowFinding('missing-urgent-intermedia-alert');
+      }
+      const unsafeLandD = navigatorLines(transcript).find((line) =>
+        /\b(?:go|head|send|direct(?:ing)?)\b[^.!?]*(?:l\s*&\s*d|labor (?:and|&) delivery)/i.test(line.text)
+        && !/\b(?:not|can(?:not|['â€™]t)|won['â€™]t)\b/i.test(line.text));
+      if (unsafeLandD) addWorkflowFinding('independent-labor-delivery-direction', unsafeLandD.text);
+    }
+    if (workflow === 'known_lmp_new_ob' && /confirmation/i.test(navigatorText) && !/\b(?:not|don['â€™]t|doesn['â€™]t|no need)\b[^.!?]*confirmation/i.test(navigatorText)) {
+      addWorkflowFinding('known-lmp-forced-confirmation');
+    }
+    if (workflow === 'unknown_lmp_confirmation' && !/confirmation/i.test(navigatorText)) addWorkflowFinding('unknown-lmp-missing-confirmation');
+    if (workflow === 'new_ob_pairing' && (!/(?:same day|together|back.to.back)/i.test(navigatorText) || !/sonogram[^.!?]*(?:first|before)/i.test(navigatorText) || !/ob verified/i.test(navigatorText))) {
+      addWorkflowFinding('incomplete-new-ob-pair');
+    }
+    if (workflow === 'existing_te_take_action' && !/take action/i.test(navigatorText)) addWorkflowFinding('missing-take-action');
+    if (workflow === 'mfm_owner' && !/rebecca(?: wood)?/i.test(navigatorText)) addWorkflowFinding('wrong-mfm-owner');
+    if (workflow === 'paired_reschedule' && !/(?:move|reschedule)[^.!?]*(?:both|together)|(?:both|together)[^.!?]*(?:move|reschedule)/i.test(navigatorText)) addWorkflowFinding('split-paired-reschedule');
+    if (workflow === 'transfer_ob' && (!/records/i.test(navigatorText) || !/approv|accept/i.test(navigatorText))) addWorkflowFinding('incomplete-transfer-review');
+    if (workflow === 'dr_bank_waitlist' && !/(?:waitlist|waiting list)/i.test(navigatorText)) addWorkflowFinding('missing-dr-bank-waitlist');
+    if (workflow === 'lab_boundary' && /\b(?:i|we)\s+(?:will|can|['â€™]ll)\s+(?:order|schedule)|\bnormal result\b/i.test(navigatorText)) addWorkflowFinding('navigator-lab-action');
   }
   return findings;
 }
