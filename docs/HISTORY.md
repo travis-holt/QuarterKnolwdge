@@ -1,5 +1,39 @@
 # Development History - Knowledge Check
 
+### 2026-07-17 (part 2) - Bold visual layer (floating pill nav, 3D hero, lettered options)
+- **Context:** the owner judged the part-1 polish "not impressive at all" — the brief is to make
+  the site as beautiful as possible. This layer goes for visible drama while keeping the warm
+  refined-light identity and staying CSS-only (zero JSX changes, zero new dependencies).
+- **Nav:** now a floating frosted pill — detached from the page edge, sticky at `top: 14px`,
+  `min(100% - 32px, 1360px)` wide, stronger blur/highlight shadows, `white-space: nowrap` on brand
+  + tabs. Below 1200px the link strip scrolls horizontally behind an overflow fade (no visible
+  scrollbar); ≤760px it wraps under the brand as the part-1 swipeable row (pill radius relaxes to
+  24px for the two-row shape).
+- **Start hero:** the headline is an ink→clay gradient serif masthead (`background-clip: text`
+  over the Fraunces title); the capability-map preview tilts in gentle 3D
+  (`perspective(1300px) rotateY(-7deg)`, flattens on hover) above a blurred warm halo pseudo.
+- **Screen titles:** block-level page titles (`overview/matrix-view/results/module/gate/
+  dept-select`) get a 46px clay kicker rule above the headline — an editorial signature.
+- **KPI tiles:** left accent rail replaced by a gradient crown along the top edge; values grew to
+  46px gradient numerals; labels became small-caps with tracking.
+- **Matrix:** column headers are small-caps micro-labels; capability pills are full-round with a
+  top-light/bottom-shade inset pair and a deeper hover pop.
+- **MCQ options:** the empty `aria-hidden` marker span now renders lettered A/B/C/D chips via CSS
+  counters (`counter(opt, upper-alpha)`); hover tints the letter clay; the selected chip fills
+  with the clay gradient + glow. Options widened to 16px radius with better line-height.
+- **Buttons/cards/canvas:** primary buttons run a light sweep on hover (reusing the existing
+  `shimmer` keyframe; `.btn` gained `overflow: hidden`); cards moved to `--radius-lg` with a
+  machined inset top highlight; the body mesh gained a top-center ivory spotlight and stronger
+  color pools; progress bars thickened to 8px.
+- **Safety:** card borders stayed real (no gradient-border trick), so every state signal that
+  swaps `border-color` (`.phase-card--next`, `.option.is-selected`, `.deptstrip__item.is-current`,
+  interview log open, etc.) still renders exactly as before.
+- **Verification:** `npm test` 1045/1045, `npm run build` clean. Headless-Chromium screenshots of
+  the Start gate plus a throwaway harness (real `Nav` + `Matrix` + `Check` with mock rows, never
+  committed) at 1440px/390px: zero horizontal overflow at both widths, one-line pill nav at
+  desktop, swipeable strip on mobile, lettered options + serif scenario verified rendering.
+- **Files:** `src/styles.css`, `CLAUDE.md`, `docs/HISTORY.md`.
+
 ### 2026-07-17 - Visual polish pass (typography, mobile nav fix, brand details)
 - **Goal:** make the app as beautiful as possible within the established refined-light
   ivory/clay identity — no redesign, no new dependencies, CSS + `index.html` only.

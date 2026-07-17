@@ -1944,6 +1944,21 @@ npm run test:e2e     # run the Playwright browser tests (auto-builds + starts th
   the ≤760px swipeable nav pill row (fixing the documented mobile nav overflow), a refined
   uppercase footer with a clay rule flourish, the CSS-only `.nav__brand::before` gem mark, and
   aligned the `theme-color` meta to the ivory canvas (`#f4eee1`).
+- **Bold layer (same 2026-07-17 pass, part 2 — all CSS-only):** the nav is now a **floating
+  frosted pill** (detached, sticky at `top: 14px`, `max 1360px`, nowrap tabs; the link strip
+  scrolls with an overflow fade below 1200px and drops under the brand as a swipeable row ≤760px);
+  the Start hero headline is an **ink→clay gradient serif masthead** and the capability-map
+  preview presents in **gentle 3D** (`perspective` tilt that flattens on hover) over a blurred warm
+  halo (`.start__preview::after`); block-level screen titles carry a 46px **clay kicker rule**
+  (`::before`); KPI tiles swapped the left rail for a **gradient crown** along the top edge with
+  46px gradient numerals and small-caps labels; matrix pills are full-round with layered
+  inset/drop shadows and small-caps column headers; MCQ options gained **lettered A/B/C markers**
+  (CSS counters on the `aria-hidden` marker span — selected = clay gradient + glow); primary
+  buttons run a **light sweep** on hover (`.btn--primary::after` + the existing `shimmer`
+  keyframe); cards moved to `--radius-lg` with a machined inset top highlight; the body mesh
+  gained a top-center spotlight. State signals were untouched — every `border-color`-based
+  highlight (`.phase-card--next`, selected options, dept strips) still renders because card
+  borders stayed real.
 - **Level colors (traffic-light, `LEVELS`):** Learning red `#c0392b`, Solid amber `#e0b13c`,
   Can-Teach green `#3e8e5a` (unchanged — priority/level encoding kept off the brand gradient).
 - **Motion:** tokens `--ease-out/spring`, `--dur-1/2/3`; CSS helpers `.reveal/.is-in`,
