@@ -11,18 +11,10 @@
 > [§8 Current System State](#8-current-system-state) and [§15 Current Priorities](#15-current-priorities)
 > accurate at all times.
 >
-> **Last updated:** 2026-07-17 (PR #33 final review — grade-failed coverage is mandatory in the
-> non-authoritative pilot smoke. Prior: PR #33 operational-calibration and pilot-smoke follow-up —
-> capture-only failures now affect reliability/safety gates without becoming accuracy evidence,
-> and the separate 15-case management rehearsal has no automation authority. Prior: PR 3
-> merge-blocker follow-up — calibration policy v2 now requires
-> complete rubric labels, valid capture/grading states, meaningful pass/fail/review populations,
-> available Wilson denominators, and visible critical operational failures; shadow policy v2
-> requires verified scenario/transcript authority and complete rubric output. Prior: PR 3 — Call QA calibration, coverage, statistical readiness, and
-> shadow clean-pass assessment are implemented as offline tooling over sanitized local fixtures.
-> Synthetic examples remain separate from human evidence; current readiness is correctly
-> `INSUFFICIENT_DATA`; live calibration requires two explicit opt-ins; no automatic final verdict,
-> production-data access, or audio retention was added. Prior: PR 2 — server-authoritative Call QA transcript: the scored Call QA
+> **Last updated:** 2026-07-17 (PR #33 integrated with main `b54f701` — the non-authoritative pilot
+> smoke still requires grade-failed coverage; the Spot the Error deferred-feedback redesign and
+> visual-polish changes from main are also preserved. See F16, F27, §8, and docs/HISTORY.md. Prior:
+> PR 2 — server-authoritative Call QA transcript: the scored Call QA
 > test is now captured, finalized, loaded, graded, and persisted by the SERVER. The `/api/live`
 > relay derives navigator identity from the verified token, loads the curated scenario server-side,
 > creates a server-owned attempt before the call, captures Gemini Live's transcription events,
@@ -373,10 +365,15 @@ training assignments.
     Click-accuracy only. Same 0–100 scale as the main check, so results feed domain scores directly.
   - `src/components/SpotTheError.jsx` — phases: `loading` (fires one `/api/generate-audit` call per
     planned item in parallel via `Promise.allSettled`, keeps whatever succeeds; full-mode domains
-    that fail to generate backfill to 0) → `active` (one item at a time; **one click per item**,
-    then a correct/wrong reveal + Next; each item shows its domain tag) → `review` (overall score +
-    level badge, a per-domain breakdown in full mode, and a per-item list of the actual error + what
-    the SOP says) → `saving` → `done`. No hints, no reflection, no AI coaching.
+    that fail to generate backfill to 0) → `active` (one item at a time; the navigator **picks the
+    message AND types a required "why is this the error" explanation** before Next commits the
+    answer — the pick stays changeable until then, and **no correct/wrong feedback is shown during
+    the run** (deferred-feedback redesign 2026-07-17); each item shows its domain tag) → `review`
+    (overall score + level badge, a per-domain breakdown in full mode, and a per-item list showing
+    the correct/missed verdict — the first time any verdict appears — the navigator's pick when
+    missed, the actual error + what the SOP says, and the navigator's typed reasoning; explanations
+    are display-only in the review, not graded or persisted) → `saving` → `done`. No hints, no AI
+    coaching. Click accuracy remains the whole score.
   - **Score feed:** `SpotTheError` calls `onComplete(domainScores, mode)`;
     `NavigatorApp.handleSpotComplete` saves the scores (full → replace whole profile; domain →
     merge just that domain), appends a `resultHistory` trend point, and records a `kind:'practice'`
@@ -1175,7 +1172,8 @@ training assignments.
     viewport. That same walkthrough surfaced a **pre-existing, unrelated** mobile issue: the
     supervisor `Nav` bar's link strip (`.nav__links`) has no wrap/scroll handling and overflows the
     viewport at phone widths (confirmed present on the Overview tab too, not introduced by this
-    change) — out of scope here, left for a future Nav responsiveness pass.
+    change) — out of scope here; **fixed 2026-07-17** in the visual polish pass (the link strip
+    becomes a swipeable, scrollbar-less pill row with an overflow fade at ≤760px — see §10).
 - **MCQ v2 operating-model bank (2026-07-09):** the active MCQ bank was replaced with an
   operating-model-driven v2 bank ([src/data/questions-v2.js](src/data/questions-v2.js)) — 48
   scenario-based MCQs (**24 Pediatrics + 24 OB/GYN, 4 per domain per department**) that test real
@@ -1706,8 +1704,12 @@ of this file on 2026-07-07 to cut per-session context cost (it was ~55% of the f
 - **Experimental / mockup:**
   - Training **content** is mockup (flagged in UI). Logic is real.
   - **Adult Medicine and Behavioural Health** are not assessed; **Pediatrics and OB/GYN** are live.
-- **Test coverage:** **1129 tests** across **55 test files** (PR 3 adds 84 fixture/metrics/readiness/
-  coverage/CLI/shadow-policy tests; PR 2 final merge blocker adds 5 serialized-checkpoint race tests + controllable-write-order fake Firestore; PR 2 final merge-review adds active-turn-settle/ordering/durability/bounds/finalization-timing relay tests, `boundedAppend` + client finalize-guard tests; PR 2 merge-review adds
+- **Test coverage:** **1133 tests** across **56 test files** (PR 3 adds 84 fixture/metrics/readiness/
+  coverage/CLI/shadow-policy tests; the 2026-07-17 Spot the Error deferred-feedback redesign adds
+  `src/components/spotTheError.component.test.jsx` with 4 jsdom tests; PR 2 final merge blocker adds
+  5 serialized-checkpoint race tests + controllable-write-order fake Firestore; PR 2 final
+  merge-review adds active-turn-settle/ordering/durability/bounds/finalization-timing relay tests,
+  `boundedAppend` + client finalize-guard tests; PR 2 merge-review adds
   `src/components/voiceCall.component.test.jsx` — the End-Call handshake + capture-vs-grade-retry
   distinctions with fake browser APIs — and expands `api/liveRelay.test.js` (two-stage drain,
   transcript ordering, roster-member gate, ack-after-write), `api/_call-qa-attempts.test.js` (exact
@@ -1788,8 +1790,9 @@ of this file on 2026-07-07 to cut per-session context cost (it was ~55% of the f
   `SUPERVISOR_PASSCODE_SERVER`, `SESSION_SIGNING_SECRET`; legacy body secrets are off by default.
 - **Branding:** product name is **Knowledge Check** everywhere in the UI. `public/favicon.png`
   is active (linked in `index.html`). `public/logo.png` exists in the repo but is no longer
-  referenced. `styles.css` has orphaned `.start__logo`/`.nav__logo`/`logo-float` rules from
-  the 2026-06-28 commit — safe to delete in a future cleanup pass.
+  referenced. The orphaned `.start__logo`/`.nav__logo`/`logo-float` rules from the 2026-06-28
+  commit were **deleted 2026-07-17**; the nav wordmark now carries a CSS-only clay "gem" mark
+  (`.nav__brand::before`) and the footer a matching clay rule flourish.
 - **Known code quality items (non-blocking, from code review 2026-06-25):**
   - ~~Dead import `createRequire` in `server.js:6`~~ — **removed 2026-06-25**.
   - ~~`getApiKeys`/`callGemini`/`geminiWithRotation` duplicated across all `api/` handlers~~ —
@@ -1820,7 +1823,7 @@ of this file on 2026-07-07 to cut per-session context cost (it was ~55% of the f
   OB/GYN = **37** seed questions (offline fallback) + the **48-item MCQ v2 operating-model bank**
   (24 Pediatrics + 24 OB/GYN) that replaces the weak active bank via a marker-gated
   archive-and-replace migration (bank grows in Firestore per dept) · 4 departments (**Pediatrics
-  + OB/GYN live**, 2 mockup) · **1129** unit tests (55 test files) + two committed Firestore Rules
+  + OB/GYN live**, 2 mockup) · **1133** unit tests (56 test files) + two committed Firestore Rules
   emulator suites (`npm run test:rules` — the 51-assertion result-authorization suite + the PR-2
   Call QA interviews suite; require Java, run in CI, not part of the unit-test count) ·
   **13** Firestore collections
@@ -2012,6 +2015,34 @@ npm run test:e2e     # run the Playwright browser tests (auto-builds + starts th
   - **Depth system:** elevation scale (`--shadow-xs…lg`, `--shadow-glow`), focus `--ring`, glass
     tokens (`--glass-bg/border/blur`), radius scale, and a top-sheen on cards.
   - **Atmosphere:** warm radial mesh + slow ambient-glow drift + faint SVG noise on `body`.
+- **Typography (2026-07-17 visual polish pass):** two-voice type system — variable **Inter**
+  (`wght 400..900`, so the sheet's 550/650/850 intermediate weights render true) for all UI, and
+  **Fraunces** (variable optical-size serif, `--font-display`) for page-level headlines
+  (`.start__title`, `.overview__title`, `.matrix-view__title`, `.results__title`,
+  `.navdetail__title`, `.module__title`, `.gate__title`, `.empty__title`, `.dept-select__title`,
+  `.spot-error__title`) and the MCQ scenario prose (`.question__scenario`) — panel/widget headers
+  deliberately stay Inter for UI hierarchy. Headlines get `text-wrap: balance`, ledes
+  `text-wrap: pretty`; both fonts load from Google Fonts in `index.html` with system fallbacks.
+  The same pass added warm minimal scrollbars, a zero-specificity global `:focus-visible` ring
+  (`:where(button, a, …)` so component rules still win), proper tracking on uppercase micro-labels,
+  the ≤760px swipeable nav pill row (fixing the documented mobile nav overflow), a refined
+  uppercase footer with a clay rule flourish, the CSS-only `.nav__brand::before` gem mark, and
+  aligned the `theme-color` meta to the ivory canvas (`#f4eee1`).
+- **Bold layer (same 2026-07-17 pass, part 2 — all CSS-only):** the nav is now a **floating
+  frosted pill** (detached, sticky at `top: 14px`, `max 1360px`, nowrap tabs; the link strip
+  scrolls with an overflow fade below 1200px and drops under the brand as a swipeable row ≤760px);
+  the Start hero headline is an **ink→clay gradient serif masthead** and the capability-map
+  preview presents in **gentle 3D** (`perspective` tilt that flattens on hover) over a blurred warm
+  halo (`.start__preview::after`); block-level screen titles carry a 46px **clay kicker rule**
+  (`::before`); KPI tiles swapped the left rail for a **gradient crown** along the top edge with
+  46px gradient numerals and small-caps labels; matrix pills are full-round with layered
+  inset/drop shadows and small-caps column headers; MCQ options gained **lettered A/B/C markers**
+  (CSS counters on the `aria-hidden` marker span — selected = clay gradient + glow); primary
+  buttons run a **light sweep** on hover (`.btn--primary::after` + the existing `shimmer`
+  keyframe); cards moved to `--radius-lg` with a machined inset top highlight; the body mesh
+  gained a top-center spotlight. State signals were untouched — every `border-color`-based
+  highlight (`.phase-card--next`, selected options, dept strips) still renders because card
+  borders stayed real.
 - **Level colors (traffic-light, `LEVELS`):** Learning red `#c0392b`, Solid amber `#e0b13c`,
   Can-Teach green `#3e8e5a` (unchanged — priority/level encoding kept off the brand gradient).
 - **Motion:** tokens `--ease-out/spring`, `--dur-1/2/3`; CSS helpers `.reveal/.is-in`,
@@ -2056,7 +2087,7 @@ npm run test:e2e     # run the Playwright browser tests (auto-builds + starts th
 - Heatmap intensity toggle (show % inside matrix cells).
 
 ### Technical Debt
-- **1129 tests** across 55 test files as of 2026-07-17 (plus two committed Firestore Rules emulator
+- **1133 tests** across 56 test files as of 2026-07-17 (plus two committed Firestore Rules emulator
   suites, `npm run test:rules`, run separately from the unit-test gate). **Role-app
   coverage** (`App`, `Start`,
   `SupervisorApp`, `NavigatorApp`) now includes both shell smoke tests (mount + gate/session routing)

@@ -63,7 +63,12 @@
   --dur-3: 0.6s;
 
   --maxw: 1100px;
-  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+
+  /* ── Type ── */
+  --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial,
+    sans-serif;
+  --font-display: 'Fraunces', 'Iowan Old Style', Georgia, 'Times New Roman', serif;
+  font-family: var(--font-sans);
   font-feature-settings: 'cv02', 'cv03', 'cv04', 'cv11', 'ss01';
 }
 
@@ -83,12 +88,13 @@ body {
 body {
   line-height: 1.5;
   background-color: var(--bg);
-  /* Layered warm mesh — gives the canvas depth without a heavy image. */
+  /* Layered warm mesh + a top-center spotlight — depth without a heavy image. */
   background-image:
-    radial-gradient(closest-side at 12% 8%, rgba(196, 116, 79, 0.10), transparent),
-    radial-gradient(closest-side at 88% 4%, rgba(224, 177, 60, 0.10), transparent),
-    radial-gradient(closest-side at 78% 88%, rgba(62, 142, 90, 0.07), transparent),
-    radial-gradient(closest-side at 20% 95%, rgba(196, 116, 79, 0.06), transparent);
+    radial-gradient(120vmax 60vmax at 50% -18vmax, rgba(255, 253, 247, 0.9), transparent 60%),
+    radial-gradient(closest-side at 12% 8%, rgba(196, 116, 79, 0.16), transparent),
+    radial-gradient(closest-side at 88% 4%, rgba(224, 177, 60, 0.15), transparent),
+    radial-gradient(closest-side at 78% 88%, rgba(62, 142, 90, 0.1), transparent),
+    radial-gradient(closest-side at 20% 95%, rgba(196, 116, 79, 0.09), transparent);
   background-attachment: fixed;
   min-height: 100vh;
 }
@@ -126,6 +132,35 @@ button {
 ::selection {
   background: var(--accent-soft);
   color: var(--accent-deep);
+}
+
+/* Consistent, accessible focus ring on every interactive element. Zero-specificity
+   :where() so component-level rules (e.g. .btn's box-shadow ring) still win. */
+:where(button, a, [role='tab'], [tabindex]):focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* Warm, minimal scrollbars that belong to the ivory canvas. */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: #d3c8b1 transparent;
+}
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: #d3c8b1;
+  border-radius: 999px;
+  border: 2px solid transparent;
+  background-clip: content-box;
+}
+::-webkit-scrollbar-thumb:hover {
+  background-color: #c2b394;
 }
 
 .app {
@@ -219,20 +254,24 @@ button {
   }
 }
 
-/* ── Nav ─────────────────────────────────────────────────────────────────── */
+/* ── Nav — a floating frosted pill, detached from the page edge ──────────── */
 .nav {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 16px;
-  padding: 14px 28px;
-  border-bottom: 1px solid var(--glass-border);
+  width: min(calc(100% - 32px), 1360px);
+  margin: 16px auto 4px;
+  padding: 10px 14px 10px 24px;
+  border: 1px solid rgba(255, 255, 255, 0.75);
+  border-radius: 999px;
   background: var(--glass-bg);
-  -webkit-backdrop-filter: saturate(160%) blur(var(--glass-blur));
-  backdrop-filter: saturate(160%) blur(var(--glass-blur));
-  box-shadow: 0 1px 0 rgba(255, 255, 255, 0.6) inset, 0 6px 20px rgba(35, 32, 27, 0.05);
+  -webkit-backdrop-filter: saturate(170%) blur(18px);
+  backdrop-filter: saturate(170%) blur(18px);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.7), 0 2px 8px rgba(35, 32, 27, 0.05),
+    0 16px 44px rgba(35, 32, 27, 0.12);
   position: sticky;
-  top: 0;
+  top: 14px;
   z-index: 20;
 }
 
@@ -242,6 +281,7 @@ button {
   font-weight: 700;
   font-size: 15px;
   letter-spacing: -0.01em;
+  white-space: nowrap;
   color: var(--ink);
   display: inline-flex;
   align-items: center;
@@ -251,30 +291,16 @@ button {
 .nav__brand:hover {
   opacity: 0.7;
 }
-/* Image logo replaces the gradient mark. */
-.nav__logo {
-  width: 28px;
-  height: 28px;
-  border-radius: 7px;
+/* CSS-only brand mark — a small clay gem beside the wordmark. */
+.nav__brand::before {
+  content: '';
   flex: 0 0 auto;
-  object-fit: cover;
-  mix-blend-mode: multiply;
-  animation: logo-float 4s ease-in-out infinite alternate;
-}
-
-.start__logo {
-  width: 56px;
-  height: 56px;
-  margin-bottom: 16px;
-  border-radius: 12px;
-  object-fit: cover;
-  mix-blend-mode: multiply;
-  animation: logo-float 4s ease-in-out infinite alternate;
-}
-
-@keyframes logo-float {
-  0% { transform: translateY(0); filter: drop-shadow(0 4px 6px rgba(196, 116, 79, 0.1)); }
-  100% { transform: translateY(-4px); filter: drop-shadow(0 8px 12px rgba(196, 116, 79, 0.25)); }
+  width: 11px;
+  height: 11px;
+  border-radius: 4px;
+  background: var(--grad-accent);
+  box-shadow: 0 2px 6px rgba(196, 116, 79, 0.45), inset 0 1px 0 rgba(255, 255, 255, 0.4);
+  transform: rotate(45deg);
 }
 
 .nav__links {
@@ -287,10 +313,11 @@ button {
   border: 0;
   background: none;
   color: var(--ink-soft);
-  padding: 8px 15px;
+  padding: 8px 14px;
   border-radius: 999px;
   font-size: 14px;
   font-weight: 550;
+  white-space: nowrap;
   position: relative;
   transition: background var(--dur-1) var(--ease-out), color var(--dur-1) var(--ease-out),
     transform var(--dur-1) var(--ease-out);
@@ -396,10 +423,24 @@ button {
 
 .footer {
   text-align: center;
-  color: var(--ink-soft);
-  font-size: 12.5px;
-  padding: 24px;
-  border-top: 1px solid var(--line);
+  color: var(--ink-faint);
+  font-size: 11.5px;
+  font-weight: 650;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  padding: 30px 24px 34px;
+  border-top: 1px solid var(--line-soft);
+}
+/* Closing flourish — a short clay rule above the wordmark. */
+.footer::before {
+  content: '';
+  display: block;
+  width: 30px;
+  height: 3px;
+  margin: 0 auto 12px;
+  border-radius: 999px;
+  background: var(--grad-accent);
+  opacity: 0.55;
 }
 
 .accent {
@@ -411,8 +452,9 @@ button {
   position: relative;
   background: linear-gradient(180deg, var(--surface) 0%, var(--surface-2) 100%);
   border: 1px solid var(--line);
-  border-radius: var(--radius);
-  box-shadow: var(--shadow);
+  border-radius: var(--radius-lg);
+  /* Machined edge: crisp inner top highlight over the warm multi-layer shadow. */
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.65), var(--shadow);
   padding: 24px;
   transition: box-shadow var(--dur-2) var(--ease-out), transform var(--dur-2) var(--ease-out),
     border-color var(--dur-2) var(--ease-out);
@@ -425,7 +467,7 @@ button {
   height: 50%;
   border-radius: inherit;
   background: var(--grad-sheen);
-  opacity: 0.5;
+  opacity: 0.55;
   pointer-events: none;
 }
 .card > * {
@@ -455,6 +497,7 @@ button {
 
 .btn {
   position: relative;
+  overflow: hidden;
   border: 1px solid transparent;
   border-radius: 999px;
   padding: 10px 20px;
@@ -483,12 +526,24 @@ button {
 .btn--primary {
   background: var(--grad-accent);
   color: #fff;
-  box-shadow: var(--shadow-glow);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.3), var(--shadow-glow);
+}
+/* Light sweep across the primary button on hover. */
+.btn--primary::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: linear-gradient(115deg, transparent 28%, rgba(255, 255, 255, 0.38) 50%, transparent 72%);
+  transform: translateX(-130%);
 }
 
 .btn--primary:hover:not(:disabled) {
   transform: translateY(-1px);
-  box-shadow: 0 14px 34px rgba(196, 116, 79, 0.32);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.3), 0 14px 34px rgba(196, 116, 79, 0.32);
+}
+.btn--primary:hover:not(:disabled)::after {
+  animation: shimmer 0.9s var(--ease-out);
 }
 
 .btn--ghost {
@@ -612,7 +667,7 @@ textarea:focus-visible {
   align-items: center;
   gap: 8px;
   text-transform: uppercase;
-  letter-spacing: 0;
+  letter-spacing: 0.06em;
   font-size: 12px;
   font-weight: 700;
   color: var(--accent-strong);
@@ -689,6 +744,7 @@ textarea:focus-visible {
 }
 
 .start__preview {
+  position: relative;
   min-height: 330px;
   padding: 22px;
   border-radius: var(--radius-lg);
@@ -697,6 +753,27 @@ textarea:focus-visible {
     radial-gradient(circle at 80% 0%, rgba(196, 116, 79, 0.16), transparent 38%);
   border: 1px solid rgba(255, 255, 255, 0.78);
   box-shadow: var(--shadow-lg);
+  /* Gentle 3D presentation — flattens on hover like a card being handed over. */
+  transform: perspective(1300px) rotateY(-7deg) rotateX(1.5deg);
+  transition: transform var(--dur-3) var(--ease-out), box-shadow var(--dur-3) var(--ease-out);
+  will-change: transform;
+}
+.start__preview:hover {
+  transform: perspective(1300px) rotateY(0deg) rotateX(0deg);
+  box-shadow: var(--shadow-lg), var(--shadow-glow);
+}
+/* Warm halo bleeding out from behind the panel. */
+.start__preview::after {
+  content: '';
+  position: absolute;
+  inset: -28px -34px -30px -20px;
+  z-index: -1;
+  border-radius: 50%;
+  background:
+    radial-gradient(closest-side at 70% 20%, rgba(211, 133, 92, 0.32), transparent 70%),
+    radial-gradient(closest-side at 25% 85%, rgba(224, 177, 60, 0.24), transparent 70%);
+  filter: blur(26px);
+  pointer-events: none;
 }
 
 .start__preview-head,
@@ -709,7 +786,7 @@ textarea:focus-visible {
   font-size: 12px;
   font-weight: 700;
   text-transform: uppercase;
-  letter-spacing: 0;
+  letter-spacing: 0.07em;
 }
 
 .start__preview-head span:first-child {
@@ -782,7 +859,7 @@ textarea:focus-visible {
 
 .start__domains-label {
   text-transform: uppercase;
-  letter-spacing: 0;
+  letter-spacing: 0.08em;
   font-size: 11.5px;
   font-weight: 650;
   color: var(--ink-soft);
@@ -833,11 +910,11 @@ textarea:focus-visible {
 }
 
 .progress {
-  height: 7px;
+  height: 8px;
   background: var(--surface-3);
   border-radius: 999px;
   overflow: hidden;
-  box-shadow: inset 0 1px 2px rgba(35, 32, 27, 0.08);
+  box-shadow: inset 0 1px 2px rgba(35, 32, 27, 0.1);
 }
 
 .progress__fill {
@@ -884,19 +961,22 @@ textarea:focus-visible {
 .question__options {
   display: grid;
   gap: 10px;
+  counter-reset: opt;
 }
 
 .option {
+  counter-increment: opt;
   display: flex;
   align-items: flex-start;
-  gap: 12px;
+  gap: 14px;
   text-align: left;
   width: 100%;
   border: 1px solid var(--line);
   background: var(--surface);
-  border-radius: 13px;
+  border-radius: 16px;
   padding: 15px 17px;
   font-size: 15px;
+  line-height: 1.45;
   color: var(--ink);
   box-shadow: var(--shadow-xs);
   transition: border-color var(--dur-1) var(--ease-out), background var(--dur-1) var(--ease-out),
@@ -910,14 +990,29 @@ textarea:focus-visible {
   box-shadow: var(--shadow-sm);
 }
 
+/* Lettered marker (A/B/C…) — decorative, span is aria-hidden. */
 .option__marker {
   flex: 0 0 auto;
-  width: 18px;
-  height: 18px;
-  border-radius: 50%;
-  border: 2px solid #c9bfa9;
-  margin-top: 1px;
-  transition: border-color 0.12s, background 0.12s;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  border-radius: 10px;
+  border: 1px solid var(--line);
+  background: var(--surface-2);
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--ink-soft);
+  margin-top: -2px;
+  transition: border-color 0.12s, background 0.12s, color 0.12s, box-shadow 0.12s;
+}
+.option__marker::before {
+  content: counter(opt, upper-alpha);
+}
+.option:hover .option__marker {
+  border-color: var(--accent-soft);
+  color: var(--accent-strong);
 }
 
 .option.is-selected {
@@ -927,9 +1022,10 @@ textarea:focus-visible {
 }
 
 .option.is-selected .option__marker {
-  border-color: var(--accent);
-  background: var(--accent);
-  box-shadow: inset 0 0 0 3px var(--accent-soft);
+  border-color: transparent;
+  background: var(--grad-accent);
+  color: #fff;
+  box-shadow: var(--shadow-glow);
   animation: pop-badge var(--dur-2) var(--ease-spring);
 }
 
@@ -1068,9 +1164,11 @@ textarea:focus-visible {
 }
 
 .matrix__colhead {
-  font-size: 13px;
-  font-weight: 600;
-  color: var(--ink);
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--ink-soft);
   border-bottom: 2px solid var(--line);
   vertical-align: bottom;
   min-width: 116px;
@@ -1155,17 +1253,20 @@ textarea:focus-visible {
 
 .matrix__pill {
   display: inline-block;
-  min-width: 90px;
-  padding: 7px 10px;
-  border-radius: 9px;
+  min-width: 96px;
+  padding: 8px 14px;
+  border-radius: 999px;
   font-size: 12.5px;
-  font-weight: 650;
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.28), 0 1px 2px rgba(35, 32, 27, 0.12);
+  font-weight: 700;
+  letter-spacing: 0.01em;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.35), inset 0 -1px 0 rgba(35, 32, 27, 0.12),
+    0 1px 3px rgba(35, 32, 27, 0.14);
   transition: transform var(--dur-1) var(--ease-spring), box-shadow var(--dur-1) var(--ease-out);
 }
 .matrix__cell:hover .matrix__pill {
-  transform: scale(1.06);
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.28), 0 4px 12px rgba(35, 32, 27, 0.2);
+  transform: scale(1.07);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.35), inset 0 -1px 0 rgba(35, 32, 27, 0.12),
+    0 6px 16px rgba(35, 32, 27, 0.22);
 }
 
 .matrix__legend {
@@ -1328,25 +1429,25 @@ textarea:focus-visible {
   gap: 2px;
   overflow: hidden;
 }
-/* Accent rail down the left edge — turns a plain card into a KPI widget. */
+/* Gradient crown along the top edge — turns a plain card into a KPI widget. */
 .kpi::after {
   content: '';
   position: absolute;
   left: 0;
+  right: 0;
   top: 0;
-  bottom: 0;
-  width: 4px;
+  height: 4px;
   background: var(--grad-accent);
-  border-radius: 4px 0 0 4px;
+  border-radius: var(--radius-lg) var(--radius-lg) 0 0;
 }
 .kpi:hover {
-  box-shadow: var(--shadow-md);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.65), var(--shadow-md);
   transform: translateY(-2px);
 }
 
 .kpi__value {
-  font-size: 38px;
-  font-weight: 800;
+  font-size: 46px;
+  font-weight: 780;
   line-height: 1.05;
   letter-spacing: -0.03em;
   background: var(--grad-accent);
@@ -1365,9 +1466,12 @@ textarea:focus-visible {
 }
 
 .kpi__label {
-  font-size: 14px;
-  font-weight: 600;
-  margin-top: 6px;
+  font-size: 12.5px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  color: var(--ink-soft);
+  margin-top: 8px;
 }
 
 .kpi__sub {
@@ -3363,32 +3467,13 @@ textarea:focus-visible {
   transform: translateY(0);
 }
 
-/* Correct error bubble — green highlight */
-.spot-error__bubble--found .spot-error__message {
-  background: #e2f0e8;
-  border-color: #3e8e5a;
+/* Picked bubble — NEUTRAL accent highlight (deliberately no correct/wrong
+   signal during the run; verdicts appear only on the review screen) */
+.spot-error__bubble--selected .spot-error__message {
+  background: color-mix(in srgb, var(--accent) 24%, var(--surface));
+  border-color: var(--accent-strong);
   border-width: 2px;
   color: var(--ink);
-}
-
-/* Wrong click shake animation */
-@keyframes spot-shake {
-  0%, 100% { transform: translateX(0); }
-  15%       { transform: translateX(-7px); }
-  30%       { transform: translateX(7px); }
-  45%       { transform: translateX(-5px); }
-  60%       { transform: translateX(5px); }
-  75%       { transform: translateX(-3px); }
-  90%       { transform: translateX(3px); }
-}
-
-.spot-error__bubble--shake .spot-error__message {
-  animation: spot-shake 0.5s var(--ease-out);
-  border-color: #c0392b;
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .spot-error__bubble--shake .spot-error__message { animation: none; }
 }
 
 /* Reflection panel */
@@ -3497,7 +3582,7 @@ textarea:focus-visible {
   color: var(--ink);
 }
 
-/* ── Assessment: progress, wrong-pick reveal, per-item feedback ───────────── */
+/* ── Assessment: progress, explain-your-pick panel ────────────────────────── */
 
 .spot-error__progress {
   flex-shrink: 0;
@@ -3514,14 +3599,6 @@ textarea:focus-visible {
   white-space: nowrap;
 }
 
-/* Wrong pick — red highlight (assessment reveal after the single attempt) */
-.spot-error__bubble--wrong .spot-error__message {
-  background: #fbe9e7;
-  border-color: #c0392b;
-  border-width: 2px;
-  color: var(--ink);
-}
-
 .spot-error__feedback {
   display: flex;
   flex-direction: column;
@@ -3529,14 +3606,16 @@ textarea:focus-visible {
   animation: fadeIn var(--dur-2) var(--ease-out);
 }
 
-.spot-error__feedback-verdict {
-  margin: 0;
+.spot-error__explain-label {
   font-size: 0.95rem;
-  font-weight: 600;
+  font-weight: 700;
+  color: var(--ink);
 }
 
-.spot-error__feedback-verdict--ok { color: #3e8e5a; }
-.spot-error__feedback-verdict--miss { color: #c0392b; }
+.spot-error__explain-hint {
+  font-weight: 400;
+  color: var(--ink-soft);
+}
 
 /* ── Dashboard assessment bar (MCQ / Spot toggle + take another) ──────────── */
 
@@ -3723,6 +3802,38 @@ textarea:focus-visible {
   color: var(--ink);
 }
 
+/* The navigator's own (wrong) pick, shown above the actual error */
+.spot-error__review-pick {
+  margin: 0;
+  font-size: 0.9rem;
+  line-height: 1.55;
+  color: var(--ink-soft);
+}
+
+/* The navigator's typed "why is this the error" reasoning */
+.spot-error__review-yours {
+  border-left: 3px solid var(--accent);
+  padding: 8px 0 8px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.spot-error__review-yours-label {
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--ink-faint);
+}
+
+.spot-error__review-yours-text {
+  margin: 0;
+  font-size: 0.9rem;
+  line-height: 1.55;
+  color: var(--ink-soft);
+}
+
 /* Done screen */
 .spot-error__done {
   text-align: center;
@@ -3766,6 +3877,58 @@ textarea:focus-visible {
 }
 
 /* ── Responsive ──────────────────────────────────────────────────────────── */
+/* Below 1200px the supervisor tab set can outgrow the pill nav — let the link
+   strip scroll horizontally (no visible scrollbar) with an overflow fade. */
+@media (max-width: 1200px) {
+  .nav__links {
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    padding: 4px 28px 4px 0;
+    scrollbar-width: none;
+    -webkit-mask-image: linear-gradient(90deg, #000 calc(100% - 24px), transparent);
+    mask-image: linear-gradient(90deg, #000 calc(100% - 24px), transparent);
+  }
+  .nav__links::-webkit-scrollbar {
+    display: none;
+  }
+}
+
+/* Nav at phone widths: the strip drops below the brand as a full-width,
+   swipeable pill row. */
+@media (max-width: 760px) {
+  .nav {
+    flex-wrap: wrap;
+    padding: 10px 16px 6px;
+    border-radius: 24px;
+    width: calc(100% - 20px);
+    top: 8px;
+    margin: 10px auto 4px;
+  }
+  .nav__links {
+    width: 100%;
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    padding: 4px 36px 8px 0;
+    scrollbar-width: none;
+    -webkit-mask-image: linear-gradient(90deg, #000 calc(100% - 28px), transparent);
+    mask-image: linear-gradient(90deg, #000 calc(100% - 28px), transparent);
+  }
+  .nav__links::-webkit-scrollbar {
+    display: none;
+  }
+  .nav__link,
+  .nav__dept-switch {
+    flex: 0 0 auto;
+    white-space: nowrap;
+  }
+  .deptbar {
+    padding: 14px 16px 0;
+  }
+  .main {
+    padding: 28px 16px 52px;
+  }
+}
+
 @media (max-width: 900px) {
   .start__hero {
     grid-template-columns: 1fr;
@@ -5791,4 +5954,74 @@ textarea:focus-visible {
   margin-top: 0.5rem;
   font-size: 0.85rem;
   color: var(--ink-soft);
+}
+
+/* ── Display typography ──────────────────────────────────────────────────────
+   Fraunces (optical-size serif) on page-level headlines gives the product an
+   editorial, premium voice against the Inter UI layer. Kept deliberately to
+   screen titles + the scenario prose — panel/widget headers stay sans for
+   crisp UI hierarchy. Placed last so it wins same-specificity ties. */
+.start__title,
+.gate__title,
+.overview__title,
+.matrix-view__title,
+.results__title,
+.navdetail__title,
+.module__title,
+.empty__title,
+.dept-select__title,
+.spot-error__title {
+  font-family: var(--font-display);
+  font-weight: 620;
+  letter-spacing: -0.01em;
+  text-wrap: balance;
+}
+
+.start__title {
+  font-weight: 580;
+  line-height: 1.02;
+  letter-spacing: -0.015em;
+  /* Ink flowing into clay at the tail — an editorial masthead, not flat text. */
+  background: linear-gradient(115deg, var(--ink) 45%, var(--accent-deep) 85%, var(--accent-strong) 105%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  color: var(--ink);
+}
+
+/* Editorial kicker — a short clay rule above each screen headline. Only on
+   block-level titles (inline-flex titles would inline the pseudo). */
+.overview__title::before,
+.matrix-view__title::before,
+.results__title::before,
+.module__title::before,
+.gate__title::before,
+.dept-select__title::before {
+  content: '';
+  display: block;
+  width: 46px;
+  height: 4px;
+  border-radius: 999px;
+  background: var(--grad-accent);
+  margin: 0 0 16px;
+}
+
+/* Scenario prose reads as narrative, not UI — serif sets it apart from the
+   Inter answer options below it. */
+.question__scenario {
+  font-family: var(--font-display);
+  font-weight: 520;
+  font-size: 20px;
+  line-height: 1.45;
+}
+
+/* Ledes and notices get pretty-wrapping so no line ends on a lonely word. */
+.start__lede,
+.overview__lede,
+.matrix-view__lede,
+.results__lede,
+.navdetail__lede,
+.module__lede,
+.gate__notice {
+  text-wrap: pretty;
 }

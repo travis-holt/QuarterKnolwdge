@@ -1,5 +1,16 @@
 # Development History - Knowledge Check
 
+### 2026-07-17 - PR #33 integrated with main b54f701
+- Merged main commit `b54f701` into the Call QA calibration branch. Conflict resolution preserves
+  PR #33's calibration/pilot-smoke documentation and main's visual-polish and Spot the Error
+  deferred-feedback history. The combined suite is 1133 tests across 56 files.
+- **Verification:** `npm ci` succeeded (864 packages; 3 existing moderate findings); `npm test`
+  1133/1133; `npm run test:rules` 51/51 + 16/16; `npm run build` passed with the existing Firebase
+  chunk warning; calibration and coverage remained `INSUFFICIENT_DATA` with 0 human cases and 88
+  gaps; pilot smoke remained `PILOT_SMOKE_VERIFIED` for 15 cases; the readiness check exited 1 as
+  expected; `npm run test:e2e:safe` passed 12/12. No live model call, production-data access,
+  audio storage, automatic final verdict, merge of PR #33, or deployment occurred.
+
 ### 2026-07-17 - PR #33 pilot-smoke grade-failure coverage guard
 - Added `grade-failed` to the mandatory `qa:pilot-smoke` categories and a regression proving that
   removing every grade-failed rehearsal returns `PILOT_SMOKE_FAILED` with
@@ -113,6 +124,102 @@
   JavaScript files passed `node --check`; `git diff --check` clean. No Playwright run because
   production UI was untouched. No live calibration, production data access, audio storage, merge,
   or deploy.
+### 2026-07-17 (part 3) - Spot the Error: deferred feedback + required explanation
+- **What changed (owner request):** the assessment's active phase no longer reveals correct/wrong
+  after each pick, and every pick now requires a typed explanation of *why* that message is the
+  error before advancing.
+- **Active phase (`SpotTheError.jsx`):** clicking an Agent bubble now just SELECTS it (neutral
+  clay highlight, `spot-error__bubble--selected`, `aria-pressed`); the pick stays changeable until
+  "Next item →" / "Finish & see results" commits `{ picked, correct, explanation }` into `picks`.
+  The commit button lives in an explain panel (label + textarea, reusing `.spot-error__textarea`)
+  that appears once a message is selected and is disabled until the explanation is non-empty
+  (trimmed). The old one-click lock, per-item verdict card, and `--found`/`--wrong` bubble reveals
+  are gone; header copy updated ("…then explain why. You can change your pick until you continue —
+  results are revealed after the last item.").
+- **Review phase:** now the FIRST place any verdict appears. Each item shows the ✓ Correct /
+  ✗ Missed badge (unchanged), the navigator's own pick quoted when missed
+  (`.spot-error__review-pick`), the actual error + model explanation (unchanged), and the
+  navigator's typed reasoning in a labelled quote block (`.spot-error__review-yours`).
+- **Scoring/persistence unchanged:** click accuracy is still the entire score
+  (`scoreSpotTheError` already reads `p?.correct` and tolerates the extra `explanation` field);
+  `onComplete(domainScores, mode)` signature untouched; explanations are display-only in the
+  review and are NOT persisted to Firestore (possible future follow-up: thread them into the spot
+  result's `answers` for supervisor visibility).
+- **CSS:** added `--selected` bubble, `.spot-error__explain-label/-hint`,
+  `.spot-error__review-pick`, `.spot-error__review-yours*`; deleted the now-orphaned
+  `--found`/`--wrong` reveal rules, the `spot-shake` animation block, and the
+  `__feedback-verdict` rules (`.spot-error__feedback` container kept and reused for the explain
+  panel).
+- **Tests:** new `src/components/spotTheError.component.test.jsx` (4 jsdom tests, db/firebase/
+  apiFetch mocked, items served from a mocked audit bank): no verdict text/classes during the run;
+  explanation gating + changeable pick + per-item reset; patient turns not pickable; review-only
+  correctness/pick/reasoning display. Full suite 1049/1049 across 52 files; build clean.
+
+### 2026-07-17 (part 2) - Bold visual layer (floating pill nav, 3D hero, lettered options)
+- **Context:** the owner judged the part-1 polish "not impressive at all" — the brief is to make
+  the site as beautiful as possible. This layer goes for visible drama while keeping the warm
+  refined-light identity and staying CSS-only (zero JSX changes, zero new dependencies).
+- **Nav:** now a floating frosted pill — detached from the page edge, sticky at `top: 14px`,
+  `min(100% - 32px, 1360px)` wide, stronger blur/highlight shadows, `white-space: nowrap` on brand
+  + tabs. Below 1200px the link strip scrolls horizontally behind an overflow fade (no visible
+  scrollbar); ≤760px it wraps under the brand as the part-1 swipeable row (pill radius relaxes to
+  24px for the two-row shape).
+- **Start hero:** the headline is an ink→clay gradient serif masthead (`background-clip: text`
+  over the Fraunces title); the capability-map preview tilts in gentle 3D
+  (`perspective(1300px) rotateY(-7deg)`, flattens on hover) above a blurred warm halo pseudo.
+- **Screen titles:** block-level page titles (`overview/matrix-view/results/module/gate/
+  dept-select`) get a 46px clay kicker rule above the headline — an editorial signature.
+- **KPI tiles:** left accent rail replaced by a gradient crown along the top edge; values grew to
+  46px gradient numerals; labels became small-caps with tracking.
+- **Matrix:** column headers are small-caps micro-labels; capability pills are full-round with a
+  top-light/bottom-shade inset pair and a deeper hover pop.
+- **MCQ options:** the empty `aria-hidden` marker span now renders lettered A/B/C/D chips via CSS
+  counters (`counter(opt, upper-alpha)`); hover tints the letter clay; the selected chip fills
+  with the clay gradient + glow. Options widened to 16px radius with better line-height.
+- **Buttons/cards/canvas:** primary buttons run a light sweep on hover (reusing the existing
+  `shimmer` keyframe; `.btn` gained `overflow: hidden`); cards moved to `--radius-lg` with a
+  machined inset top highlight; the body mesh gained a top-center ivory spotlight and stronger
+  color pools; progress bars thickened to 8px.
+- **Safety:** card borders stayed real (no gradient-border trick), so every state signal that
+  swaps `border-color` (`.phase-card--next`, `.option.is-selected`, `.deptstrip__item.is-current`,
+  interview log open, etc.) still renders exactly as before.
+- **Verification:** `npm test` 1045/1045, `npm run build` clean. Headless-Chromium screenshots of
+  the Start gate plus a throwaway harness (real `Nav` + `Matrix` + `Check` with mock rows, never
+  committed) at 1440px/390px: zero horizontal overflow at both widths, one-line pill nav at
+  desktop, swipeable strip on mobile, lettered options + serif scenario verified rendering.
+- **Files:** `src/styles.css`, `CLAUDE.md`, `docs/HISTORY.md`.
+
+### 2026-07-17 - Visual polish pass (typography, mobile nav fix, brand details)
+- **Goal:** make the app as beautiful as possible within the established refined-light
+  ivory/clay identity — no redesign, no new dependencies, CSS + `index.html` only.
+- **Two-voice typography:** added **Fraunces** (variable optical-size serif) as `--font-display`
+  on the ten page-level headline classes + the MCQ scenario prose (`.question__scenario`), and
+  switched Inter to its variable range (`wght@400..900`) so the sheet's 550/650/850 intermediate
+  weights render as true weights instead of snapping to the nearest static cut. Panel/widget
+  headers deliberately stay Inter. Headlines get `text-wrap: balance`, ledes `text-wrap: pretty`.
+  The display layer lives at the END of `styles.css` so it wins same-specificity ties.
+- **Fixed the documented mobile nav overflow** (recorded 2026-07-14 during the Assessment Bank
+  selector browser walkthrough): at ≤760px the nav wraps to brand-above-links and `.nav__links`
+  becomes a full-width, swipeable, scrollbar-less pill row with a right-edge mask fade hinting at
+  overflow (`padding-right` lets the last pill scroll clear of the fade). Verified in headless
+  Chromium at 390px: `document.scrollWidth` now equals the viewport (no horizontal page scroll)
+  with the strip internally scrollable; desktop layout unchanged. The same query tightens
+  `.main`/`.deptbar` side padding to 16px on phones.
+- **Brand details:** deleted the orphaned `.nav__logo`/`.start__logo`/`logo-float` rules (flagged
+  in §8 since 2026-06-28); the wordmark now carries a CSS-only rotated clay-gradient "gem"
+  (`.nav__brand::before`), and the footer became a refined uppercase closing band with a short
+  clay rule flourish (`.footer::before`).
+- **Micro-polish:** warm minimal scrollbars (thin, content-box thumb, transparent track, both
+  engines); a zero-specificity global focus ring (`:where(button, a, [role='tab'],
+  [tabindex]):focus-visible`) so keyboard focus is always visible without fighting component
+  rules like `.btn`'s box-shadow ring; proper tracking (0.06–0.08em) on the uppercase
+  micro-labels that had `letter-spacing: 0`; `theme-color` meta aligned to the ivory canvas
+  (`#f4eee1`).
+- **Verification:** `npm test` 1045/1045, `npm run build` clean. Real-browser (headless Chromium
+  via the repo's Playwright) screenshots of the Start gate at 1440px + 390px and a throwaway
+  harness mounting the real supervisor `Nav` (widest tab set, never committed) confirmed the
+  serif headlines, gem mark, footer flourish, and the nav overflow fix end to end.
+- **Files:** `index.html`, `src/styles.css`, `CLAUDE.md`, `docs/HISTORY.md`. No JSX changes.
 
 ### 2026-07-15 (part 3) - Call QA checkpoint write serialization (PR 2 final merge blocker)
 - **Context:** the final merge review of draft PR #32 found the server-authoritative transcript
