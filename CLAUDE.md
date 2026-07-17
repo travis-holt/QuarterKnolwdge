@@ -11,7 +11,11 @@
 > [§8 Current System State](#8-current-system-state) and [§15 Current Priorities](#15-current-priorities)
 > accurate at all times.
 >
-> **Last updated:** 2026-07-17 (visual polish pass — two-voice typography: Fraunces display serif
+> **Last updated:** 2026-07-17 (Spot the Error deferred-feedback redesign — the active phase no
+> longer reveals correct/wrong per item; the navigator picks the message AND types a required
+> "why is this the error" explanation (pick changeable until Next), and all verdicts + their typed
+> reasoning appear only on the end-of-assessment review screen — see F16. Scoring model unchanged
+> (click accuracy only; explanations are display-only, not persisted). Prior: visual polish pass — two-voice typography: Fraunces display serif
 > on page-level headlines + variable Inter for UI; fixed the documented mobile nav overflow with a
 > swipeable pill row; CSS-only nav gem mark + refined footer; warm scrollbars, global focus rings,
 > uppercase-label tracking; deleted the orphaned logo rules — see §10. Prior: PR 2 — server-authoritative Call QA transcript: the scored Call QA
@@ -365,10 +369,15 @@ training assignments.
     Click-accuracy only. Same 0–100 scale as the main check, so results feed domain scores directly.
   - `src/components/SpotTheError.jsx` — phases: `loading` (fires one `/api/generate-audit` call per
     planned item in parallel via `Promise.allSettled`, keeps whatever succeeds; full-mode domains
-    that fail to generate backfill to 0) → `active` (one item at a time; **one click per item**,
-    then a correct/wrong reveal + Next; each item shows its domain tag) → `review` (overall score +
-    level badge, a per-domain breakdown in full mode, and a per-item list of the actual error + what
-    the SOP says) → `saving` → `done`. No hints, no reflection, no AI coaching.
+    that fail to generate backfill to 0) → `active` (one item at a time; the navigator **picks the
+    message AND types a required "why is this the error" explanation** before Next commits the
+    answer — the pick stays changeable until then, and **no correct/wrong feedback is shown during
+    the run** (deferred-feedback redesign 2026-07-17); each item shows its domain tag) → `review`
+    (overall score + level badge, a per-domain breakdown in full mode, and a per-item list showing
+    the correct/missed verdict — the first time any verdict appears — the navigator's pick when
+    missed, the actual error + what the SOP says, and the navigator's typed reasoning; explanations
+    are display-only in the review, not graded or persisted) → `saving` → `done`. No hints, no AI
+    coaching. Click accuracy remains the whole score.
   - **Score feed:** `SpotTheError` calls `onComplete(domainScores, mode)`;
     `NavigatorApp.handleSpotComplete` saves the scores (full → replace whole profile; domain →
     merge just that domain), appends a `resultHistory` trend point, and records a `kind:'practice'`
@@ -1625,7 +1634,10 @@ of this file on 2026-07-07 to cut per-session context cost (it was ~55% of the f
 - **Experimental / mockup:**
   - Training **content** is mockup (flagged in UI). Logic is real.
   - **Adult Medicine and Behavioural Health** are not assessed; **Pediatrics and OB/GYN** are live.
-- **Test coverage:** **1045 tests** across **51 test files** (PR 2 final merge blocker adds 5 serialized-checkpoint race tests + controllable-write-order fake Firestore; PR 2 final merge-review adds active-turn-settle/ordering/durability/bounds/finalization-timing relay tests, `boundedAppend` + client finalize-guard tests; PR 2 merge-review adds
+- **Test coverage:** **1049 tests** across **52 test files** (2026-07-17 Spot the Error
+  deferred-feedback redesign adds `src/components/spotTheError.component.test.jsx` — 4 jsdom tests
+  for the no-verdict-during-run rule, required explanation gating + changeable pick,
+  patient-turns-not-pickable, and review-only correctness/reasoning display. PR 2 final merge blocker adds 5 serialized-checkpoint race tests + controllable-write-order fake Firestore; PR 2 final merge-review adds active-turn-settle/ordering/durability/bounds/finalization-timing relay tests, `boundedAppend` + client finalize-guard tests; PR 2 merge-review adds
   `src/components/voiceCall.component.test.jsx` — the End-Call handshake + capture-vs-grade-retry
   distinctions with fake browser APIs — and expands `api/liveRelay.test.js` (two-stage drain,
   transcript ordering, roster-member gate, ack-after-write), `api/_call-qa-attempts.test.js` (exact
@@ -1739,7 +1751,7 @@ of this file on 2026-07-07 to cut per-session context cost (it was ~55% of the f
   OB/GYN = **37** seed questions (offline fallback) + the **48-item MCQ v2 operating-model bank**
   (24 Pediatrics + 24 OB/GYN) that replaces the weak active bank via a marker-gated
   archive-and-replace migration (bank grows in Firestore per dept) · 4 departments (**Pediatrics
-  + OB/GYN live**, 2 mockup) · **1045** unit tests (51 test files) + two committed Firestore Rules
+  + OB/GYN live**, 2 mockup) · **1049** unit tests (52 test files) + two committed Firestore Rules
   emulator suites (`npm run test:rules` — the 51-assertion result-authorization suite + the PR-2
   Call QA interviews suite; require Java, run in CI, not part of the unit-test count) ·
   **13** Firestore collections
@@ -2003,7 +2015,7 @@ npm run test:e2e     # run the Playwright browser tests (auto-builds + starts th
 - Heatmap intensity toggle (show % inside matrix cells).
 
 ### Technical Debt
-- **1045 tests** across 51 test files as of 2026-07-15 (plus two committed Firestore Rules emulator
+- **1049 tests** across 52 test files as of 2026-07-17 (plus two committed Firestore Rules emulator
   suites, `npm run test:rules`, run separately from the unit-test gate). **Role-app
   coverage** (`App`, `Start`,
   `SupervisorApp`, `NavigatorApp`) now includes both shell smoke tests (mount + gate/session routing)

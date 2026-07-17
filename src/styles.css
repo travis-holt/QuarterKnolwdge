@@ -3467,32 +3467,13 @@ textarea:focus-visible {
   transform: translateY(0);
 }
 
-/* Correct error bubble — green highlight */
-.spot-error__bubble--found .spot-error__message {
-  background: #e2f0e8;
-  border-color: #3e8e5a;
+/* Picked bubble — NEUTRAL accent highlight (deliberately no correct/wrong
+   signal during the run; verdicts appear only on the review screen) */
+.spot-error__bubble--selected .spot-error__message {
+  background: color-mix(in srgb, var(--accent) 24%, var(--surface));
+  border-color: var(--accent-strong);
   border-width: 2px;
   color: var(--ink);
-}
-
-/* Wrong click shake animation */
-@keyframes spot-shake {
-  0%, 100% { transform: translateX(0); }
-  15%       { transform: translateX(-7px); }
-  30%       { transform: translateX(7px); }
-  45%       { transform: translateX(-5px); }
-  60%       { transform: translateX(5px); }
-  75%       { transform: translateX(-3px); }
-  90%       { transform: translateX(3px); }
-}
-
-.spot-error__bubble--shake .spot-error__message {
-  animation: spot-shake 0.5s var(--ease-out);
-  border-color: #c0392b;
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .spot-error__bubble--shake .spot-error__message { animation: none; }
 }
 
 /* Reflection panel */
@@ -3601,7 +3582,7 @@ textarea:focus-visible {
   color: var(--ink);
 }
 
-/* ── Assessment: progress, wrong-pick reveal, per-item feedback ───────────── */
+/* ── Assessment: progress, explain-your-pick panel ────────────────────────── */
 
 .spot-error__progress {
   flex-shrink: 0;
@@ -3618,14 +3599,6 @@ textarea:focus-visible {
   white-space: nowrap;
 }
 
-/* Wrong pick — red highlight (assessment reveal after the single attempt) */
-.spot-error__bubble--wrong .spot-error__message {
-  background: #fbe9e7;
-  border-color: #c0392b;
-  border-width: 2px;
-  color: var(--ink);
-}
-
 .spot-error__feedback {
   display: flex;
   flex-direction: column;
@@ -3633,14 +3606,16 @@ textarea:focus-visible {
   animation: fadeIn var(--dur-2) var(--ease-out);
 }
 
-.spot-error__feedback-verdict {
-  margin: 0;
+.spot-error__explain-label {
   font-size: 0.95rem;
-  font-weight: 600;
+  font-weight: 700;
+  color: var(--ink);
 }
 
-.spot-error__feedback-verdict--ok { color: #3e8e5a; }
-.spot-error__feedback-verdict--miss { color: #c0392b; }
+.spot-error__explain-hint {
+  font-weight: 400;
+  color: var(--ink-soft);
+}
 
 /* ── Dashboard assessment bar (MCQ / Spot toggle + take another) ──────────── */
 
@@ -3825,6 +3800,38 @@ textarea:focus-visible {
   font-size: 0.9rem;
   line-height: 1.55;
   color: var(--ink);
+}
+
+/* The navigator's own (wrong) pick, shown above the actual error */
+.spot-error__review-pick {
+  margin: 0;
+  font-size: 0.9rem;
+  line-height: 1.55;
+  color: var(--ink-soft);
+}
+
+/* The navigator's typed "why is this the error" reasoning */
+.spot-error__review-yours {
+  border-left: 3px solid var(--accent);
+  padding: 8px 0 8px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.spot-error__review-yours-label {
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--ink-faint);
+}
+
+.spot-error__review-yours-text {
+  margin: 0;
+  font-size: 0.9rem;
+  line-height: 1.55;
+  color: var(--ink-soft);
 }
 
 /* Done screen */

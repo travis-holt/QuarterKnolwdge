@@ -1,5 +1,36 @@
 # Development History - Knowledge Check
 
+### 2026-07-17 (part 3) - Spot the Error: deferred feedback + required explanation
+- **What changed (owner request):** the assessment's active phase no longer reveals correct/wrong
+  after each pick, and every pick now requires a typed explanation of *why* that message is the
+  error before advancing.
+- **Active phase (`SpotTheError.jsx`):** clicking an Agent bubble now just SELECTS it (neutral
+  clay highlight, `spot-error__bubble--selected`, `aria-pressed`); the pick stays changeable until
+  "Next item →" / "Finish & see results" commits `{ picked, correct, explanation }` into `picks`.
+  The commit button lives in an explain panel (label + textarea, reusing `.spot-error__textarea`)
+  that appears once a message is selected and is disabled until the explanation is non-empty
+  (trimmed). The old one-click lock, per-item verdict card, and `--found`/`--wrong` bubble reveals
+  are gone; header copy updated ("…then explain why. You can change your pick until you continue —
+  results are revealed after the last item.").
+- **Review phase:** now the FIRST place any verdict appears. Each item shows the ✓ Correct /
+  ✗ Missed badge (unchanged), the navigator's own pick quoted when missed
+  (`.spot-error__review-pick`), the actual error + model explanation (unchanged), and the
+  navigator's typed reasoning in a labelled quote block (`.spot-error__review-yours`).
+- **Scoring/persistence unchanged:** click accuracy is still the entire score
+  (`scoreSpotTheError` already reads `p?.correct` and tolerates the extra `explanation` field);
+  `onComplete(domainScores, mode)` signature untouched; explanations are display-only in the
+  review and are NOT persisted to Firestore (possible future follow-up: thread them into the spot
+  result's `answers` for supervisor visibility).
+- **CSS:** added `--selected` bubble, `.spot-error__explain-label/-hint`,
+  `.spot-error__review-pick`, `.spot-error__review-yours*`; deleted the now-orphaned
+  `--found`/`--wrong` reveal rules, the `spot-shake` animation block, and the
+  `__feedback-verdict` rules (`.spot-error__feedback` container kept and reused for the explain
+  panel).
+- **Tests:** new `src/components/spotTheError.component.test.jsx` (4 jsdom tests, db/firebase/
+  apiFetch mocked, items served from a mocked audit bank): no verdict text/classes during the run;
+  explanation gating + changeable pick + per-item reset; patient turns not pickable; review-only
+  correctness/pick/reasoning display. Full suite 1049/1049 across 52 files; build clean.
+
 ### 2026-07-17 (part 2) - Bold visual layer (floating pill nav, 3D hero, lettered options)
 - **Context:** the owner judged the part-1 polish "not impressive at all" — the brief is to make
   the site as beautiful as possible. This layer goes for visible drama while keeping the warm
