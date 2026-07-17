@@ -11,7 +11,8 @@
 > [§8 Current System State](#8-current-system-state) and [§15 Current Priorities](#15-current-priorities)
 > accurate at all times.
 >
-> **Last updated:** 2026-07-16 (PR #33 operational-calibration and pilot-smoke follow-up —
+> **Last updated:** 2026-07-17 (PR #33 final review — grade-failed coverage is mandatory in the
+> non-authoritative pilot smoke. Prior: PR #33 operational-calibration and pilot-smoke follow-up —
 > capture-only failures now affect reliability/safety gates without becoming accuracy evidence,
 > and the separate 15-case management rehearsal has no automation authority. Prior: PR 3
 > merge-blocker follow-up — calibration policy v2 now requires
@@ -941,7 +942,7 @@ training assignments.
 - **Current evidence/readiness:** 3 synthetic examples, 0 human pilot fixtures, 0 operational pilot
   fixtures,
   `INSUFFICIENT_DATA`. This is the intended initial state.
-- **Tests:** 83 PR-3 tests cover fixture privacy/schema failures, exact confusion/criterion/auto-fail/
+- **Tests:** 84 PR-3 tests cover fixture privacy/schema failures, exact confusion/criterion/auto-fail/
   capture/Wilson metrics, readiness gates and sufficient populations, every shadow disqualifier,
   homogeneous/imbalanced populations, contradictory capture states, complete labels and provenance,
   operational-only failure evidence, offline determinism/no-network behavior, live double opt-in,
@@ -1705,7 +1706,7 @@ of this file on 2026-07-07 to cut per-session context cost (it was ~55% of the f
 - **Experimental / mockup:**
   - Training **content** is mockup (flagged in UI). Logic is real.
   - **Adult Medicine and Behavioural Health** are not assessed; **Pediatrics and OB/GYN** are live.
-- **Test coverage:** **1128 tests** across **55 test files** (PR 3 adds 83 fixture/metrics/readiness/
+- **Test coverage:** **1129 tests** across **55 test files** (PR 3 adds 84 fixture/metrics/readiness/
   coverage/CLI/shadow-policy tests; PR 2 final merge blocker adds 5 serialized-checkpoint race tests + controllable-write-order fake Firestore; PR 2 final merge-review adds active-turn-settle/ordering/durability/bounds/finalization-timing relay tests, `boundedAppend` + client finalize-guard tests; PR 2 merge-review adds
   `src/components/voiceCall.component.test.jsx` — the End-Call handshake + capture-vs-grade-retry
   distinctions with fake browser APIs — and expands `api/liveRelay.test.js` (two-stage drain,
@@ -1819,7 +1820,7 @@ of this file on 2026-07-07 to cut per-session context cost (it was ~55% of the f
   OB/GYN = **37** seed questions (offline fallback) + the **48-item MCQ v2 operating-model bank**
   (24 Pediatrics + 24 OB/GYN) that replaces the weak active bank via a marker-gated
   archive-and-replace migration (bank grows in Firestore per dept) · 4 departments (**Pediatrics
-  + OB/GYN live**, 2 mockup) · **1128** unit tests (55 test files) + two committed Firestore Rules
+  + OB/GYN live**, 2 mockup) · **1129** unit tests (55 test files) + two committed Firestore Rules
   emulator suites (`npm run test:rules` — the 51-assertion result-authorization suite + the PR-2
   Call QA interviews suite; require Java, run in CI, not part of the unit-test count) ·
   **13** Firestore collections
@@ -2055,7 +2056,7 @@ npm run test:e2e     # run the Playwright browser tests (auto-builds + starts th
 - Heatmap intensity toggle (show % inside matrix cells).
 
 ### Technical Debt
-- **1128 tests** across 55 test files as of 2026-07-16 (plus two committed Firestore Rules emulator
+- **1129 tests** across 55 test files as of 2026-07-17 (plus two committed Firestore Rules emulator
   suites, `npm run test:rules`, run separately from the unit-test gate). **Role-app
   coverage** (`App`, `Start`,
   `SupervisorApp`, `NavigatorApp`) now includes both shell smoke tests (mount + gate/session routing)

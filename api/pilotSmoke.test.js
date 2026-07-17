@@ -41,6 +41,14 @@ describe('Call QA pilot smoke workflow', () => {
     expect(report.failures).toContain('missing-category:abandoned-capture');
   });
 
+  it('fails when every grade-failed rehearsal is missing', async () => {
+    const cases = (await buildPilotSmokeCases())
+      .filter((item) => item.category !== 'grade-failed');
+    const report = evaluatePilotSmokeCases(cases);
+    expect(report.status).toBe(PILOT_SMOKE_FAILED);
+    expect(report.failures).toContain('missing-category:grade-failed');
+  });
+
   it('fails when a rehearsal label does not match the fixture behavior', async () => {
     const cases = await buildPilotSmokeCases();
     cases[0].category = 'safety-violation';

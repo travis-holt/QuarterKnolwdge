@@ -1,5 +1,16 @@
 # Development History - Knowledge Check
 
+### 2026-07-17 - PR #33 pilot-smoke grade-failure coverage guard
+- Added `grade-failed` to the mandatory `qa:pilot-smoke` categories and a regression proving that
+  removing every grade-failed rehearsal returns `PILOT_SMOKE_FAILED` with
+  `missing-category:grade-failed`. Calibration thresholds and automation authority are unchanged.
+- **Verification:** `npm test` 1129/1129 across 55 files; `npm run test:rules` 51/51 + 16/16;
+  `npm run build` passed with the existing Firebase chunk-size warning; `npm run qa:calibrate`
+  and `npm run qa:coverage` remained `INSUFFICIENT_DATA` with 0 human cases and 88 gaps;
+  `npm run qa:pilot-smoke` reported `PILOT_SMOKE_VERIFIED` for the standard 15 cases;
+  `npm run qa:calibrate:check` exited 1 as expected. No live model call, production data access,
+  audio storage, automatic final verdict, merge, or deployment occurred.
+
 ### 2026-07-16 - PR #33 operational calibration and management pilot smoke
 - **Capture-only evidence:** added sanitized `source:'operational-pilot'` fixtures for terminal
   abandoned, capture-incomplete, and grade-failed attempts. They may omit transcript, turn counts,

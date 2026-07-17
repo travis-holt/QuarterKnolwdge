@@ -178,6 +178,7 @@ export function evaluatePilotSmokeCases(cases) {
     'needs-review',
     'incomplete-capture',
     'abandoned-capture',
+    'grade-failed',
   ]) {
     if (!categories.has(category)) failures.push(`missing-category:${category}`);
   }
