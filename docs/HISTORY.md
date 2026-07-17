@@ -1,5 +1,129 @@
 # Development History - Knowledge Check
 
+### 2026-07-17 - PR #33 integrated with main b54f701
+- Merged main commit `b54f701` into the Call QA calibration branch. Conflict resolution preserves
+  PR #33's calibration/pilot-smoke documentation and main's visual-polish and Spot the Error
+  deferred-feedback history. The combined suite is 1133 tests across 56 files.
+- **Verification:** `npm ci` succeeded (864 packages; 3 existing moderate findings); `npm test`
+  1133/1133; `npm run test:rules` 51/51 + 16/16; `npm run build` passed with the existing Firebase
+  chunk warning; calibration and coverage remained `INSUFFICIENT_DATA` with 0 human cases and 88
+  gaps; pilot smoke remained `PILOT_SMOKE_VERIFIED` for 15 cases; the readiness check exited 1 as
+  expected; `npm run test:e2e:safe` passed 12/12. No live model call, production-data access,
+  audio storage, automatic final verdict, merge of PR #33, or deployment occurred.
+
+### 2026-07-17 - PR #33 pilot-smoke grade-failure coverage guard
+- Added `grade-failed` to the mandatory `qa:pilot-smoke` categories and a regression proving that
+  removing every grade-failed rehearsal returns `PILOT_SMOKE_FAILED` with
+  `missing-category:grade-failed`. Calibration thresholds and automation authority are unchanged.
+- **Verification:** `npm test` 1129/1129 across 55 files; `npm run test:rules` 51/51 + 16/16;
+  `npm run build` passed with the existing Firebase chunk-size warning; `npm run qa:calibrate`
+  and `npm run qa:coverage` remained `INSUFFICIENT_DATA` with 0 human cases and 88 gaps;
+  `npm run qa:pilot-smoke` reported `PILOT_SMOKE_VERIFIED` for the standard 15 cases;
+  `npm run qa:calibrate:check` exited 1 as expected. No live model call, production data access,
+  audio storage, automatic final verdict, merge, or deployment occurred.
+
+### 2026-07-16 - PR #33 operational calibration and management pilot smoke
+- **Capture-only evidence:** added sanitized `source:'operational-pilot'` fixtures for terminal
+  abandoned, capture-incomplete, and grade-failed attempts. They may omit transcript, turn counts,
+  human review, model output, and rubric labels; any transcript/count data that exists is still
+  validated against allowed roles and counts. Non-failure or graded operational fixtures fail
+  closed.
+- **Metric boundary:** operational-pilot fixtures feed capture reliability, capture/grading
+  breakdowns, mixed-population capture evidence, and the critical capture-failure safety gate.
+  They are excluded from final-outcome agreement, human pass/fail/review counts, criterion and
+  auto-fail accuracy, scenario/workflow calibration volume, and every automation sample minimum.
+  Grading fixtures now remain fully graded/labeled; live calibration retains operational failures
+  in reports but never sends them to Gemini.
+- **Monday smoke workflow:** added `qa:pilot-smoke`, a separate non-production 15-case local
+  synthetic/rehearsed suite covering pass, fail, safety violation, needs review, incomplete
+  capture, abandoned capture, grade failure, Pediatrics, OB/GYN, and Phase 3 complete/incomplete
+  behavior. It prints `PILOT_SMOKE_VERIFIED` or `PILOT_SMOKE_FAILED`, exposes no readiness or
+  approved population, and cannot unlock shadow eligibility or automatic finalization.
+- **Policy separation:** the production gate remains calibration policy v2 with at least 200
+  independently human-reviewed adjudicated calls plus all outcome, coverage, safety, and version
+  gates. Committed evidence remains 3 synthetic examples, 0 human pilots, and 0 operational pilots;
+  readiness remains intentionally `INSUFFICIENT_DATA`.
+- **Verification:** `npm test` 1128/1128 across 55 files; `npm run test:rules` 51/51 + 16/16 using
+  the existing portable Temurin 21 runtime; `npm run build` passed with the existing Firebase
+  chunk-size warning; `npm run qa:calibrate` and `npm run qa:coverage` reported
+  `INSUFFICIENT_DATA`, 0 human cases, 0 operational fixtures, 3 excluded synthetic examples, and
+  88 coverage gaps; `npm run qa:pilot-smoke` reported `PILOT_SMOKE_VERIFIED` for 15 cases;
+  `npm run qa:calibrate:check` exited 1 as expected. No live model call, production data access,
+  audio storage, merge, or deployment occurred.
+
+### 2026-07-16 - PR #33 calibration/readiness merge-blocker hardening
+- **Population integrity:** bumped the calibration policy to
+  `call-qa-calibration-policy-v2`. Readiness now requires at least 60 human passes, 60 fails, and
+  40 review-required outcomes, with every class at least 15% of evaluated cases. Zero-denominator
+  Wilson intervals remain `null`/unavailable and cannot satisfy readiness. All-pass, all-fail,
+  all-review, severely imbalanced, and zero-denominator populations are regression-tested.
+- **Label integrity:** every human reviewer, adjudication, and model run must label all 20 rubric
+  criteria exactly once (`NA` when inapplicable). Missing/unknown criteria and duplicate model
+  criteria fail validation. Adjudicated recommendation/finalPass/reviewRequired and model
+  recommendation/pass combinations are checked for consistency. The 3 synthetic examples and all
+  sufficient-population test builders now use the complete rubric.
+- **Capture integrity:** fixture validation now enforces the PR #32 capture/grading state matrix,
+  exact `captureComplete` semantics, model-run presence only for graded attempts, and exact
+  patient/navigator transcript role counts. Human incomplete, abandoned, active, and grade-failed
+  attempts remain visible in capture/grading breakdowns and every mixed-version readiness report.
+  A versioned 1% critical capture-failure gate covers incomplete, abandoned, and grade-failed
+  attempts, so enough successful cases cannot hide operational failures.
+- **Shadow hardening:** bumped the non-final diagnostic policy to
+  `call-qa-clean-pass-shadow-v2`. Eligibility now requires calibration policy v2,
+  `qa.metadataIntegrity.verified === true`, a complete valid rubric result, and
+  server-authoritative `qa.transcriptMetadata` matching the attempt ID, capture state,
+  capture-complete flag, capture version, and live model. `off|shadow` remains the entire mode set;
+  no `qaFinalReview` or automatic finalization path was added.
+- **Verification:** focused calibration/shadow/CLI tests 78/78; `npm test` 1123/1123 across 54
+  files; `npm run test:rules` 51/51 + 16/16; `npm run build` passed with the existing Firebase
+  chunk-size warning; `npm run qa:calibrate` and `npm run qa:coverage` remained
+  `INSUFFICIENT_DATA` with 0 human cases, 3 excluded synthetic examples, and 88 coverage gaps;
+  `npm run qa:calibrate:check` exited 1 as expected; changed server/CLI files passed
+  `node --check`; `git diff --check` passed. No live model call, production data access, audio
+  retention, merge, or deployment occurred.
+
+### 2026-07-16 - Call QA calibration, coverage, and shadow automation readiness (PR 3)
+- **Goal:** add an honest measuring instrument around the PR #31 evidence/model protections and PR
+  #32 server-authoritative capture state machine without enabling automatic final pass/fail.
+- **Calibration fixtures:** added versioned sanitized local fixtures with a pure fail-closed
+  validator. It rejects unknown departments/scenarios/criteria/auto-fails, scenario mismatch,
+  invalid verdict/capture/grading states, duplicate/insufficient reviewers, incomplete human
+  adjudication, empty/malformed transcripts, missing model provenance, and recursive sensitive
+  fields. The 3 committed examples are explicitly `source:'synthetic-example'`; they do not count
+  as human evidence. No production Firestore downloader was added.
+- **Metrics/readiness:** `api/_qa-calibration.js` reports the 3×3 human/model outcome confusion
+  matrix, false passes/fails, review misses, criterion precision/recall and disagreements,
+  safety-critical agreement from the existing safety source, auto-fail TP/FP/FN/TN, capture
+  integrity, Wilson 95% intervals, version populations, operational breakdowns, and rich curated
+  scenario/workflow/domain/competency coverage. `api/_qa-calibration-gates.js` owns
+  `call-qa-calibration-policy-v1`; small perfect samples remain insufficient, mixed populations
+  must qualify independently, and false automatic auto-fails/review misses fail safety.
+- **CLI:** added `qa:calibrate`, `qa:calibrate:check`, and `qa:coverage`. Offline runs validate every
+  JSON fixture and deterministically write ignored `artifacts/call-qa-calibration/report.{json,md}`.
+  Empty/no-human data returns `INSUFFICIENT_DATA` and explicitly says no real-world accuracy
+  conclusion is possible. Optional live mode requires `CALL_QA_CALIBRATION_LIVE=true`, Gemini keys,
+  `--live`, and `--confirm-live`, prints request exposure first, runs sequentially through the
+  existing pinned `gradeCallQaTranscript()` service with static local SOP context, and never
+  reads/writes Firestore or edits fixtures.
+- **Shadow automation:** `api/_qa-automation-policy.js` adds a pure fail-closed eligibility check and
+  `off|shadow` environment parsing. It requires clean server capture, high-confidence pass, zero
+  auto-fails/unresolved evidence/deterministic findings/repairs/review flags/capture warnings,
+  complete matching provenance, clean-pass calibration readiness, and no final supervisor review.
+  It never changes `qa.pass`, creates `qaFinalReview`, changes Phase 3 completion, or affects
+  capability/history scoring, training, coaching, or supervisor actions.
+- **Privacy/docs:** no audio is stored. Added `docs/CALL_QA_CALIBRATION.md`,
+  `docs/CALL_QA_AUDIO_RETENTION_DECISION.md`, root `CALL_QA_CALIBRATION.md`, grading invariants,
+  README/env guidance, and F27 in CLAUDE.md. Current evidence is 0 human pilot cases and the expected
+  readiness result is `INSUFFICIENT_DATA`.
+- **Verification:** `npm ci` succeeded (864 packages; existing audit reports 3 moderate
+  vulnerabilities); `npm test` 1101/1101 across 54 files; `npm run test:rules` 51/51 result
+  authorization + 16/16 Call QA interview assertions using a temporary portable Temurin 21 JRE;
+  `npm run build` clean (existing >500 kB Firebase chunk warning only); `npm run qa:calibrate` and
+  `npm run qa:coverage` both generated deterministic `INSUFFICIENT_DATA` reports with 0 human cases,
+  3 excluded synthetic examples, and 88 visible coverage gaps; all six changed/new server or CLI
+  JavaScript files passed `node --check`; `git diff --check` clean. No Playwright run because
+  production UI was untouched. No live calibration, production data access, audio storage, merge,
+  or deploy.
 ### 2026-07-17 (part 3) - Spot the Error: deferred feedback + required explanation
 - **What changed (owner request):** the assessment's active phase no longer reveals correct/wrong
   after each pick, and every pick now requires a typed explanation of *why* that message is the
