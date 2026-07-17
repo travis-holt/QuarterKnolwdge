@@ -105,7 +105,7 @@ export const BASES = new Set(['EVIDENCE', 'ABSENCE']);
 // weights, or auto-fail definitions change. Recorded on every stored QA result
 // (qa.gradingMetadata.rubricVersion) so a supervisor can tell which rubric graded
 // a historical attempt.
-export const QA_RUBRIC_VERSION = 'qa-rubric-v1';
+export const QA_RUBRIC_VERSION = 'qa-rubric-v2';
 
 export function rubricCriteria(rubric = QA_RUBRIC) {
   return rubric.flatMap((cat) =>

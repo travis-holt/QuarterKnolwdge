@@ -53,7 +53,13 @@ export const GRADING_LEASE_TTL_MS = 90_000;
  */
 export function buildScenarioSnapshot(scenario) {
   return {
-    scenario: scenario.scenario,
+    qaScenarioId: scenario.id,
+    department: scenario.department,
+    scenarioVersion: scenario.version ?? null,
+    workflowType: scenario.workflowType ?? null,
+    difficulty: scenario.difficulty ?? null,
+    publicBriefing: scenario.publicBriefing,
+    gradingContext: scenario.gradingContext,
     callerName: scenario.callerName,
     openingLine: scenario.openingLine,
     expectedActions: scenario.expectedActions ?? [],
@@ -123,13 +129,10 @@ export function buildAttemptDoc({ navigatorId, name, department, scenario, liveM
 
     // Legacy interview fields kept null so supervisor/history rendering that
     // reads these on practice docs does not choke on a QA attempt.
-    scenario: scenario.scenario,
+    scenario: scenario.publicBriefing,
     callerName: scenario.callerName,
     criteriaGrades: null,
     supervisorOverrides: null,
-    expectedActions: scenario.expectedActions ?? [],
-    criticalMisses: scenario.criticalMisses ?? [],
-
     grade: null,
     qa: null,
   };

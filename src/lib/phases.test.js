@@ -70,6 +70,7 @@ describe('active QA helpers', () => {
   it('does not count archived QA interviews as active', () => {
     expect(isActiveQaInterview({
       department: 'pediatrics',
+      assessmentType: 'call-qa',
       qa: { score: 92, pass: true },
       qaArchived: true,
     }, 'pediatrics')).toBe(false);
@@ -79,17 +80,27 @@ describe('active QA helpers', () => {
     const interviews = [
       {
         department: 'pediatrics',
+        assessmentType: 'call-qa',
         qa: { score: 95, pass: true },
         qaArchived: true,
         endedAt: { seconds: 200 },
       },
       {
         department: 'pediatrics',
+        assessmentType: 'call-qa',
         qa: { score: 82, pass: true },
         endedAt: { seconds: 100 },
       },
     ];
 
     expect(latestQaForDept(interviews, 'pediatrics')?.qa?.score).toBe(82);
+  });
+
+  it('does not let an arbitrary practice qa payload complete Phase 3', () => {
+    expect(isActiveQaInterview({
+      department: 'pediatrics',
+      assessmentType: 'practice',
+      qa: { score: 100, pass: true },
+    }, 'pediatrics')).toBe(false);
   });
 });

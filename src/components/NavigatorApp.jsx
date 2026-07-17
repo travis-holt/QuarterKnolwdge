@@ -20,7 +20,7 @@ import {
   findRow,
 } from '../lib/scoring.js';
 import { mergeNavigatorFloorAndOwnResult } from '../lib/navigatorResultMerge.js';
-import { getResult, saveResult, getActiveQuestions, getCompletions, getInterviews, saveCompletion } from '../lib/db.js';
+import { getResult, saveResult, getActiveQuestions, getCompletions, saveCompletion } from '../lib/db.js';
 import { apiFetch } from '../lib/apiFetch.js';
 import { MINICHECK_SIZE, MINICHECK_PASS } from '../data/config.js';
 import { phasesComplete, completedCount, latestQaForDept } from '../lib/phases.js';
@@ -39,6 +39,9 @@ const SEED_BY_DEPT = {
 
 // Every domain id — the full-profile "Spot the Error" assessment covers them all.
 const ALL_DOMAIN_IDS = DOMAINS.map((d) => d.id);
+
+const getOwnInterviews = () => apiFetch('/api/my-interviews', {}, 15_000)
+  .then((data) => data?.interviews ?? []);
 
 // The navigator's self-contained app. They can ONLY ever see their own data:
 // there is no route to the matrix, overview, or other navigators' dashboards.
@@ -132,7 +135,7 @@ export default function NavigatorApp({ navigatorId, name, onSignOut }) {
         getResult(navigatorId, dept, 'mcq'),
         getResult(navigatorId, dept, 'spot'),
         getResult(navigatorId, dept, 'qa'),
-        getInterviews(navigatorId).catch(() => []),
+        getOwnInterviews().catch(() => []),
       ]);
       setResultsByType({ mcq, spot, qa });
       setInterviews(ivs);
@@ -195,7 +198,7 @@ export default function NavigatorApp({ navigatorId, name, onSignOut }) {
     if (!isFirebaseConfigured) return undefined;
     if (view !== 'dashboard' && view !== 'training' && view !== 'phases') return undefined;
     let active = true;
-    getInterviews(navigatorId)
+    getOwnInterviews()
       .then((list) => {
         if (!active) return;
         setInterviews(list);
@@ -493,11 +496,6 @@ export default function NavigatorApp({ navigatorId, name, onSignOut }) {
           name={name}
           department={dept}
           mode="test"
-          priorQaAttempts={interviews.filter((iv) =>
-            iv?.qa &&
-            !iv?.qaArchived &&
-            (iv.department ?? 'pediatrics') === dept
-          )}
           onQaResult={handleQaComplete}
           onExit={() => setView('phases')}
           onDone={() => setView('dashboard')}

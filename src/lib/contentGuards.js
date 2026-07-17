@@ -22,15 +22,17 @@ function joinText(parts) {
 const OBGYN_CONTRADICTION_CHECKS = [
   ['known_lmp_forced_confirmation', ['new_ob_known_lmp'], /(?:known|reliable)\s+lmp[\s\S]{0,120}(?:book|schedule|require|must use)\s+(?:a\s+)?confirmation/i, 'Reliable LMP should use the normal New OB workflow, not forced Confirmation.'],
   ['unknown_lmp_direct_new_ob', ['confirmation_unknown_lmp'], /(?:unknown|unreliable|does not know|doesn['’]t know)\s+(?:the\s+)?lmp[\s\S]{0,140}(?:book|schedule|send)[\s\S]{0,35}new\s+ob/i, 'Unknown or unreliable LMP requires Confirmation first unless clinical approval says otherwise.'],
-  ['new_ob_pair_split', ['new_ob_pairing'], /new\s+ob[\s\S]{0,160}(?:split|separate days?|different days?|gap between|sonogram only|provider visit only)/i, 'The New OB sonogram and provider visit must remain a same-day back-to-back pair.'],
+  ['new_ob_pair_split', ['new_ob_pairing'], /new\s+ob[\s\S]{0,160}(?:split|separate days?|different days?|gap between|sonogram only|provider visit only)|(?:sonogram|ultrasound)[\s\S]{0,80}(?:one day|tuesday|this week)[\s\S]{0,80}(?:provider|doctor)[\s\S]{0,45}(?:another day|friday|next week)/i, 'The New OB sonogram and provider visit must remain a same-day back-to-back pair.'],
+  ['new_ob_pair_reversed', ['new_ob_pairing'], /(?:provider|doctor)[\s\S]{0,45}(?:first|before)[\s\S]{0,45}(?:sonogram|ultrasound|scan)/i, 'The New OB sonogram comes before the provider visit.'],
   ['paired_appointment_split', ['paired_appointment_reschedule', 'growth_bpp_plus_md', 'anatomy_plus_md'], /(?:keep|move|cancel|reschedule)[\s\S]{0,45}(?:only|just|one (?:part|half))[\s\S]{0,60}(?:sonogram|ultrasound|scan|provider|md|appointment)/i, 'Required paired appointments cannot be handled independently.'],
   ['urgent_without_approval', ['urgent_high_priority', 'nurse_approved_ob_urgent'], /(?:book|schedule|use)[\s\S]{0,60}(?:ob|gyn)?\s*urgent[\s\S]{0,100}(?:without|no need for|before)[\s\S]{0,35}(?:nurse|provider|clinical)?\s*approval|(?:open|available)\s+urgent\s+slot[\s\S]{0,80}(?:is enough|authori[sz]es|means (?:i|we) can)/i, 'Urgent appointments require written nurse/provider approval; slot availability is not authority.'],
-  ['navigator_directs_ld', ['urgent_intermedia_escalation', 'urgent_high_priority'], /(?:i|we|navigator|agent)\s+(?:will|should|must|can)\s+(?:send|direct|transfer|route)[\s\S]{0,45}(?:l\s*&\s*d|labor (?:and|&) delivery)/i, 'Current navigator workflow uses High Priority OB Portal TE plus the urgent channel, not independent L&D direction.'],
+  ['navigator_directs_ld', ['urgent_intermedia_escalation', 'urgent_high_priority'], /(?:(?:i|we|navigator|agent)\s+(?:will|should|must|can)\s+(?:send|direct|transfer|route)|(?:go|head|proceed)\s+(?:straight\s+)?to)[\s\S]{0,45}(?:l\s*&\s*d|labor (?:and|&) delivery)/i, 'Current navigator workflow uses urgent clinical escalation, not independent L&D direction.'],
   ['annual_status_ignored', ['annual_gyn_vs_gyn_ov'], /(?:annual (?:gyn )?status|last annual)[\s\S]{0,70}(?:does not matter|doesn['’]t matter|ignore|skip|need not be checked)/i, 'Annual GYN status controls routine GYN visit selection.'],
   ['invalid_annual_counted_current', ['annual_gyn_vs_gyn_ov'], /(?:pap(?:\s+smear)?\s+(?:alone|only)|outside\s+annual|postpartum\s+visit)[\s\S]{0,90}(?:counts?|qualif(?:y|ies)|means)[\s\S]{0,35}(?:annual\s+gyn\s+)?(?:utd|up[- ]to[- ]date|current)/i, 'Pap-only, outside annual, and postpartum visits do not make Annual GYN current.'],
-  ['duplicate_te_same_issue', ['existing_te_take_action'], /(?:open|existing)\s+te[\s\S]{0,100}(?:same|that)\s+issue[\s\S]{0,100}(?:create|open|start)[\s\S]{0,25}(?:new|another|second)\s+te/i, 'Use Take Action on an open TE for the same issue instead of creating a duplicate.'],
-  ['mfm_general_ob_routing', ['mfm_routing'], /mfm[\s\S]{0,130}(?:general|regular|standard)\s+ob\s+(?:schedule|scheduling|workflow)|mfm[\s\S]{0,100}(?:pss\s+ob|ob\s+portal)/i, 'MFM requests route directly to Rebecca Wood, not general OB scheduling.'],
-  ['navigator_schedules_lab', ['lab_boundary'], /(?:i|we|navigator|agent)\s+(?:will|can|should)\s+(?:book|schedule|reschedule)[\s\S]{0,40}(?:lab|gct|gtt)/i, 'Navigators do not schedule OB/GYN lab work.'],
+  ['duplicate_te_same_issue', ['existing_te_take_action'], /(?:open|existing)[\s\S]{0,100}(?:te|message|request)[\s\S]{0,120}(?:create|open|start)[\s\S]{0,30}(?:new|another|second)|(?:create|open|start)[\s\S]{0,30}(?:new|another|second)[\s\S]{0,60}(?:te|message|request)[\s\S]{0,100}(?:already|existing|open)/i, 'Update an open same-issue request instead of creating a duplicate.'],
+  ['mfm_general_ob_routing', ['mfm_routing'], /mfm[\s\S]{0,130}(?:general|regular|standard)\s+ob\s+(?:schedule|scheduling|workflow)|mfm[\s\S]{0,100}(?:pss\s+ob|ob\s+portal)|(?:send|route|transfer)[\s\S]{0,60}(?:general|regular|standard)\s+(?:ob\s+)?schedul/i, 'MFM requests go to the direct MFM team, not general OB scheduling.'],
+  ['transfer_booked_before_review', ['transfer_ob'], /(?:book|schedule)[\s\S]{0,80}(?:now|before)[\s\S]{0,80}(?:records|review|approv)|(?:accept|approv)[\s\S]{0,40}(?:without|before)[\s\S]{0,40}(?:records|review)/i, 'Transfer OB requests require records and approval before scheduling.'],
+  ['navigator_schedules_lab', ['lab_boundary'], /(?:i|we|navigator|agent)\s+(?:will|can|should)\s+(?:book|schedule|reschedule|order)[\s\S]{0,40}(?:lab|gct|gtt)|(?:i|we)\s+(?:will|can|should)\s+order\s+(?:that|the|your)?\s*lab/i, 'Navigators do not order or schedule OB/GYN lab work.'],
   ['navigator_interprets_lab', ['lab_boundary'], /(?:result|lab)[\s\S]{0,60}(?:looks|is|seems)\s+(?:normal|fine|abnormal|concerning)/i, 'Navigators do not interpret OB/GYN lab results.'],
   ['direct_dr_bank_booking', ['dr_bank_waitlist'], /(?:book|schedule|reserve)[\s\S]{0,35}(?:dr\.?\s+)?bank\b/i, 'Navigators do not directly schedule Dr. Bank GYN or fertility visits.'],
   ['iud_sonogram_wrong_order', ['iud_insertion_plus_sono', 'postpartum_iud'], /(?:gyn\s+)?sono(?:gram)?[\s\S]{0,60}(?:before|first)[\s\S]{0,60}(?:iud|insertion)|(?:ultrasound|sonogram)[\s\S]{0,30}then[\s\S]{0,30}(?:iud|insertion)/i, 'IUD workflow places the provider insertion visit before the GYN sonogram.'],
@@ -41,18 +43,34 @@ const OBGYN_CONTRADICTION_CHECKS = [
   ['urgent_channel_omitted', ['urgent_intermedia_escalation'], /(?:no need|do not need|don['’]t need|skip)[\s\S]{0,45}(?:urgent|intermedia)\s+channel/i, 'Serious symptoms require the urgent Intermedia channel in addition to the TE.'],
 ];
 
-function notNegated(text, matchIndex) {
-  return !/\b(?:do not|don['’]t|never|must not|cannot|can['’]t|avoid)\b/i.test(text.slice(Math.max(0, matchIndex - 35), matchIndex));
+const NEGATED_ACTION = /\b(?:do(?:es|did)? not|don['’]t|doesn['’]t|didn['’]t|will not|won['’]t|should not|shouldn['’]t|could not|couldn['’]t|would not|wouldn['’]t|must not|cannot|can['’]t|no need to|need not|never|avoid)\s+(?:(?:independently|directly|just|simply|ever|go ahead and)\s+){0,2}(?:book|booking|schedule|scheduling|require|requiring|use|using|split|splitting|separate|separating|move|moving|cancel|canceling|reschedule|rescheduling|send|sending|direct|directing|transfer|transferring|route|routing|go|going|head|heading|proceed|proceeding|come|coming|ignore|ignoring|skip|skipping|count|counting|qualify|qualifying|create|creating|open|opening|start|starting|accept|accepting|approve|approving|order|ordering|interpret|interpreting|tell|telling|say|saying|promise|promising|ask|asking|confirm|confirming|check|checking)\b/i;
+
+export function isObgynProhibitedActionNegated(text) {
+  return NEGATED_ACTION.test(String(text ?? ''));
+}
+
+function contradictionClauses(text) {
+  const body = String(text ?? '');
+  const clauses = body.replace(/\bdr\./gi, 'Dr')
+    .split(/[.;!?]|—|--|,\s*(?:but|however|although|meanwhile)\b|,\s*and\s+(?=(?:i|we)\b)/i)
+    .map((clause) => clause.trim())
+    .filter(Boolean);
+  return [...new Set([body.trim(), ...clauses].filter(Boolean))];
 }
 
 export function detectObgynContradictions(text, { ruleIds = [] } = {}) {
-  const body = String(text ?? '');
-  return OBGYN_CONTRADICTION_CHECKS.flatMap(([code, applicableRuleIds, pattern, message, allowMatchedNegation = false]) => {
-    const match = pattern.exec(body);
-    if (!match || !notNegated(body, match.index) || (!allowMatchedNegation && /\b(?:do not|don['’]t|never|must not|cannot|can['’]t|avoid)\b/i.test(match[0]))) return [];
-    if (ruleIds.length && !applicableRuleIds.some((id) => ruleIds.includes(id))) return [];
-    return [{ severity: 'block', code, message, ruleIds: applicableRuleIds }];
-  });
+  const findings = contradictionClauses(text).flatMap((body) => (
+    OBGYN_CONTRADICTION_CHECKS.flatMap(([code, applicableRuleIds, pattern, message, allowNegatedAction = false]) => {
+      const match = pattern.exec(body);
+      const actionWindow = match
+        ? body.slice(Math.max(0, match.index - 80), match.index + match[0].length)
+        : '';
+      if (!match || (!allowNegatedAction && isObgynProhibitedActionNegated(actionWindow))) return [];
+      if (ruleIds.length && !applicableRuleIds.some((id) => ruleIds.includes(id))) return [];
+      return [{ severity: 'block', code, message, ruleIds: applicableRuleIds }];
+    })
+  ));
+  return findings.filter((finding, index) => findings.findIndex((item) => item.code === finding.code) === index);
 }
 
 export function detectLookupOrderPreference(text) {

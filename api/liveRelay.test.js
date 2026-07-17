@@ -8,11 +8,32 @@ import {
   CALL_QA_ACTIVE_TURN_SETTLE_MS, clientFinalizeGuardMs,
 } from './live-relay.js';
 import { createFakeFirestore } from './fixtures/fakeFirestore.js';
-import { getCallQaScenarioById } from '../src/data/callQaScenarios.js';
 import { CAPTURE_STATUS } from './_call-qa-attempts.js';
 import { MAX_QA_TURN_CHARS } from './_call-qa-transcript.js';
 
-const SCENARIO = getCallQaScenarioById('qa-peds-refill-001');
+const SCENARIO = {
+  id: 'qa-test-call-001',
+  version: 'test-v1',
+  department: 'pediatrics',
+  title: 'Fictional test call',
+  workflowType: 'fictional_workflow',
+  difficulty: 'medium',
+  primaryDomainId: 'intake',
+  domainIds: ['intake'],
+  competencyIds: ['communication'],
+  callerName: 'Test Caller',
+  openingLine: 'I need help with an administrative request.',
+  publicBriefing: 'A caller asks for help with a fictional administrative request.',
+  gradingContext: 'Use the fictional unit-test expectations for this call.',
+  expectedActions: ['Complete the fictional observable step.'],
+  criticalMisses: ['State the fictional unsafe outcome.'],
+  scoringNotes: ['Accept natural wording in this fictional fixture.'],
+  hiddenChartState: { fixture: true },
+  ruleIds: [],
+  sourceSopVersion: null,
+  sourceRuleVersion: null,
+  sourceAuthority: null,
+};
 const flush = () => new Promise((r) => setTimeout(r, 0));
 // Unique IP per harness — the relay's per-IP concurrency cap is module-level
 // state that would otherwise leak across tests.
@@ -42,7 +63,8 @@ function harness(overrides = {}) {
     verifyToken: vi.fn(async () => ({ role: 'navigator', navigatorId: 'nav-a' })),
     getApiKeys: () => ['k1'],
     buildSystemInstruction: () => 'persona',
-    resolveScenario: (id) => getCallQaScenarioById(id),
+    selectScenario: vi.fn(() => SCENARIO),
+    loadPriorQaAttempts: vi.fn(async () => []),
     loadRosterMember: vi.fn(async () => ({ id: 'nav-a', name: 'Ada', status: 'active' })),
     db: () => db,
     now: (() => { let t = 1000; return () => (t += 1000); })(),
@@ -77,7 +99,7 @@ function harness(overrides = {}) {
 async function startTest(h, startMsg = {}) {
   handleConnection(h.client, {}, h.deps);
   await h.client.emit('message', JSON.stringify({
-    type: 'start', idToken: 't', mode: 'test', department: 'pediatrics', qaScenarioId: SCENARIO.id, ...startMsg,
+    type: 'start', idToken: 't', mode: 'test', department: 'pediatrics', ...startMsg,
   }));
   await flush();
   // Drive the upstream setup handshake.
@@ -98,7 +120,7 @@ function storedAttempt(h) {
 beforeEach(() => vi.clearAllMocks());
 
 describe('server-authoritative start contract', () => {
-  it('derives navigatorId from the token and loads the scenario server-side (ignoring client scenario text)', async () => {
+  it('derives navigatorId from the token and selects the scenario server-side (ignoring every client scenario field)', async () => {
     const h = harness();
     handleConnection(h.client, {}, h.deps);
     await h.client.emit('message', JSON.stringify({
@@ -108,8 +130,10 @@ describe('server-authoritative start contract', () => {
     await flush();
     const attempt = storedAttempt(h);
     expect(attempt.navigatorId).toBe('nav-a');
-    expect(attempt.scenario).toBe(SCENARIO.scenario);
+    expect(attempt.scenario).toBe(SCENARIO.publicBriefing);
     expect(attempt.captureAuthority).toBe('server');
+    expect(h.deps.loadPriorQaAttempts).toHaveBeenCalledWith('nav-a');
+    expect(h.deps.selectScenario).toHaveBeenCalledWith({ department: 'pediatrics', priorAttempts: [] });
   });
 
   it('creates the attempt BEFORE sending ready and returns the attempt id + trusted scenario', async () => {
@@ -118,8 +142,33 @@ describe('server-authoritative start contract', () => {
     const ready = h.client.lastByType('ready');
     expect(ready).toBeTruthy();
     expect(ready.attemptId).toBeTruthy();
-    expect(ready.scenario).toMatchObject({ id: SCENARIO.id, department: 'pediatrics', callerName: SCENARIO.callerName });
+    expect(ready.scenario).toMatchObject({
+      prompt: SCENARIO.publicBriefing,
+      department: 'pediatrics',
+      callerName: SCENARIO.callerName,
+      primaryDomainId: SCENARIO.primaryDomainId,
+    });
+    expect(ready.scenario).not.toHaveProperty('id');
+    expect(ready.scenario).not.toHaveProperty('expectedActions');
+    expect(ready.scenario).not.toHaveProperty('criticalMisses');
+    expect(ready.scenario).not.toHaveProperty('hiddenChartState');
+    expect(ready.scenario).not.toHaveProperty('gradingContext');
+    expect(ready.scenario).not.toHaveProperty('scoringNotes');
     expect(storedAttempt(h)).toBeTruthy();
+  });
+
+  it('does not send the private grading rubric or hidden chart state to the live caller model', async () => {
+    const buildSystemInstruction = vi.fn(() => 'persona');
+    const h = harness({ buildSystemInstruction });
+    await startTest(h);
+    const [callerName, prompt, options] = buildSystemInstruction.mock.calls[0];
+    expect(callerName).toBe(SCENARIO.callerName);
+    expect(prompt).toBe(SCENARIO.publicBriefing);
+    expect(options).not.toHaveProperty('caseFile');
+    expect(JSON.stringify(options)).not.toContain('expectedActions');
+    expect(JSON.stringify(options)).not.toContain('criticalMisses');
+    expect(JSON.stringify(options)).not.toContain('hiddenChartState');
+    expect(JSON.stringify(buildSystemInstruction.mock.calls[0])).not.toContain(SCENARIO.gradingContext);
   });
 
   it('rejects a non-navigator identity for a scored test', async () => {

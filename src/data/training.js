@@ -92,7 +92,7 @@ export const TRAINING_MODULES = [
         points: [
           'When the owner is available, soft-transfer the live call instead of sending a TE (e.g., immunizations → Marisa Kraft or Jeanette Alcantara).',
           'Refills where the patient is completely out are marked HIGH PRIORITY.',
-          'Obstetric red flags (decreased fetal movement at/after viability, regular contractions before 37 weeks) → Labor & Delivery immediately — never a routine appointment or a wait-and-see TE.',
+          'Obstetric red flags (decreased fetal movement, heavy bleeding, severe pain, contractions, possible water breaking) → immediate urgent OB clinical escalation; the navigator does not independently direct care or book from slot availability.',
         ],
       },
     ],

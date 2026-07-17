@@ -153,9 +153,14 @@ beforeEach(() => {
   dbMocks.getFloorScores.mockResolvedValue([]);
   dbMocks.getResultHistory.mockResolvedValue([]);
   sessionMocks.getSession.mockReturnValue(null);
-  // Restore the inert (never-resolving) default in case a prior test overrode
-  // apiFetch's implementation to simulate a resolved /api call.
-  apiFetch.mockImplementation(() => new Promise(() => {}));
+  // Navigator interview history now comes through a sanitized API projection;
+  // reuse each test's existing getInterviews fixture as that projection.
+  apiFetch.mockImplementation((url) => {
+    if (url === '/api/my-interviews') {
+      return dbMocks.getInterviews().then((interviews) => ({ interviews }));
+    }
+    return new Promise(() => {});
+  });
 });
 
 // ═════════════════════════════════════════════════════════════════════════════
@@ -290,7 +295,7 @@ describe('NavigatorApp — flow behavior', () => {
       return Promise.resolve(null);
     });
     dbMocks.getInterviews.mockResolvedValue([
-      { navigatorId: 'nav-1', department: 'pediatrics', endedAt: { seconds: 1_700_000_500 }, transcript: [], qa: { pass: true, score: 92 } },
+      { navigatorId: 'nav-1', department: 'pediatrics', assessmentType: 'call-qa', endedAt: { seconds: 1_700_000_500 }, transcript: [], qa: { pass: true, score: 92 } },
     ]);
 
     renderNav();
@@ -311,7 +316,7 @@ describe('NavigatorApp — flow behavior', () => {
       return Promise.resolve(null);
     });
     dbMocks.getInterviews.mockResolvedValue([
-      { navigatorId: 'nav-1', department: 'pediatrics', endedAt: { seconds: 1_700_000_500 }, transcript: [], qa: { pass: true, score: 86, review: { recommendation: 'needs_review' } } },
+      { navigatorId: 'nav-1', department: 'pediatrics', assessmentType: 'call-qa', endedAt: { seconds: 1_700_000_500 }, transcript: [], qa: { pass: true, score: 86, review: { recommendation: 'needs_review' } } },
     ]);
 
     renderNav();
@@ -327,7 +332,7 @@ describe('NavigatorApp — flow behavior', () => {
     );
     // Make phases complete so we land on the dashboard rather than the hub.
     dbMocks.getInterviews.mockResolvedValue([
-      { navigatorId: 'nav-1', department: 'pediatrics', endedAt: { seconds: 1 }, transcript: [], qa: { pass: false, score: 50 } },
+      { navigatorId: 'nav-1', department: 'pediatrics', assessmentType: 'call-qa', endedAt: { seconds: 1 }, transcript: [], qa: { pass: false, score: 50 } },
     ]);
     dbMocks.getResult.mockImplementation((_id, dept, type) => {
       if (type === 'mcq') return Promise.resolve(makeResult({ assessmentType: 'mcq' }));
@@ -352,7 +357,7 @@ describe('NavigatorApp — flow behavior', () => {
       return Promise.resolve(null);
     });
     dbMocks.getInterviews.mockResolvedValue([
-      { navigatorId: 'nav-1', department: 'pediatrics', endedAt: { seconds: 1 }, transcript: [], qa: { pass: true, score: 90 } },
+      { navigatorId: 'nav-1', department: 'pediatrics', assessmentType: 'call-qa', endedAt: { seconds: 1 }, transcript: [], qa: { pass: true, score: 90 } },
     ]);
 
     renderNav();
@@ -422,13 +427,16 @@ describe('NavigatorApp — flow behavior', () => {
       return Promise.resolve(null);
     });
     dbMocks.getInterviews.mockResolvedValue([
-      { navigatorId: 'nav-1', department: 'pediatrics', endedAt: { seconds: 1 }, transcript: [], qa: { pass: true, score: 90 } },
+      { navigatorId: 'nav-1', department: 'pediatrics', assessmentType: 'call-qa', endedAt: { seconds: 1 }, transcript: [], qa: { pass: true, score: 90 } },
     ]);
     // /api/mentor-scores projects a STALE copy of the current navigator
     // (same navigatorId, old score) alongside an unrelated colleague. 15 is
     // not used by any domain in DOMAIN_SCORES, so it can't false-positive
     // match a genuine (unrelated) domain score.
     apiFetch.mockImplementation((url) => {
+      if (url === '/api/my-interviews') {
+        return dbMocks.getInterviews().then((interviews) => ({ interviews }));
+      }
       if (url === '/api/mentor-scores') {
         return Promise.resolve({
           results: [

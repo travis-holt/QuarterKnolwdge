@@ -13,41 +13,8 @@ vi.mock('../lib/db.js', () => ({
 vi.mock('../lib/apiFetch.js', () => ({ apiFetch: vi.fn() }));
 
 const {
-  callQaScenarioMetadata,
   gradeCallQaByAttemptId,
 } = await import('./VoiceCall.jsx');
-
-const curated = {
-  id: 'peds-refill-1',
-  title: 'Albuterol refill, out of medication',
-  workflowType: 'prescription_refill',
-  difficulty: 'medium',
-  version: 'call-qa-scenarios-v1',
-  domainIds: ['routing'],
-  competencyIds: ['sopKnowledge'],
-  expectedActions: ['Confirm medication name and preferred pharmacy', 'Mark HIGH PRIORITY (out of med)'],
-  criticalMisses: ['Promised the refill would be sent today'],
-  scoringNotes: ['Do not require PE-status verification unless the caller makes that the governing issue.'],
-};
-
-describe('callQaScenarioMetadata', () => {
-  it('keeps compact curated metadata for the local onQaResult callback', () => {
-    expect(callQaScenarioMetadata(curated)).toMatchObject({
-      qaScenarioId: curated.id,
-      workflowType: 'prescription_refill',
-      expectedActions: curated.expectedActions,
-      criticalMisses: curated.criticalMisses,
-    });
-  });
-
-  it('retains scenario provenance (scenarioVersion) for display', () => {
-    expect(callQaScenarioMetadata(curated).scenarioVersion).toBe('call-qa-scenarios-v1');
-  });
-
-  it('returns an empty object for a missing scenario', () => {
-    expect(callQaScenarioMetadata(null)).toEqual({});
-  });
-});
 
 describe('gradeCallQaByAttemptId — attempt-id-only grading authority', () => {
   it('sends ONLY { attemptId } to the scored endpoint', async () => {

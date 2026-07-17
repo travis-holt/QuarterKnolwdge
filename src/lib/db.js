@@ -535,7 +535,9 @@ export async function updateQaFinalReview(interviewId, review) {
 }
 
 /**
- * One-time fetch of all interviews for a navigator (for their history view).
+ * Supervisor-only one-time fetch of all interviews for a navigator. Navigator
+ * clients use /api/my-interviews because server Call QA docs are not readable
+ * through Firestore and must be returned as an allowlisted result projection.
  * @param {string} navigatorId
  * @returns {Promise<object[]>}
  */

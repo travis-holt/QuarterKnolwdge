@@ -8,21 +8,27 @@ import {
 } from './_call-qa-attempts.js';
 
 const SCENARIO = {
-  id: 'qa-peds-refill-001',
+  id: 'qa-test-call-001',
   department: 'pediatrics',
-  title: 'Standard prescription refill request',
-  workflowType: 'prescription_refill',
+  title: 'Fictional test call',
+  workflowType: 'fictional_workflow',
   difficulty: 'medium',
-  version: 'call-qa-scenarios-v1',
-  primaryDomainId: 'routing',
-  domainIds: ['classification', 'routing'],
-  competencyIds: ['sopApplication'],
-  callerName: 'Samira',
-  openingLine: 'My daughter is out of her allergy medicine.',
-  scenario: 'A parent is calling for a standard pediatric medication refill.',
-  expectedActions: ['Clarify medication name'],
-  criticalMisses: ['Promises refill approval'],
-  scoringNotes: ['Do not require PE-status verification.'],
+  version: 'test-v1',
+  primaryDomainId: 'intake',
+  domainIds: ['intake'],
+  competencyIds: ['communication'],
+  callerName: 'Test Caller',
+  openingLine: 'I need help with an administrative request.',
+  publicBriefing: 'A caller asks for help with a fictional administrative request.',
+  gradingContext: 'Use the fictional unit-test expectations for this call.',
+  expectedActions: ['Complete the fictional observable step.'],
+  criticalMisses: ['State the fictional unsafe outcome.'],
+  scoringNotes: ['Accept natural wording in this fictional fixture.'],
+  hiddenChartState: { fixture: true },
+  ruleIds: [],
+  sourceSopVersion: null,
+  sourceRuleVersion: null,
+  sourceAuthority: null,
 };
 
 function seededAttempt(overrides = {}) {
@@ -33,13 +39,19 @@ function seededAttempt(overrides = {}) {
 describe('buildScenarioSnapshot / buildAttemptDoc', () => {
   it('captures the trusted scenario snapshot', () => {
     expect(buildScenarioSnapshot(SCENARIO)).toEqual({
-      scenario: SCENARIO.scenario,
-      callerName: 'Samira',
+      qaScenarioId: SCENARIO.id,
+      department: 'pediatrics',
+      scenarioVersion: 'test-v1',
+      workflowType: 'fictional_workflow',
+      difficulty: 'medium',
+      publicBriefing: SCENARIO.publicBriefing,
+      gradingContext: SCENARIO.gradingContext,
+      callerName: 'Test Caller',
       openingLine: SCENARIO.openingLine,
       expectedActions: SCENARIO.expectedActions,
       criticalMisses: SCENARIO.criticalMisses,
       scoringNotes: SCENARIO.scoringNotes,
-      hiddenChartState: null,
+      hiddenChartState: SCENARIO.hiddenChartState,
       ruleIds: [],
       sourceSopVersion: null,
       sourceRuleVersion: null,
@@ -54,8 +66,11 @@ describe('buildScenarioSnapshot / buildAttemptDoc', () => {
     expect(doc.captureStatus).toBe(CAPTURE_STATUS.ACTIVE);
     expect(doc.gradingStatus).toBe(GRADING_STATUS.NOT_STARTED);
     expect(doc.qaScenarioId).toBe(SCENARIO.id);
-    expect(doc.scenarioVersion).toBe('call-qa-scenarios-v1');
-    expect(doc.domainId).toBe('routing');
+    expect(doc.scenarioVersion).toBe('test-v1');
+    expect(doc.domainId).toBe('intake');
+    expect(doc.scenario).toBe(SCENARIO.publicBriefing);
+    expect(doc).not.toHaveProperty('expectedActions');
+    expect(doc).not.toHaveProperty('criticalMisses');
     expect(doc.liveModel).toBe('live-x');
     expect(doc.startedAt).toBe(5000);
     expect(doc.transcript).toEqual([]);

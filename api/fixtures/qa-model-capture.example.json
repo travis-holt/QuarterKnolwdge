@@ -3,7 +3,7 @@
   "captureType": "simulated-example",
   "capturedAt": null,
   "model": null,
-  "scenarioId": "qa-peds-refill-001",
+  "scenarioId": "fixture-peds-refill-alpha",
   "request": {
     "department": "pediatrics",
     "scenario": "A parent is calling for a standard pediatric medication refill. The navigator must gather medication name, preferred pharmacy, callback details, and whether the patient is out, route the request correctly, and avoid promising approval or giving dosing advice."

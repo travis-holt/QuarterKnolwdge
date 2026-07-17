@@ -8,7 +8,83 @@
 > [`api/_qa-grading-corpus.test.js`](../api/_qa-grading-corpus.test.js) — if one of
 > those tests fails after your change, re-read this document before "fixing" the test.
 >
-> Last updated: 2026-07-15 (PR 2 final merge blocker — checkpoint write serialization).
+> Last updated: 2026-07-17 (private Call QA runtime, snapshot-only grading, navigator read denial,
+> and caller-observable OB/GYN grading).
+
+## 0e. Private Call QA runtime and caller-observable grading (2026-07-17)
+
+These strengthen §0/§0a–§0d. All are binding for the SCORED Call QA test.
+
+1. **The public repository contains no runtime Call QA scenario instance.**
+   `src/data/callQaScenarios.js` exposes only anonymous aggregate minimum counts.
+   It contains no scenario IDs/versions, caller or clinician names, opening lines,
+   public briefings, workflow/difficulty, domains/competencies, rule IDs, grading
+   context, hidden facts, expected actions, critical misses, or scoring notes. In
+   particular, the repo exposes no opening-line-to-answer mapping.
+2. **Every runtime scenario-instance field comes from the private server store.**
+   The relay loads active documents from `callQaScenariosPrivate` with Firebase
+   Admin. Firestore denies all client reads and writes to that collection,
+   including supervisor clients. A missing, inactive, malformed, wrong-department,
+   or document-ID/version-mismatched private instance fails closed; the relay does
+   not fall back to public code or browser data.
+3. **The server chooses the scenario.** Selection uses the authenticated navigator
+   identity and Admin-loaded prior attempts. Browser-supplied scenario IDs,
+   prompts, history, metadata, or answer hints are ignored.
+4. **Caller and browser projections are neutral and allowlisted.** The scored caller
+   receives only `publicBriefing`, `callerName`, and `openingLine`. It never receives
+   workflow/rule metadata, grading context, hidden chart facts, expected actions,
+   critical misses, or scoring notes. Browser `ready.scenario` contains only the
+   neutral briefing (`prompt`), caller name, department, and primary domain.
+5. **The attempt snapshot is the permanent grading authority.** Before `ready`, the
+   server stores one immutable scenario snapshot on the attempt, including identity
+   and version, workflow and narrow rule-derived coverage tags, private grading
+   context, provenance, hidden facts, expected actions, critical misses, and scoring
+   notes. Grading reconstructs context from that stored snapshot only. It never
+   joins the current private bank and never accepts browser scenario material, so a
+   later rotation cannot alter an already-captured attempt.
+6. **Snapshot authority fails closed.** The grader cross-checks server capture/type,
+   attempt scenario ID, snapshot ID, department, version, and required private
+   grading fields. Missing, incomplete, forged, or mismatched authority disables
+   fairness repairs and forces supervisor review; it is never silently trusted.
+7. **An attempt ID is not authorization.** `/api/grade-call-qa` verifies the
+   authenticated navigator owns the attempt. Firestore rules prevent navigators
+   from reading the raw server attempt, so relaying an `attemptId` reveals neither
+   the transcript nor private snapshot.
+8. **Navigator history is a projection, never a raw Call QA read.** Navigators
+   cannot get or list server/curated/protected legacy QA attempts. Authenticated
+   `/api/my-interviews` derives `navigatorId` from the token and strictly allowlists
+   result/status fields. It also protects and normalizes legacy rows carrying
+   `qaScenarioId` or `qa`; transcript, scenario snapshot, grading context, rubric,
+   lease, and future unlisted fields stay private. Supervisors may read attempts,
+   but not the private runtime bank.
+9. **Practice documents cannot be forged into Call QA evidence.** A navigator cannot
+   create or mutate a practice interview with server authority,
+   `assessmentType:'call-qa'`, `qaScenarioId`, or `qa`. Phase 3 completion requires
+   a projected/server row with `assessmentType:'call-qa'` and a saved `qa`; an
+   arbitrary legacy practice payload cannot unlock the phase.
+10. **OB/GYN grading is caller-observable.** Exact internal clicks, buttons, visit
+    labels, queues, channels, or staff assignments never need to be narrated. A
+    natural caller-facing statement of the same safe outcome counts. A fairness
+    repair may correct an internal-narration-only model false negative only when a
+    separate verified navigator line proves the safe caller-visible outcome and no
+    substantive workflow failure, over-promise, or clinical advice is present.
+11. **OB/GYN deterministic findings are explicit-contradiction-only.** Absence of an
+    internal term never creates a finding or review. Explicit unsafe/wrong clauses
+    are evaluated independently, so a safe disclaimer cannot hide a later unsafe
+    instruction; reasons are de-duplicated and `assessQa` adds each review-flag
+    category once.
+12. **Private coverage metadata is honest and narrow.** Each privately provisioned
+    OB/GYN scenario uses de-duplicated domain and competency unions derived from its
+    referenced rules, with its primary domain included. A shared all-six-domain/
+    fixed-five-competency default is forbidden.
+13. **Private content must be rotated before deployment.** All formerly committed or
+    published scenario instances and opening-line mappings are compromised and may
+    not be reused. Fresh private provisioning that meets the anonymous minimums is a
+    pre-deploy prerequisite and is intentionally outside this PR. The rules/code in
+    this branch are not live until deployed.
+14. **The production bundle is checked.** `npm run build` scans `dist` for private
+    runtime field/store tokens and fails if the private shape crosses into the
+    browser graph. Provisioning files are gitignored and must never be committed.
 
 ## 0d. Call QA checkpoint write serialization (PR 2 final merge blocker, 2026-07-15)
 
@@ -139,17 +215,19 @@ not weaken any §0 evidence/model invariant, which still runs on that transcript
    `POST /api/grade-call-qa` accepts only `{ attemptId }`; it loads the stored
    transcript + scenario snapshot via Firebase Admin and ignores any transcript,
    scenario, department, or grader metadata a client includes alongside the id.
-4. **The browser cannot write or replace a scored transcript or QA result.**
-   `firestore.rules` forbids a navigator from creating a document with
+4. **The browser cannot read, write, or replace a scored transcript, private
+   snapshot, or QA result.** `firestore.rules` forbids a navigator from reading
+   protected server/curated/legacy QA attempts and from creating a document with
    `assessmentType:'call-qa'`, `captureAuthority:'server'`, or a curated QA
-   scenario id, and from mutating any field (transcript, capture state, scenario
-   snapshot, grade, qa, server metadata) of a server-created attempt. All server
-   writes go through Admin, which bypasses client rules.
-5. **Trusted scenario snapshots are chosen and stored server-side.** The relay
-   loads the curated scenario with `getCallQaScenarioById()`, validates the
-   department, and stores an immutable `scenarioSnapshot`. Grading uses that
-   stored snapshot, so a later scenario-bank revision cannot change the context an
-   already-captured attempt was graded against.
+   scenario id or `qa`, and from mutating any field (transcript, capture state,
+   scenario snapshot, grade, qa, server metadata) of a protected attempt. Navigator
+   history comes through `/api/my-interviews`; all server writes go through Admin.
+5. **Trusted private scenario snapshots are chosen and stored server-side.** The
+   relay selects a validated active instance from `callQaScenariosPrivate` using
+   authenticated identity and trusted prior attempts, then stores the immutable
+   `scenarioSnapshot` before `ready`. Grading uses only that stored snapshot, so a
+   later private-bank rotation cannot change the context an already-captured
+   attempt was graded against.
 6. **Finalization has a bounded drain protocol.** End Call signals end-of-audio
    upstream and waits at most `CALL_QA_DRAIN_TIMEOUT_MS` for a final transcription
    boundary so the last navigator utterance is not lost to socket teardown.
@@ -235,8 +313,9 @@ voice transcript
                                 NOT_MET; a NOT_MET/EVIDENCE whose quote can't be verified in a
                                 navigator turn → unresolved; auto-fail stands only with verified
                                 navigator evidence and zeroes the score; modelJudgment preserved)
-  → deterministic conflicts    (model-POSITIVE error protection: MET verdicts that contradict the
-                                routing policy, and deterministic unsafe-language signals — see §3a)
+  → deterministic conflicts    (model-POSITIVE error protection: Pediatrics routing-policy
+                                conflicts; OB/GYN explicit contradictions; deterministic unsafe
+                                language — never absence of internal narration; see §3a)
   → review assessment          (deterministic flags → pass / needs_review / fail recommendation;
                                 any unresolved negative forces needs_review)
   → grading metadata           (server-owned model + rubric/prompt/scenario versions + gradedAt)
@@ -248,12 +327,16 @@ Each layer distrusts the previous one in a specific direction:
 - The **grader** may hallucinate → the evidence gate kills fabricated MET quotes and
   fabricated auto-fails (an unverified auto-fail never fails the navigator, and never
   disappears silently — it becomes a `possible-unsafe-behavior` review flag).
-- The **grader** may be a literalist (fail natural wording, demand PE/TE phrases) →
-  the repair layer may overturn exactly two criteria under strict evidence gates.
+- The **grader** may be a literalist (fail natural wording, demand PE/TE/internal
+  chart or destination phrases) → the repair layer may overturn only whitelisted
+  criteria under strict evidence gates. OB/GYN repair additionally requires a
+  verified, contradiction-safe caller-visible outcome.
 - The **grader** may be routing-blind or lenient (mark MET with a real quote on a call
-  that mis-routes, hedges, over-promises, or gives clinical advice) → the deterministic
-  conflict layer flags the contradiction and forces `needs_review` on an
-  otherwise-confident pass. Findings never change verdicts or scores.
+  that mis-routes, hedges, over-promises, gives clinical advice, or explicitly
+  contradicts an OB/GYN rule) → the deterministic conflict layer flags the
+  observed contradiction and forces `needs_review` on an otherwise-confident pass.
+  Missing OB/GYN internal narration is not an observed contradiction. Findings
+  never change verdicts or scores.
 - The **repair layer** may be wrong → repairs are logged with the grader's original
   verdict/note/evidence, surfaced to supervisors, and an outcome-flipping repair
   forces `needs_review`.
@@ -290,7 +373,9 @@ whitelist (`REPAIRABLE_CRITERIA` = `know-rule`, `doc-te`).
 
 The fairness repairs exist for exactly one purpose: overturning **known grader
 false-negative styles** (demanding PE verification on standard refills; demanding
-literal "TE"/"Telephone Encounter" wording). They are deliberately narrow.
+literal "TE"/"Telephone Encounter" wording; or demanding that an OB/GYN navigator
+narrate an internal chart/queue/channel/staff label despite stating the equivalent
+safe caller-visible outcome). They are deliberately narrow.
 
 | # | Invariant | Enforced by |
 |---|-----------|-------------|
@@ -298,7 +383,7 @@ literal "TE"/"Telephone Encounter" wording). They are deliberately narrow.
 | R2 | Repairs never add, remove, or alter auto-fails, and a verified auto-fail always zeroes the test regardless of repairs. | `gradingInvariants.test.js` |
 | R3 | Every repair is recorded in `qa.repairs` with the rule id, the new evidence quote, and the grader's ORIGINAL verdict, note, and evidence — supervisors can always reconstruct what the grader said. | corpus harness, unit tests |
 | R4 | Repair evidence must use the **department + authoritative `workflowType` routing policy**. Pediatrics refill = PEDS Encounters; Pediatrics referral = Pediatrics referral owner; OB/GYN non-pregnant GYN and pregnancy scheduling = PSS; OB/GYN results/clinical questions = TE/message to nursing/clinical staff. A destination accepted for one workflow is neither globally accepted nor globally rejected. | routing-policy unit tests |
-| R5 | Questions, offers, hypotheticals, historical checks, caller lines, destination-less commitments, and generic "team" wording are never enough when the workflow requires a specific queue/person. | corpus `question-not-commitment`; unit tests |
+| R5 | Questions, offers, hypotheticals, historical checks, caller lines, and destination-less statements are never repair evidence. Pediatrics/exact-destination policies still require their authoritative commitment. An OB/GYN caller-observable repair may accept natural "clinical team"/equivalent wording only for a workflow with a private caller-outcome matcher and only when it clearly commits to the safe outcome. | corpus `question-not-commitment`; caller-observable unit tests |
 | R6 | Call-level validation uses the **final committed routing decision**. Correct→wrong never repairs; wrong→correct repairs only when the later line explicitly corrects the earlier commitment; two unexplained conflicting destinations never repair. Line and call validation share one destination vocabulary. | adversarial contradiction tests |
 | R6a | Any over-promise or clinical-advice signal blocks repairs. Safe language is excluded — but **only within its own clause**: "I can't promise approval" is not a promise, and "I can't tell you if it's safe — that's for the nurse" is scope discipline; "I can't promise timing, but I guarantee approval today" IS an over-promise, and "that's for the nurse, but take twice the dose" IS clinical advice. Detection is clause-aware (split on sentence boundaries, semicolons, em dashes, but/however/although/meanwhile). | clause-aware unit tests; corpus `unsafe-mixed-*` |
 | R6b | Hedged/uncertain routing language ("I think…", "I'm not sure whether…", "might", "may", "probably", "supposed to"…) is never a routing commitment and never supports a repair. Confident valid commitments ("I will send this to PEDS Encounters", "PEDS Encounters will follow up", "Actually, PEDS Encounters is the correct queue") remain accepted. | hedging unit tests; corpus `hedged-routing` |
@@ -306,22 +391,28 @@ literal "TE"/"Telephone Encounter" wording). They are deliberately narrow.
 | R8 | The PE repair requires a STRICTLY PE-only grader complaint, checked positively: after normalization, every token of the note must be a PE term or generic failure scaffolding — any substantive residue (urgency, "out", callback, pharmacy, queue, promise…) blocks the repair. The doc-te repair requires a POSITIVELY scoped literal-TE/absent-action complaint (must reference TE/route/send/message/log/forward and contain no wrongness, missing-detail, urgency, destination, or incompleteness complaint). Generic "did not say" / "not documented" notes are NOT sufficient. | `isStrictPeOnlyFailure` / `isLiteralTeWordingFailure` unit tests |
 | R9 | A repair that flips the outcome (would have failed without the repaired points) forces `recommendation: needs_review` with the `repair-changed-outcome` flag. Repairs are decision support, not the final word. | `assessQa` unit tests, corpus `good-refill-natural` literalist |
 | R10 | Every repairable criterion is also in `SAFETY_CRITICAL_CRITERIA`, so an UNREPAIRED miss on it still flags a passing call for review — the repair layer cannot become the only scrutiny those criteria get. | `gradingInvariants.test.js` |
+| R11 | An OB/GYN caller-observable repair requires all of: the model's stated failure is internal-narration-only; a separate verified navigator line states the workflow's safe caller-visible outcome; the applicable private rule IDs support that outcome; and there is no other workflow failure, over-promise, or clinical advice. The repair never proves a silent click occurred and never requires an internal label aloud. | caller-observable and no-over-repair unit tests |
 
 ### §3a — Deterministic conflict layer (model-positive error protection)
 
 The repair layer guards against grader FALSE NEGATIVES. The deterministic conflict
 layer (`evaluateQaDeterministicFindings`) guards against grader FALSE POSITIVES —
-know-rule/doc-te marked MET on a call whose committed route the routing policy knows
-is wrong, contradictory, ambiguous, or missing, or where a deterministic
-over-promise / clinical-advice signal exists.
+know-rule/doc-te marked MET despite a deterministic contradiction or unsafe signal.
+Legacy Pediatrics route policies remain conservative about wrong, contradictory,
+ambiguous, or missing commitments. OB/GYN is different: only an explicit spoken
+contradiction/unsafe commitment is a finding; absence of an internal system term is
+not evidence that the workflow was wrong.
 
 | # | Invariant | Enforced by |
 |---|-----------|-------------|
 | C1 | A deterministic conflict is NOT a fairness repair: findings never touch verdicts, scores, auto-fails, or `qa.repairs`. The model's original criteria and score are preserved for auditability. | `gradingInvariants.test.js` I-CONFLICT |
-| C2 | A model-positive verdict that contradicts the authoritative routing policy can never become a confident silent pass: findings force `recommendation: needs_review` (flags `model-routing-conflict` / `deterministic-safety-conflict`) whenever the result would otherwise pass confidently. | corpus lenient cases; `finalizeQaResult` unit tests |
+| C2 | A model-positive verdict with a Pediatrics authoritative routing conflict or an explicit OB/GYN rule contradiction can never become a confident silent pass: findings force `recommendation: needs_review` (flags `model-routing-conflict` / `deterministic-safety-conflict`) whenever the result would otherwise pass confidently. | corpus lenient cases; `finalizeQaResult` unit tests |
 | C3 | Findings are persisted on `qa.deterministicFindings` (type, reason, evidence, destinationId, affectedCriteria) and rendered to supervisors in the "Deterministic grading conflicts" section — they may force review but must never be hidden. | corpus aggregate test; `navigatorDetail.override.test.jsx` |
 | C4 | The shared `assessQa` review contract accepts deterministic findings and forces `needs_review` without changing the model score or criteria. | `api/grade-call-qa.test.js` |
 | C5 | Findings never upgrade or soften a fail; they only remove unwarranted confidence from a pass. | `finalizeQaResult` unit tests |
+| C6 | For OB/GYN, missing `OB Verified`, `Take Action`, `High Priority`, `TE`, `OB Portal`, `Intermedia`, a clinician/staff name, or any other internal label is never a deterministic finding by itself. Natural caller-facing outcome wording is not treated as ambiguity or missing routing. | safe-natural-phrasing unit tests |
+| C7 | OB/GYN explicit contradictions are evaluated clause by clause. A safe disclaimer protects only its own clause and cannot suppress a later unsafe instruction in the same turn. Duplicate reason codes are collapsed. | clause-aware contradiction tests |
+| C8 | `assessQa` is the single owner of deterministic review flags and recommendation changes; each routing/safety category is emitted once. | duplicate-flag regression test |
 
 Routing policies intentionally marked review-only because the repository sources do not
 establish one exact destination: Pediatrics `records_forms`, `urgent_symptom_boundary`, and
@@ -334,15 +425,21 @@ routing uncertainty is flagged for supervisor review.
 ### Routing authority and calibration limits
 
 Routing authority is strictly ordered: (1) owner-confirmed floor operations, (2)
-explicit non-conflicting department SOP rules, (3) the trusted curated Call QA
-scenario, then (4) generic/sanitized repository language only when consistent.
-The server resolves the scenario ID and policy; browser metadata cannot alter it.
+explicit non-conflicting department SOP rules, (3) the immutable trusted private
+scenario snapshot, then (4) generic repository language only when consistent.
+The relay selects the private scenario; grading resolves policy from the stored
+snapshot only; browser metadata and later bank changes cannot alter it.
 Owner-confirmed deterministic routes are PEDS Encounters for pediatric refills,
 Anisa for pediatric referrals, PSS OB for non-pregnant GYN, OB Portal for
 pregnancy, Rebecca for MFM, and OB Portal or the scenario's explicit clinical
 TE/message path for OB/GYN results. Pediatric records/forms (apart from trusted
 subtype rules), urgent symptoms, unclear requests, and unknown/conflicting OB
 workflows are review-only.
+
+Those exact destinations are private workflow authority and repair/calibration
+inputs, not a script that must be spoken to a patient. An OB/GYN navigator may state
+the equivalent safe caller-visible outcome naturally; exact internal queue,
+channel, button, visit-label, or staff-name narration is never required.
 
 Routing decisions distinguish navigator commitments, destination mentions,
 corrections, questions/offers/history, and negations. A clear correction can
@@ -358,7 +455,7 @@ Gemini outputs.
 | V2 | An UNVERIFIED auto-fail never fails the navigator and never vanishes: it becomes `possible-unsafe-behavior`, `safetyRisk: 'critical'`, recommendation `needs_review`. | corpus `unsafe-hallucinated-autofail` |
 | V3 | A pass over a safety-tagged miss, a borderline score (±5 of the pass mark), low transcript confidence, or an outcome-flipping repair is always `needs_review` — never a confident verdict. | corpus borderline cases |
 | V4 | `QA_REVIEW_MARGIN ≥ 1`, so a raw ratio that rounds up to exactly the pass mark always lands in the review band. | `gradingInvariants.test.js` |
-| V5 | The grading API resolves workflow/scoring metadata from the server-owned curated scenario id. Missing, unknown, department-mismatched, or scenario-mismatched ids disable repairs and add `unverified-scenario-metadata` with `needs_review`; browser-supplied workflow/scoring arrays are not grading authority. | metadata-integrity unit tests |
+| V5 | The grading API resolves workflow/scoring metadata only from the immutable private snapshot on the server attempt. Missing/incomplete snapshots, server-authority mismatches, or ID/department/version mismatches disable repairs and add `unverified-scenario-metadata` with `needs_review`; browser fields and the current private bank are not grading authority. | snapshot-integrity unit tests |
 
 ## 5. Supervisor-layer invariants
 
@@ -448,11 +545,19 @@ Intentional quirks, documented so nobody "fixes" them blind:
 
 Before merging any change that touches grading:
 
-1. `npm test` green — including the corpus harness and `gradingInvariants.test.js`.
+1. `npm test` green — including the corpus harness and `gradingInvariants.test.js` —
+   and `npm run build` green, including the private-runtime bundle scan.
 2. New grading behavior → new corpus cases (fix direction AND abuse direction),
    verified to fail before the change.
-3. If a repair rule is added: it must satisfy R1–R10 (whitelist, direction, logging,
+3. If a repair rule is added: it must satisfy R1–R11 (whitelist, direction, logging,
    evidence gates, review-on-flip) and get corpus cases for its abuse direction.
-4. If a threshold changes: update §2/§4 here, `gradingInvariants.test.js`, and
+4. Any Call QA authorization/private-store change requires `npm run test:rules`,
+   including raw get/list denial, forged/legacy shapes, and private-bank denial.
+5. Verify the public repo and built client contain no runtime scenario instance,
+   opening-line mapping, or private provisioning artifact. Fresh private provisioning
+   and compromised-content rotation are external pre-deploy prerequisites, never a
+   source-control shortcut.
+6. If a threshold changes: update §2/§4 here, `gradingInvariants.test.js`, and
    CLAUDE.md in the same commit.
-5. Update this document's tables and the CLAUDE.md maintenance sections.
+7. Update this document, CLAUDE.md, and docs/HISTORY.md; replace any temporary
+   verification placeholders before commit.

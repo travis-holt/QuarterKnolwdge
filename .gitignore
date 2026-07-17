@@ -3,6 +3,9 @@ dist
 .vite
 *.local
 migration-bundles/
+private-call-qa/
+call-qa-private*.json
+call-qa-scenarios-private*.json
 
 # Playwright e2e artifacts (browsers install to a user-level cache, not here)
 test-results/

@@ -196,10 +196,10 @@ export const SEED_QUESTIONS_OBGYN = [
     options: [
       { id: 'a', text: 'Schedule her for a routine visit later this week so the provider can check.', points: 0,
         rationale: 'Decreased fetal movement is a potential emergency — scheduling a routine visit delays critical monitoring.' },
-      { id: 'b', text: 'Direct her to go to Labor and Delivery immediately for monitoring; decreased fetal movement requires urgent evaluation.', points: 100,
-        rationale: 'Correct per SOP: decreased fetal movement at or after viability always requires immediate L&D triage — never schedule a routine appointment.' },
+      { id: 'b', text: 'Tell her you are escalating the concern immediately through the urgent OB clinical workflow, without independently directing care.', points: 100,
+        rationale: 'Correct per the current-floor workflow: treat decreased fetal movement as urgent, escalate immediately to the clinical team, and stay within navigator scope.' },
       { id: 'c', text: 'Send a Telephone Encounter to the nursing team and tell her to call back if it doesn\'t improve.', points: 5,
-        rationale: 'A TE for decreased fetal movement is insufficient — this symptom requires immediate, not deferred, evaluation.' },
+        rationale: 'A routine deferred message is insufficient — this symptom needs the immediate urgent clinical escalation workflow.' },
       { id: 'd', text: 'Tell her to drink cold water or juice and do a kick count; call back if she counts fewer than 10 movements in an hour.', points: 10,
         rationale: 'Giving clinical advice on the phone about kick counts is outside navigator scope, and the symptom\'s duration warrants immediate evaluation.' },
     ],

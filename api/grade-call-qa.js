@@ -30,7 +30,6 @@ import {
   evaluateQaDeterministicFindings,
 } from './_qa-rubric.js';
 import { qaDomainScoreSummary } from '../src/lib/qaDomainScoring.js';
-import { getCallQaScenarioById } from '../src/data/callQaScenarios.js';
 import { readFirebaseIdentity } from './_auth.js';
 import { FirebaseAdminConfigError, getFirebaseAdmin } from './_firebase-admin.js';
 import {
@@ -45,7 +44,7 @@ const MAX_TURN_CHARS = 2000;
 // Grader prompt version — bump whenever the grading INSTRUCTIONS materially
 // change. Recorded on qa.gradingMetadata.promptVersion. This version reflects the
 // judgment-basis (EVIDENCE / ABSENCE) grader contract introduced in this PR.
-export const CALL_QA_PROMPT_VERSION = 'call-qa-grader-v2';
+export const CALL_QA_PROMPT_VERSION = 'call-qa-grader-v3';
 
 /**
  * The single, pinned model used to SCORE a Call QA test. Scored grading must be
@@ -60,27 +59,13 @@ export function callQaGraderModel(env = process.env) {
   return configured || MODEL;
 }
 
-function trustedScenarioMetadata(scenario) {
-  return {
-    qaScenarioId: scenario.id,
-    workflowType: scenario.workflowType,
-    difficulty: scenario.difficulty,
-    expectedActions: scenario.expectedActions,
-    criticalMisses: scenario.criticalMisses,
-    scoringNotes: scenario.scoringNotes ?? [],
-    ruleIds: scenario.ruleIds ?? [],
-    sourceSopVersion: scenario.sourceSopVersion ?? null,
-    sourceRuleVersion: scenario.sourceRuleVersion ?? null,
-    sourceAuthority: scenario.sourceAuthority ?? null,
-  };
-}
-
 export function buildTrustedGradingScenario(scenario) {
   const lines = [
-    scenario.scenario,
+    scenario.gradingContext ?? scenario.scenario,
     '',
     'GRADING CONTEXT (server-authoritative curated scenario):',
     `Scenario: ${scenario.title} · Workflow type: ${scenario.workflowType} · Difficulty: ${scenario.difficulty}`,
+    'OBSERVABILITY BOUNDARY: Internal chart clicks, buttons, visit labels, queues, channels, and staff assignments are private implementation details. Never require them to be narrated. Credit a natural caller-facing statement that commits to the equivalent safe outcome. Do not mark an internal action NOT_MET or send the attempt to review solely because the transcript cannot prove a silent action.',
     'Expected navigator behaviors:',
     ...scenario.expectedActions.map((item) => `- ${item}`),
     'Critical misses (fail the relevant criteria if these occur):',
@@ -90,46 +75,13 @@ export function buildTrustedGradingScenario(scenario) {
     lines.push(
       'HIDDEN CHART FACTS (server-authoritative; judge the navigator against these facts):',
       JSON.stringify(scenario.hiddenChartState),
-      'Do not require the navigator to narrate silent chart clicks. Grade only observable questions, classifications, explanations, and stated actions; use supervisor review when a silent action is outcome-determinative.',
+      'Do not require the navigator to narrate silent chart clicks. Grade only observable questions, classifications, explanations, and stated actions; absence of unobservable telemetry alone is neither a miss nor a review reason.',
     );
   }
   if (scenario.scoringNotes?.length) {
     lines.push('Scenario-specific grading notes:', ...scenario.scoringNotes.map((item) => `- ${item}`));
   }
   return lines.join('\n');
-}
-
-export function resolveQaScenarioContext({ scenario = '', department = 'pediatrics', qaScenarioId, metadata = {} } = {}) {
-  const requestedId = String(qaScenarioId ?? metadata?.qaScenarioId ?? '').trim();
-  const trusted = requestedId ? getCallQaScenarioById(requestedId) : null;
-  let status = 'verified';
-  if (!requestedId) status = 'missing-scenario-id';
-  else if (!trusted) status = 'unknown-scenario-id';
-  else if (trusted.department !== department) status = 'department-mismatch';
-  else if (normalizeScenario(scenario) !== normalizeScenario(trusted.scenario)) status = 'scenario-mismatch';
-
-  return {
-    verified: status === 'verified',
-    status,
-    qaScenarioId: requestedId || null,
-    department: trusted?.department ?? department,
-    // Server-trusted scenario version; never a browser-supplied value.
-    scenarioVersion: trusted?.version ?? null,
-    sourceSopVersion: trusted?.sourceSopVersion ?? null,
-    sourceRuleVersion: trusted?.sourceRuleVersion ?? null,
-    sourceAuthority: trusted?.sourceAuthority ?? null,
-    ruleIds: trusted?.ruleIds ?? [],
-    gradingScenario: trusted ? buildTrustedGradingScenario(trusted) : String(scenario),
-    repairContext: {
-      scenario: trusted?.scenario ?? String(scenario),
-      department: trusted?.department ?? department,
-      metadata: trusted ? trustedScenarioMetadata(trusted) : {},
-    },
-  };
-}
-
-function normalizeScenario(value) {
-  return String(value ?? '').toLowerCase().replace(/[^\p{L}\p{N}\s]/gu, ' ').replace(/\s+/g, ' ').trim();
 }
 
 const RESPONSE_SCHEMA = {
@@ -206,8 +158,9 @@ line — never call an observed violation an absence. A behavior that never happ
 NA) with basis ABSENCE and empty evidence. Never put substantive evidence on an ABSENCE.
 
 Grading rules — this is a hard test, apply them strictly:
-- Judge ONLY what is in the transcript. If the navigator did not say it, it did not happen.
-- Do not give benefit of the doubt: partial or implied compliance is NOT_MET.
+- Judge only CALLER-OBSERVABLE communication in the transcript. Do not infer that a silent internal action happened, and do not penalize or review solely because an internal click, label, queue, channel, or staff assignment was not spoken.
+- Accept natural patient-facing wording that states the same safe classification, outcome, or next step. Exact internal jargon is never required.
+- Do not give benefit of the doubt on caller-observable safety, verification, questions, explanations, commitments, or explicit actions: partial or implied compliance is NOT_MET.
 - Verdicts must be evidence-based. If you cannot quote a real line for MET, the verdict is NOT_MET.
 - For SOP-knowledge criteria, judge correctness against the SOP CONTEXT below — never invent rules.
 - In "note", when a criterion is NOT_MET for an SOP-related reason, NAME the specific SOP rule or \
@@ -294,28 +247,8 @@ function buildBody(systemInstruction, userMessage) {
 
 export function finalizeQaResult(scored, transcript, correctedTurns = 0, repairs = [], metadataIntegrity = { verified: true, status: 'verified' }, forcedReviewReasons = [], deterministicFindings = [], gradingMetadata = null, captureIntegrity = { complete: true }, transcriptMetadata = null) {
   const review = assessQa(scored, transcript, { correctedTurns, repairs, deterministicFindings });
-  // Deterministic conflict layer (NOT repairs): a model-positive verdict that
-  // contradicts the authoritative routing policy, or a deterministic unsafe-
-  // language signal, must never become a confident unreviewed PASS. Findings
-  // never change verdicts or scores — they are persisted for supervisors and
-  // force review only when the result would otherwise pass confidently.
-  if (deterministicFindings.length > 0) {
-    if (deterministicFindings.some((finding) => finding.type === 'routing')) {
-      review.reviewFlags.push({
-        id: 'model-routing-conflict',
-        label: 'Grader verdict conflicts with deterministic routing policy',
-        detail: 'The grader marked routing/knowledge criteria MET, but the deterministic routing policy found the committed route wrong, contradictory, ambiguous, or missing. A supervisor must review this result.',
-      });
-    }
-    if (deterministicFindings.some((finding) => finding.type === 'safety')) {
-      review.reviewFlags.push({
-        id: 'deterministic-safety-conflict',
-        label: 'Deterministic unsafe-language signal detected',
-        detail: `Deterministic checks detected ${deterministicFindings.filter((f) => f.type === 'safety').map((f) => f.reason).join(', ')} in the navigator's wording. The result cannot pass without supervisor review.`,
-      });
-    }
-    if (review.recommendation === 'pass') review.recommendation = 'needs_review';
-  }
+  // assessQa owns deterministic review flags and recommendation changes. Keep
+  // that logic in one place so each finding category is surfaced exactly once.
   if (forcedReviewReasons.includes('routing-policy-review-only')) {
     review.reviewFlags.push({
       id: 'routing-policy-review-only',
@@ -377,20 +310,36 @@ export function finalizeQaResult(scored, transcript, correctedTurns = 0, repairs
  * Rebuild the trusted grading context from a STORED server attempt. Grading uses
  * the attempt's own immutable scenario snapshot + scenario id — never anything
  * the browser sent — so a later scenario-bank revision or code deploy cannot
- * change the context an already-captured attempt was graded against. The curated
- * scenario id is still the metadata authority for repairs; if it is unknown
- * (e.g. a scenario retired after capture), repairs are disabled and the result
- * is forced to supervisor review.
+ * change the context an already-captured attempt was graded against. Snapshot
+ * identity fields are cross-checked when present; legacy server snapshots remain
+ * valid, while missing/private-shape mismatches fail closed to supervisor review.
  */
+function storedScenarioIntegrity(attempt, snapshot) {
+  if (attempt?.assessmentType !== CALL_QA_ASSESSMENT_TYPE
+    || attempt?.captureAuthority !== CALL_QA_CAPTURE_AUTHORITY) return 'server-authority-mismatch';
+  if (!String(attempt?.qaScenarioId ?? '').trim()) return 'missing-scenario-id';
+  if (!snapshot || typeof snapshot !== 'object' || Array.isArray(snapshot)) return 'missing-scenario-snapshot';
+  if (snapshot.qaScenarioId && snapshot.qaScenarioId !== attempt.qaScenarioId) return 'snapshot-id-mismatch';
+  if (snapshot.department && snapshot.department !== attempt.department) return 'snapshot-department-mismatch';
+  if (snapshot.scenarioVersion && attempt.scenarioVersion
+    && snapshot.scenarioVersion !== attempt.scenarioVersion) return 'snapshot-version-mismatch';
+  if (!String(snapshot.gradingContext ?? snapshot.scenario ?? '').trim()
+    || !Array.isArray(snapshot.expectedActions)
+    || !Array.isArray(snapshot.criticalMisses)
+    || !Array.isArray(snapshot.scoringNotes)) return 'incomplete-scenario-snapshot';
+  return 'verified';
+}
+
 export function buildScenarioContextFromAttempt(attempt) {
   const snapshot = attempt.scenarioSnapshot ?? {};
   const department = attempt.department ?? 'pediatrics';
-  const trusted = attempt.qaScenarioId ? getCallQaScenarioById(attempt.qaScenarioId) : null;
+  const status = storedScenarioIntegrity(attempt, attempt.scenarioSnapshot);
+  const privateContext = snapshot.gradingContext ?? snapshot.scenario ?? '';
   const gradingScenario = buildTrustedGradingScenario({
-    scenario: snapshot.scenario ?? attempt.scenario ?? '',
+    gradingContext: privateContext,
     title: attempt.qaScenarioTitle ?? '',
-    workflowType: attempt.workflowType ?? '',
-    difficulty: attempt.difficulty ?? '',
+    workflowType: snapshot.workflowType ?? attempt.workflowType ?? '',
+    difficulty: snapshot.difficulty ?? attempt.difficulty ?? '',
     expectedActions: snapshot.expectedActions ?? attempt.expectedActions ?? [],
     criticalMisses: snapshot.criticalMisses ?? attempt.criticalMisses ?? [],
     scoringNotes: snapshot.scoringNotes ?? [],
@@ -401,23 +350,23 @@ export function buildScenarioContextFromAttempt(attempt) {
     sourceAuthority: snapshot.sourceAuthority ?? attempt.sourceAuthority ?? null,
   });
   return {
-    verified: Boolean(trusted),
-    status: trusted ? 'verified' : 'unknown-scenario-id',
+    verified: status === 'verified',
+    status,
     qaScenarioId: attempt.qaScenarioId ?? null,
     department,
-    scenarioVersion: attempt.scenarioVersion ?? trusted?.version ?? null,
+    scenarioVersion: snapshot.scenarioVersion ?? attempt.scenarioVersion ?? null,
     sourceSopVersion: snapshot.sourceSopVersion ?? attempt.sourceSopVersion ?? null,
     sourceRuleVersion: snapshot.sourceRuleVersion ?? attempt.sourceRuleVersion ?? null,
     sourceAuthority: snapshot.sourceAuthority ?? attempt.sourceAuthority ?? null,
     ruleIds: snapshot.ruleIds ?? attempt.ruleIds ?? [],
     gradingScenario,
     repairContext: {
-      scenario: snapshot.scenario ?? attempt.scenario ?? '',
+      scenario: privateContext,
       department,
       metadata: {
         qaScenarioId: attempt.qaScenarioId ?? null,
-        workflowType: attempt.workflowType ?? null,
-        difficulty: attempt.difficulty ?? null,
+        workflowType: snapshot.workflowType ?? attempt.workflowType ?? null,
+        difficulty: snapshot.difficulty ?? attempt.difficulty ?? null,
         expectedActions: snapshot.expectedActions ?? attempt.expectedActions ?? [],
         criticalMisses: snapshot.criticalMisses ?? attempt.criticalMisses ?? [],
         scoringNotes: snapshot.scoringNotes ?? [],

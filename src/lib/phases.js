@@ -11,7 +11,8 @@ import { compareTimestampValues } from './time.js';
 // Completion is DERIVED from stored data, never persisted as a flag:
 //   mcq  — an MCQ result doc exists for the department
 //   spot — a Spot result doc exists for the department
-//   qa   — a graded QA interview (interview doc with a `qa` field) exists
+//   qa   — a server/projected Call QA interview (`assessmentType:'call-qa'` +
+//          a `qa` field) exists
 //          for the department
 //
 // State rules: a phase is 'done' when complete; the FIRST incomplete phase in
@@ -43,7 +44,8 @@ export const PHASE_META = {
 };
 
 export function isActiveQaInterview(interview, department = 'pediatrics') {
-  return Boolean(interview?.qa) &&
+  return interview?.assessmentType === 'call-qa' &&
+    Boolean(interview?.qa) &&
     !interview?.qaArchived &&
     (interview.department ?? 'pediatrics') === department;
 }

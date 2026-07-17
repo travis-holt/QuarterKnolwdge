@@ -12,8 +12,7 @@ import Footer     from './Footer.jsx';
 import Nav        from './Nav.jsx';
 import PhaseHub   from './PhaseHub.jsx';
 import Start      from './Start.jsx';
-import { callQaScenarioMetadata, gradeCallQaByAttemptId } from './VoiceCall.jsx';
-import { CALL_QA_SCENARIOS } from '../data/callQaScenarios.js';
+import { gradeCallQaByAttemptId } from './VoiceCall.jsx';
 
 const startMocks = vi.hoisted(() => ({
   signInWithAppToken: vi.fn(),
@@ -319,8 +318,4 @@ describe('gradeCallQaByAttemptId (PR 2 server-authoritative grading)', () => {
     expect(data.grade.score).toBe(88);
   });
 
-  it('still keeps compact curated metadata for the local onQaResult callback', () => {
-    const metadata = callQaScenarioMetadata(CALL_QA_SCENARIOS[0]);
-    expect(metadata).toMatchObject({ qaScenarioId: CALL_QA_SCENARIOS[0].id, scenarioSource: 'curated' });
-  });
 });
