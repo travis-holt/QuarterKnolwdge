@@ -1,5 +1,37 @@
 # Development History - Knowledge Check
 
+### 2026-07-17 - Visual polish pass (typography, mobile nav fix, brand details)
+- **Goal:** make the app as beautiful as possible within the established refined-light
+  ivory/clay identity — no redesign, no new dependencies, CSS + `index.html` only.
+- **Two-voice typography:** added **Fraunces** (variable optical-size serif) as `--font-display`
+  on the ten page-level headline classes + the MCQ scenario prose (`.question__scenario`), and
+  switched Inter to its variable range (`wght@400..900`) so the sheet's 550/650/850 intermediate
+  weights render as true weights instead of snapping to the nearest static cut. Panel/widget
+  headers deliberately stay Inter. Headlines get `text-wrap: balance`, ledes `text-wrap: pretty`.
+  The display layer lives at the END of `styles.css` so it wins same-specificity ties.
+- **Fixed the documented mobile nav overflow** (recorded 2026-07-14 during the Assessment Bank
+  selector browser walkthrough): at ≤760px the nav wraps to brand-above-links and `.nav__links`
+  becomes a full-width, swipeable, scrollbar-less pill row with a right-edge mask fade hinting at
+  overflow (`padding-right` lets the last pill scroll clear of the fade). Verified in headless
+  Chromium at 390px: `document.scrollWidth` now equals the viewport (no horizontal page scroll)
+  with the strip internally scrollable; desktop layout unchanged. The same query tightens
+  `.main`/`.deptbar` side padding to 16px on phones.
+- **Brand details:** deleted the orphaned `.nav__logo`/`.start__logo`/`logo-float` rules (flagged
+  in §8 since 2026-06-28); the wordmark now carries a CSS-only rotated clay-gradient "gem"
+  (`.nav__brand::before`), and the footer became a refined uppercase closing band with a short
+  clay rule flourish (`.footer::before`).
+- **Micro-polish:** warm minimal scrollbars (thin, content-box thumb, transparent track, both
+  engines); a zero-specificity global focus ring (`:where(button, a, [role='tab'],
+  [tabindex]):focus-visible`) so keyboard focus is always visible without fighting component
+  rules like `.btn`'s box-shadow ring; proper tracking (0.06–0.08em) on the uppercase
+  micro-labels that had `letter-spacing: 0`; `theme-color` meta aligned to the ivory canvas
+  (`#f4eee1`).
+- **Verification:** `npm test` 1045/1045, `npm run build` clean. Real-browser (headless Chromium
+  via the repo's Playwright) screenshots of the Start gate at 1440px + 390px and a throwaway
+  harness mounting the real supervisor `Nav` (widest tab set, never committed) confirmed the
+  serif headlines, gem mark, footer flourish, and the nav overflow fix end to end.
+- **Files:** `index.html`, `src/styles.css`, `CLAUDE.md`, `docs/HISTORY.md`. No JSX changes.
+
 ### 2026-07-15 (part 3) - Call QA checkpoint write serialization (PR 2 final merge blocker)
 - **Context:** the final merge review of draft PR #32 found the server-authoritative transcript
   pipeline still permitted concurrent Firestore checkpoint writes: `requestCheckpoint({force})` called

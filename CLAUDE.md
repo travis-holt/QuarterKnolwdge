@@ -11,7 +11,10 @@
 > [§8 Current System State](#8-current-system-state) and [§15 Current Priorities](#15-current-priorities)
 > accurate at all times.
 >
-> **Last updated:** 2026-07-14 (PR 2 — server-authoritative Call QA transcript: the scored Call QA
+> **Last updated:** 2026-07-17 (visual polish pass — two-voice typography: Fraunces display serif
+> on page-level headlines + variable Inter for UI; fixed the documented mobile nav overflow with a
+> swipeable pill row; CSS-only nav gem mark + refined footer; warm scrollbars, global focus rings,
+> uppercase-label tracking; deleted the orphaned logo rules — see §10. Prior: PR 2 — server-authoritative Call QA transcript: the scored Call QA
 > test is now captured, finalized, loaded, graded, and persisted by the SERVER. The `/api/live`
 > relay derives navigator identity from the verified token, loads the curated scenario server-side,
 > creates a server-owned attempt before the call, captures Gemini Live's transcription events,
@@ -1104,7 +1107,8 @@ training assignments.
     viewport. That same walkthrough surfaced a **pre-existing, unrelated** mobile issue: the
     supervisor `Nav` bar's link strip (`.nav__links`) has no wrap/scroll handling and overflows the
     viewport at phone widths (confirmed present on the Overview tab too, not introduced by this
-    change) — out of scope here, left for a future Nav responsiveness pass.
+    change) — out of scope here; **fixed 2026-07-17** in the visual polish pass (the link strip
+    becomes a swipeable, scrollbar-less pill row with an overflow fade at ≤760px — see §10).
 - **MCQ v2 operating-model bank (2026-07-09):** the active MCQ bank was replaced with an
   operating-model-driven v2 bank ([src/data/questions-v2.js](src/data/questions-v2.js)) — 48
   scenario-based MCQs (**24 Pediatrics + 24 OB/GYN, 4 per domain per department**) that test real
@@ -1702,8 +1706,9 @@ of this file on 2026-07-07 to cut per-session context cost (it was ~55% of the f
   `SUPERVISOR_PASSCODE_SERVER`, `SESSION_SIGNING_SECRET`; legacy body secrets are off by default.
 - **Branding:** product name is **Knowledge Check** everywhere in the UI. `public/favicon.png`
   is active (linked in `index.html`). `public/logo.png` exists in the repo but is no longer
-  referenced. `styles.css` has orphaned `.start__logo`/`.nav__logo`/`logo-float` rules from
-  the 2026-06-28 commit — safe to delete in a future cleanup pass.
+  referenced. The orphaned `.start__logo`/`.nav__logo`/`logo-float` rules from the 2026-06-28
+  commit were **deleted 2026-07-17**; the nav wordmark now carries a CSS-only clay "gem" mark
+  (`.nav__brand::before`) and the footer a matching clay rule flourish.
 - **Known code quality items (non-blocking, from code review 2026-06-25):**
   - ~~Dead import `createRequire` in `server.js:6`~~ — **removed 2026-06-25**.
   - ~~`getApiKeys`/`callGemini`/`geminiWithRotation` duplicated across all `api/` handlers~~ —
@@ -1926,6 +1931,19 @@ npm run test:e2e     # run the Playwright browser tests (auto-builds + starts th
   - **Depth system:** elevation scale (`--shadow-xs…lg`, `--shadow-glow`), focus `--ring`, glass
     tokens (`--glass-bg/border/blur`), radius scale, and a top-sheen on cards.
   - **Atmosphere:** warm radial mesh + slow ambient-glow drift + faint SVG noise on `body`.
+- **Typography (2026-07-17 visual polish pass):** two-voice type system — variable **Inter**
+  (`wght 400..900`, so the sheet's 550/650/850 intermediate weights render true) for all UI, and
+  **Fraunces** (variable optical-size serif, `--font-display`) for page-level headlines
+  (`.start__title`, `.overview__title`, `.matrix-view__title`, `.results__title`,
+  `.navdetail__title`, `.module__title`, `.gate__title`, `.empty__title`, `.dept-select__title`,
+  `.spot-error__title`) and the MCQ scenario prose (`.question__scenario`) — panel/widget headers
+  deliberately stay Inter for UI hierarchy. Headlines get `text-wrap: balance`, ledes
+  `text-wrap: pretty`; both fonts load from Google Fonts in `index.html` with system fallbacks.
+  The same pass added warm minimal scrollbars, a zero-specificity global `:focus-visible` ring
+  (`:where(button, a, …)` so component rules still win), proper tracking on uppercase micro-labels,
+  the ≤760px swipeable nav pill row (fixing the documented mobile nav overflow), a refined
+  uppercase footer with a clay rule flourish, the CSS-only `.nav__brand::before` gem mark, and
+  aligned the `theme-color` meta to the ivory canvas (`#f4eee1`).
 - **Level colors (traffic-light, `LEVELS`):** Learning red `#c0392b`, Solid amber `#e0b13c`,
   Can-Teach green `#3e8e5a` (unchanged — priority/level encoding kept off the brand gradient).
 - **Motion:** tokens `--ease-out/spring`, `--dur-1/2/3`; CSS helpers `.reveal/.is-in`,
