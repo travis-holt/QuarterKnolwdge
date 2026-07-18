@@ -1,0 +1,9 @@
+/*
+ * PR 34 recovery stylesheet.
+ *
+ * The original PR appended the rich-training rules to an older global
+ * stylesheet. Importing that recovered sheet into a named cascade layer keeps
+ * its new training and simulation selectors while ensuring current-main
+ * unlayered design rules win whenever an older selector overlaps.
+ */
+@import './styles-pr34-base.css' layer(pr34-training);
