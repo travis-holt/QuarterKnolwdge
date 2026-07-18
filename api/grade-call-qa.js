@@ -37,14 +37,14 @@ import {
   claimGradingLease, commitGrade, markGradeFailed, loadAttempt,
 } from './_call-qa-attempts.js';
 import { randomUUID } from 'node:crypto';
+import { CALL_QA_PROMPT_VERSION } from './_qa-grading-versions.js';
 
 const MAX_TURNS = 60;
 const MAX_TURN_CHARS = 2000;
 
-// Grader prompt version — bump whenever the grading INSTRUCTIONS materially
-// change. Recorded on qa.gradingMetadata.promptVersion. This version reflects the
-// judgment-basis (EVIDENCE / ABSENCE) grader contract introduced in this PR.
-export const CALL_QA_PROMPT_VERSION = 'call-qa-grader-v3';
+// Grader prompt version is shared with offline calibration provenance checks.
+// The single source of truth lives in api/_qa-grading-versions.js.
+export { CALL_QA_PROMPT_VERSION } from './_qa-grading-versions.js';
 
 /**
  * The single, pinned model used to SCORE a Call QA test. Scored grading must be

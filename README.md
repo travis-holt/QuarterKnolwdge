@@ -117,12 +117,23 @@ refresh `api/_sop-context.js`, and either edit `SEED_QUESTIONS` or generate a fr
 
 ```bash
 npm test            # Vitest unit tests for the scoring logic (both axes)
+npm run test:rules  # Firestore authorization emulator suites
 npm run build       # production build to dist/
+npm run qa:calibrate # offline Call QA calibration/readiness report
+npm run qa:coverage  # offline Call QA scenario/workflow coverage
+npm run qa:pilot-smoke # non-production Monday management rehearsal
 # deploy: Railway uses railway.toml/nixpacks.toml.
 # Set env vars in Railway: VITE_FIREBASE_* (client build) and
 # FIREBASE_SERVICE_ACCOUNT_JSON + SUPERVISOR_PASSCODE_SERVER +
 # SESSION_SIGNING_SECRET + GEMINI_API_KEYS/GEMINI_API_KEY (server-only).
 ```
+
+Call QA calibration is offline by default and uses only sanitized local fixtures.
+See [docs/CALL_QA_CALIBRATION.md](docs/CALL_QA_CALIBRATION.md). The committed
+examples are synthetic and the current readiness result is intentionally
+`INSUFFICIENT_DATA`; no automatic final verdict is enabled. Pilot smoke prints
+an operational rehearsal status only and cannot satisfy the separate 200-call
+human calibration policy.
 
 ## Browser end-to-end tests (Playwright)
 

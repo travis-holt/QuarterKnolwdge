@@ -8,10 +8,9 @@
 > [`api/_qa-grading-corpus.test.js`](../api/_qa-grading-corpus.test.js) — if one of
 > those tests fails after your change, re-read this document before "fixing" the test.
 >
-> Last updated: 2026-07-17 (private Call QA runtime, snapshot-only grading, navigator read denial,
-> and caller-observable OB/GYN grading).
+> Last updated: 2026-07-18 (private Call QA runtime merged with PR #33 calibration invariants).
 
-## 0e. Private Call QA runtime and caller-observable grading (2026-07-17)
+## 0f. Private Call QA runtime and caller-observable grading (2026-07-17)
 
 These strengthen §0/§0a–§0d. All are binding for the SCORED Call QA test.
 
@@ -85,6 +84,59 @@ These strengthen §0/§0a–§0d. All are binding for the SCORED Call QA test.
 14. **The production bundle is checked.** `npm run build` scans `dist` for private
     runtime field/store tokens and fails if the private shape crosses into the
     browser graph. Provisioning files are gitignored and must never be committed.
+
+## 0e. Call QA calibration and shadow automation (PR 3, 2026-07-16)
+
+These rules measure the existing pipeline without weakening §§0–0d:
+
+1. **Synthetic regression is not human accuracy evidence.** Synthetic examples,
+   deterministic corpus runs, captured model replay, adjudicated human pilots,
+   optional live runs, and automation readiness are reported as separate layers.
+2. **Only sanitized, adjudicated human-pilot fixtures count toward grading
+   accuracy and automation sample minimums.** Each requires at least two
+   independent pseudonymous reviewers; incomplete or malformed fixtures fail
+   validation and are never silently skipped.
+3. **Calibration is offline by default.** The normal CLI performs no model or
+   Firestore call. Live grading requires `CALL_QA_CALIBRATION_LIVE=true`,
+   `--live`, `--confirm-live`, and Gemini keys, and uses only local sanitized
+   fixtures through the existing pinned `gradeCallQaTranscript()` path.
+4. **Version populations remain isolated.** Grader, rubric, prompt, scenario,
+   capture, and live voice versions are split. Mixed grader/rubric/prompt
+   populations cannot be approved unless one population independently satisfies
+   every gate.
+5. **Small perfect samples are insufficient.** Readiness enforces coverage
+   minimums and 95% Wilson intervals; observed 0/N errors are never described as
+   proof of zero true risk.
+6. **One false automatic auto-fail or one review miss fails the safety gate.**
+   Safety-critical criterion agreement is measured from the existing
+   `SAFETY_CRITICAL_CRITERIA` source.
+7. **Shadow eligibility fails closed and is non-final.** It cannot change
+   `qa.pass`, create/update `qaFinalReview`, alter Phase 3 completion, supervisor
+   actions, capability/history scoring, training, or coaching.
+8. **No audio or production-data collection is introduced.** Calibration
+   fixtures are local sanitized text; there is no Firestore export/downloader.
+9. **Calibration labels are complete and internally consistent.** Every human
+   reviewer, adjudication, and model result labels the complete rubric exactly
+   once (`NA` when inapplicable). Human recommendation/finalPass/reviewRequired
+   and model recommendation/pass relationships fail closed when contradictory.
+10. **Operational failures remain in capture readiness without becoming grading
+    evidence.** Sanitized `operational-pilot` fixtures may omit transcript,
+    human labels, and model output only for terminal abandoned,
+    capture-incomplete, or grade-failed attempts. Any transcript/count data that
+    exists is validated. These fixtures affect capture reliability and critical
+    capture-failure gates, but never final-outcome, criterion, auto-fail accuracy,
+    coverage sample, or automation minimum counts.
+11. **Clean-pass consideration requires outcome diversity.** Calibration policy
+    v2 requires meaningful pass, fail, and review-required populations; zero-
+    denominator Wilson intervals are unavailable and cannot pass.
+12. **Shadow v2 requires the full server trust chain.** Eligibility requires
+    calibration policy v2, verified scenario metadata, complete rubric output,
+    and server transcript metadata consistent with the attempt. It remains
+    diagnostic-only and never writes a final verdict.
+13. **Pilot smoke has no readiness authority.** `qa:pilot-smoke` validates only
+    local synthetic/rehearsed management-test cases and Phase 3 behavior. Its
+    `PILOT_SMOKE_VERIFIED` status cannot supply an approved calibration
+    population, unlock shadow eligibility, or enable automatic finalization.
 
 ## 0d. Call QA checkpoint write serialization (PR 2 final merge blocker, 2026-07-15)
 

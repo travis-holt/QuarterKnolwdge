@@ -11,7 +11,9 @@
 > [§8 Current System State](#8-current-system-state) and [§15 Current Priorities](#15-current-priorities)
 > accurate at all times.
 >
-> **Last updated:** 2026-07-17 (Call QA answer secrecy + caller-observable grading — every runtime
+> **Last updated:** 2026-07-18 (PR #33 calibration/readiness architecture from main integrated into
+> this branch — grader prompt version now `call-qa-grader-v3` via the shared
+> `api/_qa-grading-versions.js` authority. Prior: Call QA answer secrecy + caller-observable grading — every runtime
 > scenario-instance field now comes from the client-denied `callQaScenariosPrivate` store; the public
 > repo contains only anonymous aggregate coverage requirements; raw server attempts are unreadable to
 > navigators and history is an allowlisted API projection; the caller/browser receive only a neutral,
@@ -959,6 +961,66 @@ training assignments.
 - **Files:** new `src/lib/{phases,phases.test}.js`, `src/components/PhaseHub.jsx`; edited
   `src/components/{NavigatorApp,components.test}.jsx`, `src/styles.css`, `CLAUDE.md`.
 
+### F27 — Call QA Calibration, Coverage and Shadow Automation Readiness
+- **Purpose:** Measure how the completed Call QA architecture compares with adjudicated experienced
+  human review, expose scenario/workflow/version/capture gaps, and evaluate future clean-pass
+  candidates without enabling automatic final verdicts.
+- **Evidence separation:** deterministic synthetic corpus, captured model replay, committed
+  `source:'synthetic-example'` calibration examples, adjudicated `source:'human-pilot'` fixtures,
+  terminal `source:'operational-pilot'` capture failures, optional live model runs, and automation
+  readiness remain separate populations. Only valid, sanitized, completed human-pilot
+  adjudications count toward grading accuracy and automation sample minimums.
+- **Merge-blocker hardening:** calibration policy v2 requires complete 20-criterion labels for
+  every reviewer/adjudication/model run, exact recommendation/final-outcome consistency, PR #32
+  capture/grading-state and transcript-count consistency, minimum pass/fail/review populations
+  (60/60/40 and at least 15% each), available non-zero Wilson denominators, and a maximum 1%
+  critical capture-failure rate. Terminal operational-pilot abandoned, capture-incomplete, and
+  grade-failed fixtures may omit transcript/human/model data but remain in capture reliability and
+  safety gates; they are excluded from grading accuracy, criterion metrics, coverage sample volume,
+  and automation minimums.
+- **Technical implementation:** `api/_qa-calibration.js` provides pure fixture validation,
+  confusion/criterion/auto-fail/capture metrics, Wilson intervals, version and operational
+  breakdowns, richer scenario coverage, readiness evaluation, and deterministic Markdown output.
+  `api/_qa-calibration-gates.js` owns the versioned conservative policy. The validator rejects
+  unknown departments/scenarios/criteria, scenario mismatch, invalid states/verdicts, duplicate or
+  insufficient reviewers, incomplete adjudication, unsanitized content, missing provenance,
+  malformed transcripts, and recursive prohibited sensitive fields.
+- **CLI:** `scripts/call-qa/calibrate.mjs` powers `qa:calibrate`, `qa:calibrate:check`, and
+  `qa:coverage`. Default operation is offline/deterministic, validates every local JSON fixture,
+  writes ignored `artifacts/call-qa-calibration/{report.json,report.md}`, and returns
+  `INSUFFICIENT_DATA` with zero human fixtures. Optional live mode requires
+  `CALL_QA_CALIBRATION_LIVE=true`, Gemini keys, `--live`, and `--confirm-live`; it runs sequentially
+  through the existing pinned `gradeCallQaTranscript()` path with static local SOP context and
+  never reads/writes Firestore or edits fixtures. Operational-only failures stay in capture reports
+  but are never sent to Gemini.
+- **Management pilot smoke:** `scripts/call-qa/pilot-smoke.mjs` powers `qa:pilot-smoke`, a separate
+  non-production 15-case synthetic/rehearsed Monday check covering pass, fail, safety violation,
+  needs review, incomplete/abandoned/grade-failed capture, both departments, and Phase 3 behavior.
+  It prints `PILOT_SMOKE_VERIFIED` or `PILOT_SMOKE_FAILED` but has no calibration authority and
+  cannot unlock shadow eligibility or finalization. The future production automation gate remains
+  the separate policy-v2 minimum of 200 independently human-reviewed adjudicated calls.
+- **Shadow policy:** `api/_qa-automation-policy.js` is a pure fail-closed evaluator. Only `off` and
+  `shadow` environment modes exist; unknown values act as `off`. Eligibility requires a clean
+  server-authoritative capture, high-confidence pass recommendation, no auto-fails/unresolved
+  evidence/deterministic findings/repairs/review flags/capture warnings, complete matching
+  provenance, clean-pass calibration readiness, and no existing final supervisor verdict.
+  Diagnostics are non-final and do not change `qa.pass`, `qaFinalReview`, Phase 3 completion,
+  supervisor actions, capability/history scoring, training, or coaching.
+  Shadow policy v2 also requires calibration policy v2, verified server scenario metadata, a
+  complete rubric result, and server transcript metadata matching the attempt ID, capture state,
+  capture-complete flag, capture version, and live model.
+- **Privacy:** no production export/downloader and no audio storage. Audio retention remains an
+  unimplemented management/privacy decision in `docs/CALL_QA_AUDIO_RETENTION_DECISION.md`.
+- **Current evidence/readiness:** 3 synthetic examples, 0 human pilot fixtures, 0 operational pilot
+  fixtures,
+  `INSUFFICIENT_DATA`. This is the intended initial state.
+- **Tests:** 84 PR-3 tests cover fixture privacy/schema failures, exact confusion/criterion/auto-fail/
+  capture/Wilson metrics, readiness gates and sufficient populations, every shadow disqualifier,
+  homogeneous/imbalanced populations, contradictory capture states, complete labels and provenance,
+  operational-only failure evidence, offline determinism/no-network behavior, live double opt-in,
+  sequential repeat stability, ignored artifacts, and pilot-smoke coverage/non-authority.
+- **Status:** Complete in code; real human pilot collection and adjudication remain operational work.
+
 ### F14 — Question Bank + Gemini Scenario Generation (review gate)
 - **Versioned OB/GYN generation (2026-07-17):** the endpoint selects applicable executable rules by
   domain/workflow/rule ID and includes only those rules plus the resolved SOP source. New questions
@@ -1631,6 +1693,19 @@ of this file on 2026-07-07 to cut per-session context cost (it was ~55% of the f
   freshly rotated private provisioning is a pre-deploy prerequisite and is not performed here. No
   merge, deployment, migration, production write, or Firestore-rules publication is part of this PR.
 
+- **Call QA calibration/readiness (2026-07-16):** F27 adds a fail-closed, offline calibration
+  instrument over sanitized local fixtures. It measures final-outcome confusion, criterion and
+  safety-critical agreement, auto-fail errors, capture reliability, Wilson confidence intervals,
+  version populations, and department/scenario/workflow coverage. The committed 3 fixtures are
+  synthetic examples only; no human pilot fixtures exist, so the reproducible readiness state is
+  `INSUFFICIENT_DATA`. Optional live grading requires explicit environment + CLI confirmation and
+  never accesses Firestore. Shadow clean-pass assessment is pure/non-final; automatic
+  `qaFinalReview` remains impossible in PR 3. Policy v2 prevents homogeneous or severely imbalanced
+  human outcome populations, unavailable Wilson denominators, contradictory PR #32 states, and
+  incomplete rubric labels from appearing ready; shadow v2 requires the complete server trust
+  chain. Sanitized operational-pilot failures now feed only capture reliability/safety gates, while
+  `qa:pilot-smoke` separately verifies 15 rehearsed management-test cases without contributing any
+  automation evidence.
 - **Audit remediation (2026-07-12):** live access is no longer anonymous or role-by-localStorage.
   Server-issued Firebase claims protect REST, WebSocket, and Firestore; PIN material stays
   server-side; peer mentor data is a minimized protected projection. Assessment saves are atomic
@@ -1710,7 +1785,7 @@ of this file on 2026-07-07 to cut per-session context cost (it was ~55% of the f
   (51 result authorization + 25 Call QA); production build
   includes the private-runtime bundle scan. GitHub Actions mirrors the
   normal local gate on `main` pushes and PRs: `npm ci` → `npm test` → `npm run build` (no deploy step).
-- **Existing functionality:** features F1–F26 (see [§4](#4-feature-inventory)) are **Complete** in
+- **Existing functionality:** features F1–F27 (see [§4](#4-feature-inventory)) are **Complete** in
   code. F17 adds longitudinal trends + Sparkline. F18 adds dossier evidence per competency. F19
   adds the supervisor Action Center. F20 adds AI-sequenced dev paths + mini re-check. F21 adds
   the mentor matching engine with persisted pairings + outcome tracking. F22 adds a real-time
@@ -1719,7 +1794,8 @@ of this file on 2026-07-07 to cut per-session context cost (it was ~55% of the f
   question-improvement signals, and explainable next-best training recommendations. F25 adds the
   hard rubric-graded Call QA Test (pass/fail voice test against the owner's call quality guide).
   F26 sequences the live navigator assessment into MCQ → Spot the Error → Call QA with derived
-  completion and hub-based progression.
+  completion and hub-based progression. F27 adds offline human calibration/readiness reporting and
+  a non-final shadow clean-pass eligibility policy.
 - **SOP grounding:** Pediatrics AI features ground against `Pediatrics_SOP_Updated.pdf`; OB/GYN AI
   features ground against `SOP_CONTEXT_OBGYN_CURRENT` in `api/_sop-context.js` (faithful to the current-floor
   workflow; approved operational names may remain, but no patient PII, credentials, or private
@@ -1744,7 +1820,8 @@ of this file on 2026-07-07 to cut per-session context cost (it was ~55% of the f
   secrecy/observable-grading work (authenticated projection,
   private-store selection, neutral relay allowlist, snapshot-only grading, forged/legacy protection,
   safe natural-language/explicit-contradiction behavior, narrow rule-derived metadata, and the
-  bundle-private-runtime scan). The same-day Spot the Error
+  bundle-private-runtime scan), plus the PR 3 calibration suite from main (84 fixture/metrics/
+  readiness/coverage/CLI/shadow-policy tests). The same-day Spot the Error
   deferred-feedback redesign added `src/components/spotTheError.component.test.jsx` — 4 jsdom tests
   for the no-verdict-during-run rule, required explanation gating + changeable pick,
   patient-turns-not-pickable, and review-only correctness/reasoning display. PR 2 final merge blocker adds 5 serialized-checkpoint race tests + controllable-write-order fake Firestore; PR 2 final merge-review adds active-turn-settle/ordering/durability/bounds/finalization-timing relay tests, `boundedAppend` + client finalize-guard tests; PR 2 merge-review adds
@@ -2157,7 +2234,8 @@ npm run test:e2e     # run the Playwright browser tests (auto-builds + starts th
 - ~~**Invalid/vulnerable Vite 5 + nested Vite 8/esbuild tree**~~ — **resolved 2026-07-12**:
   Vite 8.1 + plugin-react 6 are top-level, `npm ls --all` is valid, Node engines match upstream,
   Railway uses `npm ci`, and the compatible `uuid@11.1.1` override clears Firebase Admin's
-  vulnerable transitive v9 line. Production and full `npm audit` report zero findings.
+  vulnerable transitive v9 line. The 2026-07-16 `npm ci` audit currently reports 3 moderate
+  transitive findings; PR 3 adds no dependency.
 - ~~Components, role apps, and API handlers untested~~ — **resolved 2026-06-26**: component tests
   (jsdom + Testing Library), API handler pure-function tests, and db.js mocked tests all added.
 - ~~`getApiKeys`/`callGemini`/`geminiWithRotation` duplicated 6×~~ — **extracted to
@@ -2548,7 +2626,12 @@ npm run test:e2e     # run the Playwright browser tests (auto-builds + starts th
   the separate future project below) and does not prove perfect speech recognition; real-microphone
   validation remains post-deploy. The 2026-07-17 private-bank/read-denial redesign supersedes the
   original public-bank and navigator-read behavior; its final emulator total is
-  **76/76 assertions** (51 result authorization + 25 Call QA), all passing.
+  **76/76 assertions** (51 result authorization + 25 Call QA), all passing. Firestore-rules
+  validation was also run successfully during PR 3 verification with a temporary portable
+  Temurin 21 JRE.
+- ✅ Call QA calibration, coverage, statistical readiness, and shadow automation policy (PR 3) —
+  done 2026-07-16; see F27 + `docs/CALL_QA_CALIBRATION.md`. Current committed evidence is 3
+  synthetic examples and 0 human pilots, so readiness is intentionally `INSUFFICIENT_DATA`.
 
 
 ---
