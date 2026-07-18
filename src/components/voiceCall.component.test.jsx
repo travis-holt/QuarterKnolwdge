@@ -18,7 +18,11 @@ vi.mock('../lib/firebase.js', () => ({
   getFirebaseIdToken: vi.fn().mockResolvedValue('token-123'),
 }));
 
-const { default: VoiceCall } = await import('./VoiceCall.jsx');
+const {
+  default: VoiceCall,
+  QA_GRADE_PENDING_MESSAGE,
+  QA_GRADE_WAIT_EXCEEDED_MESSAGE,
+} = await import('./VoiceCall.jsx');
 
 // ── Fake browser APIs ────────────────────────────────────────────────────────
 class FakeWS {
@@ -75,7 +79,10 @@ beforeEach(() => {
     configurable: true,
   });
 });
-afterEach(() => cleanup());
+afterEach(() => {
+  vi.useRealTimers();
+  cleanup();
+});
 
 describe('VoiceCall test mode — server-authoritative handshake', () => {
   it('start payload contains only identity, mode, and department — no scenario selector or answer material', async () => {
@@ -158,6 +165,88 @@ describe('VoiceCall test mode — server-authoritative handshake', () => {
       ws.onmessage?.({ data: JSON.stringify({ type: 'captured', attemptId: 'att-1', captureComplete: false, warning: 'partial' }) });
     });
     await waitFor(() => expect(apiFetchMock).toHaveBeenCalledWith('/api/grade-call-qa', { attemptId: 'att-1' }, expect.any(Number)));
+  });
+
+  it('shows the saved-grading state for a temporary 409, retries the same attempt, and renders the durable grade', async () => {
+    const temporary = Object.assign(new Error('still grading'), { status: 409 });
+    apiFetchMock
+      .mockRejectedValueOnce(temporary)
+      .mockResolvedValueOnce({ qa: QA, grade: GRADE, attemptId: 'att-1' });
+    const onQaResult = vi.fn();
+    render(<VoiceCall navigatorId="nav-a" name="Ada" department="pediatrics" mode="test" onQaResult={onQaResult} />);
+    const ws = await startAndActivate();
+    fireEvent.click(screen.getByRole('button', { name: /end & get graded/i }));
+
+    vi.useFakeTimers();
+    await act(async () => {
+      ws.onmessage?.({ data: JSON.stringify({ type: 'captured', attemptId: 'att-1', captureComplete: true }) });
+      await Promise.resolve();
+    });
+    expect(screen.getByText(QA_GRADE_PENDING_MESSAGE)).toBeTruthy();
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(2_000);
+      await Promise.resolve();
+    });
+    expect(screen.getByText(/AI recommendation pending supervisor review/i)).toBeTruthy();
+    expect(onQaResult).toHaveBeenCalledWith(QA);
+    expect(apiFetchMock).toHaveBeenCalledTimes(2);
+    for (const [endpoint, body] of apiFetchMock.mock.calls) {
+      expect(endpoint).toBe('/api/grade-call-qa');
+      expect(body).toEqual({ attemptId: 'att-1' });
+    }
+    expect(apiFetchMock.mock.calls[0][2]).toBe(100_000);
+    expect(FakeWS.instances).toHaveLength(1);
+    expect(dbMocks.saveInterview).not.toHaveBeenCalled();
+    expect(dbMocks.updateInterviewGrade).not.toHaveBeenCalled();
+  });
+
+  it('stops temporary grading retries at 150000 ms and keeps manual retry without offering a retake', async () => {
+    apiFetchMock.mockRejectedValue(Object.assign(new Error('busy'), { status: 503 }));
+    render(<VoiceCall navigatorId="nav-a" name="Ada" department="pediatrics" mode="test" onQaResult={vi.fn()} />);
+    const ws = await startAndActivate();
+    fireEvent.click(screen.getByRole('button', { name: /end & get graded/i }));
+
+    vi.useFakeTimers();
+    await act(async () => {
+      ws.onmessage?.({ data: JSON.stringify({ type: 'captured', attemptId: 'att-1', captureComplete: true }) });
+      await Promise.resolve();
+      await vi.advanceTimersByTimeAsync(150_000);
+      await Promise.resolve();
+    });
+
+    expect(screen.getByText(QA_GRADE_WAIT_EXCEEDED_MESSAGE)).toBeTruthy();
+    expect(screen.getByRole('button', { name: /retry grading the saved server transcript/i })).toBeTruthy();
+    expect(screen.queryByRole('button', { name: /take the test again/i })).toBeNull();
+    expect(dbMocks.saveInterview).not.toHaveBeenCalled();
+    expect(dbMocks.updateInterviewGrade).not.toHaveBeenCalled();
+  });
+
+  it('keeps HTTP 422 on the capture-error path', async () => {
+    apiFetchMock.mockRejectedValue(Object.assign(new Error('empty transcript'), { status: 422 }));
+    render(<VoiceCall navigatorId="nav-a" name="Ada" department="pediatrics" mode="test" onQaResult={vi.fn()} />);
+    const ws = await startAndActivate();
+    fireEvent.click(screen.getByRole('button', { name: /end & get graded/i }));
+    await act(async () => {
+      ws.onmessage?.({ data: JSON.stringify({ type: 'captured', attemptId: 'att-1', captureComplete: true }) });
+    });
+    await waitFor(() => expect(screen.getByText(/did not capture any of your speech/i)).toBeTruthy());
+    expect(screen.getByRole('button', { name: /take the test again/i })).toBeTruthy();
+    expect(apiFetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps permanent grading errors on the manual saved-attempt retry path', async () => {
+    apiFetchMock.mockRejectedValue(Object.assign(new Error('server configuration'), { status: 500 }));
+    render(<VoiceCall navigatorId="nav-a" name="Ada" department="pediatrics" mode="test" onQaResult={vi.fn()} />);
+    const ws = await startAndActivate();
+    fireEvent.click(screen.getByRole('button', { name: /end & get graded/i }));
+    await act(async () => {
+      ws.onmessage?.({ data: JSON.stringify({ type: 'captured', attemptId: 'att-1', captureComplete: true }) });
+    });
+    await waitFor(() => expect(screen.getByText(/retry grading this saved attempt/i)).toBeTruthy());
+    expect(screen.getByRole('button', { name: /retry grading the saved server transcript/i })).toBeTruthy();
+    expect(screen.queryByRole('button', { name: /take the test again/i })).toBeNull();
+    expect(apiFetchMock).toHaveBeenCalledTimes(1);
   });
 
   // ── Finalization guard timing (Fix 3) ──────────────────────────────────────

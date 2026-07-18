@@ -27,8 +27,12 @@ import { getFirebaseIdToken } from '../lib/firebase.js';
 //        Gemini → 24kHz PCM16 → scheduled AudioBufferSources for gapless playback.
 // ─────────────────────────────────────────────────────────────────────────────
 
-const GRADE_TIMEOUT_MS = 30_000;
-const QA_GRADE_TIMEOUT_MS = 60_000; // rubric grading is a bigger prompt + server-side retry
+export const PRACTICE_GRADE_TIMEOUT_MS = 30_000;
+export const QA_GRADE_TIMEOUT_MS = 100_000;
+export const QA_GRADE_TOTAL_WAIT_MS = 150_000;
+export const QA_GRADE_RETRY_DELAYS_MS = [2_000, 5_000, 10_000, 15_000];
+export const QA_GRADE_PENDING_MESSAGE = 'Your call is saved. Grading is still in progress…';
+export const QA_GRADE_WAIT_EXCEEDED_MESSAGE = 'Your call is safely saved, but grading is taking longer than expected. Retry grading later.';
 // The client finalization guard MUST always exceed the server's maximum possible
 // drain + settle + persistence/network window, or the browser could abandon a
 // valid drain and show "retake" before the server's real deadline. The server
@@ -47,6 +51,55 @@ const OUT_RATE = 24000;
 // the attempt id — never a transcript, scenario, department, or grader metadata.
 export async function gradeCallQaByAttemptId(attemptId, apiFetchFn = apiFetch, timeout = QA_GRADE_TIMEOUT_MS) {
   return apiFetchFn('/api/grade-call-qa', { attemptId }, timeout);
+}
+
+export function isTemporaryQaGradeError(err) {
+  return err?.name === 'AbortError' || [409, 429, 503].includes(err?.status);
+}
+
+function savedGradeWaitExceededError() {
+  const error = new Error(QA_GRADE_WAIT_EXCEEDED_MESSAGE);
+  error.code = 'qa-grade-wait-exceeded';
+  return error;
+}
+
+/**
+ * Poll one already-saved Call QA attempt until its durable grade is available.
+ * Every request remains attempt-id-only; temporary errors reuse the same id.
+ * Dependencies are injectable so retry timing can be tested without real waits.
+ */
+export async function gradeSavedCallQaAttempt(attemptId, {
+  apiFetchFn = apiFetch,
+  onTemporaryFailure = () => {},
+  sleepFn = (delayMs) => new Promise((resolve) => setTimeout(resolve, delayMs)),
+  nowFn = () => Date.now(),
+  requestTimeoutMs = QA_GRADE_TIMEOUT_MS,
+  totalWaitMs = QA_GRADE_TOTAL_WAIT_MS,
+  retryDelaysMs = QA_GRADE_RETRY_DELAYS_MS,
+} = {}) {
+  const startedAt = nowFn();
+  let retryIndex = 0;
+
+  while (true) {
+    const remainingMs = totalWaitMs - (nowFn() - startedAt);
+    if (remainingMs <= 0) throw savedGradeWaitExceededError();
+    try {
+      return await gradeCallQaByAttemptId(
+        attemptId,
+        apiFetchFn,
+        Math.min(requestTimeoutMs, remainingMs),
+      );
+    } catch (err) {
+      if (!isTemporaryQaGradeError(err)) throw err;
+      onTemporaryFailure(err);
+      const waitRemainingMs = totalWaitMs - (nowFn() - startedAt);
+      if (waitRemainingMs <= 0) throw savedGradeWaitExceededError();
+      const configuredDelay = retryDelaysMs[Math.min(retryIndex, retryDelaysMs.length - 1)];
+      const delayMs = Math.min(configuredDelay, waitRemainingMs);
+      retryIndex += 1;
+      await sleepFn(delayMs);
+    }
+  }
 }
 
 // ── Audio helpers (module-level, pure) ───────────────────────────────────────
@@ -117,6 +170,7 @@ export default function VoiceCall({ navigatorId, name, department = 'pediatrics'
   const [gradeSaveError, setGradeSaveError] = useState('');
   const [gradeError, setGradeError] = useState('');
   const [captureError, setCaptureError] = useState('');
+  const [gradingSavedPending, setGradingSavedPending] = useState(false);
 
   const wsRef        = useRef(null);
   const streamRef    = useRef(null);
@@ -139,6 +193,7 @@ export default function VoiceCall({ navigatorId, name, department = 'pediatrics'
     setGradeSaveError('');
     setGradeError('');
     setCaptureError('');
+    setGradingSavedPending(false);
     attemptIdRef.current = null;
   }
 
@@ -405,9 +460,12 @@ export default function VoiceCall({ navigatorId, name, department = 'pediatrics'
   const gradeAttempt = async () => {
     const attemptId = attemptIdRef.current;
     if (!attemptId) return onCaptureFailed('No recorded attempt to grade.');
+    setGradingSavedPending(false);
     setPhase('grading');
     try {
-      const data = await gradeCallQaByAttemptId(attemptId);
+      const data = await gradeSavedCallQaAttempt(attemptId, {
+        onTemporaryFailure: () => setGradingSavedPending(true),
+      });
       if (!data?.qa || !data?.grade) {
         setGradeError('The call was captured, but grading failed. You can retry grading this saved attempt.');
         return setPhase('gradeError');
@@ -421,7 +479,9 @@ export default function VoiceCall({ navigatorId, name, department = 'pediatrics'
         setCaptureError('The call server did not capture any of your speech. Nothing was scored. Please take the test again.');
         return setPhase('captureError');
       }
-      setGradeError('The call was captured, but grading failed. You can retry grading this saved attempt.');
+      setGradeError(err?.code === 'qa-grade-wait-exceeded'
+        ? QA_GRADE_WAIT_EXCEEDED_MESSAGE
+        : 'The call was captured, but grading failed. You can retry grading this saved attempt.');
       setPhase('gradeError');
     }
   };
@@ -479,7 +539,7 @@ export default function VoiceCall({ navigatorId, name, department = 'pediatrics'
       const data = await apiFetch(
         '/api/grade-interview',
         { domain: domainId, department, scenario, transcript, name },
-        GRADE_TIMEOUT_MS,
+        PRACTICE_GRADE_TIMEOUT_MS,
       );
       if (data.grade) {
         setGrade(data.grade);
@@ -584,7 +644,9 @@ export default function VoiceCall({ navigatorId, name, department = 'pediatrics'
           <h2 className="overview__panel-title">{isTest ? 'Grading your test…' : 'Reviewing your call…'}</h2>
           <p className="readoff__sub">
             {isTest
-              ? 'Auditing the server-captured call against every criterion on the quality scorecard.'
+              ? gradingSavedPending
+                ? QA_GRADE_PENDING_MESSAGE
+                : 'Auditing the server-captured call against every criterion on the quality scorecard.'
               : 'Scoring your performance against the SOP. A few seconds.'}
           </p>
         </div>

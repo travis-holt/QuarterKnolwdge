@@ -11,7 +11,12 @@ import {
   findObgynCallerOutcomeLine, evaluateQaDeterministicFindings,
   SAFETY_CRITICAL_CRITERIA,
 } from './_qa-rubric.js';
-import { buildMessages, buildTrustedGradingScenario, buildScenarioContextFromAttempt, finalizeQaResult, gradeCallQaTranscript, callQaGraderModel, CALL_QA_PROMPT_VERSION } from './grade-call-qa.js';
+import {
+  buildMessages, buildTrustedGradingScenario, buildScenarioContextFromAttempt,
+  finalizeQaResult, gradeCallQaTranscript, callQaGraderModel,
+  callQaGeminiAttemptTimeoutMs, callQaGeminiMaxAttempts, callQaGeminiTotalDeadlineMs,
+  CALL_QA_PROMPT_VERSION,
+} from './grade-call-qa.js';
 import { COMPETENCY_IDS } from '../src/data/competencies.js';
 import { DOMAINS } from '../src/data/questions.js';
 
@@ -25,6 +30,28 @@ const TRANSCRIPT = [
   { role: 'navigator', text: "Thank you, I'm pulling up the schedule now. I understand you want him seen soon." },
   { role: 'navigator', text: 'You are all set for Tuesday at 9 at 48 Baker Town Rd. Please stay on the line for our survey. Is there anything else I can help with? Thank you for calling.' },
 ];
+
+describe('Call QA Gemini configuration', () => {
+  it('uses the production defaults', () => {
+    expect(callQaGeminiAttemptTimeoutMs({})).toBe(40_000);
+    expect(callQaGeminiMaxAttempts({})).toBe(2);
+    expect(callQaGeminiTotalDeadlineMs({})).toBe(85_000);
+  });
+
+  it('clamps configured values to the supported ranges', () => {
+    expect(callQaGeminiAttemptTimeoutMs({ CALL_QA_GEMINI_ATTEMPT_TIMEOUT_MS: '1' })).toBe(10_000);
+    expect(callQaGeminiAttemptTimeoutMs({ CALL_QA_GEMINI_ATTEMPT_TIMEOUT_MS: '999999' })).toBe(60_000);
+    expect(callQaGeminiMaxAttempts({ CALL_QA_GEMINI_MAX_ATTEMPTS: '0' })).toBe(1);
+    expect(callQaGeminiMaxAttempts({ CALL_QA_GEMINI_MAX_ATTEMPTS: '9' })).toBe(3);
+    expect(callQaGeminiTotalDeadlineMs({ CALL_QA_GEMINI_TOTAL_DEADLINE_MS: '1' })).toBe(30_000);
+    expect(callQaGeminiTotalDeadlineMs({ CALL_QA_GEMINI_TOTAL_DEADLINE_MS: '999999' })).toBe(120_000);
+  });
+
+  it('keeps CALL_QA_GRADER_MODEL pinned behavior unchanged', () => {
+    expect(callQaGraderModel({ CALL_QA_GRADER_MODEL: 'grader-pinned' })).toBe('grader-pinned');
+    expect(callQaGraderModel({ CALL_QA_GRADER_MODEL: '  ' })).toBe('gemini-2.5-flash');
+  });
+});
 
 // A verdict list where everything is MET with real quotes from TRANSCRIPT.
 function allMetVerdicts() {
@@ -1383,6 +1410,107 @@ describe('OB/GYN caller-observable fairness repair', () => {
     expect(qa.criteria.find((criterion) => criterion.id === 'know-rule').verdict).toBe('MET');
     expect(qa.review.recommendation).toBe('pass');
     expect(qa.review.reviewFlags.map((flag) => flag.id)).not.toContain('repair-changed-outcome');
+  });
+});
+
+describe('gradeCallQaTranscript upstream budget', () => {
+  const scenarioContext = {
+    verified: true,
+    status: 'verified',
+    qaScenarioId: 'fixture-budget-alpha',
+    department: 'obgyn',
+    scenarioVersion: 'fixture-v1',
+    sourceSopVersion: 'fixture-sop-v1',
+    sourceRuleVersion: 'fixture-rules-v1',
+    sourceAuthority: 'fixture-authority',
+    ruleIds: ['fixture-rule'],
+    gradingScenario: 'Synthetic private grading context.',
+    repairContext: { department: 'obgyn', metadata: { workflowType: 'fixture', ruleIds: ['fixture-rule'] } },
+  };
+  const validResponse = () => ({ criteria: allMetVerdicts(), autoFails: [] });
+  const input = {
+    transcript: TRANSCRIPT,
+    scenarioContext,
+    captureMetadata: { captureComplete: true },
+    transcriptMetadata: { captureStatus: 'captured' },
+  };
+
+  it('uses only the pinned grader model and preserves successful score metadata', async () => {
+    const options = [];
+    const { qa, grade } = await gradeCallQaTranscript(input, {
+      keys: ['k1', 'k2', 'k3', 'k4'],
+      graderModel: 'fixture-pinned-model',
+      sopContextForFresh: async () => 'Synthetic SOP context.',
+      geminiWithRotation: async (_keys, _body, opts) => {
+        options.push(opts);
+        return { ok: true, text: JSON.stringify(validResponse()), model: 'fixture-pinned-model', attemptCount: 1 };
+      },
+    });
+
+    expect(options).toEqual([expect.objectContaining({
+      models: ['fixture-pinned-model'],
+      timeoutMs: 40_000,
+      maxAttempts: 2,
+      totalDeadlineMs: expect.any(Number),
+    })]);
+    expect(qa).toMatchObject({
+      score: 100,
+      pass: true,
+      gradingMetadata: {
+        model: 'fixture-pinned-model',
+        rubricVersion: QA_RUBRIC_VERSION,
+        promptVersion: CALL_QA_PROMPT_VERSION,
+        scenarioVersion: 'fixture-v1',
+        sourceSopVersion: 'fixture-sop-v1',
+        sourceRuleVersion: 'fixture-rules-v1',
+        sourceAuthority: 'fixture-authority',
+        ruleIds: ['fixture-rule'],
+        gradedAt: expect.any(String),
+      },
+    });
+    expect(qa.categories).toHaveLength(QA_RUBRIC.length);
+    expect(qa.criteria).toHaveLength(rubricCriteria().length);
+    expect(grade).toMatchObject({ score: 100, summary: expect.any(String) });
+    expect(grade.strengths).toEqual(expect.any(Array));
+    expect(grade.improvements).toEqual(expect.any(Array));
+  });
+
+  it('does not multiply rotation attempts by malformed-output retries', async () => {
+    const calls = [];
+    await expect(gradeCallQaTranscript(input, {
+      keys: ['k1', 'k2', 'k3', 'k4'],
+      graderModel: 'fixture-pinned-model',
+      sopContextForFresh: async () => 'Synthetic SOP context.',
+      geminiWithRotation: async (_keys, _body, opts) => {
+        calls.push(opts);
+        return { ok: true, text: '{malformed', model: 'fixture-pinned-model', attemptCount: 2 };
+      },
+    })).rejects.toMatchObject({
+      httpStatus: 502,
+      error: 'The grader returned an unusable review. Try again.',
+    });
+    expect(calls).toHaveLength(1);
+    expect(calls[0]).toMatchObject({ maxAttempts: 2, models: ['fixture-pinned-model'] });
+  });
+
+  it('allows one malformed response retry when one upstream attempt remains', async () => {
+    const calls = [];
+    const { qa } = await gradeCallQaTranscript(input, {
+      keys: ['k1', 'k2', 'k3', 'k4'],
+      graderModel: 'fixture-pinned-model',
+      sopContextForFresh: async () => 'Synthetic SOP context.',
+      geminiWithRotation: async (_keys, _body, opts) => {
+        calls.push(opts);
+        if (calls.length === 1) {
+          return { ok: true, text: '{malformed', model: 'fixture-pinned-model', attemptCount: 1 };
+        }
+        return { ok: true, text: JSON.stringify(validResponse()), model: 'fixture-pinned-model', attemptCount: 1 };
+      },
+    });
+    expect(qa.score).toBe(100);
+    expect(calls).toHaveLength(2);
+    expect(calls.map((opts) => opts.maxAttempts)).toEqual([2, 1]);
+    expect(calls.every((opts) => opts.models.length === 1 && opts.models[0] === 'fixture-pinned-model')).toBe(true);
   });
 });
 
