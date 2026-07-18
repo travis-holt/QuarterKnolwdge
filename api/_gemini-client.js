@@ -16,7 +16,7 @@
 //                                              produced the response — the primary
 //                                              or whichever fallback answered)
 //   { ok: false, reason: 'fatal', status, attemptCount } → non-rotatable error → 502
-//   { ok: false, reason: 'auth', attemptCount }          → 403 auth failure     → 500
+//   { ok: false, reason: 'auth', attemptCount }          → attempted calls all 403 → 500
 //   { ok: false, reason: 'exhausted', attemptCount }     → transient exhaustion → 429
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -76,7 +76,7 @@ export function rotationFailure(result, overrides = {}) {
     return { status: 502, error: overrides.fatal ?? `Gemini request failed (${result.status}).` };
   }
   if (result.reason === 'auth') {
-    return { status: 500, error: overrides.auth ?? 'All Gemini keys have auth or billing failures — check Railway Variables.' };
+    return { status: 500, error: overrides.auth ?? 'Every attempted Gemini request failed authentication or billing checks — check Railway Variables.' };
   }
   return { status: 429, error: overrides.exhausted ?? 'All Gemini keys are rate-limited right now. Try again shortly.' };
 }
@@ -164,6 +164,13 @@ export async function geminiWithRotation(keys, body, {
     ? Math.max(1, Math.round(timeoutMs))
     : geminiTimeoutMs();
   let attemptCount = 0;
+  let forbiddenCount = 0;
+  let sawNonForbiddenFailure = false;
+  const failedRotationResult = () => (
+    attemptCount > 0 && forbiddenCount === attemptCount && !sawNonForbiddenFailure
+      ? { ok: false, reason: 'auth', attemptCount }
+      : { ok: false, reason: 'exhausted', attemptCount }
+  );
 
   for (const model of models) {
     const start = Math.floor(Math.random() * keys.length);
@@ -172,7 +179,7 @@ export async function geminiWithRotation(keys, body, {
       const cdKey = `${model}::${keys[idx]}`;
       if ((cooldowns.get(cdKey) ?? 0) > Date.now()) continue; // known rate-limited — skip
       if (attemptCount >= attemptLimit || Date.now() >= deadlineAt) {
-        return { ok: false, reason: 'exhausted', attemptCount };
+        return failedRotationResult();
       }
       const remainingMs = deadlineAt - Date.now();
       const attemptTimeoutMs = Number.isFinite(remainingMs)
@@ -189,15 +196,18 @@ export async function geminiWithRotation(keys, body, {
         } else {
           console.warn(`${label}: upstream timeout model=${model} attempt=${attemptCount} elapsedMs=${elapsedMs} timeoutMs=${attemptTimeoutMs}`);
         }
+        sawNonForbiddenFailure = true;
         continue;
       }
       if (result.ok) return { ok: true, text: result.text, model, attemptCount };
       const elapsedMs = Date.now() - startedAt;
       console.warn(`${label}: upstream HTTP model=${model} attempt=${attemptCount} elapsedMs=${elapsedMs} status=${result.status}`);
       if (result.status === 403) {
-        return { ok: false, reason: 'auth', attemptCount };
+        forbiddenCount += 1;
+        continue;
       }
       if (ROTATABLE.has(result.status)) {
+        sawNonForbiddenFailure = true;
         if (result.status === 429 || result.status === 503) {
           cooldowns.set(cdKey, Date.now() + retryDelayMs(result.detail));
         }
@@ -207,5 +217,5 @@ export async function geminiWithRotation(keys, body, {
     }
   }
 
-  return { ok: false, reason: 'exhausted', attemptCount };
+  return failedRotationResult();
 }

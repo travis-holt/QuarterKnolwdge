@@ -147,8 +147,35 @@ describe('geminiWithRotation', () => {
   it('returns { ok: false, reason: auth } when every key returns 403', async () => {
     fetch.mockResolvedValue(errResponse(403));
     const result = await geminiWithRotation(['k1', 'k2'], {}, { label: 'test' });
-    expect(result).toMatchObject({ ok: false, reason: 'auth', attemptCount: 1 });
-    expect(fetch).toHaveBeenCalledTimes(1);
+    expect(result).toMatchObject({ ok: false, reason: 'auth', attemptCount: 2 });
+    expect(fetch).toHaveBeenCalledTimes(2);
+  });
+
+  it('rotates from a 403 key to a healthy second key', async () => {
+    vi.spyOn(Math, 'random').mockReturnValue(0);
+    fetch.mockResolvedValueOnce(errResponse(403)).mockResolvedValueOnce(okResponse('healthy'));
+    const result = await geminiWithRotation(['k1', 'k2'], {}, { label: 'test' });
+    expect(result).toMatchObject({ ok: true, text: 'healthy', attemptCount: 2 });
+    expect(fetch).toHaveBeenCalledTimes(2);
+    expect(fetch.mock.calls[1][0]).toContain('key=k2');
+  });
+
+  it('returns auth when two allowed attempts both return 403', async () => {
+    vi.spyOn(Math, 'random').mockReturnValue(0);
+    fetch.mockResolvedValue(errResponse(403));
+    const result = await geminiWithRotation(['k1', 'k2', 'k3', 'k4'], {}, {
+      label: 'grade-call-qa', maxAttempts: 2,
+    });
+    expect(result).toMatchObject({ ok: false, reason: 'auth', attemptCount: 2 });
+    expect(fetch).toHaveBeenCalledTimes(2);
+  });
+
+  it('returns exhausted when a 403 is mixed with a 503', async () => {
+    vi.spyOn(Math, 'random').mockReturnValue(0);
+    fetch.mockResolvedValueOnce(errResponse(403)).mockResolvedValueOnce(errResponse(503));
+    const result = await geminiWithRotation(['k1', 'k2'], {}, { label: 'test' });
+    expect(result).toMatchObject({ ok: false, reason: 'exhausted', attemptCount: 2 });
+    expect(fetch).toHaveBeenCalledTimes(2);
   });
 
   it('returns { ok: false, reason: fatal } immediately on a non-rotatable error (400)', async () => {
@@ -157,6 +184,13 @@ describe('geminiWithRotation', () => {
     expect(result.ok).toBe(false);
     expect(result.reason).toBe('fatal');
     // 400 is not rotatable — should not try the second key
+    expect(fetch).toHaveBeenCalledTimes(1);
+  });
+
+  it('stops immediately on a 401 request/auth failure', async () => {
+    fetch.mockResolvedValue(errResponse(401));
+    const result = await geminiWithRotation(['k1', 'k2'], {}, { label: 'test' });
+    expect(result).toMatchObject({ ok: false, reason: 'fatal', status: 401, attemptCount: 1 });
     expect(fetch).toHaveBeenCalledTimes(1);
   });
 
@@ -248,6 +282,16 @@ describe('geminiWithRotation', () => {
     });
     await vi.advanceTimersByTimeAsync(2_000);
     await expect(pending).resolves.toMatchObject({ ok: false, reason: 'exhausted', attemptCount: 2 });
+    expect(fetch).toHaveBeenCalledTimes(2);
+  });
+
+  it('limits four 403 keys to two Call QA fetches while classifying attempted failures as auth', async () => {
+    vi.spyOn(Math, 'random').mockReturnValue(0);
+    fetch.mockResolvedValue(errResponse(403));
+    const result = await geminiWithRotation(['k1', 'k2', 'k3', 'k4'], {}, {
+      label: 'grade-call-qa', maxAttempts: 2, timeoutMs: 40_000, totalDeadlineMs: 85_000,
+    });
+    expect(result).toMatchObject({ ok: false, reason: 'auth', attemptCount: 2 });
     expect(fetch).toHaveBeenCalledTimes(2);
   });
 
@@ -385,7 +429,10 @@ describe('rotationFailure', () => {
   });
 
   it('maps auth to 500', () => {
-    expect(rotationFailure({ reason: 'auth' }).status).toBe(500);
+    const failure = rotationFailure({ reason: 'auth' });
+    expect(failure.status).toBe(500);
+    expect(failure.error).toMatch(/Every attempted Gemini request/);
+    expect(failure.error).not.toMatch(/All Gemini keys/);
   });
 
   it('maps exhausted (and any other reason) to 429', () => {

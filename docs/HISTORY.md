@@ -1,5 +1,28 @@
 # Development History - Knowledge Check
 
+### 2026-07-18 - PR #36 blocker follow-up: safe 403 rotation + saved-grading wait
+- **403 rotation restored:** a 403 now rotates to another configured key because one stale key must
+  not randomly break every Gemini endpoint. HTTP 400/401 remain immediate fatal request failures;
+  408/429/500/502/503/504 and fetch failures remain transient. `maxAttempts` and the total deadline
+  still cap actual calls. The final result is `auth` only when every request actually attempted was
+  403; 403 mixed with timeout/429/5xx is `exhausted`. Logs remain structured and contain no keys,
+  prompts, transcript, scenario, or grading context. The auth error now describes attempted requests
+  rather than claiming every configured key failed.
+- **Saved Call QA grading state:** scored `VoiceCall` grading now uses a 100,000 ms request timeout
+  within a strict 150,000 ms overall wait. AbortError and HTTP 409/429/503 keep the saved attempt ID,
+  show "Your call is saved. Grading is still in progress…", and retry the same attempt-only request
+  after 2s, 5s, 10s, then bounded 15s intervals. A later idempotent server response renders the
+  durable grade normally. At the ceiling the UI says the call is safely saved and keeps manual Retry
+  Grading; it never starts a new call or creates/writes a client result. HTTP 422 keeps the existing
+  capture-error path; permanent 400/401/403/500 errors keep manual saved-grade retry. Practice-call
+  grading remains unchanged at 30,000 ms.
+- **Boundaries held:** no private scenarios, Firestore data, grading rubric, grader model, thinking
+  configuration, prompt, deterministic scoring, server attempt budget, merge, or deployment changed.
+- **Verification:** targeted suites 373/373 across 5 files; full Vitest suite 1312/1312 across 65
+  files; Firestore rules 25/25; production build and private-runtime bundle scan passed; pilot smoke
+  verified 15 cases; calibration and coverage produced expected `INSUFFICIENT_DATA` reports with 0
+  human cases; production dependency audit found 0 vulnerabilities; `git diff --check` clean.
+
 ### 2026-07-18 - Bounded scored Call QA grading attempts
 - **Root cause:** the shared Gemini client allowed each configured key to consume the full 25-second
   timeout sequentially. A scored grading request with four keys could therefore outlive the browser's
@@ -8,8 +31,9 @@
   `totalDeadlineMs`, and returns the number of actual upstream fetches used. The attempt ceiling is
   global across keys and models, and the total deadline is checked before each fetch and caps each
   attempt's abort timer. Callers that omit the new options retain their prior unbounded rotation.
-  Retries are limited to fetch/transient failures and HTTP 408/429/500/502/503/504; 400/401/403 and
-  other clear request/auth failures stop immediately. Cooldowns remain for 429/503. Upstream logs
+  Retries are limited to fetch/transient failures and HTTP 408/429/500/502/503/504; 403 key rotation
+  was restored in the follow-up above, while 400/401 and other clear request failures stop
+  immediately. Cooldowns remain for 429/503. Upstream logs
   contain only the endpoint label, model, attempt number, elapsed time, and timeout/status fields.
 - **Scored Call QA:** new server-only settings are `CALL_QA_GEMINI_ATTEMPT_TIMEOUT_MS` (default
   40000, clamp 10000–60000), `CALL_QA_GEMINI_MAX_ATTEMPTS` (default 2, clamp 1–3), and
@@ -17,7 +41,8 @@
   existing malformed-output recovery share the same attempt counter/deadline, so four keys can make
   at most two upstream calls. Scoring remains pinned to exactly `models: [graderModel]`; no fallback
   model, `CALL_QA_GRADER_MODEL` behavior, thinking budget, rubric, prompt, scenario content,
-  persistence shape, Firestore data, or client timeout changed.
+  persistence shape, or Firestore data changed. The saved-attempt client timeout/retry state was
+  aligned in the follow-up above.
 - **Verification:** shared-client tests 40/40; grade-call-qa tests 277/277; combined targeted tests
   317/317; full Vitest suite 1292/1292 across 65 files; Firestore rules 25/25; production build and
   private-runtime bundle scan passed; pilot smoke verified 15 cases; calibration and coverage

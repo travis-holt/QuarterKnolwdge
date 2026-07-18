@@ -42,7 +42,10 @@
 > `qa:pilot-smoke`, `qa:calibrate`, and `qa:coverage` (offline, no secrets).
 > Same-day reliability follow-up: scored Call QA grading now has a strict shared upstream budget:
 > 40s per attempt, at most 2 actual Gemini fetches across every configured key and malformed-output
-> recovery, and an 85s total deadline. It remains pinned to exactly one grader model.
+> recovery, and an 85s total deadline. A subsequent PR #36 blocker pass restores safe 403 key
+> rotation (auth only when every attempted call is 403) and gives the saved-attempt client a 100s
+> request timeout with bounded 2s/5s/10s/15s retries inside a 150s total wait. It remains pinned to
+> exactly one grader model.
 > See docs/HISTORY.md 2026-07-18. Prior: Call QA answer secrecy + caller-observable grading — every runtime
 > scenario-instance field now comes from the client-denied `callQaScenariosPrivate` store; the public
 > repo contains only anonymous aggregate coverage requirements; raw server attempts are unreadable to
@@ -744,7 +747,8 @@ training assignments.
      closing pleasantry criterion (`close-anything-thanks` reworded) — while verification, scope,
      routing, scheduling, and SOP-knowledge stay strict.
 - **UI:** `VoiceCall.jsx` gains a `mode='practice'|'test'` prop — test mode has its own copy
-  ("graded hard, no partial credit"), grading via `/api/grade-call-qa` (60s timeout), and a
+  ("graded hard, no partial credit"), grading via `/api/grade-call-qa` (100s request timeout within
+  a 150s saved-attempt wait ceiling), and a
   results screen: PASS/FAIL banner, score, auto-fail cards with the quoted offending line,
   per-category bars, and a "Points you lost" list.
 - **Persistence reliability (2026-07-08):** Call QA completion now requires a full persisted chain:
@@ -1390,8 +1394,10 @@ QuarterKnolwdge/
   the REST Gemini handlers plus [api/health.js](api/health.js) as Express routes. The handlers use
   the same `(req, res)` Node.js signature they had as Vercel functions — no changes needed.
   `api/_gemini-client.js` keeps `GEMINI_API_KEYS` **server-side only** (never bundled), calls
-  Gemini with structured-JSON/text outputs, and rotates keys only for transient fetch failures or
-  HTTP 408/429/500/502/503/504 responses; clear request/auth failures stop immediately. Helper modules are
+  Gemini with structured-JSON/text outputs, and rotates keys for transient fetch failures or HTTP
+  408/429/500/502/503/504 responses. HTTP 403 also rotates because one configured key may be stale;
+  auth is returned only when every actual attempted request was 403. HTTP 400/401 and other clear
+  request failures stop immediately. Helper modules are
   `_`-prefixed (`api/_sop-context.js`, `api/_auth.js`). **Supervisor-only authoring endpoints**
   (`generate-scenarios`, `refine-sop`) are gated by a **server-issued signed session cookie**
   (`validateSession`); navigator/practice endpoints require a verified role-bearing Firebase ID
@@ -1715,6 +1721,13 @@ of this file on 2026-07-07 to cut per-session context cost (it was ~55% of the f
   Key rotation and the malformed-JSON recovery consume the same attempt counter and deadline, so
   four configured keys can still make no more than two upstream calls. The grader remains exactly
   `models: [graderModel]`; no Flash-Lite fallback, model substitution, or inference setting changed.
+  A follow-up restores 403 rotation within that same cap: a healthy second key can succeed, two
+  attempted 403s return auth, and 403 mixed with timeout/429/5xx returns exhausted. The scored client
+  now polls the same safely saved `attemptId` on AbortError/409/429/503 after 2s, 5s, 10s, then 15s,
+  with a 100,000 ms request timeout and a strict 150,000 ms total wait. Every request body remains
+  exactly `{ attemptId }`; later durable grades render normally, while the ceiling and permanent
+  failures retain manual Retry Grading. Practice grading stays at 30,000 ms and HTTP 422 retains the
+  capture-error path.
 
 - **OB/GYN source authority and executable content (2026-07-17):** assessment grounding is ordered
   owner-confirmed current-floor rules > active supervisor-managed department SOP > current
