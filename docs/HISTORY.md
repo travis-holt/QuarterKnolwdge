@@ -1,5 +1,29 @@
 # Development History - Knowledge Check
 
+### 2026-07-18 - Bounded scored Call QA grading attempts
+- **Root cause:** the shared Gemini client allowed each configured key to consume the full 25-second
+  timeout sequentially. A scored grading request with four keys could therefore outlive the browser's
+  wait even though the server-authoritative transcript had already been saved safely.
+- **Shared client:** `geminiWithRotation` now accepts optional `timeoutMs`, `maxAttempts`, and
+  `totalDeadlineMs`, and returns the number of actual upstream fetches used. The attempt ceiling is
+  global across keys and models, and the total deadline is checked before each fetch and caps each
+  attempt's abort timer. Callers that omit the new options retain their prior unbounded rotation.
+  Retries are limited to fetch/transient failures and HTTP 408/429/500/502/503/504; 400/401/403 and
+  other clear request/auth failures stop immediately. Cooldowns remain for 429/503. Upstream logs
+  contain only the endpoint label, model, attempt number, elapsed time, and timeout/status fields.
+- **Scored Call QA:** new server-only settings are `CALL_QA_GEMINI_ATTEMPT_TIMEOUT_MS` (default
+  40000, clamp 10000–60000), `CALL_QA_GEMINI_MAX_ATTEMPTS` (default 2, clamp 1–3), and
+  `CALL_QA_GEMINI_TOTAL_DEADLINE_MS` (default 85000, clamp 30000–120000). Key rotation and the
+  existing malformed-output recovery share the same attempt counter/deadline, so four keys can make
+  at most two upstream calls. Scoring remains pinned to exactly `models: [graderModel]`; no fallback
+  model, `CALL_QA_GRADER_MODEL` behavior, thinking budget, rubric, prompt, scenario content,
+  persistence shape, Firestore data, or client timeout changed.
+- **Verification:** shared-client tests 40/40; grade-call-qa tests 277/277; combined targeted tests
+  317/317; full Vitest suite 1292/1292 across 65 files; Firestore rules 25/25; production build and
+  private-runtime bundle scan passed; pilot smoke verified 15 cases; calibration and coverage
+  produced their expected `INSUFFICIENT_DATA` reports (0 human cases); production dependency audit
+  found 0 vulnerabilities; `git diff --check` clean.
+
 ### 2026-07-18 - Private Call QA bank provisioned + Firestore rules deployed (operator action)
 - **Provisioning gate cleared.** An authorized operator authored 15 fresh private OB/GYN Call QA
   scenarios (fictional callers; reconciled against the owner-provided current-floor SOP, Version

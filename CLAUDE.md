@@ -40,6 +40,9 @@
 > current-floor `OBGYN_SOP_VERSION`, non-empty valid
 > rule IDs), and coverage/pilot-smoke report the rollout scope honestly; CI now also runs
 > `qa:pilot-smoke`, `qa:calibrate`, and `qa:coverage` (offline, no secrets).
+> Same-day reliability follow-up: scored Call QA grading now has a strict shared upstream budget:
+> 40s per attempt, at most 2 actual Gemini fetches across every configured key and malformed-output
+> recovery, and an 85s total deadline. It remains pinned to exactly one grader model.
 > See docs/HISTORY.md 2026-07-18. Prior: Call QA answer secrecy + caller-observable grading — every runtime
 > scenario-instance field now comes from the client-denied `callQaScenariosPrivate` store; the public
 > repo contains only anonymous aggregate coverage requirements; raw server attempts are unreadable to
@@ -704,8 +707,9 @@ training assignments.
      internal Closing inconsistency (5 vs 10 pts) resolved in favor of the 100-point scorecard.
   2. **Gemini returns only verdicts** (`MET`/`NOT_MET`/`NA`) per criterion at **temperature 0**
      with a **verbatim evidence quote** each ([api/grade-call-qa.js](api/grade-call-qa.js),
-     `POST /api/grade-call-qa`; scored output → no lite-model fallback; one retry on malformed
-     shape).
+     `POST /api/grade-call-qa`; scored output → no lite-model fallback). The malformed-shape retry
+     is preserved but shares one upstream-call budget with key rotation: defaults are 40,000 ms per
+     attempt, 2 actual fetch calls total, and an 85,000 ms total deadline across all attempts.
   3. **Deterministic trust gates + scoring in code** (`scoreQa`): MET without evidence that
      verifies against the transcript (normalized substring + single-turn word-set fallback) →
      NOT_MET; NA on a core (always-expected) criterion → NOT_MET; auto-fail stands only with
@@ -1386,7 +1390,8 @@ QuarterKnolwdge/
   the REST Gemini handlers plus [api/health.js](api/health.js) as Express routes. The handlers use
   the same `(req, res)` Node.js signature they had as Vercel functions — no changes needed.
   `api/_gemini-client.js` keeps `GEMINI_API_KEYS` **server-side only** (never bundled), calls
-  Gemini with structured-JSON/text outputs, and rotates keys on 429/403/503/500. Helper modules are
+  Gemini with structured-JSON/text outputs, and rotates keys only for transient fetch failures or
+  HTTP 408/429/500/502/503/504 responses; clear request/auth failures stop immediately. Helper modules are
   `_`-prefixed (`api/_sop-context.js`, `api/_auth.js`). **Supervisor-only authoring endpoints**
   (`generate-scenarios`, `refine-sop`) are gated by a **server-issued signed session cookie**
   (`validateSession`); navigator/practice endpoints require a verified role-bearing Firebase ID
@@ -1702,6 +1707,14 @@ of this file on 2026-07-07 to cut per-session context cost (it was ~55% of the f
 ---
 
 ## 8. Current System State
+
+- **Scored Call QA upstream deadline (2026-07-18):** `geminiWithRotation` accepts optional
+  per-attempt timeout, maximum actual-fetch count, and overall deadline settings without changing
+  legacy callers that omit them. Scored Call QA supplies a 40,000 ms attempt timeout, 2-call maximum,
+  and 85,000 ms shared deadline by default (environment-configurable within documented clamps).
+  Key rotation and the malformed-JSON recovery consume the same attempt counter and deadline, so
+  four configured keys can still make no more than two upstream calls. The grader remains exactly
+  `models: [graderModel]`; no Flash-Lite fallback, model substitution, or inference setting changed.
 
 - **OB/GYN source authority and executable content (2026-07-17):** assessment grounding is ordered
   owner-confirmed current-floor rules > active supervisor-managed department SOP > current
@@ -2133,7 +2146,10 @@ of this file on 2026-07-07 to cut per-session context cost (it was ~55% of the f
 - **Env vars:** client/build-time `VITE_FIREBASE_*`; server-only
   `FIREBASE_SERVICE_ACCOUNT_JSON` (or split `FIREBASE_PROJECT_ID` / `FIREBASE_CLIENT_EMAIL` /
   `FIREBASE_PRIVATE_KEY`), `SUPERVISOR_PASSCODE_SERVER`, `SESSION_SIGNING_SECRET`,
-  `GEMINI_API_KEYS` (or one `GEMINI_API_KEY`), optional `GEMINI_REQUEST_TIMEOUT_MS`, and optional
+  `GEMINI_API_KEYS` (or one `GEMINI_API_KEY`), optional `GEMINI_REQUEST_TIMEOUT_MS`, optional
+  `CALL_QA_GEMINI_ATTEMPT_TIMEOUT_MS` (default 40000; clamp 10000–60000),
+  `CALL_QA_GEMINI_MAX_ATTEMPTS` (default 2; clamp 1–3),
+  `CALL_QA_GEMINI_TOTAL_DEADLINE_MS` (default 85000; clamp 30000–120000), and optional
   `CALL_QA_GRADER_MODEL` (the single pinned, auditable model that SCORES the Call QA Test; defaults
   to `MODEL`/`gemini-2.5-flash` — key rotation only, never a model fallback; set it only to re-pin
   the grader after a deliberate re-calibration).

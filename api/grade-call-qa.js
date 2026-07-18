@@ -59,6 +59,44 @@ export function callQaGraderModel(env = process.env) {
   return configured || MODEL;
 }
 
+export const DEFAULT_CALL_QA_GEMINI_ATTEMPT_TIMEOUT_MS = 40_000;
+export const DEFAULT_CALL_QA_GEMINI_MAX_ATTEMPTS = 2;
+export const DEFAULT_CALL_QA_GEMINI_TOTAL_DEADLINE_MS = 85_000;
+
+function boundedInteger(value, fallback, min, max) {
+  if (value == null || String(value).trim() === '') return fallback;
+  const configured = Number(value);
+  if (!Number.isFinite(configured)) return fallback;
+  return Math.max(min, Math.min(max, Math.round(configured)));
+}
+
+export function callQaGeminiAttemptTimeoutMs(env = process.env) {
+  return boundedInteger(
+    env?.CALL_QA_GEMINI_ATTEMPT_TIMEOUT_MS,
+    DEFAULT_CALL_QA_GEMINI_ATTEMPT_TIMEOUT_MS,
+    10_000,
+    60_000,
+  );
+}
+
+export function callQaGeminiMaxAttempts(env = process.env) {
+  return boundedInteger(
+    env?.CALL_QA_GEMINI_MAX_ATTEMPTS,
+    DEFAULT_CALL_QA_GEMINI_MAX_ATTEMPTS,
+    1,
+    3,
+  );
+}
+
+export function callQaGeminiTotalDeadlineMs(env = process.env) {
+  return boundedInteger(
+    env?.CALL_QA_GEMINI_TOTAL_DEADLINE_MS,
+    DEFAULT_CALL_QA_GEMINI_TOTAL_DEADLINE_MS,
+    30_000,
+    120_000,
+  );
+}
+
 export function buildTrustedGradingScenario(scenario) {
   const lines = [
     scenario.gradingContext ?? scenario.scenario,
@@ -397,13 +435,17 @@ class GradingServiceError extends Error {
  * invariant. Throws GradingServiceError({httpStatus, error}) on model failure.
  *
  * `deps` is injectable for tests: { keys, geminiWithRotation, sopContextForFresh,
- * graderModel }.
+ * graderModel, env }.
  */
 export async function gradeCallQaTranscript({ transcript: rawTranscript, scenarioContext, captureMetadata = {}, transcriptMetadata = null }, deps = {}) {
   const keys = deps.keys ?? getApiKeys();
   const runGemini = deps.geminiWithRotation ?? geminiWithRotation;
   const sopFresh = deps.sopContextForFresh ?? sopContextForFresh;
-  const graderModel = deps.graderModel ?? callQaGraderModel();
+  const configEnv = deps.env ?? process.env;
+  const graderModel = deps.graderModel ?? callQaGraderModel(configEnv);
+  const attemptTimeoutMs = callQaGeminiAttemptTimeoutMs(configEnv);
+  const maxAttempts = callQaGeminiMaxAttempts(configEnv);
+  const totalDeadlineMs = callQaGeminiTotalDeadlineMs(configEnv);
 
   // Snap mis-transcribed SOP proper nouns/terms to their canonical form BEFORE
   // grading (bounded to the glossary — never invents). The correction count
@@ -422,8 +464,22 @@ export async function gradeCallQaTranscript({ transcript: rawTranscript, scenari
   // model fallback. A malformed-output retry reuses the SAME pinned model.
   let validated = null;
   let usedModel = graderModel;
-  for (let attempt = 0; attempt < 2 && !validated; attempt++) {
-    const result = await runGemini(keys, body, { label: 'grade-call-qa', models: [graderModel] });
+  let attemptsUsed = 0;
+  const gradingStartedAt = Date.now();
+  for (let responseAttempt = 0; responseAttempt < 2 && !validated && attemptsUsed < maxAttempts; responseAttempt++) {
+    const remainingDeadlineMs = totalDeadlineMs - (Date.now() - gradingStartedAt);
+    if (remainingDeadlineMs <= 0) break;
+    const result = await runGemini(keys, body, {
+      label: 'grade-call-qa',
+      models: [graderModel],
+      timeoutMs: attemptTimeoutMs,
+      maxAttempts: maxAttempts - attemptsUsed,
+      totalDeadlineMs: remainingDeadlineMs,
+    });
+    const upstreamAttempts = Number.isInteger(result.attemptCount) && result.attemptCount >= 0
+      ? result.attemptCount
+      : 1;
+    attemptsUsed += upstreamAttempts;
     if (!result.ok) {
       const { status, error } = rotationFailure(result, { exhausted: 'The grader is busy right now. Try again shortly.' });
       throw new GradingServiceError(status, error);
@@ -437,7 +493,7 @@ export async function gradeCallQaTranscript({ transcript: rawTranscript, scenari
     }
     const check = validateQaResponse(parsed);
     if (check.data) validated = check.data;
-    else console.warn(`grade-call-qa: invalid response (attempt ${attempt + 1}): ${check.error}`);
+    else console.warn(`grade-call-qa: upstream response invalid model=${usedModel} attempt=${attemptsUsed} elapsedMs=${Date.now() - gradingStartedAt}`);
   }
   if (!validated) {
     throw new GradingServiceError(502, 'The grader returned an unusable review. Try again.');

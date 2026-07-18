@@ -7,17 +7,17 @@
 //
 // geminiWithRotation tries each configured key once per model (primary model
 // first, then any fallback models), starting from a random offset, rotating past
-// transient / quota / permission failures. It returns a normalized result the
+// transient fetch, quota, and overload failures. It returns a normalized result the
 // caller maps to an HTTP response:
 //
-//   { ok: true,  text, model }              → 200 from Gemini (text MAY be empty;
+//   { ok: true,  text, model, attemptCount } → 200 from Gemini (text MAY be empty;
 //                                              callers validate their own output;
 //                                              `model` is the model that actually
 //                                              produced the response — the primary
 //                                              or whichever fallback answered)
-//   { ok: false, reason: 'fatal', status }  → non-rotatable error (our bug)  → 502
-//   { ok: false, reason: 'auth' }           → every key failed with 403       → 500
-//   { ok: false, reason: 'exhausted' }      → keys rate-limited / overloaded  → 429
+//   { ok: false, reason: 'fatal', status, attemptCount } → non-rotatable error → 502
+//   { ok: false, reason: 'auth', attemptCount }          → 403 auth failure     → 500
+//   { ok: false, reason: 'exhausted', attemptCount }     → transient exhaustion → 429
 // ─────────────────────────────────────────────────────────────────────────────
 
 // Primary model. gemini-3.5-flash was tried here (2026-07-09) but its free tier is
@@ -40,9 +40,8 @@ export const STABLE_MODEL = 'gemini-2.5-flash-lite';
 export const LITE_MODEL = 'gemini-3.1-flash-lite';
 
 // Per-key failures where trying a DIFFERENT key may succeed (quota / rate limit /
-// permission / transient overload). A 400 (bad request) is our bug, not the key's,
-// so it is NOT rotated — it surfaces immediately as `fatal`.
-const ROTATABLE = new Set([429, 403, 503, 500]);
+// transient overload). Clear request/auth failures are not rotated.
+const ROTATABLE = new Set([408, 429, 500, 502, 503, 504]);
 
 // Configured keys: GEMINI_API_KEYS (comma-separated, preferred) with GEMINI_API_KEY
 // as a single-key fallback. De-duped and trimmed.
@@ -135,32 +134,36 @@ export function resetCooldowns() {
   cooldowns.clear();
 }
 
-// Pull the quota that tripped out of a 429 body so Railway logs say WHICH limit
-// died (per-minute vs per-day) instead of a bare status code.
-function quotaInfo(detail) {
-  const t = String(detail ?? '');
-  const metric = t.match(/"quotaMetric"\s*:\s*"([^"]+)"/)?.[1];
-  const id = t.match(/"quotaId"\s*:\s*"([^"]+)"/)?.[1];
-  const value = t.match(/"quotaValue"\s*:\s*"?(\d+)/)?.[1];
-  if (!metric && !id && !value) return '';
-  const kind = /perday/i.test(id ?? '') ? 'per-DAY' : /perminute/i.test(id ?? '') ? 'per-minute' : '';
-  return ` (quota: ${metric?.split('/').pop() ?? id ?? '?'}${value ? ` limit=${value}` : ''}${kind ? ` ${kind}` : ''})`;
-}
-
 /**
- * Try each key once per model (random start), rotating past transient/quota/
- * permission failures. Models are tried in order — all keys on models[0], then
+ * Try each key once per model (random start), rotating past transient fetch,
+ * quota, and overload failures. Models are tried in order — all keys on models[0], then
  * all keys on models[1], … — because free-tier rate limits are per model per
  * project, so a fallback model is a separate quota bucket on the same keys.
  * See the module header for the return shape. `label` is used only in log lines
  * so the originating handler is identifiable.
  * @param {string[]} keys  non-empty (callers guard `keys.length === 0` first)
  * @param {object} body    the Gemini generateContent request body
- * @param {{label?: string, models?: string[]}} [opts]
+ * @param {{label?: string, models?: string[], timeoutMs?: number,
+ *   maxAttempts?: number, totalDeadlineMs?: number}} [opts]
  */
-export async function geminiWithRotation(keys, body, { label = 'gemini', models = [MODEL] } = {}) {
-  let sawFailure = false;
-  let sawNonAuthFailure = false; // a non-403 failure (transient/quota) anywhere
+export async function geminiWithRotation(keys, body, {
+  label = 'gemini',
+  models = [MODEL],
+  timeoutMs = geminiTimeoutMs(),
+  maxAttempts,
+  totalDeadlineMs,
+} = {}) {
+  const startedAt = Date.now();
+  const attemptLimit = Number.isFinite(maxAttempts)
+    ? Math.max(0, Math.floor(maxAttempts))
+    : Number.POSITIVE_INFINITY;
+  const deadlineAt = Number.isFinite(totalDeadlineMs)
+    ? startedAt + Math.max(0, Math.floor(totalDeadlineMs))
+    : Number.POSITIVE_INFINITY;
+  const configuredTimeoutMs = Number.isFinite(timeoutMs)
+    ? Math.max(1, Math.round(timeoutMs))
+    : geminiTimeoutMs();
+  let attemptCount = 0;
 
   for (const model of models) {
     const start = Math.floor(Math.random() * keys.length);
@@ -168,38 +171,41 @@ export async function geminiWithRotation(keys, body, { label = 'gemini', models 
       const idx = (start + i) % keys.length;
       const cdKey = `${model}::${keys[idx]}`;
       if ((cooldowns.get(cdKey) ?? 0) > Date.now()) continue; // known rate-limited — skip
+      if (attemptCount >= attemptLimit || Date.now() >= deadlineAt) {
+        return { ok: false, reason: 'exhausted', attemptCount };
+      }
+      const remainingMs = deadlineAt - Date.now();
+      const attemptTimeoutMs = Number.isFinite(remainingMs)
+        ? Math.max(1, Math.min(configuredTimeoutMs, remainingMs))
+        : configuredTimeoutMs;
+      attemptCount += 1;
       let result;
       try {
-        result = await callGemini(keys[idx], body, model);
+        result = await callGemini(keys[idx], body, model, attemptTimeoutMs);
       } catch (err) {
-        // Log the message only (redacted) — the raw error object can embed the
-        // key-bearing request URL via its cause/stack.
-        console.error(`${label}: fetch threw on key #${idx} (${model}) — rotating: ${redactKeys(err?.message ?? err)}`);
-        sawFailure = true;
-        sawNonAuthFailure = true; // a network/transient throw is not an auth problem
-        continue;
-      }
-      if (result.ok) return { ok: true, text: result.text, model };
-      if (ROTATABLE.has(result.status)) {
-        sawFailure = true;
-        if (result.status === 403) {
-          console.error(`${label}: 403 on key #${idx} (${model}) — auth/billing issue, rotating`);
+        const elapsedMs = Date.now() - startedAt;
+        if (err?.name !== 'AbortError') {
+          console.error(`${label}: upstream fetch error model=${model} attempt=${attemptCount} elapsedMs=${elapsedMs}`);
         } else {
-          sawNonAuthFailure = true;
-          const quota = result.status === 429 ? quotaInfo(result.detail) : '';
-          if (result.status === 429 || result.status === 503) {
-            cooldowns.set(cdKey, Date.now() + retryDelayMs(result.detail));
-          }
-          console.warn(`${label}: key #${idx} (${model}) returned ${result.status}${quota} — rotating`);
+          console.warn(`${label}: upstream timeout model=${model} attempt=${attemptCount} elapsedMs=${elapsedMs} timeoutMs=${attemptTimeoutMs}`);
         }
         continue;
       }
-      console.error(`${label}: non-rotatable error`, result.status, String(result.detail ?? '').slice(0, 200));
-      return { ok: false, reason: 'fatal', status: result.status };
+      if (result.ok) return { ok: true, text: result.text, model, attemptCount };
+      const elapsedMs = Date.now() - startedAt;
+      console.warn(`${label}: upstream HTTP model=${model} attempt=${attemptCount} elapsedMs=${elapsedMs} status=${result.status}`);
+      if (result.status === 403) {
+        return { ok: false, reason: 'auth', attemptCount };
+      }
+      if (ROTATABLE.has(result.status)) {
+        if (result.status === 429 || result.status === 503) {
+          cooldowns.set(cdKey, Date.now() + retryDelayMs(result.detail));
+        }
+        continue;
+      }
+      return { ok: false, reason: 'fatal', status: result.status, attemptCount };
     }
   }
 
-  // Every key was tried on every model and failed. All-403 surfaces as auth.
-  if (sawFailure && !sawNonAuthFailure) return { ok: false, reason: 'auth' };
-  return { ok: false, reason: 'exhausted' };
+  return { ok: false, reason: 'exhausted', attemptCount };
 }
