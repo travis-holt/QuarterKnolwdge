@@ -11,9 +11,20 @@
 > [§8 Current System State](#8-current-system-state) and [§15 Current Priorities](#15-current-priorities)
 > accurate at all times.
 >
-> **Last updated:** 2026-07-18 (PR #33 calibration/readiness architecture from main integrated into
-> this branch — grader prompt version now `call-qa-grader-v3` via the shared
-> `api/_qa-grading-versions.js` authority. Prior: Call QA answer secrecy + caller-observable grading — every runtime
+> **Last updated:** 2026-07-18 (PR #35 merge-readiness pass — current main (`d4ee320`, PR #33) merged
+> in with the full calibration/readiness architecture preserved; grader prompt version is now
+> `call-qa-grader-v3` with its single source of truth in `api/_qa-grading-versions.js`; calibration/
+> pilot-smoke run on committed non-production synthetic descriptors or an ignored local
+> private-bank manifest (never the private Firestore bank) and coverage honestly reports
+> `runtime-bank-evidence-missing` without one; private scenarios now require a validated
+> `callerCaseFile` caller contract (server-side persona injection only — never the browser, history
+> projection, or bundle); server scenario selection is randomized (recent-exclusion preserved,
+> injectable RNG); content version status separates active-SOP/fallback/rule-set/source-authority
+> concepts with exact active-SOP matching; deterministic audit validation is context-aware
+> (chart facts + preceding Patient turn) while keeping the exactly-one-Agent-error guarantee; 14
+> OB/GYN audit workflow generation smoke tests added; mojibake removed with a standing encoding
+> guard; and an Admin-only dry-run private provisioning tool added (not executed — the private bank
+> remains unprovisioned). See docs/HISTORY.md 2026-07-18. Prior: Call QA answer secrecy + caller-observable grading — every runtime
 > scenario-instance field now comes from the client-denied `callQaScenariosPrivate` store; the public
 > repo contains only anonymous aggregate coverage requirements; raw server attempts are unreadable to
 > navigators and history is an allowlisted API projection; the caller/browser receive only a neutral,
@@ -1815,9 +1826,11 @@ of this file on 2026-07-07 to cut per-session context cost (it was ~55% of the f
 - **Experimental / mockup:**
   - Training **content** is mockup (flagged in UI). Logic is real.
   - **Adult Medicine and Behavioural Health** are not assessed; **Pediatrics and OB/GYN** are live.
-- **Test coverage:** **1,124 unit tests across 57 files** and **76 Firestore Rules emulator
-  assertions** (51 result authorization + 25 Call QA) after the 2026-07-17 Call QA
-  secrecy/observable-grading work (authenticated projection,
+- **Test coverage:** **1,261 unit tests across 65 files** and **76 Firestore Rules emulator
+  assertions** (51 result authorization + 25 Call QA) after the 2026-07-18 merge-readiness pass
+  (calibration-private-bank adaptation, callerCaseFile, randomized selection, contextual audit
+  guard + 14-workflow generation smoke, encoding guard, provisioning tool) atop the 2026-07-17
+  Call QA secrecy/observable-grading work (authenticated projection,
   private-store selection, neutral relay allowlist, snapshot-only grading, forged/legacy protection,
   safe natural-language/explicit-contradiction behavior, narrow rule-derived metadata, and the
   bundle-private-runtime scan), plus the PR 3 calibration suite from main (84 fixture/metrics/
@@ -1938,7 +1951,7 @@ of this file on 2026-07-07 to cut per-session context cost (it was ~55% of the f
   OB/GYN = **37** seed questions (offline fallback) + the **48-item MCQ v2 operating-model bank**
   (24 Pediatrics + 24 OB/GYN) that replaces the weak active bank via a marker-gated
   archive-and-replace migration (bank grows in Firestore per dept) · 4 departments (**Pediatrics
-  + OB/GYN live**, 2 mockup) · **1,124 unit tests across 57 files** + **76 assertions**
+  + OB/GYN live**, 2 mockup) · **1,261 unit tests across 65 files** + **76 assertions**
   across two committed Firestore Rules emulator suites (`npm run test:rules`; require Java, run in
   CI, not part of the unit-test count) ·
   **14** Firestore collections
@@ -2223,7 +2236,7 @@ npm run test:e2e     # run the Playwright browser tests (auto-builds + starts th
 - Heatmap intensity toggle (show % inside matrix cells).
 
 ### Technical Debt
-- **1,124 unit tests across 57 files** as of 2026-07-17 (plus **76 assertions** across two
+- **1,261 unit tests across 65 files** as of 2026-07-18 (plus **76 assertions** across two
   committed Firestore Rules emulator suites, `npm run test:rules`, run separately from the unit-test
   gate). **Role-app
   coverage** (`App`, `Start`,

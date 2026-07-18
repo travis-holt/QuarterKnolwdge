@@ -14,6 +14,15 @@ Current committed evidence:
 That result is expected. Synthetic fixtures and the deterministic regression
 corpus do not prove real-model or real-transcription accuracy.
 
+The runtime scenario bank is private (Admin-only Firestore
+`callQaScenariosPrivate`); calibration references committed non-production
+synthetic descriptors or an ignored local private-bank manifest, and coverage
+reports `runtime-bank-evidence-missing` until a real manifest is supplied. The
+grader prompt version is `call-qa-grader-v3`, owned by
+`api/_qa-grading-versions.js`. The private bank has NOT been provisioned; fresh
+private provisioning (8 Pediatrics / 15 OB/GYN minimum, with caller case files)
+remains a required operator step before deployment.
+
 Calibration policy v2 requires complete rubric labels, valid PR #32 capture
 states, meaningful pass/fail/review populations, and non-zero statistical
 denominators. Shadow policy v2 remains diagnostic-only and requires verified

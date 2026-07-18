@@ -66,6 +66,7 @@ export function buildScenarioSnapshot(scenario) {
     criticalMisses: scenario.criticalMisses ?? [],
     scoringNotes: scenario.scoringNotes ?? [],
     hiddenChartState: scenario.hiddenChartState ?? null,
+    callerCaseFile: scenario.callerCaseFile ?? null,
     ruleIds: scenario.ruleIds ?? [],
     sourceSopVersion: scenario.sourceSopVersion ?? null,
     sourceRuleVersion: scenario.sourceRuleVersion ?? null,

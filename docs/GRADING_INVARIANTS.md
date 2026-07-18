@@ -8,7 +8,8 @@
 > [`api/_qa-grading-corpus.test.js`](../api/_qa-grading-corpus.test.js) — if one of
 > those tests fails after your change, re-read this document before "fixing" the test.
 >
-> Last updated: 2026-07-18 (private Call QA runtime merged with PR #33 calibration invariants).
+> Last updated: 2026-07-18 (private Call QA runtime merged with PR #33 calibration invariants;
+> randomized server-side selection + the private callerCaseFile caller contract).
 
 ## 0f. Private Call QA runtime and caller-observable grading (2026-07-17)
 
@@ -26,14 +27,26 @@ These strengthen §0/§0a–§0d. All are binding for the SCORED Call QA test.
    including supervisor clients. A missing, inactive, malformed, wrong-department,
    or document-ID/version-mismatched private instance fails closed; the relay does
    not fall back to public code or browser data.
-3. **The server chooses the scenario.** Selection uses the authenticated navigator
-   identity and Admin-loaded prior attempts. Browser-supplied scenario IDs,
-   prompts, history, metadata, or answer hints are ignored.
-4. **Caller and browser projections are neutral and allowlisted.** The scored caller
-   receives only `publicBriefing`, `callerName`, and `openingLine`. It never receives
-   workflow/rule metadata, grading context, hidden chart facts, expected actions,
-   critical misses, or scoring notes. Browser `ready.scenario` contains only the
-   neutral briefing (`prompt`), caller name, department, and primary domain.
+3. **The server chooses the scenario, unpredictably.** Selection uses the
+   authenticated navigator identity and Admin-loaded prior attempts: recently
+   used scenarios are excluded first, then the server picks RANDOMLY among the
+   remaining eligible scenarios (falling back to a random choice over the full
+   valid set when every scenario is recent). The random source is server-side
+   (injectable only for deterministic tests). Browser-supplied scenario IDs,
+   prompts, history, metadata, or answer hints are ignored, and the browser can
+   never predict the next scenario from bank order.
+4. **Caller and browser projections are separated and allowlisted.** The scored
+   caller receives `publicBriefing`, `callerName`, `openingLine`, and the
+   private `callerCaseFile` — the caller's own consistent knowledge contract
+   (goal, known facts, reveal rules, behavior, consistency constraints),
+   validated server-side and injected only into the server-built system
+   instruction. The caller never receives grader-only `hiddenChartState`,
+   workflow/rule metadata, grading context, expected actions, critical misses,
+   or scoring notes — chart authority is not caller knowledge. Browser
+   `ready.scenario` contains only the neutral briefing (`prompt`), caller name,
+   department, and primary domain; `callerCaseFile` never reaches the browser,
+   the navigator history projection, or the client bundle (enforced by the
+   postbuild scanner).
 5. **The attempt snapshot is the permanent grading authority.** Before `ready`, the
    server stores one immutable scenario snapshot on the attempt, including identity
    and version, workflow and narrow rule-derived coverage tags, private grading

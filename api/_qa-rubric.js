@@ -238,7 +238,7 @@ export const ROUTING_DESTINATIONS = [
   ['ob-mfm-owner', /\b(?:rebecca|mfm\s+owner\s*,?\s*rebecca)\b/i],
   ['ob-waiting-list', /\b(?:waiting\s+list|waitlist)\s+(?:portal|te|telephone encounter)\b/i],
   ['ob-take-action', /\btake action\b/i],
-  ['ob-urgent-channel', /\b(?:intermedia|women['â€™]s health ob urgent calls|ob urgent (?:calls )?channel)\b/i],
+  ['ob-urgent-channel', /\b(?:intermedia|women['’]s health ob urgent calls|ob urgent (?:calls )?channel)\b/i],
   ['ob-nursing', /\b(?:(?:ob(?:\s*\/\s*gyn)?|obstetrics?)\s+nurse|nursing team|clinical team)\b/i],
   ['labor-delivery', /\b(?:l\s*&\s*d|labor (?:and|&) delivery)\b/i],
   ['medical-records', /\b(?:medical records|records)\s+(?:team|department)\b/i],
@@ -508,18 +508,18 @@ export function findClinicalAdviceLine(transcript) {
 const OBGYN_CALLER_OUTCOME_CHECKS = {
   known_lmp_new_ob: (text) => /(?:known|reliable|gave|provided).{0,45}(?:lmp|last menstrual|date)/i.test(text)
     && /(?:new\s+ob|pregnan(?:cy|t)).{0,70}(?:ultrasound|sonogram|provider|doctor|appointment)/i.test(text),
-  unknown_lmp_confirmation: (text) => /(?:unknown|unsure|do not know|don['â€™]t know).{0,45}(?:lmp|last menstrual|date)/i.test(text)
+  unknown_lmp_confirmation: (text) => /(?:unknown|unsure|do not know|don['’]t know).{0,45}(?:lmp|last menstrual|date)/i.test(text)
     && /(?:clinical team|ob(?:\s*\/\s*gyn)? team|nurs(?:e|ing)|provider|doctor).{0,70}(?:review|follow up|next step|call back)/i.test(text),
   new_ob_pairing: (text) => /(?:ultrasound|sonogram|scan)/i.test(text)
     && /(?:provider|doctor)/i.test(text)
     && /(?:same day|together|back[- ]to[- ]back|paired)/i.test(text)
     && /(?:ultrasound|sonogram|scan).{0,60}(?:first|before)/i.test(text),
-  missing_rto_order: (text) => /(?:can(?:not|['â€™]t)|will not|won['â€™]t|not able to).{0,45}(?:book|schedule)/i.test(text)
+  missing_rto_order: (text) => /(?:can(?:not|['’]t)|will not|won['’]t|not able to).{0,45}(?:book|schedule)/i.test(text)
     && /(?:until|without).{0,45}(?:order|rto|document)/i.test(text)
     && /(?:contact|message|send|follow up).{0,70}(?:clinical team|ob(?:\s*\/\s*gyn)? team|nurs(?:e|ing)|provider|doctor)/i.test(text),
   transfer_ob: (text) => /records?/i.test(text)
     && /(?:review|accept|approv)/i.test(text)
-    && /(?:before|until|can(?:not|['â€™]t)).{0,70}(?:book|schedule)|(?:book|schedule).{0,70}(?:after|once)/i.test(text),
+    && /(?:before|until|can(?:not|['’]t)).{0,70}(?:book|schedule)|(?:book|schedule).{0,70}(?:after|once)/i.test(text),
   urgent_high_priority_intermedia: (text) => /(?:urgent|immediate|right away)/i.test(text)
     && /(?:send|message|alert|contact|escalat)/i.test(text)
     && /(?:clinical team|ob(?:\s*\/\s*gyn)? team|nurs(?:e|ing)|provider|doctor)/i.test(text),
@@ -537,7 +537,7 @@ const OBGYN_CALLER_OUTCOME_CHECKS = {
   test_result_medical_advice_boundary: (text) => /(?:send|forward|message|contact|follow up)/i.test(text)
     && /(?:clinical team|ob(?:\s*\/\s*gyn)? team|nurs(?:e|ing)|provider|doctor)/i.test(text)
     && /(?:callback|call back|review|question|result)/i.test(text),
-  lab_boundary: (text) => /(?:can(?:not|['â€™]t)|will not|won['â€™]t|not able to).{0,50}(?:interpret|order|schedule|tell you whether)/i.test(text)
+  lab_boundary: (text) => /(?:can(?:not|['’]t)|will not|won['’]t|not able to).{0,50}(?:interpret|order|schedule|tell you whether)/i.test(text)
     && /(?:send|message|contact|follow up).{0,70}(?:clinical team|ob(?:\s*\/\s*gyn)? team|nurs(?:e|ing)|provider|doctor)/i.test(text),
   dr_bank_waitlist: (text) => /(?:dr\.?\s+)?bank/i.test(text)
     && /(?:wait\s*list|waiting\s+list)/i.test(text)

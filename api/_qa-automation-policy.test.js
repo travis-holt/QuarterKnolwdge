@@ -8,9 +8,9 @@ import { rubricCriteria } from '../src/data/qaRubric.js';
 
 const POPULATION = [
   'gemini-2.5-flash',
-  'qa-rubric-v1',
-  'call-qa-grader-v1',
-  'call-qa-scenarios-v1',
+  'qa-rubric-v2',
+  'call-qa-grader-v3',
+  'synthetic-rehearsal-v1',
   'call-qa-live-transcript-v1',
   'gemini-live-v1',
 ].join(' | ');
@@ -61,9 +61,9 @@ function cleanAttempt() {
       },
       gradingMetadata: {
         model: 'gemini-2.5-flash',
-        rubricVersion: 'qa-rubric-v1',
-        promptVersion: 'call-qa-grader-v1',
-        scenarioVersion: 'call-qa-scenarios-v1',
+        rubricVersion: 'qa-rubric-v2',
+        promptVersion: 'call-qa-grader-v3',
+        scenarioVersion: 'synthetic-rehearsal-v1',
       },
     },
   };

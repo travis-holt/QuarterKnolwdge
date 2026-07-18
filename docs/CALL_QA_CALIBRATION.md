@@ -183,6 +183,51 @@ With no human fixtures, the report remains `INSUFFICIENT_DATA`, shows curated
 scenario coverage, and states that no real-world accuracy conclusion is
 possible.
 
+## Private runtime bank and scenario references
+
+Runtime Call QA scenarios are PRIVATE: every production instance lives only in
+the Admin-denied Firestore collection `callQaScenariosPrivate` and the immutable
+server attempt snapshot. Neither the calibration CLI nor pilot smoke ever reads
+that collection, and no runtime scenario instance is committed to this repo.
+
+Fixture `scenarioId`s therefore reference calibration descriptors, not runtime
+scenarios:
+
+- **Synthetic descriptors** (`api/_qa-calibration-scenarios.js`) are the
+  default. They carry structural metadata only (department, workflow,
+  difficulty, domains, competencies) and are explicitly marked
+  `nonProduction: true`, `calibrationAuthority: 'none'`,
+  `evidenceUse: 'synthetic-rehearsal-only'`. Committed `synthetic-example`
+  fixtures must carry the same three marks.
+- **A private-bank manifest** (`--private-manifest <ignored-local-path>`) is a
+  metadata-only export of the provisioned private bank used by operator
+  tooling. The manifest validator rejects any entry carrying private instance
+  fields (opening lines, briefings, grading context, hidden chart state,
+  caller case files, expected actions, critical misses, scoring notes), so
+  answers cannot leak into operator tooling.
+
+Coverage is honest about its evidence: without a private manifest the report
+flags `runtime-bank-evidence-missing` per department and readiness carries a
+`scenarioEvidence:synthetic-only` reason — the anonymous aggregate minimum
+counts (8 Pediatrics / 15 OB/GYN) are never treated as runtime coverage
+evidence on their own. With a manifest, a department below its anonymous
+minimum is flagged `private-bank-below-minimum`.
+
+Live mode (`--live --confirm-live`) grades only operator-supplied local
+fixtures and requires each grading fixture to embed a sanitized
+`scenarioSnapshot` (the attempt-snapshot shape); it never reads the private
+Firestore bank.
+
+The production grader prompt version has one source of truth:
+`api/_qa-grading-versions.js` (`call-qa-grader-v3`), re-exported by
+`api/grade-call-qa.js` and validated against fixture `modelRun.promptVersion`.
+
+Private provisioning is a separate deliberate operator action:
+`scripts/call-qa/provision-private-scenarios.mjs` reads an ignored local JSON
+file, validates through the production validator (including `callerCaseFile`),
+enforces the 8/15 minimums, defaults to dry-run, requires `--apply` plus an
+explicit `--project`, and never prints hidden facts or answers.
+
 ## Monday management pilot smoke
 
 ```bash

@@ -9,6 +9,8 @@ const forbiddenTokens = [
   'gradingContext',
   'scoringNotes',
   'callQaScenariosPrivate',
+  'callerCaseFile',
+  'scenarioSnapshot',
 ];
 
 async function filesUnder(dir) {

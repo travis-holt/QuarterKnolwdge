@@ -29,6 +29,14 @@ const SCENARIO = {
   criticalMisses: ['State the fictional unsafe outcome.'],
   scoringNotes: ['Accept natural wording in this fictional fixture.'],
   hiddenChartState: { fixture: true },
+  callerCaseFile: {
+    callerGoal: 'Get a fictional administrative request resolved.',
+    knownFacts: ['A private fictional fact only the caller knows.'],
+    factsToReveal: ['A fictional detail shared only when asked.'],
+    revealRules: ['Do not volunteer the detail unprompted.'],
+    behavior: ['Polite but slightly rushed.'],
+    consistencyConstraints: ['Never contradict the fictional facts above.'],
+  },
   ruleIds: [],
   sourceSopVersion: null,
   sourceRuleVersion: null,
@@ -169,6 +177,27 @@ describe('server-authoritative start contract', () => {
     expect(JSON.stringify(options)).not.toContain('criticalMisses');
     expect(JSON.stringify(options)).not.toContain('hiddenChartState');
     expect(JSON.stringify(buildSystemInstruction.mock.calls[0])).not.toContain(SCENARIO.gradingContext);
+  });
+
+  it('passes the private callerCaseFile to the caller persona but never to the browser', async () => {
+    const buildSystemInstruction = vi.fn(() => 'persona');
+    const h = harness({ buildSystemInstruction });
+    await startTest(h);
+    const [, , options] = buildSystemInstruction.mock.calls[0];
+    // The caller model gets the private consistent-fact contract…
+    expect(options.callerCaseFile).toEqual(SCENARIO.callerCaseFile);
+    // …but no grader-only chart state rides along with it.
+    expect(JSON.stringify(options)).not.toContain('hiddenChartState');
+    // The browser projection carries neither the case file nor any of its facts.
+    const ready = h.client.lastByType('ready');
+    const readyJson = JSON.stringify(ready);
+    expect(readyJson).not.toContain('callerCaseFile');
+    expect(readyJson).not.toContain(SCENARIO.callerCaseFile.knownFacts[0]);
+    expect(readyJson).not.toContain(SCENARIO.callerCaseFile.factsToReveal[0]);
+    // And every other browser-bound message stays clean too.
+    for (const message of h.client.sent) {
+      expect(JSON.stringify(message)).not.toContain('callerCaseFile');
+    }
   });
 
   it('rejects a non-navigator identity for a scored test', async () => {

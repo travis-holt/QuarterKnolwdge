@@ -1,5 +1,75 @@
 # Development History - Knowledge Check
 
+### 2026-07-18 - PR #35 merge-readiness pass: main integration, calibration adaptation, callerCaseFile, randomized selection
+- **Merged current `origin/main` (`d4ee320`, PR #33)** into `feature/obgyn-operating-model-v2`
+  with `--no-ff` (no rebase/force-push). The full PR #33 calibration/readiness architecture is
+  preserved: `api/_qa-automation-policy.js`, `_qa-calibration-gates.js`, `_qa-calibration.js`,
+  `_qa-grading-versions.js`, fixtures + validation, `scripts/call-qa/{calibrate,pilot-smoke}.mjs`,
+  and the `qa:calibrate`/`qa:calibrate:check`/`qa:coverage`/`qa:pilot-smoke` commands. Readiness
+  honestly remains `INSUFFICIENT_DATA` (3 synthetic examples, 0 human pilots).
+- **Grader version single source of truth:** `api/_qa-grading-versions.js` now owns
+  `CALL_QA_PROMPT_VERSION = 'call-qa-grader-v3'`; `api/grade-call-qa.js` re-exports it (its local
+  duplicate constant is gone). Fixtures, calibration validation, automation-policy tests, and docs
+  use v3 + `qa-rubric-v2` consistently.
+- **Calibration adapted to the private runtime bank:** new `api/_qa-calibration-scenarios.js`
+  provides committed NON-PRODUCTION synthetic descriptors (metadata only; marked
+  `nonProduction`/`calibrationAuthority: 'none'`/`evidenceUse: 'synthetic-rehearsal-only'`, marks
+  now REQUIRED on `synthetic-example` fixtures) and a metadata-only private-manifest
+  loader/validator that rejects every private instance field. `qa:pilot-smoke` runs entirely on
+  synthetic descriptors (no Firestore); `qa:coverage` accepts `--private-manifest
+  <ignored-local-path>` or an injected loader; without private evidence, coverage flags
+  `runtime-bank-evidence-missing` per department and readiness carries
+  `scenarioEvidence:synthetic-only` — aggregate minimum counts alone are never runtime coverage
+  evidence. Live calibration now grades only fixtures embedding a sanitized `scenarioSnapshot`
+  (never reads the private bank). No readiness threshold was weakened.
+- **Private caller contract (`callerCaseFile`):** private scenarios now REQUIRE a validated
+  `callerCaseFile` `{callerGoal, knownFacts, factsToReveal, revealRules, behavior,
+  consistencyConstraints}` — the AI caller's own consistent knowledge (LMP, medication/pharmacy,
+  prior callbacks, symptoms, what the patient believes the provider said), separate from
+  grader-only `hiddenChartState` which is never auto-treated as caller knowledge. It lives only in
+  the private Firestore doc + immutable attempt snapshot, is rendered server-side into the caller
+  system instruction (`renderCallerCaseFile` in `interview-turn.js`, reveal-only-when-asked +
+  never-coach rules), and never reaches the browser `ready` projection, `/api/my-interviews`, or
+  the client bundle (scanner extended with `callerCaseFile` + `scenarioSnapshot`). Tests prove
+  facts reach the persona but never any browser payload.
+- **Randomized server-side scenario selection:** `selectLoadedCallQaScenario` no longer picks the
+  first alphabetical eligible scenario — it excludes the 3 most recent completed unarchived
+  scenario ids (server-trusted history only), then chooses RANDOMLY among the remaining eligible
+  set, falling back to a random choice over the full valid set when everything is recent.
+  Injectable RNG for deterministic tests; new tests cover recency exclusion, multi-eligible
+  randomness, all-recent fallback, empty bank, and wrong-department isolation.
+- **Exact active-SOP content currency:** `src/lib/contentVersion.js` rewritten around four
+  separate concepts (active SOP grounding version, fallback SOP version, executable rule-set
+  version, source authority). With an active supervisor SOP, AI-generated content is Current only
+  when grounded in that EXACT `active-sop:<dept>:vN` version — fallback-grounded content is
+  Stale/review even with a current rule version; with no active SOP, matching fallback content is
+  Current; owner-confirmed current-floor content is evaluated separately against the rule-set
+  version (and cannot ride that authority while falsely claiming active-SOP grounding); legacy
+  stays Legacy; unknown rules stay blocked. 9 tests cover the required matrix.
+- **Contextual deterministic audit validation:** `validateAuditContent`'s indexed-error check now
+  evaluates the planted Agent error against requiredChartFacts + the immediately preceding
+  Patient turn + the Agent line, so a natural error need not restate every controlling chart fact;
+  all OTHER Agent turns are still checked strictly per-turn, preserving the exactly-one
+  deterministic-error guarantee. New `api/generateAuditObgynWorkflows.test.js` smoke-tests all 14
+  OB/GYN audit workflows with mocked model output (no paid API calls).
+- **Encoding cleanup + guard:** fixed the double-encoded-apostrophe mojibake character classes in
+  `api/_qa-rubric.js` regexes (now a plain `['’]` class, which also repairs curly-apostrophe
+  matching); added
+  `scripts/check-encoding.mjs` + `api/encoding.test.js`, an escape-only repo-wide mojibake
+  regression scan run in the unit suite.
+- **Private provisioning tool:** new Admin-only operator script
+  `scripts/call-qa/provision-private-scenarios.mjs` — ignored local JSON input, dry-run by
+  default, `--apply` + explicit `--project` match required, production validator (incl.
+  callerCaseFile + unique id__version identities + 8 Pediatrics / 15 OB/GYN minimums +
+  OB/GYN rule verification), create/update/deactivate counts, no secret content in logs, never run
+  automatically. NOT executed against production; the private bank remains unprovisioned.
+- **Verification:** `npm ci` clean · unit suite **1261/1261 across 65 files** · Firestore rules
+  emulator suites **76/76** (51 result-authorization + 25 Call QA, portable Temurin 21) ·
+  `npm run build` + private-runtime bundle scan clean · `npm audit --omit=dev` **0
+  vulnerabilities** · `qa:calibrate`/`qa:coverage` valid reports · `qa:pilot-smoke`
+  `PILOT_SMOKE_VERIFIED` (15 cases) · `qa:calibrate:check` exit 1 `INSUFFICIENT_DATA` (expected) ·
+  repo encoding scan clean · `git diff --check` clean.
+
 ### 2026-07-17 (part 5) - Call QA private runtime, caller-observable grading, and honest coverage
 - **Security finding and root cause:** the previously published Call QA bank exposed stable scenario
   IDs, caller/opening text, workflow metadata, hidden chart facts, expected actions, critical misses,

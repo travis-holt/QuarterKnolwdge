@@ -582,6 +582,10 @@ export function handleConnection(client, req, depsInput) {
         ? deps.buildSystemInstruction(session.scenario.callerName, session.scenario.publicBriefing, {
             department: session.department,
             openingLine: session.scenario.openingLine || '',
+            // Private caller contract: consistent caller-known facts + reveal
+            // rules, passed SERVER-SIDE only. Never included in the browser
+            // `ready` projection, and distinct from grader-only hiddenChartState.
+            callerCaseFile: session.scenario.callerCaseFile || null,
           })
         : deps.buildSystemInstruction(startMsg.callerName || 'the caller', startMsg.scenario || '', {
             department: startMsg.department || 'pediatrics',

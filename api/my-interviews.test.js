@@ -9,7 +9,12 @@ describe('navigatorInterviewProjection', () => {
         navigatorId: 'nav-a', department: 'obgyn', assessmentType: 'call-qa',
         captureAuthority: 'server', captureStatus: 'captured', gradingStatus: 'graded',
         endedAt: 10, grade: { score: 91 }, qa: { pass: true },
-        scenarioSnapshot: { hiddenChartState: { answer: true }, expectedActions: ['secret'] },
+        scenarioSnapshot: {
+          hiddenChartState: { answer: true },
+          expectedActions: ['secret'],
+          callerCaseFile: { callerGoal: 'secret', knownFacts: ['secret'] },
+        },
+        callerCaseFile: { callerGoal: 'secret', knownFacts: ['secret'] },
         expectedActions: ['secret'], criticalMisses: ['secret'], scoringNotes: ['secret'],
         transcript: [{ role: 'navigator', text: 'private' }], gradingLeaseId: 'secret',
         qaScenarioId: 'descriptive-secret-id', workflowType: 'secret-workflow',
@@ -22,7 +27,7 @@ describe('navigatorInterviewProjection', () => {
       captureStatus: 'captured', grade: { score: 91 }, qa: { pass: true },
     });
     for (const field of [
-      'captureAuthority', 'scenarioSnapshot', 'expectedActions', 'criticalMisses',
+      'captureAuthority', 'scenarioSnapshot', 'expectedActions', 'criticalMisses', 'callerCaseFile',
       'scoringNotes', 'transcript', 'gradingLeaseId', 'qaScenarioId', 'workflowType',
       'futureSecret',
     ]) expect(projected).not.toHaveProperty(field);

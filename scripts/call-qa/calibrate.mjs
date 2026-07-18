@@ -7,6 +7,10 @@ import {
   formatCalibrationMarkdown,
   validateCalibrationFixture,
 } from '../../api/_qa-calibration.js';
+import {
+  SYNTHETIC_CALIBRATION_SCENARIOS,
+  validateScenarioManifest,
+} from '../../api/_qa-calibration-scenarios.js';
 
 const DEFAULT_FIXTURES = 'api/fixtures/call-qa-calibration';
 const DEFAULT_OUTPUT = 'artifacts/call-qa-calibration';
@@ -22,10 +26,11 @@ export function parseArgs(argv) {
     requireReady: false,
     live: false,
     confirmLive: false,
+    privateManifest: null,
   };
   for (let index = 0; index < argv.length; index += 1) {
     const arg = argv[index];
-    if (arg === '--fixtures' || arg === '--output' || arg === '--repeat') {
+    if (arg === '--fixtures' || arg === '--output' || arg === '--repeat' || arg === '--private-manifest') {
       const value = argv[index + 1];
       if (!value) throw new Error(`${arg} requires a value`);
       options[arg.slice(2).replace(/-([a-z])/g, (_, letter) => letter.toUpperCase())] = value;
@@ -45,7 +50,20 @@ export function parseArgs(argv) {
   return options;
 }
 
-export async function loadCalibrationFixtures(directory) {
+// Load an OPERATOR-SUPPLIED metadata-only manifest of the private runtime
+// bank (an ignored local file — never committed). Without it, coverage runs
+// against the synthetic non-production descriptors and reports the missing
+// runtime-bank evidence honestly.
+export async function loadPrivateScenarioManifest(file) {
+  const manifest = JSON.parse(await readFile(file, 'utf8'));
+  const validation = validateScenarioManifest(manifest);
+  if (!validation.valid) {
+    throw new Error(`Private scenario manifest validation failed:\n${validation.errors.join('\n')}`);
+  }
+  return validation.scenarios;
+}
+
+export async function loadCalibrationFixtures(directory, { scenarios = SYNTHETIC_CALIBRATION_SCENARIOS } = {}) {
   const entries = (await readdir(directory, { withFileTypes: true }))
     .filter((entry) => entry.isFile() && entry.name.endsWith('.json'))
     .sort((a, b) => a.name.localeCompare(b.name));
@@ -60,7 +78,7 @@ export async function loadCalibrationFixtures(directory) {
       errors.push(`${entry.name}: invalid JSON (${error.message})`);
       continue;
     }
-    const validation = validateCalibrationFixture(fixture);
+    const validation = validateCalibrationFixture(fixture, { scenarios });
     if (!validation.valid) {
       errors.push(`${entry.name}:\n  ${validation.errors.join('\n  ')}`);
       continue;
@@ -129,7 +147,7 @@ function stabilityFor(runs) {
   };
 }
 
-async function runLive(fixtures, options, deps, io) {
+async function runLive(fixtures, options, deps, io, reportOptions = {}) {
   const env = deps.env ?? process.env;
   if (env.CALL_QA_CALIBRATION_LIVE !== 'true') {
     throw new Error('--live requires CALL_QA_CALIBRATION_LIVE=true');
@@ -143,24 +161,34 @@ async function runLive(fixtures, options, deps, io) {
   const requestCount = gradingFixtures.length * options.repeat;
   io.log(`Live calibration grading runs: ${requestCount} (up to ${requestCount * 2} model requests if malformed-response retries occur)`);
   const [
-    { gradeCallQaTranscript, resolveQaScenarioContext },
+    { gradeCallQaTranscript, buildScenarioContextFromAttempt },
     { sopContextFor },
-    { getCallQaScenarioById },
   ] = await Promise.all([
     import('../../api/grade-call-qa.js'),
     import('../../api/_sop-context.js'),
-    import('../../src/data/callQaScenarios.js'),
   ]);
   const grade = deps.gradeCallQaTranscript ?? gradeCallQaTranscript;
   const liveCases = [];
   const calibratedFixtures = [];
 
   for (const fixture of gradingFixtures) {
-    const scenario = getCallQaScenarioById(fixture.scenarioId);
-    const scenarioContext = resolveQaScenarioContext({
-      scenario: scenario.scenario,
+    // Runtime scenarios are private; live calibration grades ONLY what the
+    // operator supplies locally. Each grading fixture must embed a sanitized
+    // scenarioSnapshot (the same shape as the immutable server attempt
+    // snapshot) — the CLI never reads the private Firestore bank.
+    if (!fixture.scenarioSnapshot || typeof fixture.scenarioSnapshot !== 'object') {
+      throw new Error(`Live calibration requires a sanitized scenarioSnapshot on fixture ${fixture.caseId}; the private runtime bank is never read by this CLI.`);
+    }
+    const scenarioContext = buildScenarioContextFromAttempt({
+      assessmentType: 'call-qa',
+      captureAuthority: 'server',
       department: fixture.department,
       qaScenarioId: fixture.scenarioId,
+      qaScenarioTitle: fixture.scenarioSnapshot.title ?? fixture.caseId,
+      scenarioVersion: fixture.scenarioSnapshot.scenarioVersion ?? null,
+      workflowType: fixture.workflowType,
+      difficulty: fixture.difficulty,
+      scenarioSnapshot: { qaScenarioId: fixture.scenarioId, department: fixture.department, ...fixture.scenarioSnapshot },
     });
     const runs = [];
     for (let repeat = 0; repeat < options.repeat; repeat += 1) {
@@ -192,7 +220,7 @@ async function runLive(fixtures, options, deps, io) {
     });
   }
   return {
-    report: buildCalibrationReport([...calibratedFixtures, ...operationalFixtures]),
+    report: buildCalibrationReport([...calibratedFixtures, ...operationalFixtures], reportOptions),
     liveRuns: {
       requestCount,
       repeat: options.repeat,
@@ -218,13 +246,22 @@ export async function runCalibrationCli(argv = process.argv.slice(2), deps = {})
   const io = deps.io ?? console;
   const fixturesDirectory = path.resolve(deps.cwd ?? process.cwd(), options.fixtures);
   const outputDirectory = path.resolve(deps.cwd ?? process.cwd(), options.output);
-  const fixtures = await loadCalibrationFixtures(fixturesDirectory);
+  let scenarios = SYNTHETIC_CALIBRATION_SCENARIOS;
+  let scenarioEvidence = 'synthetic-only';
+  if (deps.privateScenarios) {
+    scenarios = deps.privateScenarios;
+    scenarioEvidence = 'private-manifest';
+  } else if (options.privateManifest) {
+    scenarios = await loadPrivateScenarioManifest(path.resolve(deps.cwd ?? process.cwd(), options.privateManifest));
+    scenarioEvidence = 'private-manifest';
+  }
+  const fixtures = await loadCalibrationFixtures(fixturesDirectory, { scenarios });
   let report;
   let liveRuns = null;
   if (options.live) {
-    ({ report, liveRuns } = await runLive(fixtures, options, deps, io));
+    ({ report, liveRuns } = await runLive(fixtures, options, deps, io, { scenarios, scenarioEvidence }));
   } else {
-    report = buildCalibrationReport(fixtures);
+    report = buildCalibrationReport(fixtures, { scenarios, scenarioEvidence });
   }
   report.readiness = evaluateCalibrationReadiness(report);
   if (options.coverageOnly) report.coverageOnly = true;

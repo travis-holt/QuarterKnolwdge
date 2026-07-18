@@ -144,18 +144,35 @@ export function validateAuditContent(audit) {
     return flags;
   }
 
-  const agentViolations = (audit.transcript ?? []).flatMap((turn, index) => (
-    turn?.speaker === 'Agent'
+  // The INDEXED Agent error is judged in context: the controlling chart facts
+  // and the Patient turn immediately before it establish the condition (unknown
+  // LMP, an already-open TE, a missing order, …) so the erroneous Agent line
+  // does not have to unnaturally restate every fact. The rule set stays the
+  // deterministic authority — only the selected rules' patterns can match.
+  const precedingPatient = (audit.transcript ?? [])
+    .slice(0, audit.errorIndex)
+    .filter((turn) => turn?.speaker === 'Patient')
+    .at(-1);
+  const indexedContext = [
+    (audit.requiredChartFacts ?? []).filter(Boolean).join('. '),
+    precedingPatient?.message ?? '',
+    audit.transcript?.[audit.errorIndex]?.message ?? '',
+  ].filter(Boolean).join('\n');
+  const indexedViolations = detectObgynContradictions(indexedContext, { ruleIds: audit.ruleIds });
+  if (!indexedViolations.length) {
+    flags.push({
+      severity: 'block', code: 'audit_error_not_deterministic',
+      message: 'The indexed Agent error does not deterministically contradict the selected structured rule (even with patient context and required chart facts).',
+    });
+  }
+  // Every OTHER Agent turn must be clean ON ITS OWN — the strict per-turn check
+  // is what guarantees exactly one deterministic Agent error per transcript.
+  const otherViolations = (audit.transcript ?? []).flatMap((turn, index) => (
+    turn?.speaker === 'Agent' && index !== audit.errorIndex
       ? detectObgynContradictions(turn.message, { ruleIds: audit.ruleIds }).map((flag) => ({ ...flag, index }))
       : []
   ));
-  if (!agentViolations.some((flag) => flag.index === audit.errorIndex)) {
-    flags.push({
-      severity: 'block', code: 'audit_error_not_deterministic',
-      message: 'The indexed Agent error does not deterministically contradict the selected structured rule.',
-    });
-  }
-  if (agentViolations.some((flag) => flag.index !== audit.errorIndex)) {
+  if (otherViolations.length) {
     flags.push({
       severity: 'block', code: 'audit_multiple_agent_errors',
       message: 'Another Agent turn also contradicts the selected structured rule; exactly one error is required.',

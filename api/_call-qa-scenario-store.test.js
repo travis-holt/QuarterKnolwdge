@@ -28,6 +28,14 @@ function privateScenario(id = 'qa-test-alpha', overrides = {}) {
     criticalMisses: ['State the fictional unsafe outcome.'],
     scoringNotes: ['Accept natural wording in this fictional fixture.'],
     hiddenChartState: { fixture: true },
+    callerCaseFile: {
+      callerGoal: 'Get a fictional administrative request resolved.',
+      knownFacts: ['Fictional fact the caller knows.', 'A second consistent fictional fact.'],
+      factsToReveal: ['A fictional detail shared only when asked.'],
+      revealRules: ['Do not volunteer the detail unprompted.'],
+      behavior: ['Polite but slightly rushed.'],
+      consistencyConstraints: ['Never contradict the fictional facts above.'],
+    },
     ruleIds: [],
     sourceSopVersion: null,
     sourceRuleVersion: null,
@@ -71,6 +79,7 @@ describe('private Call QA scenario validation', () => {
       gradingContext: data.gradingContext,
       expectedActions: data.expectedActions,
       hiddenChartState: data.hiddenChartState,
+      callerCaseFile: data.callerCaseFile,
     });
     expect(result).not.toHaveProperty('active');
     expect(result).not.toHaveProperty('futurePrivateField');
@@ -101,6 +110,10 @@ describe('private Call QA scenario validation', () => {
     ['grading context', (data) => ({ data: { ...data, gradingContext: '' } })],
     ['private arrays', (data) => ({ data: { ...data, expectedActions: [] } })],
     ['hidden chart shape', (data) => ({ data: { ...data, hiddenChartState: [] } })],
+    ['missing caller case file', (data) => ({ data: { ...data, callerCaseFile: null } })],
+    ['caller case file goal', (data) => ({ data: { ...data, callerCaseFile: { ...data.callerCaseFile, callerGoal: '' } } })],
+    ['caller case file known facts', (data) => ({ data: { ...data, callerCaseFile: { ...data.callerCaseFile, knownFacts: [] } } })],
+    ['caller case file reveal shape', (data) => ({ data: { ...data, callerCaseFile: { ...data.callerCaseFile, factsToReveal: 'not-an-array' } } })],
   ])('fails closed on invalid %s', (_label, mutate) => {
     const original = privateScenario();
     const changed = mutate(original);
@@ -120,16 +133,73 @@ describe('private Call QA scenario selection', () => {
         department: 'pediatrics',
       });
     });
-    const selected = selectLoadedCallQaScenario(scenarios, {
+    const priorAttempts = scenarios.slice(0, 3).map((scenario, index) => ({
       department: 'pediatrics',
-      priorAttempts: scenarios.slice(0, 3).map((scenario, index) => ({
+      qa: { score: 80 },
+      endedAt: { seconds: 3 - index },
+      qaScenarioId: scenario.id,
+    }));
+    for (const random of [() => 0, () => 0.5, () => 0.999]) {
+      const selected = selectLoadedCallQaScenario(scenarios, {
         department: 'pediatrics',
-        qa: { score: 80 },
-        endedAt: { seconds: 3 - index },
-        qaScenarioId: scenario.id,
-      })),
+        priorAttempts,
+        random,
+      });
+      expect(selected.id).toBe('qa-test-gamma');
+    }
+  });
+
+  it('chooses randomly among multiple eligible scenarios', () => {
+    const scenarios = ['alpha', 'beta', 'delta', 'gamma'].map((suffix) => {
+      const data = privateScenario(`qa-test-${suffix}`);
+      return validatePrivateScenario(data, {
+        documentId: privateScenarioDocumentId(data),
+        department: 'pediatrics',
+      });
     });
-    expect(selected.id).toBe('qa-test-gamma');
+    const pickedIds = [0, 0.3, 0.6, 0.999].map((value) =>
+      selectLoadedCallQaScenario(scenarios, {
+        department: 'pediatrics',
+        priorAttempts: [],
+        random: () => value,
+      }).id);
+    expect(new Set(pickedIds).size).toBe(4);
+    expect(pickedIds.sort()).toEqual(['qa-test-alpha', 'qa-test-beta', 'qa-test-delta', 'qa-test-gamma']);
+  });
+
+  it('falls back to a random choice among the full set when every scenario is recent', () => {
+    const scenarios = ['alpha', 'beta', 'delta'].map((suffix) => {
+      const data = privateScenario(`qa-test-${suffix}`);
+      return validatePrivateScenario(data, {
+        documentId: privateScenarioDocumentId(data),
+        department: 'pediatrics',
+      });
+    });
+    const priorAttempts = scenarios.map((scenario, index) => ({
+      department: 'pediatrics',
+      qa: { score: 80 },
+      endedAt: { seconds: 3 - index },
+      qaScenarioId: scenario.id,
+    }));
+    const first = selectLoadedCallQaScenario(scenarios, {
+      department: 'pediatrics', priorAttempts, random: () => 0,
+    });
+    const last = selectLoadedCallQaScenario(scenarios, {
+      department: 'pediatrics', priorAttempts, random: () => 0.999,
+    });
+    expect(first.id).toBe('qa-test-alpha');
+    expect(last.id).toBe('qa-test-delta');
+  });
+
+  it('never selects a scenario from another department regardless of the random draw', () => {
+    const data = privateScenario('qa-test-obgyn-only', { department: 'obgyn', ruleIds: ['rto_documentation'] });
+    const scenario = validatePrivateScenario(data, {
+      documentId: privateScenarioDocumentId(data),
+      department: 'obgyn',
+    });
+    expect(selectLoadedCallQaScenario([scenario], {
+      department: 'pediatrics', priorAttempts: [], random: () => 0,
+    })).toBeNull();
   });
 
   it('queries by department, ignores inactive docs, and returns a validated scenario', async () => {

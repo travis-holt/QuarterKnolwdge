@@ -23,3 +23,16 @@ criteria; partial label sets are rejected. Capture/grading fields and transcript
 role counts must match the PR #32 state machine.
 
 See `docs/CALL_QA_CALIBRATION.md` for the schema and reviewer workflow.
+
+Runtime scenarios are PRIVATE (Admin-only Firestore `callQaScenariosPrivate`).
+Fixtures reference calibration scenario descriptors: the committed
+`synthetic-*` descriptors from `api/_qa-calibration-scenarios.js` (explicitly
+`nonProduction: true`, `calibrationAuthority: "none"`,
+`evidenceUse: "synthetic-rehearsal-only"`), or — for real operator runs — a
+metadata-only private-bank manifest passed via `--private-manifest` (an ignored
+local file; never committed; private instance fields such as opening lines,
+briefings, grading context, hidden facts, or caller case files are rejected by
+the manifest validator). Synthetic-example fixtures must carry the three
+non-production marks. Coverage run without a private manifest honestly reports
+`runtime-bank-evidence-missing`; the anonymous aggregate minimum counts alone
+are never treated as runtime coverage evidence.
