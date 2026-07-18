@@ -100,6 +100,10 @@ export function diffAgainstExisting(documents, existingDocs) {
     else updates.push(documentId);
   }
   for (const [documentId, data] of existing) {
+    // Only rollout-department documents are managed by this manifest. An
+    // OB/GYN-only manifest must never deactivate a Pediatrics (or other
+    // out-of-scope) document that happens to exist in the collection.
+    if (!isCallQaRolloutDept(data?.department)) continue;
     if (!documents.has(documentId) && data?.active === true) deactivates.push(documentId);
   }
   return { creates, updates, deactivates };

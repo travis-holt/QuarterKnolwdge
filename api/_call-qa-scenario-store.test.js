@@ -159,7 +159,9 @@ describe('private Call QA scenario validation', () => {
     })).toThrow();
   });
 
-  it('accepts an OB/GYN scenario grounded in the verified active SOP version', () => {
+  it('pins OB/GYN scenarios to the owner-confirmed current-floor SOP version only', () => {
+    // Launch contract: no dynamic active-SOP grounding for private Call QA
+    // content — anything other than OBGYN_SOP_VERSION is rejected.
     const data = privateScenario('qa-test-obgyn-active-sop', {
       department: 'obgyn',
       ruleIds: ['rto_documentation'],
@@ -169,13 +171,14 @@ describe('private Call QA scenario validation', () => {
     expect(() => validatePrivateScenario(data, {
       documentId: privateScenarioDocumentId(data),
       department: 'obgyn',
-    })).toThrow();
-    const result = validatePrivateScenario(data, {
-      documentId: privateScenarioDocumentId(data),
-      department: 'obgyn',
-      activeSopVersion: 'obgyn-active-sop-v9',
+    })).toThrow(/SOP version is unsupported/);
+    const pinned = privateScenario('qa-test-obgyn-pinned', {
+      department: 'obgyn', ruleIds: ['rto_documentation'], ...OBGYN_PROVENANCE,
     });
-    expect(result.sourceSopVersion).toBe('obgyn-active-sop-v9');
+    expect(validatePrivateScenario(pinned, {
+      documentId: privateScenarioDocumentId(pinned),
+      department: 'obgyn',
+    }).sourceSopVersion).toBe(OBGYN_SOP_VERSION);
   });
 });
 

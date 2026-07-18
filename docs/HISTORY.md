@@ -18,11 +18,14 @@
   rollout-guarded.
 - **Provisioning tool:** `validateProvisioningPayload` rejects scenarios for non-rollout
   departments (no Pediatrics section required — or accepted), and requires ≥15 active OB/GYN
-  scenarios. Tests rewritten for OB/GYN-only payloads with real provenance constants.
+  scenarios. `diffAgainstExisting` only manages (and can only deactivate) existing documents in
+  rollout departments — an OB/GYN-only manifest can never deactivate a legacy Pediatrics document.
+  Tests rewritten for OB/GYN-only payloads with real provenance constants.
 - **Strict OB/GYN provenance:** `validatePrivateScenario` now REQUIRES, for OB/GYN, a non-null
   `sourceRuleVersion === OBGYN_RULE_SET_VERSION`, `sourceAuthority === OBGYN_SOURCE_AUTHORITY`,
-  a supported `sourceSopVersion` (`OBGYN_SOP_VERSION` current-floor constant, or a verified
-  `activeSopVersion` passed by the caller), and non-empty valid `ruleIds`. Null/empty provenance
+  `sourceSopVersion === OBGYN_SOP_VERSION` (the launch contract pins private Call QA content to
+  the owner-confirmed current-floor version — no dynamic active-SOP grounding; re-pin the constant
+  on a deliberate content re-authoring), and non-empty valid `ruleIds`. Null/empty provenance
   fails validation; Pediatrics-shaped legacy fixtures keep legacy-tolerant behavior (they are not
   provisionable anyway).
 - **Honest reporting:** calibration coverage flags `runtime-bank-evidence-missing`/

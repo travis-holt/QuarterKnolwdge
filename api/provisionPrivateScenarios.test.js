@@ -108,14 +108,25 @@ describe('provision-private-scenarios operator tool', () => {
     const { documents } = validateProvisioningPayload(fullPayload());
     const [firstId] = documents.keys();
     const existing = [
-      { id: firstId, data: { active: true } },
-      { id: 'stale__old-v0', data: { active: true } },
-      { id: 'retired__old-v0', data: { active: false } },
+      { id: firstId, data: { active: true, department: 'obgyn' } },
+      { id: 'stale__old-v0', data: { active: true, department: 'obgyn' } },
+      { id: 'retired__old-v0', data: { active: false, department: 'obgyn' } },
     ];
     const diff = diffAgainstExisting(documents, existing);
     expect(diff.updates).toEqual([firstId]);
     expect(diff.creates).toHaveLength(14);
     expect(diff.deactivates).toEqual(['stale__old-v0']);
+  });
+
+  it('never deactivates an out-of-scope (Pediatrics) document from an OB/GYN-only manifest', () => {
+    const { documents } = validateProvisioningPayload(fullPayload());
+    const existing = [
+      { id: 'legacy-peds__v1', data: { active: true, department: 'pediatrics' } },
+      { id: 'stale-obgyn__v0', data: { active: true, department: 'obgyn' } },
+    ];
+    const diff = diffAgainstExisting(documents, existing);
+    expect(diff.deactivates).toEqual(['stale-obgyn__v0']);
+    expect(diff.deactivates).not.toContain('legacy-peds__v1');
   });
 
   it('document identities bind id and version', () => {

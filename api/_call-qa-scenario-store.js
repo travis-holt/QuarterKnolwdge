@@ -59,7 +59,7 @@ export function validateCallerCaseFile(raw, scenarioId) {
   };
 }
 
-export function validatePrivateScenario(data, { documentId, department, activeSopVersion = null }) {
+export function validatePrivateScenario(data, { documentId, department }) {
   if (!data || data.active !== true) throw new Error('Private Call QA scenario is not active.');
 
   const requiredStrings = [
@@ -111,16 +111,17 @@ export function validatePrivateScenario(data, { documentId, department, activeSo
     // OB/GYN rollout scenarios require COMPLETE, current provenance: null or
     // empty values never validate. The rule-set version and source authority
     // must match the current executable constants, and the SOP version must be
-    // the owner-confirmed current-floor version (or the verified active SOP
-    // version supplied by the caller of this validator).
+    // exactly the owner-confirmed current-floor version — the launch contract
+    // deliberately pins private Call QA content to OBGYN_SOP_VERSION (no
+    // dynamic active-SOP grounding; re-pin the constant on a deliberate
+    // content re-authoring, never implicitly).
     if (data.sourceRuleVersion !== OBGYN_RULE_SET_VERSION) {
       throw new Error(`Private Call QA scenario rule-set version is not current for ${data.id}.`);
     }
     if (data.sourceAuthority !== OBGYN_SOURCE_AUTHORITY) {
       throw new Error(`Private Call QA scenario source authority is invalid for ${data.id}.`);
     }
-    const supportedSopVersions = [OBGYN_SOP_VERSION, activeSopVersion].filter(Boolean);
-    if (!nonEmptyString(data.sourceSopVersion) || !supportedSopVersions.includes(data.sourceSopVersion)) {
+    if (data.sourceSopVersion !== OBGYN_SOP_VERSION) {
       throw new Error(`Private Call QA scenario SOP version is unsupported for ${data.id}.`);
     }
     if (!stringArray(data.ruleIds)) {

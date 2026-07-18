@@ -30,7 +30,8 @@
 > Pediatrics QA attempts stay readable but no scored Pediatrics Call QA is offered or required),
 > the private-bank minimum (15 active OB/GYN scenarios only — the provisioning tool rejects
 > non-rollout departments), OB/GYN private scenarios now require complete non-null provenance
-> (current rule-set version, owner-confirmed authority, supported SOP version, non-empty valid
+> (current rule-set version, owner-confirmed authority, `sourceSopVersion` pinned exactly to the
+> current-floor `OBGYN_SOP_VERSION`, non-empty valid
 > rule IDs), and coverage/pilot-smoke report the rollout scope honestly; CI now also runs
 > `qa:pilot-smoke`, `qa:calibrate`, and `qa:coverage` (offline, no secrets).
 > See docs/HISTORY.md 2026-07-18. Prior: Call QA answer secrecy + caller-observable grading — every runtime
@@ -1404,8 +1405,13 @@ QuarterKnolwdge/
   build), `FIREBASE_SERVICE_ACCOUNT_JSON`, `SUPERVISOR_PASSCODE_SERVER`,
   `SESSION_SIGNING_SECRET`, and `GEMINI_API_KEYS` (server-only, never bundled).
   **Historical:** GitHub Pages (retired — no server) → Vercel (owner chose Railway instead).
-- **CI/CD:** GitHub Actions CI now runs `npm test` and `npm run build` on `pull_request` to `main`
-  and `push` to `main` via `.github/workflows/ci.yml` (Node 24, `npm ci`, no deploy steps). The app
+- **CI/CD:** GitHub Actions CI runs `npm ci` → `npm test` (unit suite) → `npm run test:rules`
+  (Firestore Rules emulator, Temurin 21) → `npm run build` (includes the private-runtime
+  bundle scan) → `npm run qa:pilot-smoke` → `npm run qa:calibrate` → `npm run qa:coverage`
+  (all offline/deterministic — no Firestore, Gemini, secrets, or private files;
+  `qa:calibrate:check` is intentionally excluded because it exits 1 with `INSUFFICIENT_DATA`
+  until real human calibration evidence exists) on `pull_request` to `main` and `push` to `main`
+  via `.github/workflows/ci.yml` (Node 24, no deploy steps). The app
   declares `engines.node ^20.19.0 || >=22.12.0` in `package.json`; CI uses Node 24. Railway still handles
   deployment separately from Git pushes to `main`.
 - **Monitoring:** None (Railway console shows logs + metrics).
@@ -1802,7 +1808,7 @@ of this file on 2026-07-07 to cut per-session context cost (it was ~55% of the f
   (init → chat/voice turns → `/api/live` relay) for caller consistency. Scored Call QA deliberately
   does not: its caller receives no grading context, expected actions, critical misses, scoring notes,
   rule/workflow metadata, or hidden chart state. Final verification: `npm test` =
-  **1,280/1,280 across 65 files**; Firestore Rules emulator assertions = **76/76**
+  **1,281/1,281 across 65 files**; Firestore Rules emulator assertions = **76/76**
   (51 result authorization + 25 Call QA); production build
   includes the private-runtime bundle scan. GitHub Actions mirrors the
   normal local gate on `main` pushes and PRs: `npm ci` → `npm test` → `npm run build` (no deploy step).
@@ -1836,7 +1842,7 @@ of this file on 2026-07-07 to cut per-session context cost (it was ~55% of the f
 - **Experimental / mockup:**
   - Training **content** is mockup (flagged in UI). Logic is real.
   - **Adult Medicine and Behavioural Health** are not assessed; **Pediatrics and OB/GYN** are live.
-- **Test coverage:** **1,280 unit tests across 65 files** and **76 Firestore Rules emulator
+- **Test coverage:** **1,281 unit tests across 65 files** and **76 Firestore Rules emulator
   assertions** (51 result authorization + 25 Call QA) after the 2026-07-18 merge-readiness pass
   (calibration-private-bank adaptation, callerCaseFile, randomized selection, contextual audit
   guard + 14-workflow generation smoke, encoding guard, provisioning tool) atop the 2026-07-17
@@ -1961,7 +1967,7 @@ of this file on 2026-07-07 to cut per-session context cost (it was ~55% of the f
   OB/GYN = **37** seed questions (offline fallback) + the **48-item MCQ v2 operating-model bank**
   (24 Pediatrics + 24 OB/GYN) that replaces the weak active bank via a marker-gated
   archive-and-replace migration (bank grows in Firestore per dept) · 4 departments (**Pediatrics
-  + OB/GYN live**, 2 mockup) · **1,280 unit tests across 65 files** + **76 assertions**
+  + OB/GYN live**, 2 mockup) · **1,281 unit tests across 65 files** + **76 assertions**
   across two committed Firestore Rules emulator suites (`npm run test:rules`; require Java, run in
   CI, not part of the unit-test count) ·
   **14** Firestore collections
@@ -2246,7 +2252,7 @@ npm run test:e2e     # run the Playwright browser tests (auto-builds + starts th
 - Heatmap intensity toggle (show % inside matrix cells).
 
 ### Technical Debt
-- **1,280 unit tests across 65 files** as of 2026-07-18 (plus **76 assertions** across two
+- **1,281 unit tests across 65 files** as of 2026-07-18 (plus **76 assertions** across two
   committed Firestore Rules emulator suites, `npm run test:rules`, run separately from the unit-test
   gate). **Role-app
   coverage** (`App`, `Start`,
@@ -2267,8 +2273,10 @@ npm run test:e2e     # run the Playwright browser tests (auto-builds + starts th
 - ~~**Redundant condition** in `SpotTheError.jsx:157`~~ — simplified 2026-06-26.
 - ~~`SUPERVISOR_PASSCODE` secret validation duplicated 6×~~ — **extracted to `api/_auth.js` 2026-06-26**.
 - ~~AbortController/fetch pattern duplicated 4×~~ — **extracted to `src/lib/apiFetch.js` 2026-06-26**.
-- GitHub Actions CI covers the basic PR/main verification gate only (`npm test` + `npm run build`).
-  There is still no automated deploy workflow in-repo; Railway deploys separately from GitHub Actions.
+- GitHub Actions CI covers the verification gate only (`npm ci` → `npm test` → `npm run
+  test:rules` → `npm run build` + bundle scan → `qa:pilot-smoke` → `qa:calibrate` →
+  `qa:coverage`). There is still no automated deploy workflow in-repo; Railway deploys separately
+  from GitHub Actions.
 - Single large `styles.css` — fine for now; revisit if it keeps growing.
 - Repo name typo `QuarterKnolwdge` is in the Railway/GitHub remote URL — don't rename without
   updating Railway's Git integration.
@@ -2428,7 +2436,8 @@ npm run test:e2e     # run the Playwright browser tests (auto-builds + starts th
   to `main`; GitHub Actions does not deploy. The branch/PR slash commands
   (`/start-work`, `/pre-pr`, `/end-work`) still exist but are optional; the only remaining
   `.claude/settings.json` hooks are a commit-format reminder and a block on pushing with
-  uncommitted changes. All gates are `npm test` + `npm run build`.
+  uncommitted changes. Local gates are `npm test` + `npm run build`; CI additionally runs the
+  Firestore Rules suite and the offline QA smoke/calibration/coverage scripts.
 
 - **Project conventions:**
   - All tunable values live in [src/data/config.js](src/data/config.js). Prefer editing data files
