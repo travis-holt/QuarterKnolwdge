@@ -1,5 +1,32 @@
 # Development History - Knowledge Check
 
+### 2026-07-18 - Private Call QA bank provisioned + Firestore rules deployed (operator action)
+- **Provisioning gate cleared.** An authorized operator authored 15 fresh private OB/GYN Call QA
+  scenarios (fictional callers; reconciled against the owner-provided current-floor SOP, Version
+  1.0 effective 17 July 2026, which matches the pinned `obgyn-current-floor-2026-07-17`
+  constant — no re-versioning needed). The bank passed the exact production validator locally
+  (15/15 active OB/GYN; difficulty mix 4 easy / 7 medium / 4 hard; 17 of 24 executable rule IDs
+  covered — full rule coverage is a later bank-expansion goal, not a launch blocker).
+- **Production Firestore written.** After a clean dry run (`Would create: 15 · update: 0 ·
+  deactivate: 0`), the bank was applied to the Admin-only `callQaScenariosPrivate` collection:
+  **15 created, 0 updated, 0 deactivated.** All scenario content, the SOP reconciliation record,
+  and the review table live only in gitignored operator storage (`private-call-qa/`) — no scenario
+  material, secret path, key identifier, or credential is committed to the repo, this file, or the PR.
+- **Pre-publish integrity scan run (read-only, Firebase Admin).** The §12-mandated scan of the
+  production `results` collection validated every document ID against its body ownership/
+  department/assessment-type: **17 documents, 17 clean, 0 flagged** — nothing to quarantine.
+- **Firestore rules deployed.** The tightened `firestore.rules` (result document ID+body ownership
+  binding, private Call QA store denial for every client, navigator raw-attempt denial,
+  forged/legacy QA protection) compiled and released to production.
+- **Still outstanding (live smoke requirements):** merge PR #35 and let Railway deploy; verify
+  navigator login/token exchange against the live deployment; verify `/api/my-interviews` returns
+  only the safe projected history; run the safe Playwright walkthrough; place one deliberate
+  real-microphone Call QA test call confirming a private-bank scenario is selected, the call opens
+  normally, the server transcript finalizes, grading completes, the supervisor sees the result,
+  and the navigator cannot access private answers, hidden chart state, or raw attempt data.
+- Docs updated: CLAUDE.md header note, F25 status/rotation gate, §8, §12 scan entry, §15
+  priorities/blockers. Docs-only change; no application code touched.
+
 ### 2026-07-18 - OB/GYN-only scored Call QA rollout scope
 - **Rollout configuration:** new `CALL_QA_ROLLOUT_DEPARTMENTS = ['obgyn']` +
   `isCallQaRolloutDept()` in `src/data/callQaScenarios.js` now govern scored Call QA availability

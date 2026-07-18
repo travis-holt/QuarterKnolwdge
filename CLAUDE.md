@@ -23,8 +23,14 @@
 > concepts with exact active-SOP matching; deterministic audit validation is context-aware
 > (chart facts + preceding Patient turn) while keeping the exactly-one-Agent-error guarantee; 14
 > OB/GYN audit workflow generation smoke tests added; mojibake removed with a standing encoding
-> guard; and an Admin-only dry-run private provisioning tool added (not executed — the private bank
-> remains unprovisioned). Same-day follow-up: **scored Call QA rollout is OB/GYN-only** —
+> guard; and an Admin-only dry-run private provisioning tool added. **Provisioning executed
+> 2026-07-18 by an authorized operator:** 15 freshly authored private OB/GYN scenarios validated
+> 15/15 locally, dry-run verified, then applied to production `callQaScenariosPrivate`
+> (15 created, 0 updated, 0 deactivated); the read-only pre-publish `results` integrity scan
+> passed (17 documents, 17 clean, 0 flagged) and the tightened Firestore rules were deployed to
+> production. Scenario content and operator credentials live only in gitignored operator
+> material — nothing private is committed. Remaining live smoke requirements are listed in §15.
+> Same-day follow-up: **scored Call QA rollout is OB/GYN-only** —
 > `CALL_QA_ROLLOUT_DEPARTMENTS = ['obgyn']` in `src/data/callQaScenarios.js` governs the relay's
 > test-mode gate, the phase flow (Pediatrics runs a two-phase MCQ → Spot assessment; historical
 > Pediatrics QA attempts stay readable but no scored Pediatrics Call QA is offered or required),
@@ -950,9 +956,12 @@ training assignments.
   order. Since 2026-07-07, Call QA remains a separate QA/readiness signal stored on the interview
   doc; it no longer writes a synthetic `results` doc or applies one full-call score evenly to all
   six domain scores.
-- **Status:** Code complete; **deployment is blocked on private scenario rotation/provisioning**.
-  Earlier fixture grading remains useful pipeline evidence (see the 2026-07-03 history entry), but
-  the formerly published runtime instances are compromised and are not valid production content.
+- **Status:** Code complete; **the provisioning gate cleared 2026-07-18** — 15 freshly rotated
+  private OB/GYN scenarios were provisioned into production `callQaScenariosPrivate`
+  (15 created / 0 updated / 0 deactivated) and the tightened Firestore rules were deployed. The
+  formerly published runtime instances remain compromised and permanently retired. Live
+  microphone/end-to-end validation of the scored flow is still outstanding (see §15).
+  Earlier fixture grading remains useful pipeline evidence (see the 2026-07-03 history entry).
 - **Notes:** The QA rubric and scenario bank are domain/competency-tagged, but their projections
   intentionally remain a QA-only supervisor signal and do not feed the capability matrix. Advisory
   practice grading (`grade-interview`) is unchanged. Domain-practice analytics ignore interview docs
@@ -1717,8 +1726,10 @@ of this file on 2026-07-07 to cut per-session context cost (it was ~55% of the f
   natural outcomes, deterministic checks act only on explicit contradictions/unsafe commitments,
   and private scenarios must use narrow rule-derived domain/competency tags rather than an all-six
   default. The previously published instances are compromised and retired from the runtime source;
-  freshly rotated private provisioning is a pre-deploy prerequisite and is not performed here. No
-  merge, deployment, migration, production write, or Firestore-rules publication is part of this PR.
+  freshly rotated private provisioning was completed by an authorized operator on 2026-07-18:
+  15 active OB/GYN scenarios provisioned (15 created, 0 updated, 0 deactivated), pre-publish
+  `results` integrity scan clean (17/17, 0 flagged), and the tightened Firestore rules published
+  to production. No provisioning artifact, mapping, or credential is committed to the repo.
 
 - **Call QA calibration/readiness (2026-07-16):** F27 adds a fail-closed, offline calibration
   instrument over sanitized local fixtures. It measures final-outcome confusion, criterion and
@@ -2360,9 +2371,9 @@ npm run test:e2e     # run the Playwright browser tests (auto-builds + starts th
   `assessmentType`; a suffix inconsistent with `assessmentType`; a legacy plain ID carrying
   non-Pediatrics/non-MCQ data; and duplicate/conflicting canonical slots. Investigate every
   mismatch and quarantine/archive/manually correct affected documents (preserving evidence first)
-  via trusted administrator access before the tightened rules go live. **This scan has not been run
-  against production; no claim is made that the production `results` collection is or is not
-  clean.**
+  via trusted administrator access before the tightened rules go live. **Scan executed against
+  production on 2026-07-18 with Firebase Admin access: 17 documents, 17 clean, 0 flagged. The
+  tightened rules were deployed the same day.**
 - **Browser/live-service validation gap:** unit/build/server checks are complete, but microphone
   interoperability and real Firebase/Gemini behavior still require the safe post-deploy smoke and
   a deliberate voice call on the target browser.
@@ -2501,23 +2512,22 @@ npm run test:e2e     # run the Playwright browser tests (auto-builds + starts th
 ## 15. Current Priorities
 
 1. **Maintain this CLAUDE.md** on every change (highest standing priority).
-2. **Provision and rotate private Call QA content before any deployment.** Treat every formerly
-   published scenario ID, caller/opening pair, briefing, hidden fact, and grading expectation as
-   compromised and permanently retired. An authorized operator must create fresh active instances
-   in client-denied `callQaScenariosPrivate`, meet the anonymous aggregate minimum (15 active
-   OB/GYN scenarios — the scored rollout is OB/GYN-only; Pediatrics needs no private bank and is
-   rejected by the provisioning tool), derive narrow domains/competencies from each instance's
-   rules, and verify no mapping
-   or provisioning artifact is committed. This PR performs none of those production writes and must
-   not be deployed until the gate is complete.
-3. **Deploy the identity boundary safely** — add Firebase Admin + supervisor secrets, deploy this
-   code, verify navigator/supervisor token exchange, **run the read-only pre-publish existing-results
-   integrity scan** (see [§12](#12-bugs--known-issues) "pre-publish existing-results integrity scan")
-   and resolve any flagged documents, then publish the tightened Firestore rules (result ownership,
-   private Call QA store denial, navigator raw-attempt denial, and forged/legacy QA protection).
-   Verify `/api/my-interviews` first and publish the rules in the same controlled rollout; the rules
-   in this branch are not live. Never reverse the prerequisites.
-4. **Post-deploy browser smoke** — run the safe Playwright suite and one deliberate microphone call;
+2. ~~**Provision and rotate private Call QA content before any deployment.**~~ **DONE 2026-07-18:**
+   an authorized operator authored 15 fresh private OB/GYN scenarios (reconciled against the
+   owner-provided current-floor SOP, validated 15/15 by the production validator), dry-ran, then
+   applied them to production `callQaScenariosPrivate` (15 created, 0 updated, 0 deactivated).
+   Formerly published instances remain permanently retired; no mapping, provisioning artifact, or
+   credential is committed — all operator material lives in gitignored private storage.
+3. **Deploy the identity boundary safely** — **partially done 2026-07-18:** the read-only
+   pre-publish existing-results integrity scan ran clean against production (17 documents, 0
+   flagged) and the tightened Firestore rules (result ownership, private Call QA store denial,
+   navigator raw-attempt denial, forged/legacy QA protection) are deployed and live. Still
+   outstanding: deploy this branch's code via merge → Railway, then verify navigator/supervisor
+   token exchange and that `/api/my-interviews` returns only the safe projected history.
+4. **Post-deploy browser smoke** — run the safe Playwright suite and one deliberate microphone
+   Call QA test call, confirming: a private-bank scenario is selected, the call opens normally,
+   the server transcript finalizes, grading completes, the supervisor sees the result, and the
+   navigator cannot see private answers, hidden chart state, or raw attempt data;
    the container cannot prove real browser permission/device or live Firebase/Gemini behavior.
 5. **Deeper role-app tests** — current unit/behavior coverage is broad; editing questions,
    generating SOPs, and a full authenticated assessment remain the next browser-automation targets.
@@ -2559,8 +2569,8 @@ npm run test:e2e     # run the Playwright browser tests (auto-builds + starts th
   credentials, or private contact details.
 
 **Blockers:**
-- Fresh private Call QA scenarios have not been provisioned. Existing published instances are
-  compromised and must be retired/rotated before this branch can be deployed.
+- ~~Fresh private Call QA scenarios have not been provisioned~~ — **cleared 2026-07-18** (15
+  provisioned to production; rules deployed; live microphone smoke still outstanding).
 - Adult Medicine and Behavioural Health remain mockup — each needs an owner-provided SOP before
   they can become live checks.
 - Real training materials needed to replace mockup module content.
