@@ -8,11 +8,40 @@ import {
   CALL_QA_ACTIVE_TURN_SETTLE_MS, clientFinalizeGuardMs,
 } from './live-relay.js';
 import { createFakeFirestore } from './fixtures/fakeFirestore.js';
-import { getCallQaScenarioById } from '../src/data/callQaScenarios.js';
 import { CAPTURE_STATUS } from './_call-qa-attempts.js';
 import { MAX_QA_TURN_CHARS } from './_call-qa-transcript.js';
 
-const SCENARIO = getCallQaScenarioById('qa-peds-refill-001');
+const SCENARIO = {
+  id: 'qa-test-call-001',
+  version: 'test-v1',
+  department: 'obgyn',
+  title: 'Fictional test call',
+  workflowType: 'fictional_workflow',
+  difficulty: 'medium',
+  primaryDomainId: 'intake',
+  domainIds: ['intake'],
+  competencyIds: ['communication'],
+  callerName: 'Test Caller',
+  openingLine: 'I need help with an administrative request.',
+  publicBriefing: 'A caller asks for help with a fictional administrative request.',
+  gradingContext: 'Use the fictional unit-test expectations for this call.',
+  expectedActions: ['Complete the fictional observable step.'],
+  criticalMisses: ['State the fictional unsafe outcome.'],
+  scoringNotes: ['Accept natural wording in this fictional fixture.'],
+  hiddenChartState: { fixture: true },
+  callerCaseFile: {
+    callerGoal: 'Get a fictional administrative request resolved.',
+    knownFacts: ['A private fictional fact only the caller knows.'],
+    factsToReveal: ['A fictional detail shared only when asked.'],
+    revealRules: ['Do not volunteer the detail unprompted.'],
+    behavior: ['Polite but slightly rushed.'],
+    consistencyConstraints: ['Never contradict the fictional facts above.'],
+  },
+  ruleIds: [],
+  sourceSopVersion: null,
+  sourceRuleVersion: null,
+  sourceAuthority: null,
+};
 const flush = () => new Promise((r) => setTimeout(r, 0));
 // Unique IP per harness — the relay's per-IP concurrency cap is module-level
 // state that would otherwise leak across tests.
@@ -42,7 +71,8 @@ function harness(overrides = {}) {
     verifyToken: vi.fn(async () => ({ role: 'navigator', navigatorId: 'nav-a' })),
     getApiKeys: () => ['k1'],
     buildSystemInstruction: () => 'persona',
-    resolveScenario: (id) => getCallQaScenarioById(id),
+    selectScenario: vi.fn(() => SCENARIO),
+    loadPriorQaAttempts: vi.fn(async () => []),
     loadRosterMember: vi.fn(async () => ({ id: 'nav-a', name: 'Ada', status: 'active' })),
     db: () => db,
     now: (() => { let t = 1000; return () => (t += 1000); })(),
@@ -77,7 +107,7 @@ function harness(overrides = {}) {
 async function startTest(h, startMsg = {}) {
   handleConnection(h.client, {}, h.deps);
   await h.client.emit('message', JSON.stringify({
-    type: 'start', idToken: 't', mode: 'test', department: 'pediatrics', qaScenarioId: SCENARIO.id, ...startMsg,
+    type: 'start', idToken: 't', mode: 'test', department: 'obgyn', ...startMsg,
   }));
   await flush();
   // Drive the upstream setup handshake.
@@ -98,18 +128,20 @@ function storedAttempt(h) {
 beforeEach(() => vi.clearAllMocks());
 
 describe('server-authoritative start contract', () => {
-  it('derives navigatorId from the token and loads the scenario server-side (ignoring client scenario text)', async () => {
+  it('derives navigatorId from the token and selects the scenario server-side (ignoring every client scenario field)', async () => {
     const h = harness();
     handleConnection(h.client, {}, h.deps);
     await h.client.emit('message', JSON.stringify({
-      type: 'start', idToken: 't', mode: 'test', department: 'pediatrics', qaScenarioId: SCENARIO.id,
+      type: 'start', idToken: 't', mode: 'test', department: 'obgyn', qaScenarioId: SCENARIO.id,
       navigatorId: 'nav-evil', scenario: 'FORGED', callerName: 'Forged', qaScenarioTitle: 'x',
     }));
     await flush();
     const attempt = storedAttempt(h);
     expect(attempt.navigatorId).toBe('nav-a');
-    expect(attempt.scenario).toBe(SCENARIO.scenario);
+    expect(attempt.scenario).toBe(SCENARIO.publicBriefing);
     expect(attempt.captureAuthority).toBe('server');
+    expect(h.deps.loadPriorQaAttempts).toHaveBeenCalledWith('nav-a');
+    expect(h.deps.selectScenario).toHaveBeenCalledWith({ department: 'obgyn', priorAttempts: [] });
   });
 
   it('creates the attempt BEFORE sending ready and returns the attempt id + trusted scenario', async () => {
@@ -118,25 +150,81 @@ describe('server-authoritative start contract', () => {
     const ready = h.client.lastByType('ready');
     expect(ready).toBeTruthy();
     expect(ready.attemptId).toBeTruthy();
-    expect(ready.scenario).toMatchObject({ id: SCENARIO.id, department: 'pediatrics', callerName: SCENARIO.callerName });
+    expect(ready.scenario).toMatchObject({
+      prompt: SCENARIO.publicBriefing,
+      department: 'obgyn',
+      callerName: SCENARIO.callerName,
+      primaryDomainId: SCENARIO.primaryDomainId,
+    });
+    expect(ready.scenario).not.toHaveProperty('id');
+    expect(ready.scenario).not.toHaveProperty('expectedActions');
+    expect(ready.scenario).not.toHaveProperty('criticalMisses');
+    expect(ready.scenario).not.toHaveProperty('hiddenChartState');
+    expect(ready.scenario).not.toHaveProperty('gradingContext');
+    expect(ready.scenario).not.toHaveProperty('scoringNotes');
     expect(storedAttempt(h)).toBeTruthy();
+  });
+
+  it('does not send the private grading rubric or hidden chart state to the live caller model', async () => {
+    const buildSystemInstruction = vi.fn(() => 'persona');
+    const h = harness({ buildSystemInstruction });
+    await startTest(h);
+    const [callerName, prompt, options] = buildSystemInstruction.mock.calls[0];
+    expect(callerName).toBe(SCENARIO.callerName);
+    expect(prompt).toBe(SCENARIO.publicBriefing);
+    expect(options).not.toHaveProperty('caseFile');
+    expect(JSON.stringify(options)).not.toContain('expectedActions');
+    expect(JSON.stringify(options)).not.toContain('criticalMisses');
+    expect(JSON.stringify(options)).not.toContain('hiddenChartState');
+    expect(JSON.stringify(buildSystemInstruction.mock.calls[0])).not.toContain(SCENARIO.gradingContext);
+  });
+
+  it('passes the private callerCaseFile to the caller persona but never to the browser', async () => {
+    const buildSystemInstruction = vi.fn(() => 'persona');
+    const h = harness({ buildSystemInstruction });
+    await startTest(h);
+    const [, , options] = buildSystemInstruction.mock.calls[0];
+    // The caller model gets the private consistent-fact contract…
+    expect(options.callerCaseFile).toEqual(SCENARIO.callerCaseFile);
+    // …but no grader-only chart state rides along with it.
+    expect(JSON.stringify(options)).not.toContain('hiddenChartState');
+    // The browser projection carries neither the case file nor any of its facts.
+    const ready = h.client.lastByType('ready');
+    const readyJson = JSON.stringify(ready);
+    expect(readyJson).not.toContain('callerCaseFile');
+    expect(readyJson).not.toContain(SCENARIO.callerCaseFile.knownFacts[0]);
+    expect(readyJson).not.toContain(SCENARIO.callerCaseFile.factsToReveal[0]);
+    // And every other browser-bound message stays clean too.
+    for (const message of h.client.sent) {
+      expect(JSON.stringify(message)).not.toContain('callerCaseFile');
+    }
   });
 
   it('rejects a non-navigator identity for a scored test', async () => {
     const h = harness({ verifyToken: vi.fn(async () => ({ role: 'supervisor' })) });
     handleConnection(h.client, {}, h.deps);
-    await h.client.emit('message', JSON.stringify({ type: 'start', idToken: 't', mode: 'test', department: 'pediatrics', qaScenarioId: SCENARIO.id }));
+    await h.client.emit('message', JSON.stringify({ type: 'start', idToken: 't', mode: 'test', department: 'obgyn', qaScenarioId: SCENARIO.id }));
     await flush();
     expect(h.client.lastByType('error')).toBeTruthy();
     expect(storedAttempt(h)).toBeNull();
   });
 
-  it('rejects an unknown scenario / wrong department', async () => {
-    const h = harness();
+  it('rejects a scenario whose department does not match the start department', async () => {
+    const h = harness({ selectScenario: vi.fn(async () => ({ ...SCENARIO, department: 'pediatrics' })) });
     handleConnection(h.client, {}, h.deps);
     await h.client.emit('message', JSON.stringify({ type: 'start', idToken: 't', mode: 'test', department: 'obgyn', qaScenarioId: SCENARIO.id }));
     await flush();
     expect(h.client.lastByType('error')).toBeTruthy();
+    expect(storedAttempt(h)).toBeNull();
+  });
+
+  it('rejects a scored test for a department outside the Call QA rollout (Pediatrics)', async () => {
+    const h = harness();
+    handleConnection(h.client, {}, h.deps);
+    await h.client.emit('message', JSON.stringify({ type: 'start', idToken: 't', mode: 'test', department: 'pediatrics', qaScenarioId: SCENARIO.id }));
+    await flush();
+    expect(h.client.lastByType('error')).toBeTruthy();
+    expect(h.deps.selectScenario).not.toHaveBeenCalled();
     expect(storedAttempt(h)).toBeNull();
   });
 });
@@ -152,7 +240,7 @@ describe('roster-member validation (item 6)', () => {
   it('an inactive member is rejected and NO attempt is created', async () => {
     const h = harness({ loadRosterMember: vi.fn(async () => ({ id: 'nav-a', name: 'Ada', status: 'inactive' })) });
     handleConnection(h.client, {}, h.deps);
-    await h.client.emit('message', JSON.stringify({ type: 'start', idToken: 't', mode: 'test', department: 'pediatrics', qaScenarioId: SCENARIO.id }));
+    await h.client.emit('message', JSON.stringify({ type: 'start', idToken: 't', mode: 'test', department: 'obgyn', qaScenarioId: SCENARIO.id }));
     await flush();
     expect(h.client.lastByType('error')).toBeTruthy();
     expect(storedAttempt(h)).toBeNull();
@@ -161,7 +249,7 @@ describe('roster-member validation (item 6)', () => {
   it('a missing roster member is rejected and NO attempt is created', async () => {
     const h = harness({ loadRosterMember: vi.fn(async () => null) });
     handleConnection(h.client, {}, h.deps);
-    await h.client.emit('message', JSON.stringify({ type: 'start', idToken: 't', mode: 'test', department: 'pediatrics', qaScenarioId: SCENARIO.id }));
+    await h.client.emit('message', JSON.stringify({ type: 'start', idToken: 't', mode: 'test', department: 'obgyn', qaScenarioId: SCENARIO.id }));
     await flush();
     expect(h.client.lastByType('error')).toBeTruthy();
     expect(storedAttempt(h)).toBeNull();

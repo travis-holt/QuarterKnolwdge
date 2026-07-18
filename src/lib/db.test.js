@@ -311,8 +311,6 @@ describe('saveInterview', () => {
       qaScenarioId: null,
       domainIds: ['routing'],
       competencyIds: [],
-      expectedActions: [],
-      criticalMisses: [],
     });
     expect(data.endedAt).toBe('__ts__');
   });
@@ -327,8 +325,6 @@ describe('saveInterview', () => {
       difficulty: 'medium',
       domainIds: ['intake', 'routing'],
       competencyIds: ['sopApplication', 'communication'],
-      expectedActions: ['Identify the patient.'],
-      criticalMisses: ['Promises approval.'],
     };
 
     await saveInterview('nav-id', 'Ada', 'routing', 'Scenario', 'Caller', [], 'pediatrics', metadata);

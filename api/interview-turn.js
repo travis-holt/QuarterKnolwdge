@@ -165,11 +165,51 @@ Stay strictly consistent with these facts. Reveal a fact only when the navigator
 Never tell the navigator what the "correct" procedure is — you are the caller, not their coach.`;
 }
 
+// Private caller contract for the scored Call QA test (F25). Unlike the
+// practice `caseFile` (browser-carried, advisory), the callerCaseFile lives
+// ONLY in the private server scenario document / attempt snapshot and is
+// injected here server-side by the relay. It gives the AI caller a consistent
+// set of privately known facts (LMP, medication, pharmacy, prior callbacks,
+// symptoms, what the patient believes the provider said, …) plus reveal rules —
+// WITHOUT handing over grader-only hiddenChartState.
+export function coerceCallerCaseFile(raw) {
+  if (!raw || typeof raw !== 'object') return null;
+  const str = (v) => (typeof v === 'string' ? v.trim() : '');
+  const arr = (v) => (Array.isArray(v) ? v.map(String).map((s) => s.trim()).filter(Boolean) : []);
+  const cf = {
+    callerGoal:             str(raw.callerGoal),
+    knownFacts:             arr(raw.knownFacts),
+    factsToReveal:          arr(raw.factsToReveal),
+    revealRules:            arr(raw.revealRules),
+    behavior:               arr(raw.behavior),
+    consistencyConstraints: arr(raw.consistencyConstraints),
+  };
+  return cf.callerGoal || cf.knownFacts.length ? cf : null;
+}
+
+function renderCallerCaseFile(raw) {
+  const cf = coerceCallerCaseFile(raw);
+  if (!cf) return '';
+  const lines = [];
+  if (cf.callerGoal) lines.push(`- Your goal for this call: ${cf.callerGoal}`);
+  if (cf.knownFacts.length) lines.push(`- Facts you personally know and must stay consistent with: ${cf.knownFacts.join('; ')}`);
+  if (cf.factsToReveal.length) lines.push(`- Reveal these ONLY when the navigator asks for them: ${cf.factsToReveal.join('; ')}`);
+  if (cf.revealRules.length) lines.push(`- Reveal rules: ${cf.revealRules.join('; ')}`);
+  if (cf.behavior.length) lines.push(`- How you behave on this call: ${cf.behavior.join('; ')}`);
+  if (cf.consistencyConstraints.length) lines.push(`- Consistency constraints: ${cf.consistencyConstraints.join('; ')}`);
+  return `
+
+YOUR PRIVATE CALLER CASE FILE (never read this aloud; the navigator cannot see it):
+${lines.join('\n')}
+Do not volunteer every fact at once — follow the reveal rules above. Never coach the navigator,
+never hint at the correct procedure, and never invent a fact that contradicts this case file.`;
+}
+
 export function buildSystemInstruction(callerName, scenario, options = {}) {
   const department = options.department ?? 'pediatrics';
   const deptName = departmentName(department);
   const openingLine = options.openingLine?.trim();
-  const caseNotes = renderCaseFileNotes(options.caseFile);
+  const caseNotes = renderCaseFileNotes(options.caseFile) + renderCallerCaseFile(options.callerCaseFile);
 
   return `You are ${callerName}, a patient, parent/guardian, or caregiver calling the Aizer Health ${deptName} contact centre.
 

@@ -115,6 +115,33 @@ describe('sanitize', () => {
     expect(result).not.toBeNull();
     expect(result.competencies.length).toBeLessThanOrEqual(3);
   });
+
+  it('preserves validated OB/GYN workflow and source provenance', () => {
+    const raw = validRaw();
+    raw.scenario = 'A newly pregnant patient has a reliable known LMP.';
+    raw.workflowType = 'known_vs_unknown_lmp';
+    raw.ruleIds = ['new_ob_known_lmp'];
+    raw.options[0] = { id: 'a', text: 'Use the normal New OB workflow.', points: 100, rationale: 'A reliable LMP supports New OB scheduling.' };
+    const result = sanitize(raw, 'classification', {
+      department: 'obgyn',
+      allowedRuleIds: ['new_ob_known_lmp'],
+      sourceSopVersion: 'obgyn-current-floor-2026-07-17',
+      sourceRuleVersion: 'obgyn-workflow-rules-v2',
+      sourceAuthority: 'owner-confirmed-current-floor',
+    });
+    expect(result).toMatchObject({
+      department: 'obgyn', workflowType: 'known_vs_unknown_lmp', ruleIds: ['new_ob_known_lmp'],
+      sourceSopVersion: 'obgyn-current-floor-2026-07-17', sourceRuleVersion: 'obgyn-workflow-rules-v2',
+      sourceAuthority: 'owner-confirmed-current-floor',
+    });
+  });
+
+  it('rejects unselected or workflow-mismatched OB/GYN rule metadata', () => {
+    const raw = { ...validRaw(), workflowType: 'known_vs_unknown_lmp', ruleIds: ['unknown_rule'] };
+    const metadata = { department: 'obgyn', allowedRuleIds: ['new_ob_known_lmp'] };
+    expect(sanitize(raw, 'classification', metadata)).toBeNull();
+    expect(sanitize({ ...raw, ruleIds: ['new_ob_known_lmp'], workflowType: 'mfm_owner' }, 'classification', metadata)).toBeNull();
+  });
 });
 
 // ── buildDigest ──────────────────────────────────────────────────────────────
@@ -213,6 +240,29 @@ describe('buildSystemInstruction', () => {
   it('injects the roleplay-caller operating model guidance', () => {
     const si = buildSystemInstruction('Maria', 'A scenario');
     expect(si).toMatch(/ROLEPLAY AS THE CALLER/i);
+  });
+
+  it('renders the private callerCaseFile contract (facts, reveal rules, no coaching)', () => {
+    const si = buildSystemInstruction('Maria', 'A scenario', {
+      callerCaseFile: {
+        callerGoal: 'Reschedule a fictional postpartum visit.',
+        knownFacts: ['LMP was reliable and known.', 'Prior callback was promised two days ago.'],
+        factsToReveal: ['Pharmacy is the fictional Main St location.'],
+        revealRules: ['Only mention the prior callback if asked about history.'],
+        behavior: ['Mildly frustrated but cooperative.'],
+        consistencyConstraints: ['Never change the stated LMP.'],
+      },
+    });
+    expect(si).toMatch(/PRIVATE CALLER CASE FILE/i);
+    expect(si).toContain('Reschedule a fictional postpartum visit.');
+    expect(si).toContain('LMP was reliable and known.');
+    expect(si).toContain('Only mention the prior callback if asked about history.');
+    expect(si).toMatch(/Never coach the navigator/i);
+  });
+
+  it('omits the caller case file block when none is provided', () => {
+    const si = buildSystemInstruction('Maria', 'A scenario');
+    expect(si).not.toMatch(/PRIVATE CALLER CASE FILE/i);
   });
 
   it('renders hidden case notes without leaking the correct SOP answer', () => {

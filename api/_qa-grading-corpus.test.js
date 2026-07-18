@@ -22,7 +22,7 @@ import { readFileSync } from 'node:fs';
 import { QA_GRADING_CORPUS, simulateGrader, applyVariant } from './_qa-grading-corpus.js';
 import { correctTranscriptWithStats } from './_qa-glossary.js';
 import { validateQaResponse, repairQaVerdictsForScenario, scoreQa, evaluateQaDeterministicFindings } from './_qa-rubric.js';
-import { finalizeQaResult, resolveQaScenarioContext } from './grade-call-qa.js';
+import { finalizeQaResult } from './grade-call-qa.js';
 
 function runPipeline(caseDef, profileName, transcriptOverride) {
   const raw = transcriptOverride ?? caseDef.transcript;
@@ -202,11 +202,17 @@ describe('captured grader-response fixture format', () => {
     const fixture = JSON.parse(readFileSync(new URL('./fixtures/qa-model-capture.example.json', import.meta.url), 'utf8'));
     expect(fixture).toMatchObject({ formatVersion: 1, captureType: 'simulated-example' });
 
-    const context = resolveQaScenarioContext({
-      scenario: fixture.request.scenario,
-      department: fixture.request.department,
+    const context = {
+      verified: true,
+      status: 'verified',
       qaScenarioId: fixture.scenarioId,
-    });
+      department: fixture.request.department,
+      repairContext: {
+        scenario: fixture.request.scenario,
+        department: fixture.request.department,
+        metadata: { workflowType: 'prescription_refill' },
+      },
+    };
     expect(context.verified).toBe(true);
     const { transcript, correctedTurns } = correctTranscriptWithStats(fixture.transcript, context.department);
     const validated = validateQaResponse(fixture.rawModelResponse);

@@ -9,6 +9,7 @@ import { qaFinalReviewLabel, qaFinalVerdict, qaHistoryBadgeLabel, qaBadgeTone } 
 import { compareTimestampValues, timestampMillis } from '../lib/time.js';
 import Sparkline from './Sparkline.jsx';
 import FeedbackControls from './FeedbackControls.jsx';
+import { contentVersionStatus } from '../lib/contentVersion.js';
 
 function formatWorkflow(type) {
   return String(type ?? '')
@@ -40,7 +41,7 @@ function qaSignalLabel(detail) {
 // dept: the active department string (needed for getResultHistory).
 // answers: the navigator's raw answers map {questionId: optionId} (for dossier).
 // questions: the active question bank (for dossier).
-export default function NavigatorDetail({ rows, name, deptName, dept, deptMatrix, onBack, onOpenNavigator, onPreviewModule, navigatorId, completedDomains = new Set(), completions = [], onChangeDept, answers, questions, onSaveFeedback }) {
+export default function NavigatorDetail({ rows, name, deptName, dept, deptMatrix, onBack, onOpenNavigator, onPreviewModule, navigatorId, completedDomains = new Set(), completions = [], onChangeDept, answers, questions, onSaveFeedback, contentVersionContext }) {
   const row = (navigatorId ? findRow(rows, navigatorId) : null) ?? findRow(rows, name);
   const deptRow = deptMatrix?.find((r) => navigatorId && r.navigatorId === navigatorId)
     ?? deptMatrix?.find((r) => r.name === name);
@@ -563,6 +564,9 @@ export default function NavigatorDetail({ rows, name, deptName, dept, deptMatrix
                 const isEditing = overrideId === session.id;
                 const isQaReviewEditing = qaReviewEditId === session.id;
                 const qaReviewed = Boolean(session.qaFinalReview);
+                const versionStatus = session.assessmentType === 'call-qa' && contentVersionContext
+                  ? contentVersionStatus(session, contentVersionContext)
+                  : null;
                 return (
                   <li key={session.id ?? `${session.domainId ?? 'session'}-${timestampMillis(session.endedAt)}-${sessionIndex}`} className={`interview-log__item ${isOpen ? 'is-open' : ''}`}>
                     <button
@@ -582,6 +586,11 @@ export default function NavigatorDetail({ rows, name, deptName, dept, deptMatrix
                       {session.workflowType && <span className="tag">{formatWorkflow(session.workflowType)}</span>}
                       {session.difficulty && <span className="tag">{session.difficulty}</span>}
                       {session.qaScenarioId && <span className="tag">{session.qaScenarioId}</span>}
+                      {versionStatus && (
+                        <span className="tag" title={versionStatus.stale ? 'This Call QA attempt remains historical evidence and requires review against the current rules.' : 'Content source/version status'}>
+                          {versionStatus.label}
+                        </span>
+                      )}
                       <span className="interview-log__caller">
                         Caller: <strong>{session.callerName}</strong>
                       </span>

@@ -45,12 +45,43 @@ export const AUDIT_WORKFLOWS = {
   ],
 };
 
-export function workflowOptionsFor(domainId) {
-  return AUDIT_WORKFLOWS[domainId] ?? [];
+export const OBGYN_AUDIT_WORKFLOWS = {
+  intake: ['annual_vs_gyn_ov', 'known_vs_unknown_lmp'],
+  classification: ['annual_vs_gyn_ov', 'known_vs_unknown_lmp', 'missing_rto_order', 'lab_boundary'],
+  routing: ['existing_te_take_action', 'dr_bank_waitlist', 'mfm_owner', 'urgent_requires_approval', 'urgent_intermedia_escalation', 'refill_details', 'lab_boundary'],
+  scheduling: ['new_ob_pairing', 'iud_plus_gyn_sono', 'paired_reschedule', 'ob_verified_status'],
+  boundaries: ['urgent_requires_approval', 'lab_boundary', 'mfm_owner'],
+  documentation: ['existing_te_take_action', 'missing_rto_order', 'ob_verified_status', 'refill_details'],
+};
+
+const OBGYN_AUDIT_RULE_IDS = {
+  annual_vs_gyn_ov: ['annual_gyn_vs_gyn_ov'],
+  known_vs_unknown_lmp: ['confirmation_unknown_lmp', 'new_ob_known_lmp'],
+  new_ob_pairing: ['new_ob_pairing'],
+  missing_rto_order: ['rto_documentation', 'missing_sonography_order'],
+  existing_te_take_action: ['existing_te_take_action'],
+  dr_bank_waitlist: ['dr_bank_waitlist'],
+  mfm_owner: ['mfm_routing'],
+  urgent_requires_approval: ['urgent_high_priority', 'nurse_approved_ob_urgent'],
+  urgent_intermedia_escalation: ['urgent_intermedia_escalation'],
+  iud_plus_gyn_sono: ['iud_insertion_plus_sono', 'postpartum_iud'],
+  paired_reschedule: ['paired_appointment_reschedule'],
+  ob_verified_status: ['new_ob_pairing', 'iud_insertion_plus_sono'],
+  refill_details: ['refill'],
+  lab_boundary: ['lab_boundary'],
+};
+
+export function workflowOptionsFor(domainId, department = 'pediatrics') {
+  const taxonomy = department === 'obgyn' ? OBGYN_AUDIT_WORKFLOWS : AUDIT_WORKFLOWS;
+  return taxonomy[domainId] ?? [];
 }
 
-export function chooseBalancedWorkflowTypes(existingAudits, domainId, count = 1) {
-  const workflows = workflowOptionsFor(domainId);
+export function auditRuleIdsFor(workflowType, department = 'pediatrics') {
+  return department === 'obgyn' ? (OBGYN_AUDIT_RULE_IDS[workflowType] ?? []) : [];
+}
+
+export function chooseBalancedWorkflowTypes(existingAudits, domainId, count = 1, department = 'pediatrics') {
+  const workflows = workflowOptionsFor(domainId, department);
   if (!workflows.length) return Array.from({ length: count }, () => 'general_workflow');
 
   const counts = Object.fromEntries(workflows.map((type) => [type, 0]));

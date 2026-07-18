@@ -20,10 +20,11 @@ import {
   findRow,
 } from '../lib/scoring.js';
 import { mergeNavigatorFloorAndOwnResult } from '../lib/navigatorResultMerge.js';
-import { getResult, saveResult, getActiveQuestions, getCompletions, getInterviews, saveCompletion } from '../lib/db.js';
+import { getResult, saveResult, getActiveQuestions, getCompletions, saveCompletion } from '../lib/db.js';
 import { apiFetch } from '../lib/apiFetch.js';
 import { MINICHECK_SIZE, MINICHECK_PASS } from '../data/config.js';
-import { phasesComplete, completedCount, latestQaForDept } from '../lib/phases.js';
+import { phasesComplete, completedCount, latestQaForDept, phaseOrderForDept } from '../lib/phases.js';
+import { isCallQaRolloutDept } from '../data/callQaScenarios.js';
 import { ResultSaveQueue } from '../lib/resultSaveQueue.js';
 import { clientTimestamp, compareTimestampValues, timestampMillis } from '../lib/time.js';
 import { qaSummaryLabel, qaBadgeTone } from '../lib/qaFinalReview.js';
@@ -39,6 +40,9 @@ const SEED_BY_DEPT = {
 
 // Every domain id — the full-profile "Spot the Error" assessment covers them all.
 const ALL_DOMAIN_IDS = DOMAINS.map((d) => d.id);
+
+const getOwnInterviews = () => apiFetch('/api/my-interviews', {}, 15_000)
+  .then((data) => data?.interviews ?? []);
 
 // The navigator's self-contained app. They can ONLY ever see their own data:
 // there is no route to the matrix, overview, or other navigators' dashboards.
@@ -132,7 +136,7 @@ export default function NavigatorApp({ navigatorId, name, onSignOut }) {
         getResult(navigatorId, dept, 'mcq'),
         getResult(navigatorId, dept, 'spot'),
         getResult(navigatorId, dept, 'qa'),
-        getInterviews(navigatorId).catch(() => []),
+        getOwnInterviews().catch(() => []),
       ]);
       setResultsByType({ mcq, spot, qa });
       setInterviews(ivs);
@@ -149,7 +153,7 @@ export default function NavigatorApp({ navigatorId, name, onSignOut }) {
         mcq: Boolean(mcq),
         spot: Boolean(spot),
         qa: Boolean(latestQaForDept(ivs, dept)),
-      });
+      }, phaseOrderForDept(dept));
       setView(allDone ? 'dashboard' : 'phases');
     } catch {
       setLoadError(true);
@@ -195,7 +199,7 @@ export default function NavigatorApp({ navigatorId, name, onSignOut }) {
     if (!isFirebaseConfigured) return undefined;
     if (view !== 'dashboard' && view !== 'training' && view !== 'phases') return undefined;
     let active = true;
-    getInterviews(navigatorId)
+    getOwnInterviews()
       .then((list) => {
         if (!active) return;
         setInterviews(list);
@@ -374,8 +378,10 @@ export default function NavigatorApp({ navigatorId, name, onSignOut }) {
   // Phase 3 completion comes from the interview docs (the QA test does not write a
   // results doc), so a saved-but-ungraded call does not count as complete.
   const phaseDone = { mcq: hasMcq, spot: hasSpot, qa: Boolean(latestQa) };
+  // Departments outside the scored Call QA rollout run a two-phase assessment.
+  const phaseOrder = phaseOrderForDept(dept);
   // Where to go after finishing a phase: the hub while phases remain, else the dashboard.
-  const afterPhase = () => setView(phasesComplete(phaseDone) ? 'dashboard' : 'phases');
+  const afterPhase = () => setView(phasesComplete(phaseDone, phaseOrder) ? 'dashboard' : 'phases');
   // Include allDeptResults so the strip shows real scores for every dept taken,
   // not just the currently active one. Merge ownResult in case it's fresher.
   const deptScoresMap = ownResult?.scores
@@ -455,6 +461,7 @@ export default function NavigatorApp({ navigatorId, name, onSignOut }) {
       {view === 'phases' && (
         <PhaseHub
           deptName={deptName}
+          deptId={dept}
           done={phaseDone}
           results={resultsByType}
           latestQa={latestQa}
@@ -487,17 +494,12 @@ export default function NavigatorApp({ navigatorId, name, onSignOut }) {
         />
       )}
 
-      {view === 'qatest' && (
+      {view === 'qatest' && isCallQaRolloutDept(dept) && (
         <VoiceCall
           navigatorId={navigatorId}
           name={name}
           department={dept}
           mode="test"
-          priorQaAttempts={interviews.filter((iv) =>
-            iv?.qa &&
-            !iv?.qaArchived &&
-            (iv.department ?? 'pediatrics') === dept
-          )}
           onQaResult={handleQaComplete}
           onExit={() => setView('phases')}
           onDone={() => setView('dashboard')}
@@ -520,7 +522,12 @@ export default function NavigatorApp({ navigatorId, name, onSignOut }) {
       {view === 'dashboard' && (
         <>
           {latestQa && (
-            <QaLatestCard attempt={latestQa} onRetake={() => setView('qatest')} />
+            // Historical QA attempts stay visible for every department; the
+            // Retake action only exists where the scored rollout is active.
+            <QaLatestCard
+              attempt={latestQa}
+              onRetake={isCallQaRolloutDept(dept) ? () => setView('qatest') : undefined}
+            />
           )}
           {myRow ? (
             <>
@@ -529,7 +536,8 @@ export default function NavigatorApp({ navigatorId, name, onSignOut }) {
                 resultsByType={resultsByType}
                 onSwitch={handleSwitchType}
                 onTakeAnother={handleTakeAnother}
-                phasesDone={completedCount(phaseDone)}
+                phasesDone={completedCount(phaseDone, phaseOrder)}
+                phasesTotal={phaseOrder.length}
               />
               <NavigatorDetail
                 rows={rows}
@@ -735,7 +743,7 @@ function formatQaDate(ts) {
   });
 }
 
-function AssessmentBar({ activeType, resultsByType, onSwitch, onTakeAnother, phasesDone = 0 }) {
+function AssessmentBar({ activeType, resultsByType, onSwitch, onTakeAnother, phasesDone = 0, phasesTotal = 3 }) {
   const takenTypes = ['mcq', 'spot'].filter((t) => resultsByType[t]);
   const multiTaken = takenTypes.length > 1;
   return (
@@ -761,7 +769,7 @@ function AssessmentBar({ activeType, resultsByType, onSwitch, onTakeAnother, pha
         </span>
       )}
       <button type="button" className="btn btn--ghost btn--sm" onClick={onTakeAnother}>
-        {phasesDone >= 3 ? 'Retake a phase' : `Continue assessment (Phase ${phasesDone + 1} of 3)`}
+        {phasesDone >= phasesTotal ? 'Retake a phase' : `Continue assessment (Phase ${phasesDone + 1} of ${phasesTotal})`}
       </button>
     </div>
   );
@@ -781,9 +789,11 @@ function QaLatestCard({ attempt, onRetake }) {
         <h2 className="qa-latest__title">{label}</h2>
         <p className="qa-latest__meta">{qa.score}/100 - {formatQaDate(attempt?.endedAt)}</p>
       </div>
-      <button className="btn btn--ghost btn--sm" onClick={onRetake} type="button">
-        Retake
-      </button>
+      {onRetake && (
+        <button className="btn btn--ghost btn--sm" onClick={onRetake} type="button">
+          Retake
+        </button>
+      )}
     </div>
   );
 }

@@ -6,7 +6,7 @@ import {
   validateCalibrationFixture,
   wilsonInterval,
 } from './_qa-calibration.js';
-import { CALL_QA_SCENARIOS } from '../src/data/callQaScenarios.js';
+import { SYNTHETIC_CALIBRATION_SCENARIOS as CALL_QA_SCENARIOS, SYNTHETIC_SCENARIO_VERSION } from './_qa-calibration-scenarios.js';
 import { rubricCriteria } from '../src/data/qaRubric.js';
 
 const example = JSON.parse(readFileSync(
@@ -14,6 +14,9 @@ const example = JSON.parse(readFileSync(
   'utf8',
 ));
 const RUBRIC_IDS = rubricCriteria().map((criterion) => criterion.id);
+// Simulates an operator-supplied private-bank manifest so readiness-gate tests
+// exercise the gates themselves rather than the missing-evidence reason.
+const PRIVATE_EVIDENCE = { scenarios: CALL_QA_SCENARIOS, scenarioEvidence: 'private-manifest' };
 
 function completeCriteria(overrides = {}, fallback = 'NA') {
   return Object.fromEntries(RUBRIC_IDS.map((id) => [id, overrides[id] ?? fallback]));
@@ -83,9 +86,9 @@ function calibrationFixture({
     },
     modelRun: modelRun === null ? null : {
       model: modelName,
-      rubricVersion: 'qa-rubric-v1',
-      promptVersion: 'call-qa-grader-v1',
-      scenarioVersion: 'call-qa-scenarios-v1',
+      rubricVersion: 'qa-rubric-v2',
+      promptVersion: 'call-qa-grader-v3',
+      scenarioVersion: SYNTHETIC_SCENARIO_VERSION,
       recommendation: model,
       pass: model !== 'fail',
       score: model === 'fail' ? 70 : 92,
@@ -243,7 +246,7 @@ describe('validateCalibrationFixture', () => {
     expect(invalid((fixture) => { fixture.modelRun.promptVersion = 'prompt-v999'; }).errors.join(' '))
       .toMatch(/unsupported prompt version/);
     expect(invalid((fixture) => { fixture.modelRun.scenarioVersion = 'scenario-v999'; }).errors.join(' '))
-      .toMatch(/unsupported scenario version/);
+      .toMatch(/does not match the referenced scenario version/);
   });
 
   it('enforces capture/grading state and transcript-count integrity', () => {
@@ -364,7 +367,7 @@ describe('calibration metrics', () => {
       gradingStatus: 'grade_failed',
     }),
   ];
-  const report = buildCalibrationReport(fixtures);
+  const report = buildCalibrationReport(fixtures, PRIVATE_EVIDENCE);
 
   it('calculates exact confusion-matrix and final-outcome counts', () => {
     expect(report.confusionMatrix).toMatchObject({
@@ -431,8 +434,8 @@ describe('calibration metrics', () => {
 
   it('reports department/scenario/workflow and version breakdowns', () => {
     expect(report.operationalBreakdowns.department.pediatrics.count).toBe(5);
-    expect(report.operationalBreakdowns.scenario['qa-peds-scheduling-001'].count).toBe(5);
-    expect(report.operationalBreakdowns.workflowType.new_appointment_scheduling.count).toBe(5);
+    expect(report.operationalBreakdowns.scenario['synthetic-peds-refill-01'].count).toBe(5);
+    expect(report.operationalBreakdowns.workflowType.prescription_refill.count).toBe(5);
     expect(report.operationalBreakdowns.captureStatus.abandoned.count).toBe(1);
     expect(report.operationalBreakdowns.gradingStatus.grade_failed.count).toBe(1);
     expect(report.versionBreakdowns.graderModel).toEqual([
@@ -493,14 +496,14 @@ function sufficientFixtures(count = 640) {
 
 describe('calibration readiness', () => {
   it('perfect results with too few cases remain INSUFFICIENT_DATA', () => {
-    const report = buildCalibrationReport(sufficientFixtures(10));
+    const report = buildCalibrationReport(sufficientFixtures(10), PRIVATE_EVIDENCE);
     expect(evaluateCalibrationReadiness(report).state).toBe('INSUFFICIENT_DATA');
   });
 
   it('one false automatic auto-fail fails the safety gate', () => {
     const fixtures = sufficientFixtures();
     fixtures[0].modelRun.autoFails = ['af-scope'];
-    expect(evaluateCalibrationReadiness(buildCalibrationReport(fixtures)).state)
+    expect(evaluateCalibrationReadiness(buildCalibrationReport(fixtures, PRIVATE_EVIDENCE)).state)
       .toBe('FAILS_SAFETY_GATE');
   });
 
@@ -510,7 +513,7 @@ describe('calibration readiness', () => {
     fixtures[0].humanReview.adjudicated.reviewRequired = true;
     fixtures[0].humanReview.adjudicated.finalPass = null;
     fixtures[0].modelRun.recommendation = 'pass';
-    expect(evaluateCalibrationReadiness(buildCalibrationReport(fixtures)).state)
+    expect(evaluateCalibrationReadiness(buildCalibrationReport(fixtures, PRIVATE_EVIDENCE)).state)
       .toBe('FAILS_SAFETY_GATE');
   });
 
@@ -519,7 +522,7 @@ describe('calibration readiness', () => {
     fixtures.forEach((fixture, index) => {
       fixture.modelRun.model = index % 2 ? 'grader-a' : 'grader-b';
     });
-    expect(evaluateCalibrationReadiness(buildCalibrationReport(fixtures)).state)
+    expect(evaluateCalibrationReadiness(buildCalibrationReport(fixtures, PRIVATE_EVIDENCE)).state)
       .toBe('INSUFFICIENT_DATA');
   });
 
@@ -535,12 +538,12 @@ describe('calibration readiness', () => {
         caseId: `peds-${index}`,
         scenario: CALL_QA_SCENARIOS[index % 8],
       }));
-    expect(evaluateCalibrationReadiness(buildCalibrationReport(oneDepartment)).state)
+    expect(evaluateCalibrationReadiness(buildCalibrationReport(oneDepartment, PRIVATE_EVIDENCE)).state)
       .toBe('INSUFFICIENT_DATA');
 
     const missingScenario = sufficientFixtures().filter((fixture) =>
       fixture.scenarioId !== CALL_QA_SCENARIOS[0].id);
-    expect(evaluateCalibrationReadiness(buildCalibrationReport(missingScenario)).state)
+    expect(evaluateCalibrationReadiness(buildCalibrationReport(missingScenario, PRIVATE_EVIDENCE)).state)
       .toBe('INSUFFICIENT_DATA');
   });
 
@@ -554,12 +557,12 @@ describe('calibration readiness', () => {
         changed += 1;
       }
     }
-    expect(evaluateCalibrationReadiness(buildCalibrationReport(fixtures)).state)
+    expect(evaluateCalibrationReadiness(buildCalibrationReport(fixtures, PRIVATE_EVIDENCE)).state)
       .toBe('FAILS_ACCURACY_GATE');
   });
 
   it('a fully sufficient authored population reaches clean-pass consideration', () => {
-    const result = evaluateCalibrationReadiness(buildCalibrationReport(sufficientFixtures()));
+    const result = evaluateCalibrationReadiness(buildCalibrationReport(sufficientFixtures(), PRIVATE_EVIDENCE));
     expect(result.state).toBe('READY_FOR_CLEAN_PASS_CONSIDERATION');
   });
 
@@ -583,7 +586,7 @@ describe('calibration readiness', () => {
       model: 'needs_review',
     }))],
   ])('%s populations remain insufficient', (_name, build) => {
-    expect(evaluateCalibrationReadiness(buildCalibrationReport(build())).state)
+    expect(evaluateCalibrationReadiness(buildCalibrationReport(build(), PRIVATE_EVIDENCE)).state)
       .toBe('INSUFFICIENT_DATA');
   });
 
@@ -597,7 +600,7 @@ describe('calibration readiness', () => {
         model: human,
       });
     });
-    expect(evaluateCalibrationReadiness(buildCalibrationReport(fixtures)).state)
+    expect(evaluateCalibrationReadiness(buildCalibrationReport(fixtures, PRIVATE_EVIDENCE)).state)
       .toBe('INSUFFICIENT_DATA');
   });
 
@@ -608,7 +611,7 @@ describe('calibration readiness', () => {
         scenario: CALL_QA_SCENARIOS.find((scenario) => scenario.id === fixture.scenarioId),
         human: 'pass',
         model: 'pass',
-      })));
+      })), PRIVATE_EVIDENCE);
     expect(report.finalOutcomes.falsePassInterval.upper95).toBeNull();
     expect(evaluateCalibrationReadiness(report).state).toBe('INSUFFICIENT_DATA');
   });
@@ -623,7 +626,7 @@ describe('calibration readiness', () => {
         gradingStatus: 'grade_failed',
       }));
     }
-    const report = buildCalibrationReport(fixtures);
+    const report = buildCalibrationReport(fixtures, PRIVATE_EVIDENCE);
     expect(report.captureMetrics).toMatchObject({
       abandonedCount: 20,
       gradeFailureCount: 20,

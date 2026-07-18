@@ -10,7 +10,6 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { MODEL } from './_gemini-client.js';
 import { QA_RUBRIC_VERSION } from './_qa-rubric.js';
-import { getCallQaScenarioById } from '../src/data/callQaScenarios.js';
 import { createFakeFirestore } from './fixtures/fakeFirestore.js';
 import { buildAttemptDoc, CAPTURE_STATUS, GRADING_STATUS } from './_call-qa-attempts.js';
 
@@ -45,7 +44,29 @@ const { default: handler, CALL_QA_PROMPT_VERSION, callQaGraderModel, gradeCallQa
 
 const fixture = JSON.parse(readFileSync(new URL('./fixtures/qa-model-capture.example.json', import.meta.url), 'utf8'));
 const validText = JSON.stringify(fixture.rawModelResponse);
-const CURATED = getCallQaScenarioById(fixture.scenarioId);
+const CURATED = {
+  id: fixture.scenarioId,
+  department: 'pediatrics',
+  title: 'Synthetic private refill fixture',
+  workflowType: 'prescription_refill',
+  difficulty: 'medium',
+  primaryDomainId: 'routing',
+  domainIds: ['classification', 'routing', 'boundaries', 'documentation'],
+  competencyIds: ['sopApplication', 'communication', 'riskManagement'],
+  callerName: 'Test Caller',
+  openingLine: 'I need help with a medication request.',
+  scenario: 'Help the caller with a medication request.',
+  gradingContext: fixture.request.scenario,
+  expectedActions: ['Collect the required request details.', 'Use the approved clinical handoff.'],
+  criticalMisses: ['Promise approval.', 'Give dosing advice.'],
+  scoringNotes: ['Natural caller-facing wording counts.'],
+  hiddenChartState: { establishedPatient: true },
+  version: 'fixture-scenario-v1',
+  ruleIds: [],
+  sourceSopVersion: 'fixture-sop-v1',
+  sourceRuleVersion: 'fixture-rules-v1',
+  sourceAuthority: 'test fixture',
+};
 
 const OK = (text, model = MODEL) => ({ ok: true, text, model });
 
@@ -120,6 +141,10 @@ describe('gradeCallQaTranscript — pinned model + metadata', () => {
       rubricVersion: QA_RUBRIC_VERSION,
       promptVersion: CALL_QA_PROMPT_VERSION,
       scenarioVersion: CURATED.version,
+      sourceSopVersion: CURATED.sourceSopVersion ?? null,
+      sourceRuleVersion: CURATED.sourceRuleVersion ?? null,
+      sourceAuthority: CURATED.sourceAuthority ?? null,
+      ruleIds: CURATED.ruleIds ?? [],
       gradedAt: expect.any(String),
     });
     expect(qa.transcriptMetadata.authority).toBe('server');

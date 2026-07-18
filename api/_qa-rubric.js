@@ -27,6 +27,7 @@ import {
   BASES,
   rubricCriteria,
 } from '../src/data/qaRubric.js';
+import { detectObgynContradictions, isObgynProhibitedActionNegated } from '../src/lib/contentGuards.js';
 
 export { QA_RUBRIC, QA_AUTO_FAILS, QA_PASS_THRESHOLD, QA_RUBRIC_VERSION, VERDICTS, BASES, rubricCriteria };
 
@@ -205,6 +206,7 @@ export function validateQaResponse(parsed) {
 export const CALL_QA_FAIRNESS_RULES = {
   standardRefillNoPeRequirement: 'standard-refill-no-pe-requirement',
   naturalMessageRoutingWording: 'natural-message-routing-wording',
+  obgynCallerObservableOutcome: 'obgyn-caller-observable-outcome',
 };
 
 export function normalizeQaText(text) {
@@ -234,6 +236,9 @@ export const ROUTING_DESTINATIONS = [
   ['ob-portal', /\b(?:ob\s+portal|pregnancy\s+portal)\b/i],
   ['ob-prevention', /\b(?:prevention|preventive)\s+coordinator\b/i],
   ['ob-mfm-owner', /\b(?:rebecca|mfm\s+owner\s*,?\s*rebecca)\b/i],
+  ['ob-waiting-list', /\b(?:waiting\s+list|waitlist)\s+(?:portal|te|telephone encounter)\b/i],
+  ['ob-take-action', /\btake action\b/i],
+  ['ob-urgent-channel', /\b(?:intermedia|women['’]s health ob urgent calls|ob urgent (?:calls )?channel)\b/i],
   ['ob-nursing', /\b(?:(?:ob(?:\s*\/\s*gyn)?|obstetrics?)\s+nurse|nursing team|clinical team)\b/i],
   ['labor-delivery', /\b(?:l\s*&\s*d|labor (?:and|&) delivery)\b/i],
   ['medical-records', /\b(?:medical records|records)\s+(?:team|department)\b/i],
@@ -259,11 +264,17 @@ export const ROUTING_POLICIES = {
     new_gyn_visit: { allowed: ['ob-pss'] },
     pregnancy_related_visit: { allowed: ['ob-portal'] },
     test_result_medical_advice_boundary: { allowed: ['ob-portal', 'ob-nursing'], messageRepair: true },
-    prescription_refill: { allowed: ['ob-nursing'], messageRepair: true },
     mfm_related_request: { allowed: ['ob-mfm-owner'] },
     records_forms: { allowed: ['medical-records'] },
     scheduling_change: { allowed: ['ob-pss'] },
     wrong_department_unclear_request: { allowed: [], reviewOnly: true },
+    missing_rto_order: { allowed: ['ob-portal'], messageRepair: true },
+    transfer_ob: { allowed: ['ob-portal'], messageRepair: true },
+    existing_te_take_action: { allowed: ['ob-take-action'], messageRepair: true },
+    mfm_owner: { allowed: ['ob-mfm-owner'], messageRepair: true },
+    prescription_refill: { allowed: ['ob-portal', 'ob-nursing'], messageRepair: true },
+    lab_boundary: { allowed: ['ob-portal'], messageRepair: true },
+    dr_bank_waitlist: { allowed: ['ob-waiting-list'], messageRepair: true },
   },
 };
 // Commitment syntax is separate from destination policy; both are required.
@@ -321,6 +332,19 @@ const SUBSTANTIVE_DOC_COMPLAINT = /wrong|incorrect|instead of|should (?:have|be)
 export function isLiteralTeWordingFailure(criterion) {
   const text = `${criterion.note} ${criterion.evidence}`;
   return LITERAL_TE_TARGET.test(text) && !SUBSTANTIVE_DOC_COMPLAINT.test(text);
+}
+
+const OBGYN_INTERNAL_NARRATION_TARGET = /\bob\s+verified\b|\btake\s+action\b|\bhigh\s+priority\b|\btelephone\s+encounter\b|\bte\b|\bob\s+portal\b|\bintermedia\b|\brebecca\s+wood\b|\bwaiting\s+list\s+portal\b/i;
+const OBGYN_ABSENCE_COMPLAINT = /\b(?:absen(?:ce|t)|did not|does not|failed to|never|not (?:mention|state|say|use|document)|omit(?:ted)?|missing|without|no (?:evidence|mention|statement)|must|required|should have)\b/i;
+
+// A model miss is eligible for caller-observable normalization only when its
+// stated reason is the absence of an internal chart/queue term. Wrong routes,
+// missing caller details, unsafe advice, and other substantive failures stand.
+export function isObgynInternalNarrationOnlyFailure(criterion) {
+  const text = `${criterion?.note ?? ''} ${criterion?.evidence ?? ''}`;
+  return OBGYN_INTERNAL_NARRATION_TARGET.test(text)
+    && OBGYN_ABSENCE_COMPLAINT.test(text)
+    && !SUBSTANTIVE_DOC_COMPLAINT.test(text);
 }
 
 export function routingPolicyFor({ department = '', metadata = {} } = {}) {
@@ -440,7 +464,7 @@ export function findCommittedRoutingLineWithDestination(transcript, context = {}
 // contrast conjunctions.
 export function splitClauses(text) {
   return String(text ?? '')
-    .split(/[.;!?]|—|--|,?\s+\bbut\b|,?\s+\bhowever\b|,?\s+\balthough\b|,?\s*\bmeanwhile,?\b/i)
+    .split(/[.;!?]|—|--|,?\s+\bbut\b|,?\s+\bhowever\b|,?\s+\balthough\b|,?\s*\bmeanwhile,?\b|,\s*and\s+(?=(?:i|we)\b)/i)
     .map((clause) => clause.trim())
     .filter(Boolean);
 }
@@ -479,6 +503,61 @@ export function findOverPromiseLine(transcript) {
 export function findClinicalAdviceLine(transcript) {
   return navigatorLines(transcript).find((line) =>
     splitClauses(line.text).some((clause) => !isScopeDeferral(clause) && lineMatchesAny(clause, CLINICAL_ADVICE_PATTERNS)))?.text ?? null;
+}
+
+const OBGYN_CALLER_OUTCOME_CHECKS = {
+  known_lmp_new_ob: (text) => /(?:known|reliable|gave|provided).{0,45}(?:lmp|last menstrual|date)/i.test(text)
+    && /(?:new\s+ob|pregnan(?:cy|t)).{0,70}(?:ultrasound|sonogram|provider|doctor|appointment)/i.test(text),
+  unknown_lmp_confirmation: (text) => /(?:unknown|unsure|do not know|don['’]t know).{0,45}(?:lmp|last menstrual|date)/i.test(text)
+    && /(?:clinical team|ob(?:\s*\/\s*gyn)? team|nurs(?:e|ing)|provider|doctor).{0,70}(?:review|follow up|next step|call back)/i.test(text),
+  new_ob_pairing: (text) => /(?:ultrasound|sonogram|scan)/i.test(text)
+    && /(?:provider|doctor)/i.test(text)
+    && /(?:same day|together|back[- ]to[- ]back|paired)/i.test(text)
+    && /(?:ultrasound|sonogram|scan).{0,60}(?:first|before)/i.test(text),
+  missing_rto_order: (text) => /(?:can(?:not|['’]t)|will not|won['’]t|not able to).{0,45}(?:book|schedule)/i.test(text)
+    && /(?:until|without).{0,45}(?:order|rto|document)/i.test(text)
+    && /(?:contact|message|send|follow up).{0,70}(?:clinical team|ob(?:\s*\/\s*gyn)? team|nurs(?:e|ing)|provider|doctor)/i.test(text),
+  transfer_ob: (text) => /records?/i.test(text)
+    && /(?:review|accept|approv)/i.test(text)
+    && /(?:before|until|can(?:not|['’]t)).{0,70}(?:book|schedule)|(?:book|schedule).{0,70}(?:after|once)/i.test(text),
+  urgent_high_priority_intermedia: (text) => /(?:urgent|immediate|right away)/i.test(text)
+    && /(?:send|message|alert|contact|escalat)/i.test(text)
+    && /(?:clinical team|ob(?:\s*\/\s*gyn)? team|nurs(?:e|ing)|provider|doctor)/i.test(text),
+  existing_te_take_action: (text) => /(?:existing|open|already).{0,55}(?:request|message|case|issue)/i.test(text)
+    && /(?:add|attach|update|document).{0,55}(?:information|details?|request|message)|(?:avoid|not|no).{0,30}(?:duplicate|new message|second request)/i.test(text),
+  mfm_owner: (text) => /\bmfm\b/i.test(text)
+    && /(?:send|route|forward|hand off|pass|contact|message).{0,55}(?:mfm|team|coordinator|nurs)/i.test(text),
+  paired_reschedule: (text) => /(?:ultrasound|sonogram|scan)/i.test(text)
+    && /(?:provider|doctor|md)/i.test(text)
+    && /(?:both|together|paired|same day|back[- ]to[- ]back)/i.test(text)
+    && /(?:move|reschedule|cancel|keep)/i.test(text),
+  prescription_refill: (text) => /(?:refill|prescription|medication)/i.test(text)
+    && /(?:send|forward|message|contact|follow up)/i.test(text)
+    && /(?:clinical|ob|nurs(?:e|ing)|provider|doctor|refill team)/i.test(text),
+  test_result_medical_advice_boundary: (text) => /(?:send|forward|message|contact|follow up)/i.test(text)
+    && /(?:clinical team|ob(?:\s*\/\s*gyn)? team|nurs(?:e|ing)|provider|doctor)/i.test(text)
+    && /(?:callback|call back|review|question|result)/i.test(text),
+  lab_boundary: (text) => /(?:can(?:not|['’]t)|will not|won['’]t|not able to).{0,50}(?:interpret|order|schedule|tell you whether)/i.test(text)
+    && /(?:send|message|contact|follow up).{0,70}(?:clinical team|ob(?:\s*\/\s*gyn)? team|nurs(?:e|ing)|provider|doctor)/i.test(text),
+  dr_bank_waitlist: (text) => /(?:dr\.?\s+)?bank/i.test(text)
+    && /(?:wait\s*list|waiting\s+list)/i.test(text)
+    && /(?:add|put|offer|place)/i.test(text),
+  nurse_approved_ob_urgent: (text) => /(?:written|documented|nurs(?:e|ing)|provider).{0,50}approv/i.test(text)
+    && /urgent/i.test(text)
+    && /(?:book|schedule|appointment)/i.test(text),
+};
+
+// Return one verified navigator line that proves the caller-visible workflow
+// outcome without relying on internal UI labels or staff assignments.
+export function findObgynCallerOutcomeLine(transcript, context = {}) {
+  if (context?.department !== 'obgyn') return null;
+  const check = OBGYN_CALLER_OUTCOME_CHECKS[context?.metadata?.workflowType];
+  if (!check) return null;
+  const ruleIds = context?.metadata?.ruleIds ?? [];
+  return navigatorLines(transcript).find((line) => (
+    check(String(line.text ?? ''))
+    && detectObgynContradictions(line.text, { ruleIds }).length === 0
+  ))?.text ?? null;
 }
 
 export function isStandardPediatricRefill({ scenario = '', department = 'pediatrics', metadata = {} } = {}) {
@@ -533,12 +612,14 @@ export function repairQaVerdictsForScenario(validated, transcript, context = {})
   const repairs = [];
   const signals = getRefillWorkflowSignals(transcript, context);
   const routingPolicy = routingPolicyFor(context);
+  const obgynOutcomeLine = findObgynCallerOutcomeLine(transcript, context);
   const standardRefill = isStandardPediatricRefill(context);
   const requiredDetailsMissing = standardRefill && (!signals.medication || !signals.pharmacy);
   const workflowFailure = criteria.some((criterion) => criterion.id !== 'doc-te' && criterion.verdict === 'NOT_MET' && OTHER_WORKFLOW_FAILURE.test(`${criterion.note} ${criterion.evidence}`));
   // Repair evidence must be the contradiction-safe final commitment accepted by
   // this department/workflow policy. Over-promises and clinical advice still block it.
   const safeRouting = signals.committedRoutingLine && !signals.overPromise && !signals.clinicalAdvice;
+  const safeObgynOutcome = obgynOutcomeLine && !signals.overPromise && !signals.clinicalAdvice;
   // A complete standard refill means ALL required workflow signals are present:
   // medication, pharmacy, callback details, and out-of-medication/urgency
   // handling. The PE repair only applies to a COMPLETE refill.
@@ -548,16 +629,17 @@ export function repairQaVerdictsForScenario(validated, transcript, context = {})
   // A repair may only be applied when its replacement evidence verifies as ONE
   // navigator turn — a repair must never introduce unverifiable (or caller-side)
   // evidence. If it does not verify, the grader's NOT_MET stands.
-  const applyRepair = (criterion, rule, reason) => {
-    if (!verifyNavigatorEvidence(transcript, signals.committedRoutingLine)) return;
+  const applyRepair = (criterion, rule, reason, evidence = signals.committedRoutingLine, reviewRequired = true) => {
+    if (!verifyNavigatorEvidence(transcript, evidence)) return;
     repairs.push({
       criterionId: criterion.id, rule, from: criterion.verdict, to: 'MET', reason,
-      evidence: signals.committedRoutingLine,
+      evidence,
+      reviewRequired,
       originalVerdict: criterion.verdict, originalBasis: criterion.basis,
       originalNote: criterion.note, originalEvidence: criterion.evidence,
     });
     criterion.verdict = 'MET'; criterion.basis = 'EVIDENCE';
-    criterion.evidence = signals.committedRoutingLine; criterion.note = reason;
+    criterion.evidence = evidence; criterion.note = reason;
   };
 
   for (const criterion of criteria) {
@@ -565,9 +647,23 @@ export function repairQaVerdictsForScenario(validated, transcript, context = {})
       applyRepair(criterion, CALL_QA_FAIRNESS_RULES.standardRefillNoPeRequirement,
         'Fairness repair: standard pediatric refill does not require caller-facing PE/Physical Exam verification unless PE is the governing issue.');
     }
-    if (criterion.id === 'doc-te' && criterion.verdict === 'NOT_MET' && needsMessage && isLiteralTeWordingFailure(criterion) && safeRouting && !workflowFailure && !requiredDetailsMissing) {
+    if (context?.department !== 'obgyn' && criterion.id === 'doc-te' && criterion.verdict === 'NOT_MET' && needsMessage && isLiteralTeWordingFailure(criterion) && safeRouting && !workflowFailure && !requiredDetailsMissing) {
       applyRepair(criterion, CALL_QA_FAIRNESS_RULES.naturalMessageRoutingWording,
         'Fairness repair: accepted natural patient-facing message/routing wording; exact TE/Telephone Encounter phrase is not required.');
+    }
+    if (context?.department === 'obgyn'
+      && REPAIRABLE_CRITERIA.has(criterion.id)
+      && criterion.verdict === 'NOT_MET'
+      && isObgynInternalNarrationOnlyFailure(criterion)
+      && safeObgynOutcome
+      && !workflowFailure) {
+      applyRepair(
+        criterion,
+        CALL_QA_FAIRNESS_RULES.obgynCallerObservableOutcome,
+        'Fairness repair: the caller-facing workflow outcome is explicit and safe; exact narration of internal chart, queue, channel, or staff labels is not required.',
+        obgynOutcomeLine,
+        false,
+      );
     }
   }
   return {
@@ -598,7 +694,7 @@ export function evaluateQaDeterministicFindings(criteria, transcript, context = 
     .map((criterion) => criterion.id);
 
   const decision = signals.routingDecision;
-  if (policy && !policy.reviewOnly && !decision.acceptable && metRoutingCriteria.length > 0) {
+  if (context?.department !== 'obgyn' && policy && !policy.reviewOnly && !decision.acceptable && metRoutingCriteria.length > 0) {
     findings.push({
       id: 'model-routing-conflict',
       type: 'routing',
@@ -630,6 +726,43 @@ export function evaluateQaDeterministicFindings(criteria, transcript, context = 
       destinationId: null,
       affectedCriteria: ['know-rule'],
     });
+  }
+  // OB/GYN transcript safeguards are contradiction-only. Internal chart clicks,
+  // queue names, channel names, visit labels, and staff assignments are not
+  // caller-facing requirements and their absence must never create a review.
+  // Evaluate each clause independently so a safe disclaimer cannot suppress a
+  // later explicit violation ("I cannot advise you, but go to L&D now").
+  if (context?.department === 'obgyn') {
+    const ruleIds = context?.metadata?.ruleIds ?? [];
+    const seen = new Set(findings.map((finding) => finding.reason));
+    if (ruleIds.length && metRoutingCriteria.length) {
+      for (const line of navigatorLines(transcript)) {
+        for (const clause of splitClauses(line.text)) {
+          const negated = isObgynProhibitedActionNegated(clause);
+          const contextualFlags = [
+            ...(ruleIds.includes('new_ob_known_lmp')
+              && /(?:book|schedule|require|must use)[\s\S]{0,45}(?:pregnancy\s+)?confirmation/i.test(clause)
+              && !negated ? [{ code: 'known_lmp_forced_confirmation' }] : []),
+            ...(ruleIds.includes('confirmation_unknown_lmp')
+              && /(?:book|schedule|send)[\s\S]{0,45}(?:normal\s+)?new\s+ob/i.test(clause)
+              && !negated ? [{ code: 'unknown_lmp_direct_new_ob' }] : []),
+          ];
+          for (const flag of [...detectObgynContradictions(clause, { ruleIds }), ...contextualFlags]) {
+            if (seen.has(flag.code)) continue;
+            seen.add(flag.code);
+            findings.push({
+              id: `obgyn-${flag.code}`,
+              type: /urgent|labor|lab|promise|advice|approval/i.test(flag.code) ? 'safety' : 'routing',
+              reason: flag.code,
+              evidence: clause,
+              destinationId: null,
+              affectedCriteria: metRoutingCriteria,
+            });
+          }
+        }
+      }
+    }
+    return findings;
   }
   return findings;
 }
@@ -857,7 +990,7 @@ export function assessQa(qa, transcript, { correctedTurns = 0, repairs = [], det
   // call would have FAILED without the repaired criteria, a supervisor decides.
   const defs = new Map(rubricCriteria().map((c) => [c.id, c]));
   const repairedPoints = repairs
-    .filter((r) => r.to === 'MET' && r.from === 'NOT_MET')
+    .filter((r) => r.to === 'MET' && r.from === 'NOT_MET' && r.reviewRequired !== false)
     .reduce((s, r) => s + (defs.get(r.criterionId)?.points ?? 0), 0);
   const applicableTotal = qa.categories.reduce((s, c) => s + c.applicablePoints, 0);
   const earnedTotal = qa.categories.reduce((s, c) => s + c.earned, 0);

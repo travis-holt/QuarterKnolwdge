@@ -11,9 +11,14 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { DOMAINS } from '../src/data/questions.js';
-import { workflowOptionsFor } from '../src/data/auditWorkflows.js';
+import { auditRuleIdsFor, workflowOptionsFor } from '../src/data/auditWorkflows.js';
 import { validateAuditContent } from '../src/lib/contentGuards.js';
-import { sopContextFor, sopContextForFresh } from './_sop-context.js';
+import { sopContextFor, sopGroundingForFresh } from './_sop-context.js';
+import {
+  OBGYN_RULE_SET_VERSION,
+  formatObgynRulesForPrompt,
+  obgynRulesFor,
+} from '../src/data/obgynWorkflowRules.js';
 import { navigatorContextBlock } from './_navigator-operating-model.js';
 import { getApiKeys, geminiWithRotation, rotationFailure, MODEL, STABLE_MODEL } from './_gemini-client.js';
 import { validateSecret } from './_auth.js';
@@ -36,14 +41,18 @@ const AUDIT_SCHEMA = {
     hint:             { type: 'STRING' },
     modelExplanation: { type: 'STRING' },
     workflowType:     { type: 'STRING' },
+    ruleIds:           { type: 'ARRAY', items: { type: 'STRING' } },
     errorKind:        { type: 'STRING' },
+    expectedCorrection: { type: 'STRING' },
+    requiredChartFacts: { type: 'ARRAY', items: { type: 'STRING' } },
     difficulty:       { type: 'STRING' },
   },
-  required: ['transcript', 'errorIndex', 'hint', 'modelExplanation', 'workflowType', 'errorKind', 'difficulty'],
+  required: ['transcript', 'errorIndex', 'hint', 'modelExplanation', 'workflowType', 'ruleIds', 'errorKind', 'expectedCorrection', 'requiredChartFacts', 'difficulty'],
 };
 
-export function buildPrompt(domain, department, workflowType, avoidWorkflowTypes = [], sopContext = sopContextFor(department)) {
-  const allowedWorkflows = workflowOptionsFor(domain.id);
+export function buildPrompt(domain, department, workflowType, avoidWorkflowTypes = [], sopContext = sopContextFor(department), rules = []) {
+  const allowedWorkflows = workflowOptionsFor(domain.id, department);
+  const ruleBlock = rules.length ? formatObgynRulesForPrompt(rules) : 'No department-specific structured rules are available.';
   return `You are creating a QA training exercise for contact-centre patient navigators.
 
 Generate a realistic 10-message chat transcript between a patient (or caregiver) and a contact-centre agent. The agent makes exactly ONE critical policy mistake that violates the SOP for the domain below.
@@ -55,11 +64,15 @@ Required workflow type: "${workflowType}"
 Allowed workflow types for this domain: ${allowedWorkflows.join(', ') || workflowType}
 Avoid these overused workflow types in this response: ${avoidWorkflowTypes.join(', ') || 'none'}
 
+SELECTED EXECUTABLE RULES:
+${ruleBlock}
+
 TRANSCRIPT RULES:
 - Use exactly "Agent" and "Patient" as the speaker labels (exact casing, nothing else)
 - The Agent speaks first (with a professional greeting)
 - Alternate naturally: Agent, Patient, Agent, Patient… for 10 turns total
 - Plant exactly ONE clear SOP violation in ONE Agent message (must be an Agent turn, not Patient)
+- The planted error must be an explicit action or statement that deterministically contradicts a selected rule; do not make the sole error an unobservable omission
 - All other Agent messages must be correct per SOP
 - Everything in English only
 
@@ -100,7 +113,10 @@ FOR hint: write one sentence that steers the navigator toward the error without 
 FOR modelExplanation: write 2–3 sentences explaining exactly what the agent did wrong and what they should have said instead. Reference the specific SOP rule violated using facts from the SOP reference below.
 
 FOR workflowType: return exactly "${workflowType}".
+FOR ruleIds: return the exact selected rule id or ids tested: ${rules.map((rule) => rule.id).join(', ') || 'none'}.
 FOR errorKind: return a short snake_case label for the policy miss (examples: wrong_queue, privacy_breach, promise_approval, wrong_child_chart).
+FOR expectedCorrection: state the concrete corrected Agent action.
+FOR requiredChartFacts: list the chart facts needed to decide this workflow; use an empty array only when no chart fact applies.
 FOR difficulty: return one of easy, medium, hard.
 
 SOP REFERENCE:
@@ -112,34 +128,45 @@ ${sopContext}`;
  * Pure — no I/O. Returns { data } on success, { error } on failure.
  * @param {any} parsed  The result of JSON.parse(gemini response text)
  */
-export function validateAuditResponse(parsed, requestedWorkflowType = null) {
-  const { transcript, errorIndex, hint, modelExplanation, workflowType, errorKind, difficulty } = parsed ?? {};
-  if (!Array.isArray(transcript) || transcript.length < 4)
-    return { error: 'Gemini returned an incomplete transcript.' };
+export function validateAuditResponse(parsed, requestedWorkflowType = null, context = {}) {
+  const { transcript, errorIndex, hint, modelExplanation, workflowType, ruleIds, errorKind, expectedCorrection, requiredChartFacts, difficulty } = parsed ?? {};
+  if (!Array.isArray(transcript) || transcript.length !== 10)
+    return { error: 'Gemini must return exactly 10 transcript turns.' };
   if (typeof errorIndex !== 'number' || errorIndex < 0 || errorIndex >= transcript.length)
     return { error: 'Gemini returned an invalid error index.' };
 
-  let resolvedIndex = errorIndex;
-  if (transcript[resolvedIndex]?.speaker !== 'Agent') {
-    // Shift to the nearest Agent turn so we never expose a Patient error index.
-    const fallback = transcript.findIndex((t, i) => i !== 0 && t.speaker === 'Agent');
-    if (fallback === -1) return { error: 'No Agent turn found in transcript.' };
-    resolvedIndex = fallback;
+  const cleanTranscript = transcript.map((turn) => ({
+    speaker: String(turn?.speaker ?? '').trim(),
+    message: String(turn?.message ?? '').trim(),
+  }));
+  if (cleanTranscript[errorIndex]?.speaker !== 'Agent') return { error: 'The indexed error must be on an Agent turn.' };
+  if (cleanTranscript.some((turn, index) => turn.speaker !== (index % 2 === 0 ? 'Agent' : 'Patient'))) {
+    return { error: 'Transcript must alternate Agent and Patient turns.' };
   }
   if (!hint || !modelExplanation)
     return { error: 'Gemini returned an incomplete audit response.' };
+  if (!expectedCorrection || !Array.isArray(requiredChartFacts))
+    return { error: 'Gemini returned incomplete correction or chart-fact metadata.' };
+
+  const cleanRuleIds = [...new Set(Array.isArray(ruleIds) ? ruleIds.map((id) => String(id).trim()).filter(Boolean) : [])];
+  if (context.department === 'obgyn') {
+    const allowed = new Set(context.ruleIds ?? []);
+    if (!cleanRuleIds.length || cleanRuleIds.some((id) => !allowed.has(id))) {
+      return { error: 'Gemini returned unknown or unselected OB/GYN rule ids.' };
+    }
+  }
 
   return {
     data: {
-      transcript: transcript.map((t) => ({
-        speaker: String(t.speaker ?? '').trim(),
-        message: String(t.message ?? '').trim(),
-      })),
-      errorIndex:       resolvedIndex,
+      transcript: cleanTranscript,
+      errorIndex,
       hint:             String(hint).trim(),
       modelExplanation: String(modelExplanation).trim(),
       workflowType:     String(requestedWorkflowType ?? workflowType ?? '').trim(),
+      ruleIds:           cleanRuleIds,
       errorKind:        String(errorKind ?? '').trim() || 'workflow_error',
+      expectedCorrection: String(expectedCorrection).trim(),
+      requiredChartFacts: requiredChartFacts.map((fact) => String(fact ?? '').trim()).filter(Boolean),
       difficulty:       ['easy', 'medium', 'hard'].includes(String(difficulty ?? '').trim().toLowerCase())
         ? String(difficulty).trim().toLowerCase()
         : 'medium',
@@ -155,14 +182,20 @@ export default async function handler(req, res) {
   const keys = getApiKeys();
   if (!keys.length) return res.status(500).json({ error: 'Gemini not configured on the server.' });
 
-  const { domain: domainId, department = 'pediatrics', workflowType, avoidWorkflowTypes = [] } = req.body ?? {};
+  const { domain: domainId, department = 'pediatrics', workflowType, ruleIds = [], avoidWorkflowTypes = [] } = req.body ?? {};
 
   const domain = DOMAINS.find((d) => d.id === domainId);
   if (!domain) return res.status(400).json({ error: 'Unknown domain.' });
-  const requestedWorkflowType = workflowType || workflowOptionsFor(domainId)[0] || 'general_workflow';
+  const requestedWorkflowType = workflowType || workflowOptionsFor(domainId, department)[0] || 'general_workflow';
+  const requestedRuleIds = Array.isArray(ruleIds) && ruleIds.length ? ruleIds.map(String) : auditRuleIdsFor(requestedWorkflowType, department);
+  const selectedRules = obgynRulesFor({ department, ruleIds: requestedRuleIds });
+  if (department === 'obgyn' && (!selectedRules.length || selectedRules.length !== new Set(requestedRuleIds).size)) {
+    return res.status(400).json({ error: 'Unknown or missing OB/GYN audit rule id.' });
+  }
+  const grounding = await sopGroundingForFresh(department);
 
   const body = {
-    contents: [{ role: 'user', parts: [{ text: buildPrompt(domain, department, requestedWorkflowType, avoidWorkflowTypes, await sopContextForFresh(department)) }] }],
+    contents: [{ role: 'user', parts: [{ text: buildPrompt(domain, department, requestedWorkflowType, avoidWorkflowTypes, grounding.context, selectedRules) }] }],
     generationConfig: {
       responseMimeType: 'application/json',
       responseSchema: AUDIT_SCHEMA,
@@ -183,8 +216,12 @@ export default async function handler(req, res) {
     return res.status(502).json({ error: 'Gemini returned invalid JSON.' });
   }
 
-  const validation = validateAuditResponse(parsed, requestedWorkflowType);
+  const validation = validateAuditResponse(parsed, requestedWorkflowType, { department, ruleIds: selectedRules.map((rule) => rule.id) });
   if (validation.error) return res.status(502).json({ error: validation.error });
+  validation.data.department = department;
+  validation.data.sourceSopVersion = grounding.sourceSopVersion;
+  validation.data.sourceRuleVersion = department === 'obgyn' ? OBGYN_RULE_SET_VERSION : null;
+  validation.data.sourceAuthority = grounding.sourceAuthority;
   const flags = validateAuditContent(validation.data);
   if (flags.length) return res.status(422).json({ error: flags[0].message });
 

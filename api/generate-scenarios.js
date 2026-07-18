@@ -19,7 +19,12 @@
 import { DOMAINS } from '../src/data/questions.js';
 import { COMPETENCIES } from '../src/data/competencies.js';
 import { validateQuestionContent } from '../src/lib/contentGuards.js';
-import { sopContextFor, sopContextForFresh } from './_sop-context.js';
+import { sopContextFor, sopGroundingForFresh } from './_sop-context.js';
+import {
+  OBGYN_RULE_SET_VERSION,
+  formatObgynRulesForPrompt,
+  obgynRulesFor,
+} from '../src/data/obgynWorkflowRules.js';
 import { navigatorContextBlock } from './_navigator-operating-model.js';
 import { getApiKeys, geminiWithRotation, rotationFailure, MODEL, STABLE_MODEL } from './_gemini-client.js';
 import { validateSession } from './_auth.js';
@@ -33,6 +38,8 @@ const RESPONSE_SCHEMA = {
     type: 'OBJECT',
     properties: {
       scenario: { type: 'STRING' },
+      workflowType: { type: 'STRING' },
+      ruleIds: { type: 'ARRAY', items: { type: 'STRING' } },
       competencies: { type: 'ARRAY', items: { type: 'STRING' } },
       correctOptionId: { type: 'STRING' },
       options: {
@@ -49,12 +56,15 @@ const RESPONSE_SCHEMA = {
         },
       },
     },
-    required: ['scenario', 'competencies', 'options', 'correctOptionId'],
+    required: ['scenario', 'workflowType', 'ruleIds', 'competencies', 'options', 'correctOptionId'],
   },
 };
 
-export function buildPrompt(domain, count, department, sopContext = sopContextFor(department)) {
+export function buildPrompt(domain, count, department, sopContext = sopContextFor(department), rules = []) {
   const compList = COMPETENCIES.map((c) => `${c.id} (${c.name})`).join(', ');
+  const ruleBlock = rules.length
+    ? `\nSELECTED EXECUTABLE RULES (each question must test one or more and return its exact ruleIds/workflowType):\n${formatObgynRulesForPrompt(rules)}\n`
+    : '';
   return `You are an instructional designer writing a competency assessment for patient
 navigators (contact-centre agents) based ONLY on the SOP reference below. Do not invent
 facts that are not supported by it.
@@ -63,6 +73,7 @@ ${navigatorContextBlock({ department, mode: 'scenario-generation' })}
 
 SOP REFERENCE:
 ${sopContext}
+${ruleBlock}
 
 TASK: Write ${count} scenario-based multiple-choice question(s) for the domain "${domain.name}"
 (${domain.blurb}). Mix NORMAL, EDGE-CASE, and FAILURE-STATE situations. Each question must:
@@ -73,6 +84,7 @@ TASK: Write ${count} scenario-based multiple-choice question(s) for the domain "
 - Give EVERY option a one-sentence "rationale" explaining why it is right or wrong, grounded
   in the SOP.
 - Set "correctOptionId" to the id of the 100-point option.
+- Return "workflowType" and "ruleIds" for the exact selected executable rule(s) tested.
 - Tag 1–3 "competencies" from EXACTLY this allowed list (use the id, not the name): ${compList}.
 
 DISTRACTOR QUALITY — this is the most important requirement. The question is worthless if the
@@ -103,7 +115,7 @@ Option ids must be "a","b","c","d". Do not include a domain field. Return ONLY t
 
 // Coerce one raw model question into the strict app shape, or return null if it
 // cannot be repaired into something valid.
-export function sanitize(raw, domainId) {
+export function sanitize(raw, domainId, metadata = {}) {
   if (!raw || typeof raw.scenario !== 'string' || !raw.scenario.trim()) return null;
   if (!Array.isArray(raw.options) || raw.options.length < 2) return null;
 
@@ -125,12 +137,27 @@ export function sanitize(raw, domainId) {
     .map((c) => String(c).trim())
     .filter((c) => COMPETENCY_IDS.has(c));
   if (competencies.length === 0) return null;
+  const allowedRuleIds = new Set(metadata.allowedRuleIds ?? []);
+  const ruleIds = [...new Set(Array.isArray(raw.ruleIds) ? raw.ruleIds.map((id) => String(id).trim()) : [])]
+    .filter((id) => !allowedRuleIds.size || allowedRuleIds.has(id));
+  if (metadata.department === 'obgyn' && (!ruleIds.length || ruleIds.length !== raw.ruleIds?.length)) return null;
+  const workflowType = String(raw.workflowType ?? metadata.workflowType ?? '').trim();
+  if (metadata.department === 'obgyn') {
+    const rules = obgynRulesFor({ ruleIds });
+    if (!rules.length || rules.some((item) => item.workflowType !== workflowType)) return null;
+  }
   const question = {
     domainId,
+    department: metadata.department ?? raw.department ?? 'pediatrics',
     competencies: [...new Set(competencies)].slice(0, 3),
     scenario: raw.scenario.trim(),
     options,
     correctOptionId: options[bestIdx].id,
+    sourceSopVersion: metadata.sourceSopVersion ?? null,
+    sourceRuleVersion: metadata.sourceRuleVersion ?? null,
+    ruleIds,
+    workflowType: workflowType || `general_${domainId}`,
+    sourceAuthority: metadata.sourceAuthority ?? 'department-sop',
   };
   return validateQuestionContent(question).length ? null : question;
 }
@@ -147,14 +174,25 @@ export default async function handler(req, res) {
     return res.status(500).json({ error: 'Generation is not configured on the server.' });
   }
 
-  const { domainId, count = 3, department = 'pediatrics' } = req.body ?? {};
+  const { domainId, count = 3, department = 'pediatrics', workflowType, ruleIds = [] } = req.body ?? {};
 
   const domain = DOMAINS.find((d) => d.id === domainId);
   if (!domain) return res.status(400).json({ error: 'Unknown domain.' });
   const n = Math.max(1, Math.min(8, Number(count) || 1));
+  const requestedRuleIds = Array.isArray(ruleIds) ? ruleIds.map(String) : [];
+  const selectedRules = department === 'obgyn'
+    ? obgynRulesFor({ department, domainId, workflowType, ruleIds: requestedRuleIds })
+    : [];
+  if (department === 'obgyn' && requestedRuleIds.some((id) => !selectedRules.some((rule) => rule.id === id))) {
+    return res.status(400).json({ error: 'Unknown or out-of-scope OB/GYN rule id.' });
+  }
+  if (department === 'obgyn' && !selectedRules.length) {
+    return res.status(400).json({ error: 'No OB/GYN workflow rules match this request.' });
+  }
+  const grounding = await sopGroundingForFresh(department);
 
   const requestBody = {
-    contents: [{ parts: [{ text: buildPrompt(domain, n, department, await sopContextForFresh(department)) }] }],
+    contents: [{ parts: [{ text: buildPrompt(domain, n, department, grounding.context, selectedRules) }] }],
     generationConfig: {
       responseMimeType: 'application/json',
       responseSchema: RESPONSE_SCHEMA,
@@ -181,7 +219,14 @@ export default async function handler(req, res) {
   }
 
   const questions = (Array.isArray(parsed) ? parsed : [])
-    .map((q) => sanitize(q, domainId))
+    .map((q) => sanitize(q, domainId, {
+      department,
+      workflowType,
+      allowedRuleIds: selectedRules.map((rule) => rule.id),
+      sourceSopVersion: grounding.sourceSopVersion,
+      sourceRuleVersion: department === 'obgyn' ? OBGYN_RULE_SET_VERSION : null,
+      sourceAuthority: grounding.sourceAuthority,
+    }))
     .filter(Boolean);
 
   if (questions.length === 0) {

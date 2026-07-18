@@ -4,7 +4,7 @@
   "source": "synthetic-example",
   "sanitized": true,
   "department": "pediatrics",
-  "scenarioId": "qa-peds-refill-001",
+  "scenarioId": "synthetic-peds-refill-01",
   "workflowType": "prescription_refill",
   "difficulty": "medium",
   "capture": {
@@ -18,11 +18,26 @@
     "callerTurnCount": 2
   },
   "transcript": [
-    { "role": "patient", "text": "I need help with a refill." },
-    { "role": "navigator", "text": "I can help. What medication and pharmacy should the team use?" },
-    { "role": "patient", "text": "The allergy medicine and the usual pharmacy." },
-    { "role": "navigator", "text": "I will route the request to the Pediatrics refill team and cannot promise approval." },
-    { "role": "navigator", "text": "Is there anything else I can help with today?" }
+    {
+      "role": "patient",
+      "text": "I need help with a refill."
+    },
+    {
+      "role": "navigator",
+      "text": "I can help. What medication and pharmacy should the team use?"
+    },
+    {
+      "role": "patient",
+      "text": "The allergy medicine and the usual pharmacy."
+    },
+    {
+      "role": "navigator",
+      "text": "I will route the request to the Pediatrics refill team and cannot promise approval."
+    },
+    {
+      "role": "navigator",
+      "text": "Is there anything else I can help with today?"
+    }
   ],
   "humanReview": {
     "reviewerCount": 2,
@@ -114,36 +129,99 @@
   },
   "modelRun": {
     "model": "gemini-2.5-flash",
-    "rubricVersion": "qa-rubric-v1",
-    "promptVersion": "call-qa-grader-v1",
-    "scenarioVersion": "call-qa-scenarios-v1",
+    "rubricVersion": "qa-rubric-v2",
+    "promptVersion": "call-qa-grader-v3",
+    "scenarioVersion": "synthetic-rehearsal-v1",
     "recommendation": "pass",
     "pass": true,
     "score": 92,
     "criteria": [
-      { "id": "open-greet", "verdict": "MET" },
-      { "id": "open-name", "verdict": "MET" },
-      { "id": "open-org", "verdict": "MET" },
-      { "id": "verify-three", "verdict": "MET" },
-      { "id": "verify-before-access", "verdict": "MET" },
-      { "id": "control-narrate", "verdict": "MET" },
-      { "id": "control-guide", "verdict": "MET" },
-      { "id": "doc-reason", "verdict": "MET" },
-      { "id": "doc-te", "verdict": "MET" },
-      { "id": "comm-plain", "verdict": "MET" },
-      { "id": "comm-professional", "verdict": "MET" },
-      { "id": "comm-empathy", "verdict": "MET" },
-      { "id": "listen-ack", "verdict": "MET" },
-      { "id": "listen-gather", "verdict": "MET" },
-      { "id": "know-rule", "verdict": "MET" },
-      { "id": "know-details", "verdict": "MET" },
-      { "id": "sched-flow", "verdict": "MET" },
-      { "id": "sched-recap", "verdict": "MET" },
-      { "id": "close-survey", "verdict": "MET" },
-      { "id": "close-anything-thanks", "verdict": "MET" }
+      {
+        "id": "open-greet",
+        "verdict": "MET"
+      },
+      {
+        "id": "open-name",
+        "verdict": "MET"
+      },
+      {
+        "id": "open-org",
+        "verdict": "MET"
+      },
+      {
+        "id": "verify-three",
+        "verdict": "MET"
+      },
+      {
+        "id": "verify-before-access",
+        "verdict": "MET"
+      },
+      {
+        "id": "control-narrate",
+        "verdict": "MET"
+      },
+      {
+        "id": "control-guide",
+        "verdict": "MET"
+      },
+      {
+        "id": "doc-reason",
+        "verdict": "MET"
+      },
+      {
+        "id": "doc-te",
+        "verdict": "MET"
+      },
+      {
+        "id": "comm-plain",
+        "verdict": "MET"
+      },
+      {
+        "id": "comm-professional",
+        "verdict": "MET"
+      },
+      {
+        "id": "comm-empathy",
+        "verdict": "MET"
+      },
+      {
+        "id": "listen-ack",
+        "verdict": "MET"
+      },
+      {
+        "id": "listen-gather",
+        "verdict": "MET"
+      },
+      {
+        "id": "know-rule",
+        "verdict": "MET"
+      },
+      {
+        "id": "know-details",
+        "verdict": "MET"
+      },
+      {
+        "id": "sched-flow",
+        "verdict": "MET"
+      },
+      {
+        "id": "sched-recap",
+        "verdict": "MET"
+      },
+      {
+        "id": "close-survey",
+        "verdict": "MET"
+      },
+      {
+        "id": "close-anything-thanks",
+        "verdict": "MET"
+      }
     ],
     "autoFails": [],
     "reviewFlags": [],
     "correctedTurns": 0
-  }
+  },
+  "nonProduction": true,
+  "calibrationAuthority": "none",
+  "evidenceUse": "synthetic-rehearsal-only"
 }

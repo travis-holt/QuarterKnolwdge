@@ -4,8 +4,8 @@
   "source": "synthetic-example",
   "sanitized": true,
   "department": "obgyn",
-  "scenarioId": "qa-obgyn-results-boundary-001",
-  "workflowType": "test_result_medical_advice_boundary",
+  "scenarioId": "synthetic-obgyn-results-boundary-01",
+  "workflowType": "results_boundary",
   "difficulty": "hard",
   "capture": {
     "captureStatus": "captured",
@@ -18,11 +18,26 @@
     "callerTurnCount": 2
   },
   "transcript": [
-    { "role": "patient", "text": "Can you explain my result?" },
-    { "role": "navigator", "text": "That result is normal, so there is nothing to worry about." },
-    { "role": "patient", "text": "Are you sure?" },
-    { "role": "navigator", "text": "Yes, you do not need a clinical callback." },
-    { "role": "navigator", "text": "Goodbye." }
+    {
+      "role": "patient",
+      "text": "Can you explain my result?"
+    },
+    {
+      "role": "navigator",
+      "text": "That result is normal, so there is nothing to worry about."
+    },
+    {
+      "role": "patient",
+      "text": "Are you sure?"
+    },
+    {
+      "role": "navigator",
+      "text": "Yes, you do not need a clinical callback."
+    },
+    {
+      "role": "navigator",
+      "text": "Goodbye."
+    }
   ],
   "humanReview": {
     "reviewerCount": 2,
@@ -52,7 +67,9 @@
           "close-survey": "NOT_MET",
           "close-anything-thanks": "NOT_MET"
         },
-        "autoFails": ["af-scope"],
+        "autoFails": [
+          "af-scope"
+        ],
         "recommendation": "fail"
       },
       {
@@ -79,7 +96,9 @@
           "close-survey": "NOT_MET",
           "close-anything-thanks": "NOT_MET"
         },
-        "autoFails": ["af-scope"],
+        "autoFails": [
+          "af-scope"
+        ],
         "recommendation": "fail"
       }
     ],
@@ -106,7 +125,9 @@
         "close-survey": "NOT_MET",
         "close-anything-thanks": "NOT_MET"
       },
-      "autoFails": ["af-scope"],
+      "autoFails": [
+        "af-scope"
+      ],
       "recommendation": "fail",
       "finalPass": false,
       "reviewRequired": false
@@ -114,36 +135,101 @@
   },
   "modelRun": {
     "model": "gemini-2.5-flash",
-    "rubricVersion": "qa-rubric-v1",
-    "promptVersion": "call-qa-grader-v1",
-    "scenarioVersion": "call-qa-scenarios-v1",
+    "rubricVersion": "qa-rubric-v2",
+    "promptVersion": "call-qa-grader-v3",
+    "scenarioVersion": "synthetic-rehearsal-v1",
     "recommendation": "fail",
     "pass": false,
     "score": 0,
     "criteria": [
-      { "id": "open-greet", "verdict": "NOT_MET" },
-      { "id": "open-name", "verdict": "NOT_MET" },
-      { "id": "open-org", "verdict": "NOT_MET" },
-      { "id": "verify-three", "verdict": "NOT_MET" },
-      { "id": "verify-before-access", "verdict": "NOT_MET" },
-      { "id": "control-narrate", "verdict": "NOT_MET" },
-      { "id": "control-guide", "verdict": "NOT_MET" },
-      { "id": "doc-reason", "verdict": "NOT_MET" },
-      { "id": "doc-te", "verdict": "NOT_MET" },
-      { "id": "comm-plain", "verdict": "NOT_MET" },
-      { "id": "comm-professional", "verdict": "NOT_MET" },
-      { "id": "comm-empathy", "verdict": "NOT_MET" },
-      { "id": "listen-ack", "verdict": "NOT_MET" },
-      { "id": "listen-gather", "verdict": "NOT_MET" },
-      { "id": "know-rule", "verdict": "NOT_MET" },
-      { "id": "know-details", "verdict": "NOT_MET" },
-      { "id": "sched-flow", "verdict": "NOT_MET" },
-      { "id": "sched-recap", "verdict": "NOT_MET" },
-      { "id": "close-survey", "verdict": "NOT_MET" },
-      { "id": "close-anything-thanks", "verdict": "NOT_MET" }
+      {
+        "id": "open-greet",
+        "verdict": "NOT_MET"
+      },
+      {
+        "id": "open-name",
+        "verdict": "NOT_MET"
+      },
+      {
+        "id": "open-org",
+        "verdict": "NOT_MET"
+      },
+      {
+        "id": "verify-three",
+        "verdict": "NOT_MET"
+      },
+      {
+        "id": "verify-before-access",
+        "verdict": "NOT_MET"
+      },
+      {
+        "id": "control-narrate",
+        "verdict": "NOT_MET"
+      },
+      {
+        "id": "control-guide",
+        "verdict": "NOT_MET"
+      },
+      {
+        "id": "doc-reason",
+        "verdict": "NOT_MET"
+      },
+      {
+        "id": "doc-te",
+        "verdict": "NOT_MET"
+      },
+      {
+        "id": "comm-plain",
+        "verdict": "NOT_MET"
+      },
+      {
+        "id": "comm-professional",
+        "verdict": "NOT_MET"
+      },
+      {
+        "id": "comm-empathy",
+        "verdict": "NOT_MET"
+      },
+      {
+        "id": "listen-ack",
+        "verdict": "NOT_MET"
+      },
+      {
+        "id": "listen-gather",
+        "verdict": "NOT_MET"
+      },
+      {
+        "id": "know-rule",
+        "verdict": "NOT_MET"
+      },
+      {
+        "id": "know-details",
+        "verdict": "NOT_MET"
+      },
+      {
+        "id": "sched-flow",
+        "verdict": "NOT_MET"
+      },
+      {
+        "id": "sched-recap",
+        "verdict": "NOT_MET"
+      },
+      {
+        "id": "close-survey",
+        "verdict": "NOT_MET"
+      },
+      {
+        "id": "close-anything-thanks",
+        "verdict": "NOT_MET"
+      }
     ],
-    "autoFails": ["af-scope"],
+    "autoFails": [
+      "af-scope"
+    ],
     "reviewFlags": [],
     "correctedTurns": 0
-  }
+  },
+  "nonProduction": true,
+  "calibrationAuthority": "none",
+  "evidenceUse": "synthetic-rehearsal-only"
 }

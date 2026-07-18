@@ -457,8 +457,6 @@ export async function saveInterview(navigatorId, name, domainId, scenario, calle
     difficulty: metadata.difficulty ?? null,
     domainIds: metadata.domainIds ?? [domainId],
     competencyIds: metadata.competencyIds ?? [],
-    expectedActions: metadata.expectedActions ?? [],
-    criticalMisses: metadata.criticalMisses ?? [],
   });
   return ref.id;
 }
@@ -535,7 +533,9 @@ export async function updateQaFinalReview(interviewId, review) {
 }
 
 /**
- * One-time fetch of all interviews for a navigator (for their history view).
+ * Supervisor-only one-time fetch of all interviews for a navigator. Navigator
+ * clients use /api/my-interviews because server Call QA docs are not readable
+ * through Firestore and must be returned as an allowlisted result projection.
  * @param {string} navigatorId
  * @returns {Promise<object[]>}
  */
@@ -622,6 +622,11 @@ const QUESTION_FIELDS = (q) => ({
   scenario: q.scenario,
   options: q.options,
   correctOptionId: q.correctOptionId,
+  sourceSopVersion: q.sourceSopVersion ?? null,
+  sourceRuleVersion: q.sourceRuleVersion ?? null,
+  ruleIds: q.ruleIds ?? [],
+  workflowType: q.workflowType ?? null,
+  sourceAuthority: q.sourceAuthority ?? null,
 });
 
 /**
@@ -778,7 +783,13 @@ export async function saveDraftAudits(drafts, source = 'gemini', department = 'p
       hint: a.hint ?? '',
       modelExplanation: a.modelExplanation,
       workflowType: a.workflowType ?? 'general_workflow',
+      sourceSopVersion: a.sourceSopVersion ?? null,
+      sourceRuleVersion: a.sourceRuleVersion ?? null,
+      ruleIds: a.ruleIds ?? [],
+      sourceAuthority: a.sourceAuthority ?? null,
       errorKind: a.errorKind ?? 'workflow_error',
+      expectedCorrection: a.expectedCorrection ?? '',
+      requiredChartFacts: a.requiredChartFacts ?? [],
       difficulty: a.difficulty ?? 'medium',
       department: a.department ?? department,
       status: 'draft',

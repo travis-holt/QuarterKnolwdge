@@ -1,11 +1,27 @@
 import { describe, it, expect } from 'vitest';
-import { PHASE_ORDER, buildPhases, phasesComplete, nextPhase, completedCount, latestQaForDept, isActiveQaInterview } from './phases.js';
+import { PHASE_ORDER, buildPhases, phasesComplete, nextPhase, completedCount, latestQaForDept, isActiveQaInterview, phaseOrderForDept } from './phases.js';
 
 const states = (done) => buildPhases(done).map((p) => p.state);
 
 describe('PHASE_ORDER', () => {
   it('is the fixed mcq → spot → qa sequence', () => {
     expect(PHASE_ORDER).toEqual(['mcq', 'spot', 'qa']);
+  });
+});
+
+describe('phaseOrderForDept (scored Call QA rollout scope)', () => {
+  it('OB/GYN (in rollout) runs all three phases', () => {
+    expect(phaseOrderForDept('obgyn')).toEqual(['mcq', 'spot', 'qa']);
+  });
+  it('Pediatrics (outside rollout) runs two phases — QA is never required', () => {
+    expect(phaseOrderForDept('pediatrics')).toEqual(['mcq', 'spot']);
+    expect(phasesComplete({ mcq: true, spot: true }, phaseOrderForDept('pediatrics'))).toBe(true);
+    expect(nextPhase({ mcq: true }, phaseOrderForDept('pediatrics'))).toBe('spot');
+    expect(nextPhase({ mcq: true, spot: true }, phaseOrderForDept('pediatrics'))).toBe(null);
+    expect(completedCount({ mcq: true, spot: true, qa: true }, phaseOrderForDept('pediatrics'))).toBe(2);
+  });
+  it('historical QA attempts stay recognizable regardless of rollout', () => {
+    expect(isActiveQaInterview({ assessmentType: 'call-qa', qa: { pass: true }, department: 'pediatrics' }, 'pediatrics')).toBe(true);
   });
 });
 
@@ -70,6 +86,7 @@ describe('active QA helpers', () => {
   it('does not count archived QA interviews as active', () => {
     expect(isActiveQaInterview({
       department: 'pediatrics',
+      assessmentType: 'call-qa',
       qa: { score: 92, pass: true },
       qaArchived: true,
     }, 'pediatrics')).toBe(false);
@@ -79,17 +96,27 @@ describe('active QA helpers', () => {
     const interviews = [
       {
         department: 'pediatrics',
+        assessmentType: 'call-qa',
         qa: { score: 95, pass: true },
         qaArchived: true,
         endedAt: { seconds: 200 },
       },
       {
         department: 'pediatrics',
+        assessmentType: 'call-qa',
         qa: { score: 82, pass: true },
         endedAt: { seconds: 100 },
       },
     ];
 
     expect(latestQaForDept(interviews, 'pediatrics')?.qa?.score).toBe(82);
+  });
+
+  it('does not let an arbitrary practice qa payload complete Phase 3', () => {
+    expect(isActiveQaInterview({
+      department: 'pediatrics',
+      assessmentType: 'practice',
+      qa: { score: 100, pass: true },
+    }, 'pediatrics')).toBe(false);
   });
 });

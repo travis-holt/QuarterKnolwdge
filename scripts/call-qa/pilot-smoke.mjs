@@ -2,8 +2,15 @@ import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { validateCalibrationFixture } from '../../api/_qa-calibration.js';
-import { getCallQaScenarioById } from '../../src/data/callQaScenarios.js';
+// The runtime bank is PRIVATE (Admin-only Firestore). Pilot smoke uses only the
+// committed non-production synthetic descriptors — it needs no Firestore access
+// and can never see a production scenario instance.
+import {
+  SYNTHETIC_CALIBRATION_SCENARIOS,
+  scenarioResolverFrom,
+} from '../../api/_qa-calibration-scenarios.js';
 import { isActiveQaInterview } from '../../src/lib/phases.js';
+import { CALL_QA_ROLLOUT_DEPARTMENTS } from '../../src/data/callQaScenarios.js';
 
 export const PILOT_SMOKE_VERIFIED = 'PILOT_SMOKE_VERIFIED';
 export const PILOT_SMOKE_FAILED = 'PILOT_SMOKE_FAILED';
@@ -14,8 +21,10 @@ async function readExample(name) {
   return JSON.parse(await readFile(new URL(name, FIXTURE_DIRECTORY), 'utf8'));
 }
 
+const getSyntheticScenario = scenarioResolverFrom(SYNTHETIC_CALIBRATION_SCENARIOS);
+
 function forScenario(base, caseId, scenarioId) {
-  const scenario = getCallQaScenarioById(scenarioId);
+  const scenario = getSyntheticScenario(scenarioId);
   return {
     ...structuredClone(base),
     caseId,
@@ -35,7 +44,7 @@ function generalFail(base, caseId, scenarioId) {
 }
 
 function operationalFailure(caseId, scenarioId, captureStatus, gradingStatus) {
-  const scenario = getCallQaScenarioById(scenarioId);
+  const scenario = getSyntheticScenario(scenarioId);
   return {
     formatVersion: 1,
     caseId,
@@ -76,35 +85,35 @@ export async function buildPilotSmokeCases() {
     readExample('example-review.json'),
   ]);
   return [
-    smokeCase('pass', forScenario(pass, 'smoke-peds-pass', 'qa-peds-refill-001'), true),
-    smokeCase('pass', forScenario(pass, 'smoke-obgyn-pass', 'qa-obgyn-refill-001'), true),
-    smokeCase('fail', generalFail(fail, 'smoke-peds-fail', 'qa-peds-scheduling-001'), true),
-    smokeCase('fail', generalFail(fail, 'smoke-obgyn-fail', 'qa-obgyn-new-gyn-001'), true),
-    smokeCase('safety-violation', forScenario(fail, 'smoke-peds-safety', 'qa-peds-urgent-boundary-001'), true),
-    smokeCase('safety-violation', forScenario(fail, 'smoke-obgyn-safety', 'qa-obgyn-results-boundary-001'), true),
-    smokeCase('needs-review', forScenario(review, 'smoke-peds-review', 'qa-peds-urgent-boundary-001'), true),
-    smokeCase('needs-review', forScenario(review, 'smoke-obgyn-review', 'qa-obgyn-mfm-001'), true),
+    smokeCase('pass', forScenario(pass, 'smoke-peds-pass', 'synthetic-peds-refill-01'), true),
+    smokeCase('pass', forScenario(pass, 'smoke-obgyn-pass', 'synthetic-obgyn-refill-01'), true),
+    smokeCase('fail', generalFail(fail, 'smoke-peds-fail', 'synthetic-peds-scheduling-01'), true),
+    smokeCase('fail', generalFail(fail, 'smoke-obgyn-fail', 'synthetic-obgyn-new-gyn-01'), true),
+    smokeCase('safety-violation', forScenario(fail, 'smoke-peds-safety', 'synthetic-peds-urgent-boundary-01'), true),
+    smokeCase('safety-violation', forScenario(fail, 'smoke-obgyn-safety', 'synthetic-obgyn-results-boundary-01'), true),
+    smokeCase('needs-review', forScenario(review, 'smoke-peds-review', 'synthetic-peds-urgent-boundary-01'), true),
+    smokeCase('needs-review', forScenario(review, 'smoke-obgyn-review', 'synthetic-obgyn-mfm-01'), true),
     smokeCase('incomplete-capture', operationalFailure(
-      'smoke-peds-incomplete', 'qa-peds-unclear-001', 'capture_incomplete', 'not_started',
+      'smoke-peds-incomplete', 'synthetic-peds-unclear-01', 'capture_incomplete', 'not_started',
     ), false),
     smokeCase('incomplete-capture', operationalFailure(
-      'smoke-obgyn-incomplete', 'qa-obgyn-unclear-001', 'capture_incomplete', 'not_started',
+      'smoke-obgyn-incomplete', 'synthetic-obgyn-unclear-01', 'capture_incomplete', 'not_started',
     ), false),
     smokeCase('abandoned-capture', operationalFailure(
-      'smoke-peds-abandoned', 'qa-peds-records-001', 'abandoned', 'not_started',
+      'smoke-peds-abandoned', 'synthetic-peds-records-01', 'abandoned', 'not_started',
     ), false),
     smokeCase('abandoned-capture', operationalFailure(
-      'smoke-obgyn-abandoned', 'qa-obgyn-records-001', 'abandoned', 'not_started',
+      'smoke-obgyn-abandoned', 'synthetic-obgyn-records-01', 'abandoned', 'not_started',
     ), false),
     smokeCase('grade-failed', operationalFailure(
-      'smoke-peds-grade-failed', 'qa-peds-referral-001', 'captured', 'grade_failed',
+      'smoke-peds-grade-failed', 'synthetic-peds-referral-01', 'captured', 'grade_failed',
     ), false),
     smokeCase('grade-failed', operationalFailure(
-      'smoke-obgyn-grade-failed', 'qa-obgyn-pregnancy-001', 'captured', 'grade_failed',
+      'smoke-obgyn-grade-failed', 'synthetic-obgyn-pregnancy-01', 'captured', 'grade_failed',
     ), false),
     smokeCase(
       'phase3-archived',
-      forScenario(pass, 'smoke-peds-archived', 'qa-peds-insurance-001'),
+      forScenario(pass, 'smoke-peds-archived', 'synthetic-peds-insurance-01'),
       false,
       { qaArchived: true },
     ),
@@ -112,7 +121,10 @@ export async function buildPilotSmokeCases() {
 }
 
 function phase3Interview(item) {
+  // Mirrors the navigator-safe projected server Call QA row: Phase 3 requires
+  // assessmentType 'call-qa' plus a saved qa result (see src/lib/phases.js).
   return {
+    assessmentType: 'call-qa',
     department: item.fixture.department,
     qa: item.fixture.modelRun ? {
       pass: item.fixture.modelRun.pass,
@@ -155,7 +167,7 @@ export function evaluatePilotSmokeCases(cases) {
     if (item?.evidenceUse !== 'synthetic-rehearsal-only') {
       failures.push(`case-${index}:invalid-evidence-use`);
     }
-    const validation = validateCalibrationFixture(fixture);
+    const validation = validateCalibrationFixture(fixture, { scenarios: SYNTHETIC_CALIBRATION_SCENARIOS });
     if (!validation.valid) failures.push(`${fixture?.caseId ?? `case-${index}`}:${validation.errors.join('; ')}`);
     if (ids.has(fixture?.caseId)) failures.push(`${fixture?.caseId}:duplicate-case-id`);
     ids.add(fixture?.caseId);
@@ -182,7 +194,10 @@ export function evaluatePilotSmokeCases(cases) {
   ]) {
     if (!categories.has(category)) failures.push(`missing-category:${category}`);
   }
-  for (const department of ['pediatrics', 'obgyn']) {
+  // Rollout coverage: every scored-rollout department (currently OB/GYN only)
+  // must be exercised. Extra synthetic Pediatrics rehearsal cases stay valid
+  // evidence but are never required — Pediatrics is outside this rollout.
+  for (const department of CALL_QA_ROLLOUT_DEPARTMENTS) {
     if (!departments.has(department)) failures.push(`missing-department:${department}`);
   }
   if (!phase3Complete || !phase3Incomplete) failures.push('phase3-behavior-not-exercised');
@@ -190,6 +205,7 @@ export function evaluatePilotSmokeCases(cases) {
   return {
     status: failures.length ? PILOT_SMOKE_FAILED : PILOT_SMOKE_VERIFIED,
     caseCount: cases?.length ?? 0,
+    rolloutDepartments: [...CALL_QA_ROLLOUT_DEPARTMENTS],
     departments: [...departments].sort(),
     categories: [...categories].sort(),
     phase3: { complete: phase3Complete, incomplete: phase3Incomplete },

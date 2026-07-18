@@ -1,11 +1,11 @@
 import { ASSESSED_DEPTS } from '../src/data/departments.js';
 import { DOMAINS } from '../src/data/questions.js';
 import { COMPETENCIES } from '../src/data/competencies.js';
+import { CALL_QA_COVERAGE_BLUEPRINT, isCallQaRolloutDept } from '../src/data/callQaScenarios.js';
 import {
-  CALL_QA_SCENARIOS,
-  CALL_QA_SCENARIO_BANK_VERSION,
-  getCallQaScenarioById,
-} from '../src/data/callQaScenarios.js';
+  SYNTHETIC_CALIBRATION_SCENARIOS,
+  scenarioResolverFrom,
+} from './_qa-calibration-scenarios.js';
 import {
   QA_AUTO_FAILS,
   QA_RUBRIC_VERSION,
@@ -168,7 +168,7 @@ function validateHumanReview(fixture, errors) {
   }
 }
 
-function validateModelRun(fixture, errors) {
+function validateModelRun(fixture, errors, expectedScenarioVersion = null) {
   const gradingStatus = fixture?.capture?.gradingStatus;
   const run = fixture?.modelRun;
   if (gradingStatus !== 'graded') {
@@ -188,8 +188,8 @@ function validateModelRun(fixture, errors) {
   if (run.promptVersion && run.promptVersion !== CALL_QA_PROMPT_VERSION) {
     addError(errors, 'modelRun.promptVersion', 'unsupported prompt version');
   }
-  if (run.scenarioVersion && run.scenarioVersion !== CALL_QA_SCENARIO_BANK_VERSION) {
-    addError(errors, 'modelRun.scenarioVersion', 'unsupported scenario version');
+  if (run.scenarioVersion && expectedScenarioVersion && run.scenarioVersion !== expectedScenarioVersion) {
+    addError(errors, 'modelRun.scenarioVersion', 'does not match the referenced scenario version');
   }
   if (!CALIBRATION_RECOMMENDATIONS.has(run.recommendation)) {
     addError(errors, 'modelRun.recommendation', 'invalid recommendation');
@@ -226,7 +226,8 @@ function isOperationalPilot(fixture) {
   return fixture?.source === 'operational-pilot';
 }
 
-export function validateCalibrationFixture(fixture) {
+export function validateCalibrationFixture(fixture, { scenarios = SYNTHETIC_CALIBRATION_SCENARIOS } = {}) {
+  const resolveScenario = scenarioResolverFrom(scenarios);
   const errors = [];
   if (!fixture || typeof fixture !== 'object' || Array.isArray(fixture)) {
     return { valid: false, errors: ['fixture: must be an object'] };
@@ -239,12 +240,19 @@ export function validateCalibrationFixture(fixture) {
   if (fixture.sanitized !== true) addError(errors, 'sanitized', 'must be true');
   if (!ASSESSED_DEPTS.includes(fixture.department)) addError(errors, 'department', 'unknown department');
 
-  const scenario = getCallQaScenarioById(fixture.scenarioId);
+  const scenario = resolveScenario(fixture.scenarioId);
   if (!scenario) addError(errors, 'scenarioId', 'unknown scenario id');
   else {
     if (scenario.department !== fixture.department) addError(errors, 'scenarioId', 'scenario belongs to another department');
     if (fixture.workflowType !== scenario.workflowType) addError(errors, 'workflowType', 'does not match scenario');
     if (fixture.difficulty !== scenario.difficulty) addError(errors, 'difficulty', 'does not match scenario');
+  }
+
+  // Synthetic examples are non-production rehearsal material and must say so.
+  if (fixture.source === 'synthetic-example') {
+    if (fixture.nonProduction !== true) addError(errors, 'nonProduction', 'synthetic examples must set nonProduction: true');
+    if (fixture.calibrationAuthority !== 'none') addError(errors, 'calibrationAuthority', "synthetic examples must set calibrationAuthority: 'none'");
+    if (fixture.evidenceUse !== 'synthetic-rehearsal-only') addError(errors, 'evidenceUse', "synthetic examples must set evidenceUse: 'synthetic-rehearsal-only'");
   }
 
   const capture = fixture.capture;
@@ -340,7 +348,7 @@ export function validateCalibrationFixture(fixture) {
     }
   } else {
     validateHumanReview(fixture, errors);
-    validateModelRun(fixture, errors);
+    validateModelRun(fixture, errors, scenario?.version ?? null);
   }
   scanProhibited(fixture, 'fixture', errors);
   return { valid: errors.length === 0, errors };
@@ -635,7 +643,11 @@ function populationKey(item) {
   ].map((value) => value ?? 'unknown').join(' | ');
 }
 
-function buildCalibrationReportInternal(fixtures, includePopulations) {
+function buildCalibrationReportInternal(fixtures, includePopulations, options = {}) {
+  const {
+    scenarios = SYNTHETIC_CALIBRATION_SCENARIOS,
+    scenarioEvidence = 'synthetic-only',
+  } = options;
   const seen = new Set();
   const all = fixtures.map((fixture) => {
     const item = evaluateCalibrationCase(fixture);
@@ -728,7 +740,7 @@ function buildCalibrationReportInternal(fixtures, includePopulations) {
       gradingStatus: groupBreakdown(captureEvidence, (item) => item.fixture.capture.gradingStatus),
       gradingPopulation: groupBreakdown(cases, populationKey),
     },
-    coverage: buildScenarioCoverageReport(CALL_QA_SCENARIOS, fixtures),
+    coverage: buildScenarioCoverageReport(scenarios, fixtures, { scenarioEvidence }),
     approvedPopulation: versions.populations.length === 1 ? versions.populations[0].value : null,
   };
   if (includePopulations && versions.populations.length > 1) {
@@ -740,6 +752,7 @@ function buildCalibrationReportInternal(fixtures, includePopulations) {
             !fixture.modelRun ||
             populationKey(evaluateCalibrationCase(fixture)) === value),
           false,
+          options,
         ),
       ]),
     );
@@ -747,8 +760,8 @@ function buildCalibrationReportInternal(fixtures, includePopulations) {
   return report;
 }
 
-export function buildCalibrationReport(fixtures) {
-  return buildCalibrationReportInternal(fixtures, true);
+export function buildCalibrationReport(fixtures, options = {}) {
+  return buildCalibrationReportInternal(fixtures, true, options);
 }
 
 function sampleCoverageFailures(report, gates) {
@@ -784,17 +797,25 @@ function sampleCoverageFailures(report, gates) {
       reasons.push(`department:${department}:${count}/${gates.minimumCasesPerDepartment}`);
     }
   }
-  for (const scenario of CALL_QA_SCENARIOS) {
-    const count = report.operationalBreakdowns.scenario[scenario.id]?.count ?? 0;
-    if (count < gates.minimumCasesPerScenario) {
-      reasons.push(`scenario:${scenario.id}:${count}/${gates.minimumCasesPerScenario}`);
-    }
+  // Scenario/workflow sample minimums come from the report's own coverage
+  // section (built from the calibration scenario source), never a public bank.
+  if (report.coverage.scenarioEvidence !== 'private-manifest') {
+    reasons.push(`scenarioEvidence:${report.coverage.scenarioEvidence ?? 'missing'}`);
   }
-  const workflows = new Set(CALL_QA_SCENARIOS.map((scenario) => scenario.workflowType));
-  for (const workflow of workflows) {
-    const count = report.operationalBreakdowns.workflowType[workflow]?.count ?? 0;
-    if (count < gates.minimumCasesPerWorkflow) {
-      reasons.push(`workflow:${workflow}:${count}/${gates.minimumCasesPerWorkflow}`);
+  for (const departmentCoverage of Object.values(report.coverage.departments ?? {})) {
+    for (const workflow of Object.values(departmentCoverage.workflows ?? {})) {
+      for (const scenarioId of workflow.scenarios ?? []) {
+        const count = report.operationalBreakdowns.scenario[scenarioId]?.count ?? 0;
+        if (count < gates.minimumCasesPerScenario) {
+          reasons.push(`scenario:${scenarioId}:${count}/${gates.minimumCasesPerScenario}`);
+        }
+      }
+    }
+    for (const workflowType of departmentCoverage.workflowTypes ?? []) {
+      const count = report.operationalBreakdowns.workflowType[workflowType]?.count ?? 0;
+      if (count < gates.minimumCasesPerWorkflow) {
+        reasons.push(`workflow:${workflowType}:${count}/${gates.minimumCasesPerWorkflow}`);
+      }
     }
   }
   return reasons;
@@ -897,7 +918,7 @@ function balance(fixtures) {
   return counts;
 }
 
-export function buildScenarioCoverageReport(scenarios = CALL_QA_SCENARIOS, fixtures = []) {
+export function buildScenarioCoverageReport(scenarios = SYNTHETIC_CALIBRATION_SCENARIOS, fixtures = [], { scenarioEvidence = 'synthetic-only' } = {}) {
   const human = fixtures.filter((fixture) => fixture.source === 'human-pilot');
   const departments = {};
   const flags = [];
@@ -905,6 +926,20 @@ export function buildScenarioCoverageReport(scenarios = CALL_QA_SCENARIOS, fixtu
 
   for (const department of ASSESSED_DEPTS) {
     const departmentScenarios = scenarios.filter((scenario) => scenario.department === department);
+    // Honest runtime-bank evidence: descriptor counts only prove runtime
+    // coverage when they come from a validated private-bank manifest. The
+    // anonymous aggregate minimums alone are never coverage evidence.
+    const minimumScenarioCount = CALL_QA_COVERAGE_BLUEPRINT[department]?.minimumScenarioCount ?? 0;
+    // Runtime private-bank evidence is only required for scored-rollout
+    // departments (currently OB/GYN only). Pediatrics is assessed but outside
+    // this rollout: no private bank exists or is required for it.
+    if (isCallQaRolloutDept(department)) {
+      if (scenarioEvidence !== 'private-manifest') {
+        flags.push({ id: 'runtime-bank-evidence-missing', department, requiredMinimum: minimumScenarioCount });
+      } else if (departmentScenarios.length < minimumScenarioCount) {
+        flags.push({ id: 'private-bank-below-minimum', department, count: departmentScenarios.length, requiredMinimum: minimumScenarioCount });
+      }
+    }
     const departmentFixtures = human.filter((fixture) => fixture.department === department);
     const workflows = {};
     for (const scenario of departmentScenarios) {
@@ -991,6 +1026,7 @@ export function buildScenarioCoverageReport(scenarios = CALL_QA_SCENARIOS, fixtu
     flags.push({ id: 'department-concentration', rate: maxDepartment / human.length });
   }
   return {
+    scenarioEvidence,
     humanCalibrationCaseCount: human.length,
     departments,
     flags: flags.sort((a, b) => JSON.stringify(a).localeCompare(JSON.stringify(b))),

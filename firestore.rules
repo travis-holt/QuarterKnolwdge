@@ -108,26 +108,39 @@ service cloud.firestore {
       allow update, delete: if isSupervisor();
     }
 
-    // A SERVER-AUTHORITATIVE Call QA attempt (PR 2) is created and mutated ONLY
-    // by Firebase Admin (which bypasses these rules). A navigator client can
-    // neither create one nor touch its transcript / capture state / scenario
-    // snapshot / grade / qa / server metadata. Practice interviews are unchanged:
-    // a navigator may create their own and attach the advisory grade/qa.
-    function isServerCallQa(data) {
+    // Private Call QA answer material is server-only. Firebase Admin bypasses
+    // rules; no navigator or supervisor client may read or mutate this bank.
+    match /callQaScenariosPrivate/{docId} {
+      allow read, write: if false;
+    }
+
+    // A SERVER-AUTHORITATIVE Call QA attempt is created, read, and mutated only
+    // by Firebase Admin (which bypasses these rules) or a supervisor. Firestore
+    // cannot mask fields, so an owner read would expose the private scenario
+    // snapshot and grading rubric. Navigators receive an allowlisted result/history
+    // projection through /api/my-interviews instead. Practice interviews are
+    // unchanged: a navigator may create/read their own and attach advisory grade/qa.
+    function isProtectedCallQa(data) {
       return data.get('captureAuthority', 'browser') == 'server'
-        || data.get('assessmentType', 'practice') == 'call-qa';
+        || data.get('assessmentType', 'practice') == 'call-qa'
+        || data.get('qaScenarioId', null) != null
+        || data.get('qa', null) != null;
     }
     function claimsQaScenario(data) {
       return data.get('qaScenarioId', null) != null;
     }
     match /interviews/{docId} {
-      allow read: if isSupervisor() || owns(resource.data);
+      // Navigator history is served by the authenticated projection endpoint.
+      // Deny collection queries outright so a query can never become a second
+      // path around the per-document server-QA read denial.
+      allow get: if isSupervisor() || (owns(resource.data) && !isProtectedCallQa(resource.data));
+      allow list: if isSupervisor();
       // Navigator create is limited to their own PRACTICE interview: it may not
       // claim server authority, the call-qa assessment type, or a curated QA
       // scenario id — those are the shape of a server-created scored attempt.
       allow create: if isSupervisor() || (
         owns(request.resource.data) &&
-        !isServerCallQa(request.resource.data) &&
+        !isProtectedCallQa(request.resource.data) &&
         !claimsQaScenario(request.resource.data)
       );
       // Navigators only attach the advisory practice grade/QA payload, and never
@@ -135,8 +148,8 @@ service cloud.firestore {
       // capture state, supervisor overrides, or final review fields.
       allow update: if isSupervisor() || (
         owns(resource.data) && owns(request.resource.data) && ownerUnchanged() &&
-        !isServerCallQa(resource.data) &&
-        request.resource.data.diff(resource.data).affectedKeys().hasOnly(['grade', 'qa'])
+        !isProtectedCallQa(resource.data) &&
+        request.resource.data.diff(resource.data).affectedKeys().hasOnly(['grade'])
       );
       allow delete: if isSupervisor();
     }

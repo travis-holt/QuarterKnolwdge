@@ -1,5 +1,253 @@
 # Development History - Knowledge Check
 
+### 2026-07-18 - Private Call QA bank provisioned + Firestore rules deployed (operator action)
+- **Provisioning gate cleared.** An authorized operator authored 15 fresh private OB/GYN Call QA
+  scenarios (fictional callers; reconciled against the owner-provided current-floor SOP, Version
+  1.0 effective 17 July 2026, which matches the pinned `obgyn-current-floor-2026-07-17`
+  constant — no re-versioning needed). The bank passed the exact production validator locally
+  (15/15 active OB/GYN; difficulty mix 4 easy / 7 medium / 4 hard; 17 of 24 executable rule IDs
+  covered — full rule coverage is a later bank-expansion goal, not a launch blocker).
+- **Production Firestore written.** After a clean dry run (`Would create: 15 · update: 0 ·
+  deactivate: 0`), the bank was applied to the Admin-only `callQaScenariosPrivate` collection:
+  **15 created, 0 updated, 0 deactivated.** All scenario content, the SOP reconciliation record,
+  and the review table live only in gitignored operator storage (`private-call-qa/`) — no scenario
+  material, secret path, key identifier, or credential is committed to the repo, this file, or the PR.
+- **Pre-publish integrity scan run (read-only, Firebase Admin).** The §12-mandated scan of the
+  production `results` collection validated every document ID against its body ownership/
+  department/assessment-type: **17 documents, 17 clean, 0 flagged** — nothing to quarantine.
+- **Firestore rules deployed.** The tightened `firestore.rules` (result document ID+body ownership
+  binding, private Call QA store denial for every client, navigator raw-attempt denial,
+  forged/legacy QA protection) compiled and released to production.
+- **Still outstanding (live smoke requirements):** merge PR #35 and let Railway deploy; verify
+  navigator login/token exchange against the live deployment; verify `/api/my-interviews` returns
+  only the safe projected history; run the safe Playwright walkthrough; place one deliberate
+  real-microphone Call QA test call confirming a private-bank scenario is selected, the call opens
+  normally, the server transcript finalizes, grading completes, the supervisor sees the result,
+  and the navigator cannot access private answers, hidden chart state, or raw attempt data.
+- Docs updated: CLAUDE.md header note, F25 status/rotation gate, §8, §12 scan entry, §15
+  priorities/blockers. Docs-only change; no application code touched.
+
+### 2026-07-18 - OB/GYN-only scored Call QA rollout scope
+- **Rollout configuration:** new `CALL_QA_ROLLOUT_DEPARTMENTS = ['obgyn']` +
+  `isCallQaRolloutDept()` in `src/data/callQaScenarios.js` now govern scored Call QA availability
+  everywhere. `CALL_QA_COVERAGE_BLUEPRINT` drops the Pediatrics entry: the private-bank minimum is
+  **15 active OB/GYN scenarios only**. Adding a department later is a config change plus private
+  provisioning, not another redesign.
+- **Relay gate:** `/api/live` `mode:'test'` starts are rejected server-side for any department
+  outside the rollout (Pediatrics gets a clear "not in this rollout" error, no attempt created;
+  `selectScenario` is never called). Practice mode is unchanged for all departments.
+- **Phase flow:** `phaseOrderForDept(dept)` in `src/lib/phases.js` — OB/GYN keeps the 3-phase
+  MCQ → Spot → Call QA sequence; Pediatrics runs a two-phase MCQ → Spot assessment that COMPLETES
+  without QA (no fake completions, no permanently-impossible completion). `buildPhases`/
+  `phasesComplete`/`nextPhase`/`completedCount` accept the department-scoped order; `PhaseHub`
+  renders 2 or 3 cards with correct copy; the dashboard's historical QA card stays visible for
+  every department but only offers Retake in rollout departments; the `qatest` view is
+  rollout-guarded.
+- **Provisioning tool:** `validateProvisioningPayload` rejects scenarios for non-rollout
+  departments (no Pediatrics section required — or accepted), and requires ≥15 active OB/GYN
+  scenarios. `diffAgainstExisting` only manages (and can only deactivate) existing documents in
+  rollout departments — an OB/GYN-only manifest can never deactivate a legacy Pediatrics document.
+  Tests rewritten for OB/GYN-only payloads with real provenance constants.
+- **Strict OB/GYN provenance:** `validatePrivateScenario` now REQUIRES, for OB/GYN, a non-null
+  `sourceRuleVersion === OBGYN_RULE_SET_VERSION`, `sourceAuthority === OBGYN_SOURCE_AUTHORITY`,
+  `sourceSopVersion === OBGYN_SOP_VERSION` (the launch contract pins private Call QA content to
+  the owner-confirmed current-floor version — no dynamic active-SOP grounding; re-pin the constant
+  on a deliberate content re-authoring), and non-empty valid `ruleIds`. Null/empty provenance
+  fails validation; Pediatrics-shaped legacy fixtures keep legacy-tolerant behavior (they are not
+  provisionable anyway).
+- **Honest reporting:** calibration coverage flags `runtime-bank-evidence-missing`/
+  `private-bank-below-minimum` only for rollout departments; pilot smoke requires coverage of the
+  rollout departments only (Pediatrics synthetic rehearsal cases remain valid extra evidence) and
+  reports `rolloutDepartments: ['obgyn']`.
+- **CI:** the workflow now also runs `qa:pilot-smoke`, `qa:calibrate`, and `qa:coverage` (all
+  offline/deterministic; no Firestore, Gemini, or private files). `qa:calibrate:check` is
+  intentionally NOT a required green step — it exits 1 with `INSUFFICIENT_DATA` until real human
+  calibration evidence exists.
+
+### 2026-07-18 - PR #35 merge-readiness pass: main integration, calibration adaptation, callerCaseFile, randomized selection
+- **Merged current `origin/main` (`d4ee320`, PR #33)** into `feature/obgyn-operating-model-v2`
+  with `--no-ff` (no rebase/force-push). The full PR #33 calibration/readiness architecture is
+  preserved: `api/_qa-automation-policy.js`, `_qa-calibration-gates.js`, `_qa-calibration.js`,
+  `_qa-grading-versions.js`, fixtures + validation, `scripts/call-qa/{calibrate,pilot-smoke}.mjs`,
+  and the `qa:calibrate`/`qa:calibrate:check`/`qa:coverage`/`qa:pilot-smoke` commands. Readiness
+  honestly remains `INSUFFICIENT_DATA` (3 synthetic examples, 0 human pilots).
+- **Grader version single source of truth:** `api/_qa-grading-versions.js` now owns
+  `CALL_QA_PROMPT_VERSION = 'call-qa-grader-v3'`; `api/grade-call-qa.js` re-exports it (its local
+  duplicate constant is gone). Fixtures, calibration validation, automation-policy tests, and docs
+  use v3 + `qa-rubric-v2` consistently.
+- **Calibration adapted to the private runtime bank:** new `api/_qa-calibration-scenarios.js`
+  provides committed NON-PRODUCTION synthetic descriptors (metadata only; marked
+  `nonProduction`/`calibrationAuthority: 'none'`/`evidenceUse: 'synthetic-rehearsal-only'`, marks
+  now REQUIRED on `synthetic-example` fixtures) and a metadata-only private-manifest
+  loader/validator that rejects every private instance field. `qa:pilot-smoke` runs entirely on
+  synthetic descriptors (no Firestore); `qa:coverage` accepts `--private-manifest
+  <ignored-local-path>` or an injected loader; without private evidence, coverage flags
+  `runtime-bank-evidence-missing` per department and readiness carries
+  `scenarioEvidence:synthetic-only` — aggregate minimum counts alone are never runtime coverage
+  evidence. Live calibration now grades only fixtures embedding a sanitized `scenarioSnapshot`
+  (never reads the private bank). No readiness threshold was weakened.
+- **Private caller contract (`callerCaseFile`):** private scenarios now REQUIRE a validated
+  `callerCaseFile` `{callerGoal, knownFacts, factsToReveal, revealRules, behavior,
+  consistencyConstraints}` — the AI caller's own consistent knowledge (LMP, medication/pharmacy,
+  prior callbacks, symptoms, what the patient believes the provider said), separate from
+  grader-only `hiddenChartState` which is never auto-treated as caller knowledge. It lives only in
+  the private Firestore doc + immutable attempt snapshot, is rendered server-side into the caller
+  system instruction (`renderCallerCaseFile` in `interview-turn.js`, reveal-only-when-asked +
+  never-coach rules), and never reaches the browser `ready` projection, `/api/my-interviews`, or
+  the client bundle (scanner extended with `callerCaseFile` + `scenarioSnapshot`). Tests prove
+  facts reach the persona but never any browser payload.
+- **Randomized server-side scenario selection:** `selectLoadedCallQaScenario` no longer picks the
+  first alphabetical eligible scenario — it excludes the 3 most recent completed unarchived
+  scenario ids (server-trusted history only), then chooses RANDOMLY among the remaining eligible
+  set, falling back to a random choice over the full valid set when everything is recent.
+  Injectable RNG for deterministic tests; new tests cover recency exclusion, multi-eligible
+  randomness, all-recent fallback, empty bank, and wrong-department isolation.
+- **Exact active-SOP content currency:** `src/lib/contentVersion.js` rewritten around four
+  separate concepts (active SOP grounding version, fallback SOP version, executable rule-set
+  version, source authority). With an active supervisor SOP, AI-generated content is Current only
+  when grounded in that EXACT `active-sop:<dept>:vN` version — fallback-grounded content is
+  Stale/review even with a current rule version; with no active SOP, matching fallback content is
+  Current; owner-confirmed current-floor content is evaluated separately against the rule-set
+  version (and cannot ride that authority while falsely claiming active-SOP grounding); legacy
+  stays Legacy; unknown rules stay blocked. 9 tests cover the required matrix.
+- **Contextual deterministic audit validation:** `validateAuditContent`'s indexed-error check now
+  evaluates the planted Agent error against requiredChartFacts + the immediately preceding
+  Patient turn + the Agent line, so a natural error need not restate every controlling chart fact;
+  all OTHER Agent turns are still checked strictly per-turn, preserving the exactly-one
+  deterministic-error guarantee. New `api/generateAuditObgynWorkflows.test.js` smoke-tests all 14
+  OB/GYN audit workflows with mocked model output (no paid API calls).
+- **Encoding cleanup + guard:** fixed the double-encoded-apostrophe mojibake character classes in
+  `api/_qa-rubric.js` regexes (now a plain `['’]` class, which also repairs curly-apostrophe
+  matching); added
+  `scripts/check-encoding.mjs` + `api/encoding.test.js`, an escape-only repo-wide mojibake
+  regression scan run in the unit suite.
+- **Private provisioning tool:** new Admin-only operator script
+  `scripts/call-qa/provision-private-scenarios.mjs` — ignored local JSON input, dry-run by
+  default, `--apply` + explicit `--project` match required, production validator (incl.
+  callerCaseFile + unique id__version identities + 8 Pediatrics / 15 OB/GYN minimums +
+  OB/GYN rule verification), create/update/deactivate counts, no secret content in logs, never run
+  automatically. NOT executed against production; the private bank remains unprovisioned.
+- **Verification:** `npm ci` clean · unit suite **1261/1261 across 65 files** · Firestore rules
+  emulator suites **76/76** (51 result-authorization + 25 Call QA, portable Temurin 21) ·
+  `npm run build` + private-runtime bundle scan clean · `npm audit --omit=dev` **0
+  vulnerabilities** · `qa:calibrate`/`qa:coverage` valid reports · `qa:pilot-smoke`
+  `PILOT_SMOKE_VERIFIED` (15 cases) · `qa:calibrate:check` exit 1 `INSUFFICIENT_DATA` (expected) ·
+  repo encoding scan clean · `git diff --check` clean.
+
+### 2026-07-17 (part 5) - Call QA private runtime, caller-observable grading, and honest coverage
+- **Security finding and root cause:** the previously published Call QA bank exposed stable scenario
+  IDs, caller/opening text, workflow metadata, hidden chart facts, expected actions, critical misses,
+  and scoring notes. Even after moving selection server-side, that source still provided an
+  opening-line-to-answer mapping to anyone reading the public repository. Server Call QA attempt
+  documents also held the immutable answer snapshot while navigator owners could read those raw
+  documents. The relay disclosed the attempt ID, making the read path straightforward.
+- **Runtime scenario instances removed from public source:** `src/data/callQaScenarios.js` now contains
+  only anonymous aggregate requirements (minimum 8 Pediatrics and 15 OB/GYN scenarios). Runtime IDs,
+  versions, clinician/caller names, opening lines, public briefings, workflow/difficulty, domains,
+  competencies, rule IDs, grading context, hidden facts, expected actions, critical misses, and
+  scoring notes were deleted from the public bank. `src/data/obgynCallQaScenarios.js` was removed.
+  The repo therefore carries no opening-line-to-answer mapping.
+- **Private runtime store:** every runtime scenario-instance field now loads through Firebase Admin
+  from client-denied `callQaScenariosPrivate`. The private-store validator requires an active,
+  department-matching, document-ID/version-bound complete shape. The relay selects from authenticated
+  navigator identity plus Admin-loaded prior attempts and ignores client scenario IDs, prompts,
+  history, workflow metadata, and answer hints. A missing or invalid private bank fails closed; there
+  is no public-code or browser fallback.
+- **Neutral caller/browser projection:** the scored caller receives only `publicBriefing`,
+  `callerName`, and `openingLine`. It receives no workflow/rule metadata, grading context, hidden chart
+  facts, expected actions, critical misses, or scoring notes. The browser receives only
+  `{prompt, callerName, department, primaryDomainId}` plus `attemptId`; the prompt is the neutral
+  public briefing. `attemptId` is an identifier, not authorization.
+- **Immutable snapshot-only grading:** before `ready`, the server stores the complete private scenario
+  snapshot on the server-owned attempt. `/api/grade-call-qa` authenticates ownership, loads the
+  server-captured transcript, cross-checks server authority plus snapshot ID/department/version and
+  required private fields, and rebuilds grading context from that stored snapshot only. Neither the
+  browser nor the current private bank can alter an already-captured attempt. Missing, incomplete,
+  forged, or mismatched snapshot authority disables repairs and forces supervisor review.
+- **Navigator read denial and sanitized history:** Firestore denies every client access to
+  `callQaScenariosPrivate`. Navigators cannot get or list raw server/curated/protected legacy Call QA
+  attempts; supervisors retain full attempt access for audit. New navigator-only
+  `POST /api/my-interviews` derives ownership from the verified token and strictly allowlists
+  result/status fields, stripping transcript, snapshot, rubric/grading context, leases, and future
+  unlisted fields. Rows carrying legacy `qaScenarioId` or `qa` are protected and normalized as Call
+  QA. Navigators also cannot forge practice rows with server authority, `assessmentType:'call-qa'`,
+  `qaScenarioId`, or `qa`; Phase 3 requires a projected/server Call QA row plus a saved QA result.
+- **Caller-observable fairness repair:** grader prompt/rubric versions were bumped. Internal ECW
+  clicks, buttons, visit labels, queues, channels, and staff assignments are private implementation
+  details, not patient scripts. For OB/GYN, a model false negative based solely on missing internal
+  narration may be repaired only when a separate verified navigator line states the equivalent safe
+  caller-visible outcome and there is no substantive workflow failure, over-promise, or clinical
+  advice. Repairs remain whitelisted, persisted, and supervisor-visible.
+- **Contradiction-only OB/GYN checks:** the old literal checks for `OB Verified`, `Take Action`,
+  `High Priority`, `TE`, `OB Portal`, `Intermedia`, and `Rebecca Wood` were removed. OB/GYN
+  deterministic findings now require an explicit spoken wrong/unsafe outcome and evaluate clauses
+  independently, so a safe disclaimer cannot hide a later unsafe instruction. Missing internal
+  wording alone creates neither a finding nor human review; duplicate reasons and review flags are
+  collapsed. Legacy Pediatrics routing checks remain conservative.
+- **Honest metadata:** the uniform all-six-domain/fixed-five-competency OB/GYN default was removed.
+  Every privately provisioned scenario must use narrow, de-duplicated domain and competency unions
+  derived from its referenced rules, with the primary domain included. The public repo exposes only
+  aggregate minimum counts, so it cannot inflate readiness coverage or reveal rule mappings.
+- **Related stale-content correction:** OB/GYN MCQ, fallback-question, training, and SOP-context text
+  for decreased fetal movement now teaches immediate escalation through the urgent OB clinical
+  workflow without independent navigator direction to Labor and Delivery. Explicit unsafe L&D
+  direction remains detectable. Approved real clinician/provider names may remain where operationally
+  necessary; patient PII, credentials, and private contact details remain forbidden.
+- **Defense in depth:** `npm run build` now scans `dist` for private runtime shape/store tokens.
+  Private provisioning directories/files are gitignored. The grading invariants now bind the private
+  store, neutral projections, immutable snapshot authority, legacy/forged protections,
+  caller-observable repair, contradiction-only checks, and pre-deploy rotation gate.
+- **Rotation/provisioning prerequisite:** all formerly committed or published scenario instances and
+  opening-line mappings are compromised and **must never be reused**. An authorized operator must
+  privately provision freshly rotated Pediatrics and OB/GYN instances in
+  `callQaScenariosPrivate` before deployment. This PR intentionally performs no provisioning,
+  production Firestore write, migration, merge, or deployment. The new rules are not live until
+  separately published; without private provisioning the scored relay intentionally has no scenario.
+- **Verification:** `npm test` -> **1,124/1,124 tests across 57 files**; Firestore Rules emulator ->
+  **76/76 assertions** (51 result authorization + 25 Call QA); `npm run build` passed including the
+  private-runtime bundle scan; `npm audit --omit=dev` found 0 vulnerabilities.
+
+### 2026-07-17 (part 4) - OB/GYN current-floor operating model v2
+- **Authority and source versioning:** replaced the active hardcoded OB/GYN grounding with the
+  owner-confirmed 2026-07-17 current-floor workflow and made source precedence explicit:
+  owner-confirmed current-floor rules, then the active supervisor-managed department SOP, then the
+  current hardcoded department fallback, then the generic navigator model. Active SOP records now
+  preserve version metadata while old body-only callers remain compatible. Real approved staff
+  names are retained where routing depends on them; credentials, phone numbers, and patient data are
+  excluded.
+- **Executable rules:** added `src/data/obgynWorkflowRules.js` with 24 versioned rules covering
+  Annual GYN/GYN OV, Dr. Bank waitlist, known/unknown LMP, New OB construction, documented RTO and
+  missing orders, OB sonography/provider pairs, postpartum/IUD variants (Dr. Stanislawski and Dr.
+  Klein), MFM/Rebecca Wood, transfer OB, High Priority + Intermedia escalation, Take Action,
+  refills, labs, late arrival, and pregnancy loss. Each rule carries triggers, chart checks,
+  required/prohibited actions, documentation, escalation, variants, domains, competencies, and
+  stable provenance.
+- **Generated assessment contracts:** MCQs and Spot-the-Error audits now select structured rules,
+  receive only those rules plus SOP grounding, and persist `sourceSopVersion`, `sourceRuleVersion`,
+  `sourceAuthority`, `ruleIds`, and `workflowType`. OB/GYN audits use a 14-workflow taxonomy and
+  additionally persist `errorKind`, `expectedCorrection`, and `requiredChartFacts`; validation
+  requires exactly 10 alternating turns, exactly one deterministically contradictory Agent error,
+  and an Agent `errorIndex` (no silent repair from a Patient turn). Data-driven guards reject stale
+  workflow contradictions before generated content can be saved.
+- **Call QA bank and grading:** replaced the active generic OB/GYN bank with 15 curated current-floor
+  workflows, each with a hidden chart state, expected actions, critical misses, scoring notes, rule
+  IDs, and source versions. Hidden chart facts stay server-side in the caller persona and immutable
+  attempt snapshot. The deterministic grader recognizes current OB Portal, Rebecca Wood, waitlist,
+  Take Action, paired-appointment, New OB, lab, transfer, and High Priority/Intermedia handling while
+  retaining legacy policies solely for historical attempt replay. Transcript grading evaluates
+  observable questions, classifications, explanations, and stated next steps; it never assumes
+  silent ECW actions and forces review where an unobservable action determines correctness.
+- **Drift/review UI:** a pure non-destructive helper labels question, audit, and Call QA content
+  Current, Stale, Legacy/unversioned, or unknown-rule review. Historical content is never rewritten,
+  and activating a new SOP never retroactively validates old content.
+- **Governance:** the human-readable active SOP remains the operational source; structured rules are
+  the executable assessment layer. Content still requires supervisor review, live-model calibration,
+  and operational monitoring. Scores/recommendations are coaching evidence, not an automatic
+  employment decision.
+- **Safety/scope:** no merge, deployment, production Firestore write, or destructive migration in
+  this branch.
+
+
 ### 2026-07-17 - PR #33 integrated with main b54f701
 - Merged main commit `b54f701` into the Call QA calibration branch. Conflict resolution preserves
   PR #33's calibration/pilot-smoke documentation and main's visual-polish and Spot the Error

@@ -53,7 +53,11 @@ async function startAndActivate(readyExtra = {}) {
   const ws = FakeWS.instances[0];
   await act(async () => { ws.onopen?.(); });
   await act(async () => {
-    ws.onmessage?.({ data: JSON.stringify({ type: 'ready', attemptId: 'att-1', scenario: { id: 'x', callerName: 'Sam', department: 'pediatrics' }, ...readyExtra }) });
+    ws.onmessage?.({ data: JSON.stringify({
+      type: 'ready', attemptId: 'att-1',
+      scenario: { prompt: 'A server-selected scenario.', callerName: 'Sam', department: 'pediatrics', primaryDomainId: 'routing' },
+      ...readyExtra,
+    }) });
   });
   return ws;
 }
@@ -74,18 +78,20 @@ beforeEach(() => {
 afterEach(() => cleanup());
 
 describe('VoiceCall test mode — server-authoritative handshake', () => {
-  it('start payload contains NO transcript-authority fields (only idToken/mode/department/qaScenarioId)', async () => {
+  it('start payload contains only identity, mode, and department — no scenario selector or answer material', async () => {
     render(<VoiceCall navigatorId="nav-a" name="Ada" department="pediatrics" mode="test" onQaResult={vi.fn()} />);
     const ws = await startAndActivate();
     const start = ws.parsed('start');
     expect(start.mode).toBe('test');
     expect(start.department).toBe('pediatrics');
-    expect(start.qaScenarioId).toBeTruthy();
     expect(start.idToken).toBe('token-123');
+    expect(start).not.toHaveProperty('qaScenarioId');
+    expect(start).not.toHaveProperty('priorQaAttempts');
     expect(start).not.toHaveProperty('scenario');
     expect(start).not.toHaveProperty('transcript');
     expect(start).not.toHaveProperty('callerName');
     expect(start).not.toHaveProperty('navigatorId');
+    expect(screen.getByText('A server-selected scenario.')).toBeTruthy();
   });
 
   it('End Call sends { type:"end" } and waits for the captured ack; then grades by attemptId and NEVER writes via db', async () => {

@@ -1,7 +1,8 @@
 // SOP contexts used to ground scenario generation. The leading underscore keeps
 // Express from turning this file into an HTTP route — it is a helper module.
-import { getLiveSop, getLiveSopSync } from './_sop-store.js';
+import { getLiveSopRecord, getLiveSopSyncRecord } from './_sop-store.js';
 import { navigatorContextBlock } from './_navigator-operating-model.js';
+import { OBGYN_SOP_VERSION, OBGYN_SOURCE_AUTHORITY } from '../src/data/obgynWorkflowRules.js';
 //
 // SOP_CONTEXTS is a map keyed by department id. Use sopContextFor(deptId) in
 // API handlers — it defaults to the Pediatrics context for unknown departments.
@@ -514,15 +515,86 @@ HOSPITAL SCHEDULE LIFECYCLE:
 // department SOP contexts above — the operating model deliberately stays free of
 // SOP facts and PII (the repo is public).
 // ─────────────────────────────────────────────────────────────────────────────
+// Current-floor public fallback. The structured rule layer carries the
+// machine-readable detail used by assessment generation and validation.
+export const SOP_CONTEXT_OBGYN_CURRENT = `
+OB/GYN PATIENT NAVIGATOR SOP — CURRENT FLOOR
+Version: ${OBGYN_SOP_VERSION} · Effective 2026-07-17
+
+SOURCE AND SCOPE
+- Check Encounters, Medical Summary, the last relevant note, open TEs, future appointments, and
+  e-prescription logs when relevant before choosing an appointment type.
+- Patient wording alone is not an order. Missing or conflicting RTO/sonography documentation goes
+  to OB Portal for clarification.
+- Navigators do not diagnose, interpret results, decide urgency independently, promise clinical
+  approval, or change pregnancy status/follow-up without clinical direction.
+
+GYN AND PROVIDER PREFERENCE
+- Annual GYN is current only after an actual in-department Annual GYN within one year. Pap-only,
+  an outside annual, and postpartum do not count.
+- Annual current plus a non-emergency concern uses GYN Office Visit; otherwise use Annual GYN.
+- Serious symptoms or no reasonable routine opening: OB Portal; use High Priority when serious.
+- Dr. Bank Annual GYN/fertility requests use the Waiting List Portal. Do not schedule Dr. Bank
+  directly or promise availability; offer another provider for clinical concerns.
+
+PREGNANCY CONFIRMATION AND NEW OB
+- Reliable LMP: target the 8–12-week New OB window. Unknown/unreliable LMP: 15-minute provider
+  Confirmation of Pregnancy first; do not independently add a lab or sonogram.
+- New OB is one operational appointment: 30-minute NEW OB sonogram followed immediately by a
+  30-minute provider visit, same day and back-to-back. Mark the second appointment OB Verified.
+  If no valid pair or timing is clearly outside the usual window, use OB Portal.
+
+RTO, SONOGRAPHY, AND PAIRS
+- Follow the documented RTO/order in Medical Summary, last note, or TE. Pregnancy sonography is
+  order-driven. Anatomy, Growth, BPP, NST, and other studies are not interchangeable.
+- Unless explicitly redo/repeat-only, ordered pregnancy sonography is paired with a provider visit.
+- Anatomy remains ordinary OB scheduling even though Dr. Rosenberg is entered on the scan record.
+- New OB, BPP+MD, Growth+MD, Anatomy+MD, and required procedure/sono pairs move or cancel together.
+  Preserve order and OB Verified on the second appointment where applicable.
+
+POSTPARTUM AND IUD
+- Postpartum is a 15-minute Postpartum-template visit and may still be booked around ten weeks.
+- Known IUD insertion at postpartum: provider visit then immediate GYN Sono, except Dr. Scott
+  Stanislawski. Discussion-only needs no sonogram.
+- Outside postpartum, Annual status determines GYN OV versus Annual GYN. Provider visit comes first,
+  GYN Sono second, back-to-back; the second appointment is OB Verified. Dr. Frieda Klein requires
+  30 minutes and does not use the OB schedule for this workflow.
+
+MFM, TRANSFER, AND URGENT WORK
+- All MFM scheduling, cancellation, reschedule, questions, referrals, and high-risk inquiries route
+  directly to Rebecca Wood. Navigators never schedule MFM. External/self-referrals are not accepted.
+- Transfer OB requires gestational age, outside pregnancy records, OB Portal review, and documented
+  acceptance/instructions before scheduling.
+- Serious symptoms: create/update an OB Portal TE, mark High Priority, and message the Women's Health
+  OB Urgent Calls Intermedia channel. Do not independently direct the patient to L&D or book an
+  urgent appointment from slot availability.
+- Written nurse/provider approval permits the instructed urgent booking/overbook. OB URGENT SONO
+  and provider stay back-to-back in the clinically instructed order.
+
+TE, REFILL, LAB, LATE ARRIVAL, AND PREGNANCY LOSS
+- Check for an open TE. Same issue: Take Action. Different issue: separate TE.
+- Refills: confirm medication, pharmacy, and prescribing provider; create or update the refill TE.
+  Do not give medication advice or promise approval/timing.
+- Navigators do not schedule OB/GYN labs or interpret results. Lab requests/questions go to OB Portal.
+- Late arrival: message Intermedia with account number, appointment time, and expected lateness.
+- Reported pregnancy loss: High Priority OB Portal TE plus urgent channel. Do not independently
+  cancel appointments, alter pregnancy status, or decide follow-up.
+- Current procedure questions route to OB Portal; old staff-specific procedure routing is inactive.
+`.trim();
+
 export const NAVIGATOR_ROLE_CONTEXT = navigatorContextBlock();
 
 // Owner-confirmed floor operations outrank conflicting sanitized SOP language.
 // Keep named owners to the approved public minimum; the deterministic layer uses stable IDs.
 const OWNER_CONFIRMED_ROUTING_OVERRIDES = `
-CALL QA ROUTING AUTHORITY (highest priority): owner-confirmed floor operations override conflicting sanitized SOP wording. Then use explicit department SOP rules, then the trusted curated scenario, then generic language only when consistent.
+SOURCE AUTHORITY (highest first): owner-confirmed current-floor rules; active supervisor-managed department SOP; current hardcoded department fallback; generic navigator operating model. A lower source never overrides a higher one.
 - Pediatrics standard refill: PEDS Encounters / Pediatrics Telephone Encounter queue; collect medication, pharmacy, callback, out status and high-priority if out. No PE question unless PE governs this case.
 - Pediatrics referral: Anisa Azeez. Records/forms, urgent symptoms, and unclear requests have no universal route unless the trusted scenario gives an exact subtype rule; escalate uncertain routing for supervisor review.
-- OB/GYN non-pregnant GYN: PSS OB. Pregnancy-related request: OB Portal. MFM request: Rebecca (MFM owner). Results/clinical question: OB Portal or the exact trusted clinical TE/message path. OB refill uses its trusted OB workflow; OB records use Medical Records only where the trusted workflow establishes it. Unknown/conflicting OB workflows require review.
+- OB/GYN decisions begin with chart review. Routine GYN uses the Annual-GYN-status rule; it does not universally route to PSS OB or a Prevention Coordinator.
+- Known reliable LMP uses the New OB window and complete paired visit. Unknown/unreliable LMP uses provider Confirmation first. Missing RTO/sonography documentation goes to OB Portal.
+- MFM scheduling, reschedule, cancellation, questions, referral, and high-risk inquiries route directly to Rebecca Wood. Routine Anatomy is ordinary OB scheduling, not MFM.
+- Serious OB/GYN symptoms use High Priority OB Portal TE plus the Women's Health OB Urgent Calls Intermedia channel. Navigators do not independently direct to L&D or book an urgent slot without written clinical approval.
+- OB/GYN labs are never scheduled or interpreted by navigators; route them to OB Portal. Transfer OB is not scheduled before records review and documented clinical acceptance.
 `.trim();
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -530,7 +602,7 @@ CALL QA ROUTING AUTHORITY (highest priority): owner-confirmed floor operations o
 // ─────────────────────────────────────────────────────────────────────────────
 export const SOP_CONTEXTS = {
   pediatrics: SOP_CONTEXT,
-  obgyn: SOP_CONTEXT_OBGYN,
+  obgyn: SOP_CONTEXT_OBGYN_CURRENT,
 };
 
 /** Return the SOP grounding text for a department (role context + department SOP).
@@ -542,14 +614,40 @@ export const SOP_CONTEXTS = {
  *    3. the Pediatrics context.
  *  Live SOPs make Behavioral Health / Internal Medicine AI-groundable without a
  *  code change. */
+function versionId(deptId, liveRecord) {
+  if (liveRecord) return `active-sop:${deptId}:v${liveRecord.version ?? 'unversioned'}`;
+  return deptId === 'obgyn' ? OBGYN_SOP_VERSION : `${deptId || 'pediatrics'}-hardcoded-fallback-v1`;
+}
+
+export function composeSopGrounding(deptId, liveRecord = null) {
+  const department = SOP_CONTEXTS[deptId] ? deptId : 'pediatrics';
+  const departmentSop = liveRecord?.body ?? SOP_CONTEXTS[department];
+  const departmentAuthority = liveRecord ? 'active-supervisor-managed-sop' : 'hardcoded-department-fallback';
+  return {
+    department,
+    sourceSopVersion: versionId(department, liveRecord),
+    sourceAuthority: department === 'obgyn' ? OBGYN_SOURCE_AUTHORITY : departmentAuthority,
+    departmentAuthority,
+    context: [
+      OWNER_CONFIRMED_ROUTING_OVERRIDES,
+      `DEPARTMENT SOP SOURCE (${departmentAuthority}):\n${departmentSop}`,
+      `GENERIC NAVIGATOR OPERATING MODEL (lowest authority):\n${NAVIGATOR_ROLE_CONTEXT}`,
+    ].join('\n\n'),
+  };
+}
+
+export function sopGroundingFor(deptId) {
+  return composeSopGrounding(deptId, getLiveSopSyncRecord(deptId));
+}
+
+export async function sopGroundingForFresh(deptId) {
+  return composeSopGrounding(deptId, await getLiveSopRecord(deptId));
+}
+
 export function sopContextFor(deptId) {
-  const live = getLiveSopSync(deptId);
-  const dept = live ?? SOP_CONTEXTS[deptId] ?? SOP_CONTEXTS.pediatrics;
-  return `${NAVIGATOR_ROLE_CONTEXT}\n\n${OWNER_CONFIRMED_ROUTING_OVERRIDES}\n\n${dept}`;
+  return sopGroundingFor(deptId).context;
 }
 
 export async function sopContextForFresh(deptId) {
-  const live = await getLiveSop(deptId);
-  const dept = live ?? SOP_CONTEXTS[deptId] ?? SOP_CONTEXTS.pediatrics;
-  return `${NAVIGATOR_ROLE_CONTEXT}\n\n${OWNER_CONFIRMED_ROUTING_OVERRIDES}\n\n${dept}`;
+  return (await sopGroundingForFresh(deptId)).context;
 }

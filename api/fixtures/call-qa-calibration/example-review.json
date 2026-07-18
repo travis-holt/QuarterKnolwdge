@@ -4,8 +4,8 @@
   "source": "synthetic-example",
   "sanitized": true,
   "department": "pediatrics",
-  "scenarioId": "qa-peds-urgent-boundary-001",
-  "workflowType": "urgent_symptom_boundary",
+  "scenarioId": "synthetic-peds-urgent-boundary-01",
+  "workflowType": "urgent_symptoms",
   "difficulty": "hard",
   "capture": {
     "captureStatus": "capture_incomplete",
@@ -13,15 +13,29 @@
     "captureVersion": "call-qa-live-transcript-v1",
     "liveModel": "gemini-live-example",
     "gradingStatus": "graded",
-    "warnings": ["drain-timeout"],
+    "warnings": [
+      "drain-timeout"
+    ],
     "navigatorTurnCount": 2,
     "callerTurnCount": 2
   },
   "transcript": [
-    { "role": "patient", "text": "My child is having trouble breathing." },
-    { "role": "navigator", "text": "I cannot provide clinical advice, but I will escalate this to the clinical team now." },
-    { "role": "patient", "text": "What should I do while I wait?" },
-    { "role": "navigator", "text": "If the condition worsens, use emergency services." }
+    {
+      "role": "patient",
+      "text": "My child is having trouble breathing."
+    },
+    {
+      "role": "navigator",
+      "text": "I cannot provide clinical advice, but I will escalate this to the clinical team now."
+    },
+    {
+      "role": "patient",
+      "text": "What should I do while I wait?"
+    },
+    {
+      "role": "navigator",
+      "text": "If the condition worsens, use emergency services."
+    }
   ],
   "humanReview": {
     "reviewerCount": 2,
@@ -113,36 +127,101 @@
   },
   "modelRun": {
     "model": "gemini-2.5-flash",
-    "rubricVersion": "qa-rubric-v1",
-    "promptVersion": "call-qa-grader-v1",
-    "scenarioVersion": "call-qa-scenarios-v1",
+    "rubricVersion": "qa-rubric-v2",
+    "promptVersion": "call-qa-grader-v3",
+    "scenarioVersion": "synthetic-rehearsal-v1",
     "recommendation": "needs_review",
     "pass": true,
     "score": 89,
     "criteria": [
-      { "id": "open-greet", "verdict": "MET" },
-      { "id": "open-name", "verdict": "MET" },
-      { "id": "open-org", "verdict": "MET" },
-      { "id": "verify-three", "verdict": "MET" },
-      { "id": "verify-before-access", "verdict": "MET" },
-      { "id": "control-narrate", "verdict": "MET" },
-      { "id": "control-guide", "verdict": "MET" },
-      { "id": "doc-reason", "verdict": "MET" },
-      { "id": "doc-te", "verdict": "MET" },
-      { "id": "comm-plain", "verdict": "MET" },
-      { "id": "comm-professional", "verdict": "MET" },
-      { "id": "comm-empathy", "verdict": "MET" },
-      { "id": "listen-ack", "verdict": "MET" },
-      { "id": "listen-gather", "verdict": "MET" },
-      { "id": "know-rule", "verdict": "MET" },
-      { "id": "know-details", "verdict": "MET" },
-      { "id": "sched-flow", "verdict": "MET" },
-      { "id": "sched-recap", "verdict": "MET" },
-      { "id": "close-survey", "verdict": "MET" },
-      { "id": "close-anything-thanks", "verdict": "MET" }
+      {
+        "id": "open-greet",
+        "verdict": "MET"
+      },
+      {
+        "id": "open-name",
+        "verdict": "MET"
+      },
+      {
+        "id": "open-org",
+        "verdict": "MET"
+      },
+      {
+        "id": "verify-three",
+        "verdict": "MET"
+      },
+      {
+        "id": "verify-before-access",
+        "verdict": "MET"
+      },
+      {
+        "id": "control-narrate",
+        "verdict": "MET"
+      },
+      {
+        "id": "control-guide",
+        "verdict": "MET"
+      },
+      {
+        "id": "doc-reason",
+        "verdict": "MET"
+      },
+      {
+        "id": "doc-te",
+        "verdict": "MET"
+      },
+      {
+        "id": "comm-plain",
+        "verdict": "MET"
+      },
+      {
+        "id": "comm-professional",
+        "verdict": "MET"
+      },
+      {
+        "id": "comm-empathy",
+        "verdict": "MET"
+      },
+      {
+        "id": "listen-ack",
+        "verdict": "MET"
+      },
+      {
+        "id": "listen-gather",
+        "verdict": "MET"
+      },
+      {
+        "id": "know-rule",
+        "verdict": "MET"
+      },
+      {
+        "id": "know-details",
+        "verdict": "MET"
+      },
+      {
+        "id": "sched-flow",
+        "verdict": "MET"
+      },
+      {
+        "id": "sched-recap",
+        "verdict": "MET"
+      },
+      {
+        "id": "close-survey",
+        "verdict": "MET"
+      },
+      {
+        "id": "close-anything-thanks",
+        "verdict": "MET"
+      }
     ],
     "autoFails": [],
-    "reviewFlags": ["capture-integrity-incomplete"],
+    "reviewFlags": [
+      "capture-integrity-incomplete"
+    ],
     "correctedTurns": 0
-  }
+  },
+  "nonProduction": true,
+  "calibrationAuthority": "none",
+  "evidenceUse": "synthetic-rehearsal-only"
 }

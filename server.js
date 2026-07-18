@@ -26,6 +26,7 @@ import navigatorLogin from './api/navigator-login.js';
 import navigatorRoster from './api/navigator-roster.js';
 import setNavigatorPin from './api/set-navigator-pin.js';
 import mentorScores from './api/mentor-scores.js';
+import myInterviews from './api/my-interviews.js';
 import logout from './api/logout.js';
 import health from './api/health.js';
 import { attachLiveRelay } from './api/live-relay.js';
@@ -41,6 +42,7 @@ app.get('/api/navigator-roster', rateLimit({ label: 'navigator-roster', max: 30 
 app.post('/api/logout', logout);
 app.post('/api/set-navigator-pin', rateLimit({ label: 'set-navigator-pin', max: 20 }), setNavigatorPin);
 app.post('/api/mentor-scores', rateLimit({ label: 'mentor-scores', max: 30 }), mentorScores);
+app.post('/api/my-interviews', rateLimit({ label: 'my-interviews', max: 30 }), myInterviews);
 
 app.post('/api/generate-scenarios', rateLimit({ label: 'generate-scenarios', max: 12 }), generateScenarios);
 app.post('/api/generate-coaching', rateLimit({ label: 'generate-coaching', max: 20 }), generateCoaching);

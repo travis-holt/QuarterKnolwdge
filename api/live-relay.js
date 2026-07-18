@@ -49,7 +49,11 @@ import { verifySocketToken } from './_auth.js';
 import { getFirebaseAdmin } from './_firebase-admin.js';
 import { clientIp } from './_rate-limit.js';
 import { buildSystemInstruction } from './interview-turn.js';
-import { getCallQaScenarioById } from '../src/data/callQaScenarios.js';
+import { selectServerCallQaScenario } from './_call-qa-scenario-store.js';
+// Scored Call QA is only available for rollout departments (currently OB/GYN
+// only). Assessed-but-not-in-rollout departments (Pediatrics) keep practice
+// mode; a scored test start for them fails closed here, server-side.
+import { isCallQaRolloutDept } from '../src/data/callQaScenarios.js';
 import { TranscriptCapture, boundedAppend } from './_call-qa-transcript.js';
 import {
   buildAttemptDoc, createAttempt, checkpointTranscript, finalizeCapture,
@@ -105,7 +109,6 @@ export function clientFinalizeGuardMs() {
   return Math.min(90_000, Math.max(20_000, raw));
 }
 
-const ASSESSED_DEPTS = ['pediatrics', 'obgyn'];
 
 const activeByIp = new Map();
 
@@ -145,13 +148,19 @@ export function productionDeps() {
     verifyToken: verifySocketToken,
     getApiKeys,
     buildSystemInstruction,
-    resolveScenario: getCallQaScenarioById,
+    selectScenario: (options) => selectServerCallQaScenario(getFirebaseAdmin().db, options),
     // Trusted roster-member lookup: the full doc (name + status), or null if the
     // navigator no longer exists. A valid-but-old token must not let a deleted or
     // deactivated navigator begin a new scored assessment.
     loadRosterMember: async (navigatorId) => {
       const snap = await getFirebaseAdmin().db.collection('roster').doc(navigatorId).get();
       return snap.exists ? { id: snap.id, ...snap.data() } : null;
+    },
+    loadPriorQaAttempts: async (navigatorId) => {
+      const snap = await getFirebaseAdmin().db.collection('interviews')
+        .where('navigatorId', '==', navigatorId)
+        .get();
+      return snap.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
     },
     db: () => getFirebaseAdmin().db,
     createUpstream: realCreateUpstream,
@@ -474,16 +483,10 @@ export function handleConnection(client, req, depsInput) {
         return shutdown('not-navigator');
       }
       const department = String(msg.department ?? '');
-      if (!ASSESSED_DEPTS.includes(department)) {
-        send(client, { type: 'error', message: 'That department does not have a Call QA test.' });
+      if (!isCallQaRolloutDept(department)) {
+        send(client, { type: 'error', message: 'That department does not have a Call QA test in this rollout.' });
         return shutdown('bad-department');
       }
-      const scenario = deps.resolveScenario(String(msg.qaScenarioId ?? ''));
-      if (!scenario || scenario.department !== department) {
-        send(client, { type: 'error', message: 'That Call QA scenario is not available.' });
-        return shutdown('bad-scenario');
-      }
-
       // The roster member must still exist and be active. A valid but stale token
       // cannot let a deleted/deactivated navigator start a new scored attempt.
       let member = null;
@@ -491,6 +494,20 @@ export function handleConnection(client, req, depsInput) {
       if (!member || member.id !== identity.navigatorId || member.status === 'inactive') {
         send(client, { type: 'error', message: 'Your navigator account is not active. Contact your supervisor.' });
         return shutdown('roster-invalid');
+      }
+
+      // Scenario selection is entirely server-side. Browser-supplied scenario
+      // ids, prompts, prior-attempt lists, and answer metadata are ignored.
+      let scenario = null;
+      try {
+        const priorAttempts = await deps.loadPriorQaAttempts(identity.navigatorId);
+        scenario = await deps.selectScenario({ department, priorAttempts });
+      } catch (err) {
+        console.warn(`[live-relay] scenario selection failed: ${err?.message ?? err}`);
+      }
+      if (!scenario || scenario.department !== department) {
+        send(client, { type: 'error', message: 'That Call QA scenario is not available.' });
+        return shutdown('bad-scenario');
       }
 
       session.navigatorId = identity.navigatorId;
@@ -565,10 +582,13 @@ export function handleConnection(client, req, depsInput) {
       };
 
       const persona = session.mode === 'test'
-        ? deps.buildSystemInstruction(session.scenario.callerName, session.scenario.scenario, {
+        ? deps.buildSystemInstruction(session.scenario.callerName, session.scenario.publicBriefing, {
             department: session.department,
             openingLine: session.scenario.openingLine || '',
-            caseFile: null,
+            // Private caller contract: consistent caller-known facts + reveal
+            // rules, passed SERVER-SIDE only. Never included in the browser
+            // `ready` projection, and distinct from grader-only hiddenChartState.
+            callerCaseFile: session.scenario.callerCaseFile || null,
           })
         : deps.buildSystemInstruction(startMsg.callerName || 'the caller', startMsg.scenario || '', {
             department: startMsg.department || 'pediatrics',
@@ -612,11 +632,10 @@ export function handleConnection(client, req, depsInput) {
       if (session.mode === 'test') {
         ready.attemptId = session.attemptId;
         ready.scenario = {
-          id: session.scenario.id,
-          title: session.scenario.title,
+          prompt: session.scenario.publicBriefing,
           callerName: session.scenario.callerName,
           department: session.department,
-          version: session.scenario.version ?? null,
+          primaryDomainId: session.scenario.primaryDomainId ?? session.scenario.domainIds?.[0] ?? null,
         };
         // Trusted, server-computed finalization timing. The browser sizes its
         // finalize guard from clientGuardMs so it can never abandon a valid drain

@@ -99,6 +99,18 @@ describe('Call QA calibration CLI', () => {
   it('confirmed live mode runs sequentially, records stability, and never edits fixtures', async () => {
     const workspace = await tempWorkspace();
     const fixture = await exampleFixture();
+    // Live grading never reads the private Firestore bank: the operator embeds a
+    // sanitized synthetic scenario snapshot on each grading fixture instead.
+    fixture.scenarioSnapshot = {
+      title: 'Synthetic rehearsal call',
+      scenarioVersion: 'synthetic-rehearsal-v1',
+      gradingContext: 'Synthetic rehearsal grading context for CLI tests.',
+      expectedActions: ['Complete the fictional observable step.'],
+      criticalMisses: ['State the fictional unsafe outcome.'],
+      scoringNotes: [],
+      hiddenChartState: null,
+      ruleIds: [],
+    };
     const fixtureFile = path.join(workspace.fixtures, 'example.json');
     const original = JSON.stringify(fixture);
     await writeFile(fixtureFile, original);
@@ -133,9 +145,9 @@ describe('Call QA calibration CLI', () => {
           },
           gradingMetadata: {
             model: 'gemini-2.5-flash',
-            rubricVersion: 'qa-rubric-v1',
-            promptVersion: 'call-qa-grader-v1',
-            scenarioVersion: 'call-qa-scenarios-v1',
+            rubricVersion: 'qa-rubric-v2',
+            promptVersion: 'call-qa-grader-v3',
+            scenarioVersion: 'synthetic-rehearsal-v1',
           },
         },
         grade: { score: 92 },

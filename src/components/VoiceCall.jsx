@@ -1,7 +1,6 @@
 import { useState, useRef, useEffect } from 'react';
 import { DOMAINS } from '../data/questions.js';
 import { interviewScoreColor } from '../data/config.js';
-import { selectCallQaScenario } from '../data/callQaScenarios.js';
 import { saveInterview, updateInterviewGrade } from '../lib/db.js';
 import { qaAiResultLabel } from '../lib/qaFinalReview.js';
 import { apiFetch } from '../lib/apiFetch.js';
@@ -48,23 +47,6 @@ const OUT_RATE = 24000;
 // the attempt id — never a transcript, scenario, department, or grader metadata.
 export async function gradeCallQaByAttemptId(attemptId, apiFetchFn = apiFetch, timeout = QA_GRADE_TIMEOUT_MS) {
   return apiFetchFn('/api/grade-call-qa', { attemptId }, timeout);
-}
-
-export function callQaScenarioMetadata(selectedScenario) {
-  if (!selectedScenario) return {};
-  return {
-    scenarioSource: 'curated',
-    qaScenarioId: selectedScenario.id,
-    qaScenarioTitle: selectedScenario.title,
-    scenarioVersion: selectedScenario.version,
-    workflowType: selectedScenario.workflowType,
-    difficulty: selectedScenario.difficulty,
-    domainIds: selectedScenario.domainIds,
-    competencyIds: selectedScenario.competencyIds,
-    expectedActions: selectedScenario.expectedActions,
-    criticalMisses: selectedScenario.criticalMisses,
-    scoringNotes: selectedScenario.scoringNotes ?? [],
-  };
 }
 
 // ── Audio helpers (module-level, pure) ───────────────────────────────────────
@@ -114,7 +96,7 @@ function appendTranscriptFragment(existing, fragment) {
 
 // mode: 'practice' (advisory holistic review) | 'test' (server-authoritative,
 // hard rubric-based QA test graded against the call quality guide).
-export default function VoiceCall({ navigatorId, name, department = 'pediatrics', preferredDomain = null, onExit, onDone, onQaResult, mode = 'practice', priorQaAttempts = [] }) {
+export default function VoiceCall({ navigatorId, name, department = 'pediatrics', preferredDomain = null, onExit, onDone, onQaResult, mode = 'practice' }) {
   const isTest = mode === 'test';
   // phases: setup | connecting | active | finalizing | grading | reviewed |
   //         discarded | saveError | gradeError | gradeSaveError | captureError
@@ -148,7 +130,6 @@ export default function VoiceCall({ navigatorId, name, department = 'pediatrics'
   const attemptIdRef = useRef(null);        // test-mode server attempt id (authoritative)
   const finalizeTimerRef = useRef(null);
   const finalizeGuardRef = useRef(FINALIZE_FALLBACK_MS); // server-provided guard (ms)
-  const qaScenarioMetadataRef = useRef({});
   const caseFileRef = useRef(null);
   const domain = DOMAINS.find((d) => d.id === domainId);
 
@@ -246,27 +227,16 @@ export default function VoiceCall({ navigatorId, name, department = 'pediatrics'
     setCaptions([]);
     setCaptureComplete(true);
     clearPersistenceState();
-    qaScenarioMetadataRef.current = {};
     caseFileRef.current = null;
 
     const pick = selectPracticeDomain(preferredDomain);
     setDomainId(pick);
-    let scen, caller, opener = '', qaScenarioId = null;
+    let scen, caller, opener = '';
     if (isTest) {
-      const selectedScenario = selectCallQaScenario({ department, priorAttempts: priorQaAttempts });
-      if (!selectedScenario) {
-        setError('No Call QA test scenario is available for this department yet.');
-        return setPhase('setup');
-      }
-      const primaryDomainId = selectedScenario.primaryDomainId ?? selectedScenario.domainIds[0];
-      setDomainId(primaryDomainId);
-      qaScenarioMetadataRef.current = callQaScenarioMetadata(selectedScenario);
-      qaScenarioId = selectedScenario.id;
-      // Local copies are for DISPLAY only; the server loads the trusted scenario.
-      scen = selectedScenario.scenario;
-      caller = selectedScenario.callerName;
-      setScenario(scen);
-      setCallerName(caller);
+      // The browser does not import or select from the private scenario bank.
+      // The authenticated relay selects one and sends only its public briefing.
+      setScenario('');
+      setCallerName('');
     } else {
       setDomainId(pick);
       try {
@@ -326,7 +296,7 @@ export default function VoiceCall({ navigatorId, name, department = 'pediatrics'
       ws.onopen = () => {
         // Test mode sends the MINIMUM: the server derives identity + scenario.
         const startMsg = isTest
-          ? { type: 'start', idToken, mode: 'test', department, qaScenarioId }
+          ? { type: 'start', idToken, mode: 'test', department }
           : {
               type: 'start', idToken, mode: 'practice', navigatorId,
               callerName: caller, scenario: scen, department, openingLine: opener,
@@ -340,6 +310,10 @@ export default function VoiceCall({ navigatorId, name, department = 'pediatrics'
         if (m.type === 'ready') {
           if (isTest && m.attemptId) attemptIdRef.current = m.attemptId;
           if (isTest) {
+            const publicScenario = m.scenario ?? {};
+            setScenario(String(publicScenario.prompt ?? ''));
+            setCallerName(String(publicScenario.callerName ?? 'the caller'));
+            setDomainId(publicScenario.primaryDomainId ?? pick);
             // Trust the SERVER-computed finalize guard (defensively clamped); it
             // is sized to always exceed the server's real drain deadline. Fall
             // back to a value ≥ the server maximum if it is missing/invalid.
@@ -440,7 +414,7 @@ export default function VoiceCall({ navigatorId, name, department = 'pediatrics'
       }
       setQa(data.qa);
       setGrade(data.grade);
-      await onQaResult?.(data.qa, qaScenarioMetadataRef.current);
+      await onQaResult?.(data.qa);
       setPhase('reviewed');
     } catch (err) {
       if (err?.status === 422) {

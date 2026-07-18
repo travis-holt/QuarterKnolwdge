@@ -706,8 +706,8 @@ const OBGYN = [
     options: [
       { id: 'a', text: 'Schedule her for a routine visit later this week so the provider can check.', points: 0,
         rationale: 'Decreased fetal movement is a potential emergency; a routine visit delays critical monitoring.' },
-      { id: 'b', text: 'Direct her to go to Labor and Delivery immediately for monitoring — decreased fetal movement requires urgent evaluation.', points: 100,
-        rationale: 'Correct per SOP: decreased fetal movement at this gestation requires immediate L&D triage, never a routine appointment.' },
+      { id: 'b', text: 'Tell her you are escalating the concern immediately through the urgent OB clinical workflow, without independently directing care.', points: 100,
+        rationale: 'Correct per the current-floor workflow: treat decreased fetal movement as urgent, escalate immediately to the clinical team, and stay within navigator scope.' },
       { id: 'c', text: 'Send a TE to the nursing team and tell her to call back if it does not improve.', points: 5,
         rationale: 'A deferred TE is insufficient for a symptom that requires immediate evaluation.' },
       { id: 'd', text: 'Tell her to drink something cold and do a kick count, then call back.', points: 10,
