@@ -24,6 +24,14 @@
   real-microphone Call QA test call confirming a private-bank scenario is selected, the call opens
   normally, the server transcript finalizes, grading completes, the supervisor sees the result,
   and the navigator cannot access private answers, hidden chart state, or raw attempt data.
+- **Post-merge live verification (same day, after PR #35 merged as `c17d1a6` and Railway deployed):**
+  navigator login + custom-token → ID-token exchange verified against production; public roster
+  projection confirmed `{id,name,pinSet}` only; `/api/my-interviews` audited per-document — server
+  Call QA attempts expose only the result rubric (no transcript, snapshot, or private grading
+  fields) while practice docs keep their own transcripts; safe Playwright walkthrough 12/12 green
+  against the live URL after fixing a stale smoke expectation (the hub heading regex still assumed
+  3 phases for Pediatrics; the OB/GYN-only rollout intentionally made Pediatrics two-phase — test
+  now accepts 2 or 3). Remaining: one deliberate real-microphone Call QA test call (operator).
 - Docs updated: CLAUDE.md header note, F25 status/rotation gate, §8, §12 scan entry, §15
   priorities/blockers. Docs-only change; no application code touched.
 

@@ -58,7 +58,7 @@ test.describe('Navigator journey (read-only)', () => {
     await page.getByRole('button', { name: /Pediatrics/i }).click();
 
     // Phase hub OR the dashboard (if all phases already complete for this test user).
-    const hub = page.getByRole('heading', { name: /Your assessment — 3 phases/i });
+    const hub = page.getByRole('heading', { name: /Your assessment — [23] phases/i });
     const dashboardTab = page.getByRole('button', { name: 'My results' });
     await expect(hub.or(dashboardTab)).toBeVisible({ timeout: 25_000 });
 
@@ -84,7 +84,7 @@ test.describe('Navigator journey (read-only)', () => {
     // app lands on the dashboard instead — use its "Retake a phase" control to
     // open the hub (completed phases can always be retaken). Retry to absorb a
     // late-subscription view bounce.
-    const hub = page.getByRole('heading', { name: /Your assessment — 3 phases/i });
+    const hub = page.getByRole('heading', { name: /Your assessment — [23] phases/i });
     if (!(await visibleWithin(hub, 25_000))) {
       const toHub = page.getByRole('button', { name: /Retake a phase|Continue assessment/i });
       await expect(toHub).toBeVisible({ timeout: 20_000 });
