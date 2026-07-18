@@ -25,7 +25,11 @@ import {
   privateScenarioDocumentId,
   validatePrivateScenario,
 } from '../../api/_call-qa-scenario-store.js';
-import { CALL_QA_COVERAGE_BLUEPRINT } from '../../src/data/callQaScenarios.js';
+import {
+  CALL_QA_COVERAGE_BLUEPRINT,
+  CALL_QA_ROLLOUT_DEPARTMENTS,
+  isCallQaRolloutDept,
+} from '../../src/data/callQaScenarios.js';
 
 export function parseArgs(argv) {
   const options = { input: null, project: null, apply: false };
@@ -54,6 +58,11 @@ export function validateProvisioningPayload(payload) {
   const documents = new Map();
   const activeByDepartment = {};
   for (const [index, raw] of payload.scenarios.entries()) {
+    // Only scored-rollout departments may be provisioned (currently OB/GYN
+    // only). No Pediatrics section is required — or accepted — in this rollout.
+    if (!isCallQaRolloutDept(raw?.department)) {
+      throw new Error(`Scenario at index ${index} targets department "${raw?.department}", which is not in the scored Call QA rollout (${CALL_QA_ROLLOUT_DEPARTMENTS.join(', ')}).`);
+    }
     const documentId = privateScenarioDocumentId({ id: raw?.id, version: raw?.version });
     if (documents.has(documentId)) {
       throw new Error(`Duplicate scenario identity ${documentId} at index ${index}.`);

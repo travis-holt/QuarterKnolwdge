@@ -14,7 +14,7 @@ import { MAX_QA_TURN_CHARS } from './_call-qa-transcript.js';
 const SCENARIO = {
   id: 'qa-test-call-001',
   version: 'test-v1',
-  department: 'pediatrics',
+  department: 'obgyn',
   title: 'Fictional test call',
   workflowType: 'fictional_workflow',
   difficulty: 'medium',
@@ -107,7 +107,7 @@ function harness(overrides = {}) {
 async function startTest(h, startMsg = {}) {
   handleConnection(h.client, {}, h.deps);
   await h.client.emit('message', JSON.stringify({
-    type: 'start', idToken: 't', mode: 'test', department: 'pediatrics', ...startMsg,
+    type: 'start', idToken: 't', mode: 'test', department: 'obgyn', ...startMsg,
   }));
   await flush();
   // Drive the upstream setup handshake.
@@ -132,7 +132,7 @@ describe('server-authoritative start contract', () => {
     const h = harness();
     handleConnection(h.client, {}, h.deps);
     await h.client.emit('message', JSON.stringify({
-      type: 'start', idToken: 't', mode: 'test', department: 'pediatrics', qaScenarioId: SCENARIO.id,
+      type: 'start', idToken: 't', mode: 'test', department: 'obgyn', qaScenarioId: SCENARIO.id,
       navigatorId: 'nav-evil', scenario: 'FORGED', callerName: 'Forged', qaScenarioTitle: 'x',
     }));
     await flush();
@@ -141,7 +141,7 @@ describe('server-authoritative start contract', () => {
     expect(attempt.scenario).toBe(SCENARIO.publicBriefing);
     expect(attempt.captureAuthority).toBe('server');
     expect(h.deps.loadPriorQaAttempts).toHaveBeenCalledWith('nav-a');
-    expect(h.deps.selectScenario).toHaveBeenCalledWith({ department: 'pediatrics', priorAttempts: [] });
+    expect(h.deps.selectScenario).toHaveBeenCalledWith({ department: 'obgyn', priorAttempts: [] });
   });
 
   it('creates the attempt BEFORE sending ready and returns the attempt id + trusted scenario', async () => {
@@ -152,7 +152,7 @@ describe('server-authoritative start contract', () => {
     expect(ready.attemptId).toBeTruthy();
     expect(ready.scenario).toMatchObject({
       prompt: SCENARIO.publicBriefing,
-      department: 'pediatrics',
+      department: 'obgyn',
       callerName: SCENARIO.callerName,
       primaryDomainId: SCENARIO.primaryDomainId,
     });
@@ -203,18 +203,28 @@ describe('server-authoritative start contract', () => {
   it('rejects a non-navigator identity for a scored test', async () => {
     const h = harness({ verifyToken: vi.fn(async () => ({ role: 'supervisor' })) });
     handleConnection(h.client, {}, h.deps);
-    await h.client.emit('message', JSON.stringify({ type: 'start', idToken: 't', mode: 'test', department: 'pediatrics', qaScenarioId: SCENARIO.id }));
+    await h.client.emit('message', JSON.stringify({ type: 'start', idToken: 't', mode: 'test', department: 'obgyn', qaScenarioId: SCENARIO.id }));
     await flush();
     expect(h.client.lastByType('error')).toBeTruthy();
     expect(storedAttempt(h)).toBeNull();
   });
 
-  it('rejects an unknown scenario / wrong department', async () => {
-    const h = harness();
+  it('rejects a scenario whose department does not match the start department', async () => {
+    const h = harness({ selectScenario: vi.fn(async () => ({ ...SCENARIO, department: 'pediatrics' })) });
     handleConnection(h.client, {}, h.deps);
     await h.client.emit('message', JSON.stringify({ type: 'start', idToken: 't', mode: 'test', department: 'obgyn', qaScenarioId: SCENARIO.id }));
     await flush();
     expect(h.client.lastByType('error')).toBeTruthy();
+    expect(storedAttempt(h)).toBeNull();
+  });
+
+  it('rejects a scored test for a department outside the Call QA rollout (Pediatrics)', async () => {
+    const h = harness();
+    handleConnection(h.client, {}, h.deps);
+    await h.client.emit('message', JSON.stringify({ type: 'start', idToken: 't', mode: 'test', department: 'pediatrics', qaScenarioId: SCENARIO.id }));
+    await flush();
+    expect(h.client.lastByType('error')).toBeTruthy();
+    expect(h.deps.selectScenario).not.toHaveBeenCalled();
     expect(storedAttempt(h)).toBeNull();
   });
 });
@@ -230,7 +240,7 @@ describe('roster-member validation (item 6)', () => {
   it('an inactive member is rejected and NO attempt is created', async () => {
     const h = harness({ loadRosterMember: vi.fn(async () => ({ id: 'nav-a', name: 'Ada', status: 'inactive' })) });
     handleConnection(h.client, {}, h.deps);
-    await h.client.emit('message', JSON.stringify({ type: 'start', idToken: 't', mode: 'test', department: 'pediatrics', qaScenarioId: SCENARIO.id }));
+    await h.client.emit('message', JSON.stringify({ type: 'start', idToken: 't', mode: 'test', department: 'obgyn', qaScenarioId: SCENARIO.id }));
     await flush();
     expect(h.client.lastByType('error')).toBeTruthy();
     expect(storedAttempt(h)).toBeNull();
@@ -239,7 +249,7 @@ describe('roster-member validation (item 6)', () => {
   it('a missing roster member is rejected and NO attempt is created', async () => {
     const h = harness({ loadRosterMember: vi.fn(async () => null) });
     handleConnection(h.client, {}, h.deps);
-    await h.client.emit('message', JSON.stringify({ type: 'start', idToken: 't', mode: 'test', department: 'pediatrics', qaScenarioId: SCENARIO.id }));
+    await h.client.emit('message', JSON.stringify({ type: 'start', idToken: 't', mode: 'test', department: 'obgyn', qaScenarioId: SCENARIO.id }));
     await flush();
     expect(h.client.lastByType('error')).toBeTruthy();
     expect(storedAttempt(h)).toBeNull();

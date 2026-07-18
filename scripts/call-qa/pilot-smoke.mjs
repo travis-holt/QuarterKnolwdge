@@ -10,6 +10,7 @@ import {
   scenarioResolverFrom,
 } from '../../api/_qa-calibration-scenarios.js';
 import { isActiveQaInterview } from '../../src/lib/phases.js';
+import { CALL_QA_ROLLOUT_DEPARTMENTS } from '../../src/data/callQaScenarios.js';
 
 export const PILOT_SMOKE_VERIFIED = 'PILOT_SMOKE_VERIFIED';
 export const PILOT_SMOKE_FAILED = 'PILOT_SMOKE_FAILED';
@@ -193,7 +194,10 @@ export function evaluatePilotSmokeCases(cases) {
   ]) {
     if (!categories.has(category)) failures.push(`missing-category:${category}`);
   }
-  for (const department of ['pediatrics', 'obgyn']) {
+  // Rollout coverage: every scored-rollout department (currently OB/GYN only)
+  // must be exercised. Extra synthetic Pediatrics rehearsal cases stay valid
+  // evidence but are never required — Pediatrics is outside this rollout.
+  for (const department of CALL_QA_ROLLOUT_DEPARTMENTS) {
     if (!departments.has(department)) failures.push(`missing-department:${department}`);
   }
   if (!phase3Complete || !phase3Incomplete) failures.push('phase3-behavior-not-exercised');
@@ -201,6 +205,7 @@ export function evaluatePilotSmokeCases(cases) {
   return {
     status: failures.length ? PILOT_SMOKE_FAILED : PILOT_SMOKE_VERIFIED,
     caseCount: cases?.length ?? 0,
+    rolloutDepartments: [...CALL_QA_ROLLOUT_DEPARTMENTS],
     departments: [...departments].sort(),
     categories: [...categories].sort(),
     phase3: { complete: phase3Complete, incomplete: phase3Incomplete },

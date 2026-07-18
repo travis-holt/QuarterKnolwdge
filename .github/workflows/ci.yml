@@ -39,3 +39,16 @@ jobs:
 
       - name: Build app
         run: npm run build
+
+      # Operational smoke + calibration reports. Offline/deterministic — no
+      # Firestore, no Gemini, no private scenario files. qa:calibrate:check is
+      # deliberately NOT run here: it correctly exits 1 (INSUFFICIENT_DATA)
+      # until real human calibration evidence exists.
+      - name: Call QA pilot smoke (OB/GYN rollout scope)
+        run: npm run qa:pilot-smoke
+
+      - name: Call QA calibration report (offline)
+        run: npm run qa:calibrate
+
+      - name: Call QA coverage report (offline)
+        run: npm run qa:coverage

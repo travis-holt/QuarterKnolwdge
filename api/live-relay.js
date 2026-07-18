@@ -50,6 +50,10 @@ import { getFirebaseAdmin } from './_firebase-admin.js';
 import { clientIp } from './_rate-limit.js';
 import { buildSystemInstruction } from './interview-turn.js';
 import { selectServerCallQaScenario } from './_call-qa-scenario-store.js';
+// Scored Call QA is only available for rollout departments (currently OB/GYN
+// only). Assessed-but-not-in-rollout departments (Pediatrics) keep practice
+// mode; a scored test start for them fails closed here, server-side.
+import { isCallQaRolloutDept } from '../src/data/callQaScenarios.js';
 import { TranscriptCapture, boundedAppend } from './_call-qa-transcript.js';
 import {
   buildAttemptDoc, createAttempt, checkpointTranscript, finalizeCapture,
@@ -105,7 +109,6 @@ export function clientFinalizeGuardMs() {
   return Math.min(90_000, Math.max(20_000, raw));
 }
 
-const ASSESSED_DEPTS = ['pediatrics', 'obgyn'];
 
 const activeByIp = new Map();
 
@@ -480,8 +483,8 @@ export function handleConnection(client, req, depsInput) {
         return shutdown('not-navigator');
       }
       const department = String(msg.department ?? '');
-      if (!ASSESSED_DEPTS.includes(department)) {
-        send(client, { type: 'error', message: 'That department does not have a Call QA test.' });
+      if (!isCallQaRolloutDept(department)) {
+        send(client, { type: 'error', message: 'That department does not have a Call QA test in this rollout.' });
         return shutdown('bad-department');
       }
       // The roster member must still exist and be active. A valid but stale token

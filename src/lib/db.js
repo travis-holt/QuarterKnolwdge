@@ -457,8 +457,6 @@ export async function saveInterview(navigatorId, name, domainId, scenario, calle
     difficulty: metadata.difficulty ?? null,
     domainIds: metadata.domainIds ?? [domainId],
     competencyIds: metadata.competencyIds ?? [],
-    expectedActions: metadata.expectedActions ?? [],
-    criticalMisses: metadata.criticalMisses ?? [],
   });
   return ref.id;
 }

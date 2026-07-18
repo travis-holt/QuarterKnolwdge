@@ -1,5 +1,10 @@
 import { compareTimestampValues } from '../src/lib/time.js';
-import { getObgynWorkflowRule } from '../src/data/obgynWorkflowRules.js';
+import {
+  getObgynWorkflowRule,
+  OBGYN_RULE_SET_VERSION,
+  OBGYN_SOP_VERSION,
+  OBGYN_SOURCE_AUTHORITY,
+} from '../src/data/obgynWorkflowRules.js';
 
 export const CALL_QA_PRIVATE_SCENARIOS_COLLECTION = 'callQaScenariosPrivate';
 
@@ -54,7 +59,7 @@ export function validateCallerCaseFile(raw, scenarioId) {
   };
 }
 
-export function validatePrivateScenario(data, { documentId, department }) {
+export function validatePrivateScenario(data, { documentId, department, activeSopVersion = null }) {
   if (!data || data.active !== true) throw new Error('Private Call QA scenario is not active.');
 
   const requiredStrings = [
@@ -103,6 +108,24 @@ export function validatePrivateScenario(data, { documentId, department }) {
   let domainIds = [...data.domainIds];
   let competencyIds = [...data.competencyIds];
   if (data.department === 'obgyn') {
+    // OB/GYN rollout scenarios require COMPLETE, current provenance: null or
+    // empty values never validate. The rule-set version and source authority
+    // must match the current executable constants, and the SOP version must be
+    // the owner-confirmed current-floor version (or the verified active SOP
+    // version supplied by the caller of this validator).
+    if (data.sourceRuleVersion !== OBGYN_RULE_SET_VERSION) {
+      throw new Error(`Private Call QA scenario rule-set version is not current for ${data.id}.`);
+    }
+    if (data.sourceAuthority !== OBGYN_SOURCE_AUTHORITY) {
+      throw new Error(`Private Call QA scenario source authority is invalid for ${data.id}.`);
+    }
+    const supportedSopVersions = [OBGYN_SOP_VERSION, activeSopVersion].filter(Boolean);
+    if (!nonEmptyString(data.sourceSopVersion) || !supportedSopVersions.includes(data.sourceSopVersion)) {
+      throw new Error(`Private Call QA scenario SOP version is unsupported for ${data.id}.`);
+    }
+    if (!stringArray(data.ruleIds)) {
+      throw new Error(`Private Call QA scenario has no OB/GYN rule ids for ${data.id}.`);
+    }
     const rules = data.ruleIds.map(getObgynWorkflowRule);
     if (rules.some((rule) => !rule)) {
       throw new Error(`Private Call QA scenario references an unknown OB/GYN rule for ${data.id}.`);

@@ -24,7 +24,16 @@
 > (chart facts + preceding Patient turn) while keeping the exactly-one-Agent-error guarantee; 14
 > OB/GYN audit workflow generation smoke tests added; mojibake removed with a standing encoding
 > guard; and an Admin-only dry-run private provisioning tool added (not executed — the private bank
-> remains unprovisioned). See docs/HISTORY.md 2026-07-18. Prior: Call QA answer secrecy + caller-observable grading — every runtime
+> remains unprovisioned). Same-day follow-up: **scored Call QA rollout is OB/GYN-only** —
+> `CALL_QA_ROLLOUT_DEPARTMENTS = ['obgyn']` in `src/data/callQaScenarios.js` governs the relay's
+> test-mode gate, the phase flow (Pediatrics runs a two-phase MCQ → Spot assessment; historical
+> Pediatrics QA attempts stay readable but no scored Pediatrics Call QA is offered or required),
+> the private-bank minimum (15 active OB/GYN scenarios only — the provisioning tool rejects
+> non-rollout departments), OB/GYN private scenarios now require complete non-null provenance
+> (current rule-set version, owner-confirmed authority, supported SOP version, non-empty valid
+> rule IDs), and coverage/pilot-smoke report the rollout scope honestly; CI now also runs
+> `qa:pilot-smoke`, `qa:calibrate`, and `qa:coverage` (offline, no secrets).
+> See docs/HISTORY.md 2026-07-18. Prior: Call QA answer secrecy + caller-observable grading — every runtime
 > scenario-instance field now comes from the client-denied `callQaScenariosPrivate` store; the public
 > repo contains only anonymous aggregate coverage requirements; raw server attempts are unreadable to
 > navigators and history is an allowlisted API projection; the caller/browser receive only a neutral,
@@ -736,7 +745,8 @@ training assignments.
   so they remain visible for history/audit but no longer count as the latest active QA attempt.
 - **Private curated scenario bank (security redesign, 2026-07-17):** scored Call QA still uses curated
   per-department scenarios, but **no runtime scenario instance lives in the public source tree**.
-  `src/data/callQaScenarios.js` exposes only anonymous aggregate minimums (Pediatrics 8, OB/GYN 15),
+  `src/data/callQaScenarios.js` exposes only the rollout configuration
+  (`CALL_QA_ROLLOUT_DEPARTMENTS = ['obgyn']`) and the anonymous aggregate minimum (15 OB/GYN),
   with no IDs, versions, clinician/caller names, opening lines, public briefings, workflow/rule tags,
   grading context, hidden facts, expected actions, critical misses, or scoring notes. This deliberately
   removes the opening-line-to-answer mapping that made the previously published bank compromised.
@@ -1792,7 +1802,7 @@ of this file on 2026-07-07 to cut per-session context cost (it was ~55% of the f
   (init → chat/voice turns → `/api/live` relay) for caller consistency. Scored Call QA deliberately
   does not: its caller receives no grading context, expected actions, critical misses, scoring notes,
   rule/workflow metadata, or hidden chart state. Final verification: `npm test` =
-  **1,124/1,124 across 57 files**; Firestore Rules emulator assertions = **76/76**
+  **1,280/1,280 across 65 files**; Firestore Rules emulator assertions = **76/76**
   (51 result authorization + 25 Call QA); production build
   includes the private-runtime bundle scan. GitHub Actions mirrors the
   normal local gate on `main` pushes and PRs: `npm ci` → `npm test` → `npm run build` (no deploy step).
@@ -1826,7 +1836,7 @@ of this file on 2026-07-07 to cut per-session context cost (it was ~55% of the f
 - **Experimental / mockup:**
   - Training **content** is mockup (flagged in UI). Logic is real.
   - **Adult Medicine and Behavioural Health** are not assessed; **Pediatrics and OB/GYN** are live.
-- **Test coverage:** **1,261 unit tests across 65 files** and **76 Firestore Rules emulator
+- **Test coverage:** **1,280 unit tests across 65 files** and **76 Firestore Rules emulator
   assertions** (51 result authorization + 25 Call QA) after the 2026-07-18 merge-readiness pass
   (calibration-private-bank adaptation, callerCaseFile, randomized selection, contextual audit
   guard + 14-workflow generation smoke, encoding guard, provisioning tool) atop the 2026-07-17
@@ -1951,7 +1961,7 @@ of this file on 2026-07-07 to cut per-session context cost (it was ~55% of the f
   OB/GYN = **37** seed questions (offline fallback) + the **48-item MCQ v2 operating-model bank**
   (24 Pediatrics + 24 OB/GYN) that replaces the weak active bank via a marker-gated
   archive-and-replace migration (bank grows in Firestore per dept) · 4 departments (**Pediatrics
-  + OB/GYN live**, 2 mockup) · **1,261 unit tests across 65 files** + **76 assertions**
+  + OB/GYN live**, 2 mockup) · **1,280 unit tests across 65 files** + **76 assertions**
   across two committed Firestore Rules emulator suites (`npm run test:rules`; require Java, run in
   CI, not part of the unit-test count) ·
   **14** Firestore collections
@@ -2236,7 +2246,7 @@ npm run test:e2e     # run the Playwright browser tests (auto-builds + starts th
 - Heatmap intensity toggle (show % inside matrix cells).
 
 ### Technical Debt
-- **1,261 unit tests across 65 files** as of 2026-07-18 (plus **76 assertions** across two
+- **1,280 unit tests across 65 files** as of 2026-07-18 (plus **76 assertions** across two
   committed Firestore Rules emulator suites, `npm run test:rules`, run separately from the unit-test
   gate). **Role-app
   coverage** (`App`, `Start`,
@@ -2485,8 +2495,10 @@ npm run test:e2e     # run the Playwright browser tests (auto-builds + starts th
 2. **Provision and rotate private Call QA content before any deployment.** Treat every formerly
    published scenario ID, caller/opening pair, briefing, hidden fact, and grading expectation as
    compromised and permanently retired. An authorized operator must create fresh active instances
-   in client-denied `callQaScenariosPrivate`, meet the anonymous aggregate minimums (Pediatrics 8,
-   OB/GYN 15), derive narrow domains/competencies from each instance's rules, and verify no mapping
+   in client-denied `callQaScenariosPrivate`, meet the anonymous aggregate minimum (15 active
+   OB/GYN scenarios — the scored rollout is OB/GYN-only; Pediatrics needs no private bank and is
+   rejected by the provisioning tool), derive narrow domains/competencies from each instance's
+   rules, and verify no mapping
    or provisioning artifact is committed. This PR performs none of those production writes and must
    not be deployed until the gate is complete.
 3. **Deploy the identity boundary safely** — add Firebase Admin + supervisor secrets, deploy this

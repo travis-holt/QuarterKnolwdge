@@ -6,7 +6,21 @@ import {
   selectServerCallQaScenario,
   validatePrivateScenario,
 } from './_call-qa-scenario-store.js';
-import { getObgynWorkflowRule } from '../src/data/obgynWorkflowRules.js';
+import {
+  getObgynWorkflowRule,
+  OBGYN_RULE_SET_VERSION,
+  OBGYN_SOP_VERSION,
+  OBGYN_SOURCE_AUTHORITY,
+} from '../src/data/obgynWorkflowRules.js';
+
+// Valid OB/GYN rollout provenance: OB/GYN scenarios must carry the real,
+// current constants — null provenance only remains legacy-tolerated for
+// non-rollout (Pediatrics) fixtures.
+const OBGYN_PROVENANCE = {
+  sourceSopVersion: OBGYN_SOP_VERSION,
+  sourceRuleVersion: OBGYN_RULE_SET_VERSION,
+  sourceAuthority: OBGYN_SOURCE_AUTHORITY,
+};
 
 function privateScenario(id = 'qa-test-alpha', overrides = {}) {
   return {
@@ -92,6 +106,7 @@ describe('private Call QA scenario validation', () => {
       domainIds: ['intake', 'classification', 'routing', 'scheduling', 'boundaries', 'documentation'],
       competencyIds: ['communication', 'riskManagement'],
       ruleIds: ['rto_documentation'],
+      ...OBGYN_PROVENANCE,
     });
     const result = validatePrivateScenario(data, {
       documentId: privateScenarioDocumentId(data),
@@ -121,6 +136,46 @@ describe('private Call QA scenario validation', () => {
       documentId: changed.documentId ?? privateScenarioDocumentId(original),
       department: changed.department ?? 'pediatrics',
     })).toThrow();
+  });
+  it.each([
+    ['null SOP version', { sourceSopVersion: null }],
+    ['unsupported SOP version', { sourceSopVersion: 'obgyn-something-else' }],
+    ['null rule-set version', { sourceRuleVersion: null }],
+    ['stale rule-set version', { sourceRuleVersion: 'obgyn-workflow-rules-v1' }],
+    ['null source authority', { sourceAuthority: null }],
+    ['wrong source authority', { sourceAuthority: 'active-sop' }],
+    ['empty rule ids', { ruleIds: [] }],
+    ['unknown rule id', { ruleIds: ['no_such_rule'] }],
+  ])('rejects an OB/GYN scenario with %s', (_label, overrides) => {
+    const data = privateScenario('qa-test-obgyn-prov', {
+      department: 'obgyn',
+      ruleIds: ['rto_documentation'],
+      ...OBGYN_PROVENANCE,
+      ...overrides,
+    });
+    expect(() => validatePrivateScenario(data, {
+      documentId: privateScenarioDocumentId(data),
+      department: 'obgyn',
+    })).toThrow();
+  });
+
+  it('accepts an OB/GYN scenario grounded in the verified active SOP version', () => {
+    const data = privateScenario('qa-test-obgyn-active-sop', {
+      department: 'obgyn',
+      ruleIds: ['rto_documentation'],
+      ...OBGYN_PROVENANCE,
+      sourceSopVersion: 'obgyn-active-sop-v9',
+    });
+    expect(() => validatePrivateScenario(data, {
+      documentId: privateScenarioDocumentId(data),
+      department: 'obgyn',
+    })).toThrow();
+    const result = validatePrivateScenario(data, {
+      documentId: privateScenarioDocumentId(data),
+      department: 'obgyn',
+      activeSopVersion: 'obgyn-active-sop-v9',
+    });
+    expect(result.sourceSopVersion).toBe('obgyn-active-sop-v9');
   });
 });
 
@@ -192,7 +247,9 @@ describe('private Call QA scenario selection', () => {
   });
 
   it('never selects a scenario from another department regardless of the random draw', () => {
-    const data = privateScenario('qa-test-obgyn-only', { department: 'obgyn', ruleIds: ['rto_documentation'] });
+    const data = privateScenario('qa-test-obgyn-only', {
+      department: 'obgyn', ruleIds: ['rto_documentation'], ...OBGYN_PROVENANCE,
+    });
     const scenario = validatePrivateScenario(data, {
       documentId: privateScenarioDocumentId(data),
       department: 'obgyn',

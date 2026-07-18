@@ -5,13 +5,18 @@ import {
   validateProvisioningPayload,
 } from '../scripts/call-qa/provision-private-scenarios.mjs';
 import { privateScenarioDocumentId } from './_call-qa-scenario-store.js';
+import {
+  OBGYN_RULE_SET_VERSION,
+  OBGYN_SOP_VERSION,
+  OBGYN_SOURCE_AUTHORITY,
+} from '../src/data/obgynWorkflowRules.js';
 
-function scenarioDoc(id, department, overrides = {}) {
+function scenarioDoc(id, overrides = {}) {
   return {
     active: true,
     id,
     version: 'prov-v1',
-    department,
+    department: 'obgyn',
     title: 'Fictional provisioning fixture',
     workflowType: 'fictional_workflow',
     difficulty: 'medium',
@@ -30,20 +35,17 @@ function scenarioDoc(id, department, overrides = {}) {
       callerGoal: 'Resolve a fictional request.',
       knownFacts: ['A fictional consistent fact.'],
     },
-    ruleIds: department === 'obgyn' ? ['rto_documentation'] : [],
-    sourceSopVersion: null,
-    sourceRuleVersion: null,
-    sourceAuthority: null,
+    ruleIds: ['rto_documentation'],
+    sourceSopVersion: OBGYN_SOP_VERSION,
+    sourceRuleVersion: OBGYN_RULE_SET_VERSION,
+    sourceAuthority: OBGYN_SOURCE_AUTHORITY,
     ...overrides,
   };
 }
 
 function fullPayload() {
   return {
-    scenarios: [
-      ...Array.from({ length: 8 }, (_, index) => scenarioDoc(`prov-peds-${index}`, 'pediatrics')),
-      ...Array.from({ length: 15 }, (_, index) => scenarioDoc(`prov-obgyn-${index}`, 'obgyn')),
-    ],
+    scenarios: Array.from({ length: 15 }, (_, index) => scenarioDoc(`prov-obgyn-${index}`)),
   };
 }
 
@@ -56,24 +58,46 @@ describe('provision-private-scenarios operator tool', () => {
     expect(parseArgs(['--input', 'x.json', '--project', 'proj-1', '--apply']).apply).toBe(true);
   });
 
-  it('accepts a payload meeting the anonymous minimums (8 peds / 15 obgyn)', () => {
+  it('accepts an OB/GYN-only payload meeting the 15-scenario minimum, with no Pediatrics section', () => {
     const { documents, activeByDepartment } = validateProvisioningPayload(fullPayload());
-    expect(documents.size).toBe(23);
-    expect(activeByDepartment).toEqual({ pediatrics: 8, obgyn: 15 });
+    expect(documents.size).toBe(15);
+    expect(activeByDepartment).toEqual({ obgyn: 15 });
   });
 
-  it('rejects payloads below the minimums, with duplicates, or with invalid scenarios', () => {
+  it('rejects fewer than 15 active OB/GYN scenarios', () => {
     const short = fullPayload();
-    short.scenarios = short.scenarios.slice(0, 10);
+    short.scenarios = short.scenarios.slice(0, 14);
     expect(() => validateProvisioningPayload(short)).toThrow(/minimum/);
+  });
 
+  it('rejects Pediatrics (non-rollout) scenarios instead of requiring them', () => {
+    const withPeds = fullPayload();
+    withPeds.scenarios.push(scenarioDoc('prov-peds-0', {
+      department: 'pediatrics',
+      ruleIds: [],
+      sourceSopVersion: null,
+      sourceRuleVersion: null,
+      sourceAuthority: null,
+    }));
+    expect(() => validateProvisioningPayload(withPeds)).toThrow(/not in the scored Call QA rollout/);
+  });
+
+  it('rejects duplicates, missing caller case files, missing provenance, and bad rule ids', () => {
     const dupes = fullPayload();
-    dupes.scenarios.push(scenarioDoc('prov-peds-0', 'pediatrics'));
+    dupes.scenarios.push(scenarioDoc('prov-obgyn-0'));
     expect(() => validateProvisioningPayload(dupes)).toThrow(/Duplicate/);
 
     const missingCaseFile = fullPayload();
     delete missingCaseFile.scenarios[0].callerCaseFile;
     expect(() => validateProvisioningPayload(missingCaseFile)).toThrow(/caller case file/);
+
+    const nullProvenance = fullPayload();
+    nullProvenance.scenarios[3].sourceRuleVersion = null;
+    expect(() => validateProvisioningPayload(nullProvenance)).toThrow(/rule-set version/);
+
+    const emptyRules = fullPayload();
+    emptyRules.scenarios[5].ruleIds = [];
+    expect(() => validateProvisioningPayload(emptyRules)).toThrow(/rule ids/);
 
     const badRule = fullPayload();
     badRule.scenarios[10].ruleIds = ['nonexistent_rule'];
@@ -90,7 +114,7 @@ describe('provision-private-scenarios operator tool', () => {
     ];
     const diff = diffAgainstExisting(documents, existing);
     expect(diff.updates).toEqual([firstId]);
-    expect(diff.creates).toHaveLength(22);
+    expect(diff.creates).toHaveLength(14);
     expect(diff.deactivates).toEqual(['stale__old-v0']);
   });
 

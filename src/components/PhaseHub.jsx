@@ -1,4 +1,4 @@
-import { buildPhases, PHASE_META, completedCount, nextPhase } from '../lib/phases.js';
+import { buildPhases, PHASE_META, completedCount, nextPhase, phaseOrderForDept } from '../lib/phases.js';
 import { departmentOverall } from '../lib/scoring.js';
 import { qaSummaryLabel, qaBadgeTone } from '../lib/qaFinalReview.js';
 
@@ -33,27 +33,32 @@ function phaseSummary(id, results, latestQa) {
   return overall == null ? null : { label: 'Completed', detail: `avg ${overall}%`, tone: 'pass' };
 }
 
-export default function PhaseHub({ deptName, done = {}, results, latestQa, onStart }) {
-  const phases = buildPhases(done);
-  const doneCount = completedCount(done);
-  const allDone = doneCount === 3;
-  const next = nextPhase(done);
+export default function PhaseHub({ deptName, deptId, done = {}, results, latestQa, onStart }) {
+  // Departments outside the scored Call QA rollout (Pediatrics) run a
+  // two-phase assessment — the QA phase is not shown and never required.
+  const order = phaseOrderForDept(deptId);
+  const total = order.length;
+  const phases = buildPhases(done, order);
+  const doneCount = completedCount(done, order);
+  const allDone = doneCount === total;
+  const next = nextPhase(done, order);
 
   return (
     <section className="interview view-enter">
       <header className="overview__head">
         <div>
-          <h1 className="overview__title">Your assessment — 3 phases</h1>
+          <h1 className="overview__title">Your assessment — {total} phases</h1>
           <p className="overview__lede">
-            The {deptName} assessment runs in three phases, in order. Complete all three to
-            finish; you can retake any completed phase later.
+            The {deptName} assessment runs in {total === 3 ? 'three' : 'two'} phases, in order.
+            Complete {total === 3 ? 'all three' : 'both'} to finish; you can retake any completed
+            phase later.
           </p>
         </div>
       </header>
 
       <div className="phase-hub__progress" role="status">
         <span className="phase-hub__progress-label">
-          {allDone ? 'All 3 phases complete' : `${doneCount} of 3 phases complete`}
+          {allDone ? `All ${total} phases complete` : `${doneCount} of ${total} phases complete`}
         </span>
         <span className="phase-hub__dots" aria-hidden="true">
           {phases.map((p) => (

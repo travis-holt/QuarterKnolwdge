@@ -1,5 +1,39 @@
 # Development History - Knowledge Check
 
+### 2026-07-18 - OB/GYN-only scored Call QA rollout scope
+- **Rollout configuration:** new `CALL_QA_ROLLOUT_DEPARTMENTS = ['obgyn']` +
+  `isCallQaRolloutDept()` in `src/data/callQaScenarios.js` now govern scored Call QA availability
+  everywhere. `CALL_QA_COVERAGE_BLUEPRINT` drops the Pediatrics entry: the private-bank minimum is
+  **15 active OB/GYN scenarios only**. Adding a department later is a config change plus private
+  provisioning, not another redesign.
+- **Relay gate:** `/api/live` `mode:'test'` starts are rejected server-side for any department
+  outside the rollout (Pediatrics gets a clear "not in this rollout" error, no attempt created;
+  `selectScenario` is never called). Practice mode is unchanged for all departments.
+- **Phase flow:** `phaseOrderForDept(dept)` in `src/lib/phases.js` — OB/GYN keeps the 3-phase
+  MCQ → Spot → Call QA sequence; Pediatrics runs a two-phase MCQ → Spot assessment that COMPLETES
+  without QA (no fake completions, no permanently-impossible completion). `buildPhases`/
+  `phasesComplete`/`nextPhase`/`completedCount` accept the department-scoped order; `PhaseHub`
+  renders 2 or 3 cards with correct copy; the dashboard's historical QA card stays visible for
+  every department but only offers Retake in rollout departments; the `qatest` view is
+  rollout-guarded.
+- **Provisioning tool:** `validateProvisioningPayload` rejects scenarios for non-rollout
+  departments (no Pediatrics section required — or accepted), and requires ≥15 active OB/GYN
+  scenarios. Tests rewritten for OB/GYN-only payloads with real provenance constants.
+- **Strict OB/GYN provenance:** `validatePrivateScenario` now REQUIRES, for OB/GYN, a non-null
+  `sourceRuleVersion === OBGYN_RULE_SET_VERSION`, `sourceAuthority === OBGYN_SOURCE_AUTHORITY`,
+  a supported `sourceSopVersion` (`OBGYN_SOP_VERSION` current-floor constant, or a verified
+  `activeSopVersion` passed by the caller), and non-empty valid `ruleIds`. Null/empty provenance
+  fails validation; Pediatrics-shaped legacy fixtures keep legacy-tolerant behavior (they are not
+  provisionable anyway).
+- **Honest reporting:** calibration coverage flags `runtime-bank-evidence-missing`/
+  `private-bank-below-minimum` only for rollout departments; pilot smoke requires coverage of the
+  rollout departments only (Pediatrics synthetic rehearsal cases remain valid extra evidence) and
+  reports `rolloutDepartments: ['obgyn']`.
+- **CI:** the workflow now also runs `qa:pilot-smoke`, `qa:calibrate`, and `qa:coverage` (all
+  offline/deterministic; no Firestore, Gemini, or private files). `qa:calibrate:check` is
+  intentionally NOT a required green step — it exits 1 with `INSUFFICIENT_DATA` until real human
+  calibration evidence exists.
+
 ### 2026-07-18 - PR #35 merge-readiness pass: main integration, calibration adaptation, callerCaseFile, randomized selection
 - **Merged current `origin/main` (`d4ee320`, PR #33)** into `feature/obgyn-operating-model-v2`
   with `--no-ff` (no rebase/force-push). The full PR #33 calibration/readiness architecture is

@@ -222,7 +222,7 @@ describe('PhaseHub', () => {
   const noop = () => {};
 
   it('locks phases 2 and 3 when nothing is done', () => {
-    render(<PhaseHub deptName="Pediatrics" done={{}} results={{}} latestQa={null} onStart={noop} />);
+    render(<PhaseHub deptName="OB/GYN" deptId="obgyn" done={{}} results={{}} latestQa={null} onStart={noop} />);
     expect(screen.getByText('0 of 3 phases complete')).toBeTruthy();
     const cards = screen.getAllByRole('button').filter((b) => b.className.includes('phase-card'));
     expect(cards).toHaveLength(3);
@@ -234,7 +234,7 @@ describe('PhaseHub', () => {
 
   it('starts the first phase on click', () => {
     let picked = null;
-    render(<PhaseHub deptName="Pediatrics" done={{}} results={{}} latestQa={null} onStart={(id) => { picked = id; }} />);
+    render(<PhaseHub deptName="OB/GYN" deptId="obgyn" done={{}} results={{}} latestQa={null} onStart={(id) => { picked = id; }} />);
     const cards = screen.getAllByRole('button').filter((b) => b.className.includes('phase-card'));
     fireEvent.click(cards[0]);
     expect(picked).toBe('mcq');
@@ -243,7 +243,7 @@ describe('PhaseHub', () => {
   it('unlocks phase 2 after the MCQ and shows its summary', () => {
     const results = { mcq: { scores: { intake: 80, classification: 60 } } };
     let picked = null;
-    render(<PhaseHub deptName="Pediatrics" done={{ mcq: true }} results={results} latestQa={null} onStart={(id) => { picked = id; }} />);
+    render(<PhaseHub deptName="OB/GYN" deptId="obgyn" done={{ mcq: true }} results={results} latestQa={null} onStart={(id) => { picked = id; }} />);
     expect(screen.getByText('1 of 3 phases complete')).toBeTruthy();
     expect(screen.getByText(/avg 70%/)).toBeTruthy();
     const cards = screen.getAllByRole('button').filter((b) => b.className.includes('phase-card'));
@@ -256,7 +256,7 @@ describe('PhaseHub', () => {
     const latestQa = { qa: { pass: false, score: 62, review: null } };
     render(
       <PhaseHub
-        deptName="Pediatrics"
+        deptName="OB/GYN" deptId="obgyn"
         done={{ mcq: true, spot: true, qa: true }}
         results={{ mcq: { scores: { intake: 90 } }, spot: { scores: { intake: 100 } } }}
         latestQa={latestQa}
@@ -273,7 +273,7 @@ describe('PhaseHub', () => {
   it('shows a pending AI PASS as non-final (never a bare PASS)', () => {
     render(
       <PhaseHub
-        deptName="Pediatrics"
+        deptName="OB/GYN" deptId="obgyn"
         done={{ mcq: true, spot: true, qa: true }}
         results={{ mcq: { scores: { intake: 90 } }, spot: { scores: { intake: 100 } } }}
         latestQa={{ qa: { pass: true, score: 92, review: { recommendation: 'pass' } } }}
@@ -286,7 +286,7 @@ describe('PhaseHub', () => {
   it('shows a needs-review attempt as NEEDS SUPERVISOR REVIEW', () => {
     render(
       <PhaseHub
-        deptName="Pediatrics"
+        deptName="OB/GYN" deptId="obgyn"
         done={{ mcq: true, spot: true, qa: true }}
         results={{ mcq: { scores: { intake: 90 } }, spot: { scores: { intake: 100 } } }}
         latestQa={{ qa: { pass: true, score: 86, review: { recommendation: 'needs_review' } } }}
@@ -294,6 +294,27 @@ describe('PhaseHub', () => {
       />
     );
     expect(screen.getByText(/NEEDS SUPERVISOR REVIEW · 86\/100/)).toBeTruthy();
+  });
+
+  it('Pediatrics (outside the Call QA rollout) shows a two-phase assessment with no QA card', () => {
+    render(<PhaseHub deptName="Pediatrics" deptId="pediatrics" done={{}} results={{}} latestQa={null} onStart={noop} />);
+    expect(screen.getByText('0 of 2 phases complete')).toBeTruthy();
+    const cards = screen.getAllByRole('button').filter((b) => b.className.includes('phase-card'));
+    expect(cards).toHaveLength(2);
+    expect(screen.queryByText('Call QA Test')).toBeNull();
+  });
+
+  it('Pediatrics completes with MCQ + Spot alone (no fake QA completion needed)', () => {
+    render(
+      <PhaseHub
+        deptName="Pediatrics" deptId="pediatrics"
+        done={{ mcq: true, spot: true }}
+        results={{ mcq: { scores: { intake: 90 } }, spot: { scores: { intake: 100 } } }}
+        latestQa={null}
+        onStart={noop}
+      />
+    );
+    expect(screen.getByText('All 2 phases complete')).toBeTruthy();
   });
 });
 

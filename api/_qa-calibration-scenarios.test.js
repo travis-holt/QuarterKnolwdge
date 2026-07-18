@@ -90,23 +90,32 @@ describe('private scenario manifest validation', () => {
 });
 
 describe('coverage evidence honesty', () => {
-  it('synthetic-only coverage reports missing runtime-bank evidence per department', () => {
+  it('synthetic-only coverage reports missing runtime-bank evidence for rollout departments only', () => {
     const coverage = buildScenarioCoverageReport(SYNTHETIC_CALIBRATION_SCENARIOS, [], {});
     expect(coverage.scenarioEvidence).toBe('synthetic-only');
     const missing = coverage.flags.filter((flag) => flag.id === 'runtime-bank-evidence-missing');
-    expect(missing.map((flag) => flag.department).sort()).toEqual(['obgyn', 'pediatrics']);
+    // OB/GYN is the only scored-rollout department; Pediatrics needs no private bank.
+    expect(missing.map((flag) => flag.department)).toEqual(['obgyn']);
   });
 
-  it('a private manifest below the anonymous minimum is flagged, at/above is not', () => {
-    const manifest = Array.from({ length: 8 }, (_, index) => ({
-      id: `p-${index}`, version: 'v1', department: 'pediatrics',
+  it('a private manifest below the OB/GYN minimum is flagged, at/above is not', () => {
+    const short = Array.from({ length: 14 }, (_, index) => ({
+      id: `o-${index}`, version: 'v1', department: 'obgyn',
       workflowType: 'prescription_refill', difficulty: 'medium',
       domainIds: ['classification'], competencyIds: ['communication'],
     }));
-    const coverage = buildScenarioCoverageReport(manifest, [], { scenarioEvidence: 'private-manifest' });
+    const coverage = buildScenarioCoverageReport(short, [], { scenarioEvidence: 'private-manifest' });
     const flags = coverage.flags.filter((flag) => flag.id === 'private-bank-below-minimum');
-    expect(flags.map((flag) => flag.department)).toEqual(['obgyn']); // 0 < 15; pediatrics 8 >= 8
+    expect(flags.map((flag) => flag.department)).toEqual(['obgyn']); // 14 < 15
     expect(coverage.flags.some((flag) => flag.id === 'runtime-bank-evidence-missing')).toBe(false);
+
+    const full = Array.from({ length: 15 }, (_, index) => ({
+      id: `o-${index}`, version: 'v1', department: 'obgyn',
+      workflowType: 'prescription_refill', difficulty: 'medium',
+      domainIds: ['classification'], competencyIds: ['communication'],
+    }));
+    const fullCoverage = buildScenarioCoverageReport(full, [], { scenarioEvidence: 'private-manifest' });
+    expect(fullCoverage.flags.some((flag) => flag.id === 'private-bank-below-minimum')).toBe(false);
   });
 
   it('readiness without private-bank evidence carries the scenarioEvidence reason', () => {

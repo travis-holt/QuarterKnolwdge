@@ -17,6 +17,7 @@ describe('Call QA pilot smoke workflow', () => {
       status: PILOT_SMOKE_VERIFIED,
       caseCount: 15,
       departments: ['obgyn', 'pediatrics'],
+      rolloutDepartments: ['obgyn'],
       nonProduction: true,
       calibrationAuthority: 'none',
       failures: [],
@@ -31,6 +32,17 @@ describe('Call QA pilot smoke workflow', () => {
     ]));
     expect(report.phase3.complete).toBeGreaterThan(0);
     expect(report.phase3.incomplete).toBeGreaterThan(0);
+  });
+
+  it('does not require Pediatrics coverage (outside the scored rollout) but does require OB/GYN', async () => {
+    const all = await buildPilotSmokeCases();
+    const noPeds = all.filter((item) => item.fixture.department !== 'pediatrics');
+    const pedsReport = evaluatePilotSmokeCases(noPeds);
+    expect(pedsReport.failures).not.toContainEqual(expect.stringContaining('missing-department:pediatrics'));
+
+    const noObgyn = all.filter((item) => item.fixture.department !== 'obgyn');
+    const obgynReport = evaluatePilotSmokeCases(noObgyn);
+    expect(obgynReport.failures).toContain('missing-department:obgyn');
   });
 
   it('fails visibly when required rehearsal coverage is missing', async () => {

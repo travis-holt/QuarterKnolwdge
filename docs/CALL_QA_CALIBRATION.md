@@ -207,11 +207,15 @@ scenarios:
   answers cannot leak into operator tooling.
 
 Coverage is honest about its evidence: without a private manifest the report
-flags `runtime-bank-evidence-missing` per department and readiness carries a
-`scenarioEvidence:synthetic-only` reason — the anonymous aggregate minimum
-counts (8 Pediatrics / 15 OB/GYN) are never treated as runtime coverage
-evidence on their own. With a manifest, a department below its anonymous
-minimum is flagged `private-bank-below-minimum`.
+flags `runtime-bank-evidence-missing` for every scored-rollout department and
+readiness carries a `scenarioEvidence:synthetic-only` reason — the anonymous
+aggregate minimum counts are never treated as runtime coverage evidence on
+their own. The scored Call QA rollout is **OB/GYN only**
+(`CALL_QA_ROLLOUT_DEPARTMENTS = ['obgyn']`, minimum 15 active private
+scenarios); Pediatrics is assessed (MCQ/Spot) but outside this rollout, so it
+requires no private bank and never blocks coverage or readiness. With a
+manifest, a rollout department below its anonymous minimum is flagged
+`private-bank-below-minimum`.
 
 Live mode (`--live --confirm-live`) grades only operator-supplied local
 fixtures and requires each grading fixture to embed a sanitized

@@ -1,7 +1,7 @@
 import { ASSESSED_DEPTS } from '../src/data/departments.js';
 import { DOMAINS } from '../src/data/questions.js';
 import { COMPETENCIES } from '../src/data/competencies.js';
-import { CALL_QA_COVERAGE_BLUEPRINT } from '../src/data/callQaScenarios.js';
+import { CALL_QA_COVERAGE_BLUEPRINT, isCallQaRolloutDept } from '../src/data/callQaScenarios.js';
 import {
   SYNTHETIC_CALIBRATION_SCENARIOS,
   scenarioResolverFrom,
@@ -930,10 +930,15 @@ export function buildScenarioCoverageReport(scenarios = SYNTHETIC_CALIBRATION_SC
     // coverage when they come from a validated private-bank manifest. The
     // anonymous aggregate minimums alone are never coverage evidence.
     const minimumScenarioCount = CALL_QA_COVERAGE_BLUEPRINT[department]?.minimumScenarioCount ?? 0;
-    if (scenarioEvidence !== 'private-manifest') {
-      flags.push({ id: 'runtime-bank-evidence-missing', department, requiredMinimum: minimumScenarioCount });
-    } else if (departmentScenarios.length < minimumScenarioCount) {
-      flags.push({ id: 'private-bank-below-minimum', department, count: departmentScenarios.length, requiredMinimum: minimumScenarioCount });
+    // Runtime private-bank evidence is only required for scored-rollout
+    // departments (currently OB/GYN only). Pediatrics is assessed but outside
+    // this rollout: no private bank exists or is required for it.
+    if (isCallQaRolloutDept(department)) {
+      if (scenarioEvidence !== 'private-manifest') {
+        flags.push({ id: 'runtime-bank-evidence-missing', department, requiredMinimum: minimumScenarioCount });
+      } else if (departmentScenarios.length < minimumScenarioCount) {
+        flags.push({ id: 'private-bank-below-minimum', department, count: departmentScenarios.length, requiredMinimum: minimumScenarioCount });
+      }
     }
     const departmentFixtures = human.filter((fixture) => fixture.department === department);
     const workflows = {};

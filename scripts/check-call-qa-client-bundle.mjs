@@ -11,6 +11,8 @@ const forbiddenTokens = [
   'callQaScenariosPrivate',
   'callerCaseFile',
   'scenarioSnapshot',
+  'expectedActions',
+  'criticalMisses',
 ];
 
 async function filesUnder(dir) {
