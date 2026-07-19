@@ -9,6 +9,10 @@ on:
       - 'src/data/audits-obgyn-current-floor-v3.js'
       - 'src/data/audits-obgyn-current-floor-v3.test.js'
       - 'src/data/questions-obgyn-current-floor-v3.test.js'
+  pull_request:
+    branches:
+      - main
+    types: [opened, synchronize, reopened]
 
 permissions:
   contents: read
@@ -18,8 +22,6 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-        with:
-          ref: feature/obgyn-current-floor-assessment-bank-v3
       - uses: actions/setup-node@v4
         with:
           node-version: 20.19.0
