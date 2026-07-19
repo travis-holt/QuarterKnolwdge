@@ -51,6 +51,7 @@ describe('OB/GYN current-floor assessment-bank migration planner', () => {
     const plan = planObgynCurrentFloorBankMigration([], []);
     expect(plan.questionIdsToUpsert).toHaveLength(24);
     expect(plan.auditIdsToUpsert).toHaveLength(30);
-    expect(OBGYN_CURRENT_FLOOR_BANK_MARKER).toContain('2026-07');
+    expect(OBGYN_CURRENT_FLOOR_BANK_MARKER)
+      .toBe('2026-07-obgyn-current-floor-assessment-bank-v3-answer-balance');
   });
 });

@@ -8,7 +8,7 @@ export default [
     "difficulty": "hard",
     "opening": "I am calling again about the same severe pain message.",
     "detail": "The TE is still open, and the pain is worse.",
-    "error": "I'll open a second new TE for the same pain and leave the first one as it is.",
+    "error": "I'll open another TE for the same pain and leave the first unchanged.",
     "modelExplanation": "The agent duplicated a same-issue TE.",
     "expectedCorrection": "Use Take Action on the existing TE with the worsening facts, update priority as appropriate, and use the urgent communication workflow.",
     "requiredChartFacts": ["Open TE exists for the same symptom.", "Patient reports worsening symptoms."]
@@ -21,7 +21,7 @@ export default [
     "difficulty": "hard",
     "opening": "I was told to return for another ultrasound.",
     "detail": "I cannot find the order in my portal.",
-    "error": "There is no documented order, but I'll schedule the ultrasound anyway and note that you requested it.",
+    "error": "There is no order, but I'll schedule the requested ultrasound anyway.",
     "modelExplanation": "The agent documented patient recollection as if it were an order.",
     "expectedCorrection": "Record the requested study and missing documentation in a clarification TE to OB Portal; schedule only after a documented order or approval.",
     "requiredChartFacts": ["No sonography order is visible in Medical Summary, the last note, or TEs."]
@@ -34,7 +34,7 @@ export default [
     "difficulty": "medium",
     "opening": "My IUD insertion and scan are booked one after the other.",
     "detail": "The scan is the second appointment.",
-    "error": "I'll leave OB Verified off the second appointment because the times already show they are connected.",
+    "error": "I'll omit OB Verified because the appointment times already show the connection.",
     "modelExplanation": "The agent omitted a required status from the second appointment.",
     "expectedCorrection": "Keep the provider-first pair and mark the second GYN Sono appointment OB Verified.",
     "requiredChartFacts": ["IUD insertion provider visit is first.", "GYN Sono is immediately afterward.", "No no-sonogram provider exception applies."]

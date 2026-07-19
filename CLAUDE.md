@@ -11,8 +11,9 @@
 > [§8 Current System State](#8-current-system-state) and [§15 Current Priorities](#15-current-priorities)
 > accurate at all times.
 >
-> **Last updated:** 2026-07-19 (OB/GYN current-floor assessment bank v3 — the owner-confirmed Women's Health SOP v1.0 now drives a curated 24-item MCQ bank and 30-item Spot-the-Error bank; all 24 executable workflow rules and all 14 audit workflow types are covered; a marker-gated migration archives stale active non-manual OB/GYN content without deleting history or touching Pediatrics/manual drafts; exact SOP/rule/source provenance and deterministic one-Agent-error guards are enforced by tests) ·
-> **Prior same-day update:** 2026-07-19 (PR #34 recovery + cleanup — the rich, SOP-grounded training modules
+> **Last updated:** 2026-07-19 (OB/GYN answer-length balancing — conspicuously long correct MCQ options and indexed Spot-the-Error lines were shortened without changing scenarios, distractors, correct mappings, workflow violations, or scoring; regression tests prevent answer length from revealing the target, and a new marker-gated bank version upserts the concise wording on already-migrated environments) ·
+> **Prior same-day update:** 2026-07-19 (OB/GYN current-floor assessment bank v3 — the owner-confirmed Women's Health SOP v1.0 now drives a curated 24-item MCQ bank and 30-item Spot-the-Error bank; all 24 executable workflow rules and all 14 audit workflow types are covered; a marker-gated migration archives stale active non-manual OB/GYN content without deleting history or touching Pediatrics/manual drafts; exact SOP/rule/source provenance and deterministic one-Agent-error guards are enforced by tests) ·
+> **Earlier same-day update:** 2026-07-19 (PR #34 recovery + cleanup — the rich, SOP-grounded training modules
 > (F9) are now flattened into the intended structure: the full `TRAINING_MODULES` catalog lives
 > directly in `src/data/training.js` (Pediatrics same-day-sick correction applied in the data, not a
 > runtime patch), the rich renderer directly in `src/components/TrainingModule.jsx`, and the
@@ -481,6 +482,7 @@ training assignments.
 
 ### F16 — "Spot the Error" QA Audit Assessment
 - **Curated current-floor OB/GYN bank v3 (2026-07-19):** 30 pre-authored audits (5 per domain) cover every one of the 14 existing OB/GYN audit workflow types. Each expands to exactly 10 alternating turns, carries current SOP/rule/source provenance, and has one context-verifiable Agent error; the same marker migration archives stale active non-manual OB/GYN audits and activates these stable IDs.
+- **Answer-length balance (2026-07-19):** indexed error lines were made no longer than the longest surrounding Agent turn, while preserving the same single deterministic workflow violation. A bank test enforces that visual-length guard, and the follow-up content-migration marker upserts the concise bank on environments that already ran the initial v3 migration.
 - **OB/GYN executable audit contract (2026-07-17):** OB/GYN generation uses the selected entries
   from the 14-workflow taxonomy in `src/data/auditWorkflows.js`, resolves stable rule IDs from
   `src/data/obgynWorkflowRules.js`, and sends only those rules plus resolved SOP grounding to
@@ -1149,6 +1151,7 @@ training assignments.
 
 ### F14 — Question Bank + Gemini Scenario Generation (review gate)
 - **Current-floor OB/GYN bank v3 (2026-07-19):** `src/data/questions-obgyn-current-floor-v3.js` provides 24 challenging, chart-first MCQs (4 per domain) pinned to `obgyn-current-floor-2026-07-17`, covering all 24 executable rules. `runObgynCurrentFloorBankMigration()` non-destructively archives stale active non-manual OB/GYN questions and activates the stable v3 IDs; Pediatrics, drafts, manual items, and archived history are preserved.
+- **Answer-length balance (2026-07-19):** correct options were shortened where they stood out, without changing scenarios, distractors, correct IDs, points, rationales, or medical workflow meaning. A regression test caps each correct option at four words beyond the longest distractor. Bank version `obgyn-current-floor-assessment-bank-v3-answer-balance-2026-07-19` and its distinct marker ensure a supervisor initialization safely upserts the concise wording even if the original v3 marker already exists.
 - **Versioned OB/GYN generation (2026-07-17):** the endpoint selects applicable executable rules by
   domain/workflow/rule ID and includes only those rules plus the resolved SOP source. New questions
   persist `sourceSopVersion`, `sourceRuleVersion`, `sourceAuthority`, `ruleIds`, and `workflowType`.
@@ -1801,6 +1804,8 @@ of this file on 2026-07-07 to cut per-session context cost (it was ~55% of the f
 ---
 
 ## 8. Current System State
+
+- **OB/GYN assessment answer-length balance (2026-07-19):** the active 24-item current-floor MCQ bank no longer exposes correct answers through paragraph-length options, and the 30-item Spot-the-Error bank no longer exposes its indexed error through a longer Agent turn. Scenarios, distractors, correct IDs, points, rationales, deterministic workflow violations, and SOP provenance are unchanged; bank tests enforce both length constraints. A distinct follow-up migration marker safely upserts the revised stable IDs on already-migrated environments.
 
 - **Scored Call QA upstream deadline (2026-07-18):** `geminiWithRotation` accepts optional
   per-attempt timeout, maximum actual-fetch count, and overall deadline settings without changing

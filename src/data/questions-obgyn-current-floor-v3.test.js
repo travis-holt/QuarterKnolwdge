@@ -14,6 +14,10 @@ import { validateQuestionContent } from '../lib/contentGuards.js';
 
 const DOMAINS = ['intake', 'classification', 'routing', 'scheduling', 'boundaries', 'documentation'];
 
+function wordCount(text) {
+  return text.trim().split(/\s+/).length;
+}
+
 function correctText(questionId) {
   const question = OBGYN_CURRENT_FLOOR_QUESTIONS.find((item) => item.id === questionId);
   return question?.options.find((option) => option.id === question.correctOptionId)?.text ?? '';
@@ -41,6 +45,18 @@ describe('OB/GYN current-floor MCQ bank v3', () => {
     }
   });
 
+  it('does not reveal the correct option through disproportionate answer length', () => {
+    for (const question of OBGYN_CURRENT_FLOOR_QUESTIONS) {
+      const correct = question.options.find((option) => option.id === question.correctOptionId);
+      const longestDistractor = Math.max(
+        ...question.options
+          .filter((option) => option.id !== question.correctOptionId)
+          .map((option) => wordCount(option.text)),
+      );
+      expect(wordCount(correct.text), question.id).toBeLessThanOrEqual(longestDistractor + 4);
+    }
+  });
+
   it('pins exact current-floor provenance and covers all 24 executable rules', () => {
     const covered = new Set();
     for (const question of OBGYN_CURRENT_FLOOR_QUESTIONS) {
@@ -54,7 +70,9 @@ describe('OB/GYN current-floor MCQ bank v3', () => {
       }
     }
     expect([...covered].sort()).toEqual(OBGYN_WORKFLOW_RULES.map((rule) => rule.id).sort());
-    expect(OBGYN_CURRENT_FLOOR_BANK_VERSION).toContain('2026-07-17');
+    expect(OBGYN_CURRENT_FLOOR_BANK_VERSION).toBe(
+      'obgyn-current-floor-assessment-bank-v3-answer-balance-2026-07-19',
+    );
   });
 
   it('passes shared guards and preserves the highest-risk current-floor outcomes', () => {

@@ -8,7 +8,7 @@ export default [
     "difficulty": "hard",
     "opening": "I need a routine visit for some mild discharge. I had an annual at another practice six months ago.",
     "detail": "I have not had an Annual GYN with your department in almost two years.",
-    "error": "The outside annual counts as current here, so I will book a GYN Office Visit.",
+    "error": "The outside annual counts as current, so I will book a GYN Office Visit.",
     "modelExplanation": "The agent counted an outside annual as current for this department's routine scheduling rule.",
     "expectedCorrection": "Use the last completed in-department Annual GYN; when it is over one year old, schedule Annual GYN and include the concern.",
     "requiredChartFacts": ["Outside-practice annual was six months ago.", "Last in-department Annual GYN was 22 months ago.", "Concern was not described as serious."]
