@@ -21,7 +21,7 @@ export default [
     "difficulty": "hard",
     "opening": "I was told to return for another ultrasound.",
     "detail": "I cannot find the order in my portal.",
-    "error": "There is no documented sonography order, but I'll schedule the ultrasound anyway and note that you requested it.",
+    "error": "There is no documented order, but I'll schedule the ultrasound anyway and note that you requested it.",
     "modelExplanation": "The agent documented patient recollection as if it were an order.",
     "expectedCorrection": "Record the requested study and missing documentation in a clarification TE to OB Portal; schedule only after a documented order or approval.",
     "requiredChartFacts": ["No sonography order is visible in Medical Summary, the last note, or TEs."]
