@@ -1,15 +1,5 @@
 [
   {
-    "id": "av3-obgyn-intake-4",
-    "flags": [
-      {
-        "severity": "block",
-        "code": "audit_error_not_deterministic",
-        "message": "The indexed Agent error does not deterministically contradict the selected structured rule (even with patient context and required chart facts)."
-      }
-    ]
-  },
-  {
     "id": "av3-obgyn-intake-5",
     "flags": [
       {
@@ -20,67 +10,7 @@
     ]
   },
   {
-    "id": "av3-obgyn-classification-2",
-    "flags": [
-      {
-        "severity": "block",
-        "code": "audit_error_not_deterministic",
-        "message": "The indexed Agent error does not deterministically contradict the selected structured rule (even with patient context and required chart facts)."
-      }
-    ]
-  },
-  {
-    "id": "av3-obgyn-classification-5",
-    "flags": [
-      {
-        "severity": "block",
-        "code": "audit_error_not_deterministic",
-        "message": "The indexed Agent error does not deterministically contradict the selected structured rule (even with patient context and required chart facts)."
-      }
-    ]
-  },
-  {
-    "id": "av3-obgyn-routing-4",
-    "flags": [
-      {
-        "severity": "block",
-        "code": "audit_error_not_deterministic",
-        "message": "The indexed Agent error does not deterministically contradict the selected structured rule (even with patient context and required chart facts)."
-      }
-    ]
-  },
-  {
     "id": "av3-obgyn-routing-5",
-    "flags": [
-      {
-        "severity": "block",
-        "code": "audit_error_not_deterministic",
-        "message": "The indexed Agent error does not deterministically contradict the selected structured rule (even with patient context and required chart facts)."
-      }
-    ]
-  },
-  {
-    "id": "av3-obgyn-scheduling-5",
-    "flags": [
-      {
-        "severity": "block",
-        "code": "audit_error_not_deterministic",
-        "message": "The indexed Agent error does not deterministically contradict the selected structured rule (even with patient context and required chart facts)."
-      }
-    ]
-  },
-  {
-    "id": "av3-obgyn-boundaries-4",
-    "flags": [
-      {
-        "severity": "block",
-        "code": "audit_error_not_deterministic",
-        "message": "The indexed Agent error does not deterministically contradict the selected structured rule (even with patient context and required chart facts)."
-      }
-    ]
-  },
-  {
-    "id": "av3-obgyn-documentation-2",
     "flags": [
       {
         "severity": "block",
