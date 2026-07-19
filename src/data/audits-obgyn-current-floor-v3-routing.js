@@ -60,7 +60,7 @@ export default [
     "difficulty": "hard",
     "opening": "My bleeding has become much heavier since I called this morning.",
     "detail": "There is already a TE, but the symptoms are worse now.",
-    "error": "No need to use the urgent channel; updating the TE is enough.",
+    "error": "Skip the urgent channel; updating the TE is enough.",
     "modelExplanation": "The agent omitted the required urgent communication step for worsening serious symptoms.",
     "expectedCorrection": "Use Take Action on the existing TE, mark High Priority as needed, and message the Women's Health OB Urgent Calls Intermedia channel.",
     "requiredChartFacts": ["Serious bleeding worsened.", "An existing TE is open.", "Urgent-channel escalation is required in addition to the TE."]
