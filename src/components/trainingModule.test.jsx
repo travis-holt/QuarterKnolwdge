@@ -2,12 +2,12 @@
 // ─────────────────────────────────────────────────────────────────────────────
 // TrainingModule — rendering of the rich content blocks (scripts, call
 // examples, model docs, mistakes, quick-ref, drill), the drill interaction, and
-// the DEPARTMENT SCOPING of the whole page.
+// CONTROLLED DEPARTMENT SCOPING.
 //
-// The department selector is the single source of truth for the entire module:
-// lessons, points, scripts, examples, model docs, mistakes, quick-reference
-// rows, drills, the call simulation and takeaways are all filtered to
-// "shared + selected department". Pure data in, no Firebase/db involved.
+// The `department` prop is the sole source of truth: the component keeps no
+// local department state and offers no local switcher, so the rendered content,
+// the cohort rows it was given, and the department a completion is recorded
+// under can never diverge. Pure data in, no Firebase/db involved.
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { describe, it, expect, vi } from 'vitest';
@@ -16,9 +16,11 @@ import { render, screen, fireEvent, within } from '@testing-library/react';
 import TrainingModule from './TrainingModule.jsx';
 import { moduleForDomain, scopeForDept } from '../data/training.js';
 
+// Every render is explicitly department-controlled — there is no default.
 const baseProps = {
   rows: [],
   domainId: 'routing',
+  department: 'pediatrics',
   onBack: vi.fn(),
   onOpenNavigator: vi.fn(),
 };
@@ -28,8 +30,6 @@ const simFor = (domainId, dept) => scopeForDept(moduleForDomain(domainId).simula
 const drillsFor = (domainId, dept) => scopeForDept(moduleForDomain(domainId).drill, dept);
 
 const pageText = () => document.body.textContent ?? '';
-const deptGroup = () => screen.getByRole('group', { name: 'Choose department' });
-const pickDept = (label) => fireEvent.click(within(deptGroup()).getByRole('button', { name: label }));
 const responseGroup = () => screen.getByRole('group', { name: 'Choose your response' });
 
 describe('TrainingModule content blocks', () => {
@@ -68,7 +68,7 @@ describe('TrainingModule content blocks', () => {
 });
 
 describe('TrainingModule call simulation', () => {
-  // With Pediatrics selected, routing shows the Pediatrics Concerta call.
+  // With Pediatrics controlled, routing shows the Pediatrics Concerta call.
   const sim = () => simFor('routing', 'pediatrics');
 
   it('opens on the start node with the caller line and one button per choice', () => {
@@ -138,82 +138,68 @@ describe('TrainingModule call simulation', () => {
   });
 });
 
-// ── Department scoping (the PR #34 leak this hotfix closes) ──────────────────
+// ── Controlled department scoping (the PR #34 leak this hotfix closes) ───────
 
-describe('TrainingModule department scoping', () => {
-  it('offers one page-level department control with both departments', () => {
+describe('TrainingModule controlled department scoping', () => {
+  it('has NO local department selector — department is parent-controlled', () => {
     render(<TrainingModule {...baseProps} />);
-    const group = deptGroup();
-    expect(within(group).getByRole('button', { name: 'Pediatrics' })).toBeTruthy();
-    expect(within(group).getByRole('button', { name: 'OB/GYN' })).toBeTruthy();
-    // There is no second, simulation-local department toggle any more.
+    expect(screen.queryByRole('group', { name: 'Choose department' })).toBeNull();
     expect(screen.queryByRole('group', { name: 'Choose department scenario' })).toBeNull();
+    // No control anywhere can change the rendered department from inside.
+    expect(screen.queryByRole('button', { name: 'OB/GYN' })).toBeNull();
   });
 
-  it('seeds the selected department from the app\'s active department', () => {
+  it('renders Pediatrics content when controlled to Pediatrics', () => {
+    render(<TrainingModule {...baseProps} domainId="classification" department="pediatrics" />);
+    expect(pageText()).toContain('My daughter\'s strep test came back');
+    expect(pageText()).not.toContain('moving much less');
+  });
+
+  it('renders OB/GYN content when controlled to OB/GYN', () => {
     render(<TrainingModule {...baseProps} domainId="classification" department="obgyn" />);
-    expect(within(deptGroup()).getByRole('button', { name: 'OB/GYN' }).getAttribute('aria-pressed')).toBe('true');
+    expect(pageText()).toContain('moving much less');
     expect(pageText()).not.toContain('My daughter\'s strep test came back');
   });
 
-  it('re-seeds when the app\'s active department changes', () => {
+  it('follows the department prop when the parent changes it', () => {
     const { rerender } = render(
       <TrainingModule {...baseProps} domainId="classification" department="pediatrics" />,
     );
     expect(pageText()).toContain('My daughter\'s strep test came back');
+
     rerender(<TrainingModule {...baseProps} domainId="classification" department="obgyn" />);
-    expect(pageText()).not.toContain('My daughter\'s strep test came back');
-    expect(pageText()).toContain('moving much less');
-  });
-
-  it('OB/GYN mode never renders the Pediatrics strep/amoxicillin content', () => {
-    render(<TrainingModule {...baseProps} domainId="classification" />);
-    // Pediatrics (default) shows it...
-    expect(pageText()).toContain('My daughter\'s strep test came back');
-
-    pickDept('OB/GYN');
-    // ...OB/GYN must not, in the drill OR the call simulation.
     expect(pageText()).not.toContain('My daughter\'s strep test came back');
     expect(pageText().toLowerCase()).not.toContain('amoxicillin');
     expect(pageText().toLowerCase()).not.toContain('strep');
-  });
-
-  it('Pediatrics mode never renders the OB/GYN decreased-fetal-movement content', () => {
-    render(<TrainingModule {...baseProps} domainId="classification" department="obgyn" />);
     expect(pageText()).toContain('moving much less');
-
-    pickDept('Pediatrics');
-    expect(pageText()).not.toContain('the baby has been moving much less');
-    expect(pageText().toLowerCase()).not.toContain('fetal movement');
   });
 
-  it('OB/GYN mode hides Pediatrics-only providers, routes and workflows', () => {
-    render(<TrainingModule {...baseProps} domainId="routing" />);
-    // Pediatrics shows its own routing table...
-    for (const term of ['Sally Carilli', 'Anisa Azeez', 'Marisa Kraft', 'PEDS Encounters', 'Concerta']) {
+  it('OB/GYN never renders Pediatrics-only providers, routes or workflows', () => {
+    const peds = ['Sally Carilli', 'Anisa Azeez', 'Marisa Kraft', 'PEDS Encounters', 'Concerta'];
+    const { rerender } = render(<TrainingModule {...baseProps} domainId="routing" department="pediatrics" />);
+    for (const term of peds) {
       expect(pageText(), `${term} missing from Pediatrics routing`).toContain(term);
     }
-
-    pickDept('OB/GYN');
-    for (const term of ['Sally Carilli', 'Anisa Azeez', 'Marisa Kraft', 'PEDS Encounters', 'Concerta']) {
+    rerender(<TrainingModule {...baseProps} domainId="routing" department="obgyn" />);
+    for (const term of peds) {
       expect(pageText(), `${term} leaked into OB/GYN routing`).not.toContain(term);
     }
   });
 
-  it('Pediatrics mode hides OB/GYN-only providers, routes and workflows', () => {
-    render(<TrainingModule {...baseProps} domainId="routing" department="obgyn" />);
-    for (const term of ['OB Portal', 'Rebecca Wood', 'Dr. Bank', 'Waiting List Portal', 'OB Urgent Calls']) {
+  it('Pediatrics never renders OB/GYN-only providers, routes or workflows', () => {
+    const ob = ['OB Portal', 'Rebecca Wood', 'Dr. Bank', 'Waiting List Portal', 'OB Urgent Calls'];
+    const { rerender } = render(<TrainingModule {...baseProps} domainId="routing" department="obgyn" />);
+    for (const term of ob) {
       expect(pageText(), `${term} missing from OB/GYN routing`).toContain(term);
     }
-
-    pickDept('Pediatrics');
-    for (const term of ['OB Portal', 'Rebecca Wood', 'Dr. Bank', 'Waiting List Portal', 'OB Urgent Calls', 'Labor & Delivery']) {
+    rerender(<TrainingModule {...baseProps} domainId="routing" department="pediatrics" />);
+    for (const term of [...ob, 'Labor & Delivery']) {
       expect(pageText(), `${term} leaked into Pediatrics routing`).not.toContain(term);
     }
   });
 
   it('scopes every block — lesson, mistake, quick-ref row, drill, takeaway and simulation', () => {
-    render(<TrainingModule {...baseProps} domainId="scheduling" />);
+    const { rerender } = render(<TrainingModule {...baseProps} domainId="scheduling" department="pediatrics" />);
     // Pediatrics scheduling: the Fidelis early-PE rules, no New OB pairing.
     expect(pageText()).toContain('Fidelis');
     expect(pageText()).not.toContain('New OB');
@@ -221,25 +207,22 @@ describe('TrainingModule department scoping', () => {
     expect(pageText()).not.toContain('Confirmation of Pregnancy');
     expect(screen.getByText(simFor('scheduling', 'pediatrics').title)).toBeTruthy();
 
-    pickDept('OB/GYN');
-    // OB/GYN scheduling: New OB pairing, no Fidelis/camp-form pediatrics rules.
+    rerender(<TrainingModule {...baseProps} domainId="scheduling" department="obgyn" />);
     expect(pageText()).toContain('New OB');
     expect(pageText()).toContain('OB Verified');
     expect(pageText()).not.toContain('Fidelis');
     expect(screen.getByText(simFor('scheduling', 'obgyn').title)).toBeTruthy();
   });
 
-  it('switching departments resets the simulation history', () => {
-    render(<TrainingModule {...baseProps} domainId="routing" />);
+  it('a department prop change resets the simulation history', () => {
+    const { rerender } = render(<TrainingModule {...baseProps} domainId="routing" department="pediatrics" />);
     const pedsSim = simFor('routing', 'pediatrics');
     const start = pedsSim.nodes[pedsSim.start];
-    // Commit a turn so there is history to clear.
     fireEvent.click(within(responseGroup()).getAllByRole('button')[0]);
     expect(screen.getAllByText(start.caller).length).toBeGreaterThan(0);
 
-    pickDept('OB/GYN');
+    rerender(<TrainingModule {...baseProps} domainId="routing" department="obgyn" />);
     const obSim = simFor('routing', 'obgyn');
-    // The OB/GYN call starts fresh — the Pediatrics turn is gone entirely.
     expect(screen.getByText(obSim.title)).toBeTruthy();
     expect(screen.getByText(obSim.nodes[obSim.start].caller)).toBeTruthy();
     expect(screen.queryByText(start.caller)).toBeNull();
@@ -247,34 +230,84 @@ describe('TrainingModule department scoping', () => {
       .toHaveLength(obSim.nodes[obSim.start].choices.length);
   });
 
-  it('switching departments resets drill answers', () => {
-    render(<TrainingModule {...baseProps} domainId="routing" />);
+  it('a department prop change resets drill answers', () => {
+    const { rerender } = render(<TrainingModule {...baseProps} domainId="routing" department="pediatrics" />);
     const first = screen.getByRole('group', { name: 'Drill scenario 1' });
     fireEvent.click(within(first).getAllByRole('button')[0]);
     within(first).getAllByRole('button').forEach((b) => expect(b.disabled).toBe(true));
 
-    pickDept('OB/GYN');
+    rerender(<TrainingModule {...baseProps} domainId="routing" department="obgyn" />);
     const obDrill = screen.getByRole('group', { name: 'Drill scenario 1' });
     within(obDrill).getAllByRole('button').forEach((b) => expect(b.disabled).toBe(false));
 
-    // Coming back is a fresh drill too — no stale answer survives the switch.
-    pickDept('Pediatrics');
+    rerender(<TrainingModule {...baseProps} domainId="routing" department="pediatrics" />);
     const backAgain = screen.getByRole('group', { name: 'Drill scenario 1' });
     within(backAgain).getAllByRole('button').forEach((b) => expect(b.disabled).toBe(false));
   });
 
-  it('keeps the chosen department while browsing, and still resets module state', () => {
-    const { rerender } = render(<TrainingModule {...baseProps} domainId="routing" />);
-    pickDept('OB/GYN');
-    fireEvent.click(within(responseGroup()).getAllByRole('button')[0]);
+  it('keeps exactly one call simulation mounted across department changes', () => {
+    const { rerender, container } = render(
+      <TrainingModule {...baseProps} domainId="classification" department="pediatrics" />,
+    );
+    expect(container.querySelectorAll('.tsim')).toHaveLength(1);
+    rerender(<TrainingModule {...baseProps} domainId="classification" department="obgyn" />);
+    expect(container.querySelectorAll('.tsim')).toHaveLength(1);
+    rerender(<TrainingModule {...baseProps} domainId="classification" department="pediatrics" />);
+    expect(container.querySelectorAll('.tsim')).toHaveLength(1);
+  });
+});
 
-    rerender(<TrainingModule {...baseProps} domainId="documentation" />);
-    // Department choice persists (the prop did not change)...
-    expect(within(deptGroup()).getByRole('button', { name: 'OB/GYN' }).getAttribute('aria-pressed')).toBe('true');
-    // ...but the new module opens on its own OB/GYN call, with no stale turn.
-    const docSim = simFor('documentation', 'obgyn');
-    expect(screen.getByText(docSim.title)).toBeTruthy();
-    expect(screen.getByText(docSim.nodes[docSim.start].caller)).toBeTruthy();
+// ── Unsupported departments never fall back to Pediatrics ───────────────────
+
+describe('TrainingModule unsupported departments', () => {
+  const UNSUPPORTED = [['Adult Medicine', 'adult'], ['Behavioural Health', 'behavioral']];
+
+  for (const [label, dept] of UNSUPPORTED) {
+    it(`${label} shows an unavailable state with no Pediatrics fallback`, () => {
+      render(<TrainingModule {...baseProps} domainId="routing" department={dept} />);
+      expect(screen.getByText('Training content is not available for this department yet.')).toBeTruthy();
+
+      // No content from EITHER supported department.
+      for (const term of ['Sally Carilli', 'Concerta', 'PEDS Encounters', 'OB Portal', 'Rebecca Wood']) {
+        expect(pageText(), `${term} rendered for ${label}`).not.toContain(term);
+      }
+      // No simulation, no drills, no takeaways, no quick-ref.
+      expect(screen.queryByText('Live call simulation')).toBeNull();
+      expect(screen.queryByText('Quick decision checks')).toBeNull();
+      expect(screen.queryByText('Key takeaways')).toBeNull();
+      expect(screen.queryByRole('group', { name: 'Choose your response' })).toBeNull();
+      expect(screen.queryByRole('group', { name: 'Drill scenario 1' })).toBeNull();
+    });
+
+    it(`${label} shows no completion control and no cohort, but keeps Back`, () => {
+      const onBack = vi.fn();
+      const rows = [{ name: 'Dana Cohen', scores: { routing: 20 }, levels: { routing: 'learning' } }];
+      render(
+        <TrainingModule
+          {...baseProps}
+          rows={rows}
+          domainId="routing"
+          department={dept}
+          showCohort={false}
+          completionKind="module"
+          onComplete={vi.fn()}
+          onBack={onBack}
+        />,
+      );
+      expect(screen.queryByRole('button', { name: 'Mark module complete' })).toBeNull();
+      expect(screen.queryByText('Auto-assigned to')).toBeNull();
+      expect(pageText()).not.toContain('Dana Cohen');
+
+      // Back still works.
+      fireEvent.click(screen.getByRole('button', { name: '← Back to training' }));
+      expect(onBack).toHaveBeenCalled();
+    });
+  }
+
+  it('a missing department renders unavailable rather than defaulting to Pediatrics', () => {
+    render(<TrainingModule {...baseProps} domainId="routing" department={undefined} />);
+    expect(screen.getByText('Training content is not available for this department yet.')).toBeTruthy();
+    expect(pageText()).not.toContain('Sally Carilli');
   });
 });
 
@@ -289,12 +322,10 @@ describe('TrainingModule drill interaction', () => {
     const buttons = within(group).getAllByRole('button');
     fireEvent.click(buttons[wrongIdx]);
 
-    // Rationale for the picked (wrong) and the correct option are both revealed.
     expect(screen.getByText((t) => t.includes(drill.options[wrongIdx].why))).toBeTruthy();
     expect(screen.getByText((t) => t.includes(correctOpt.why))).toBeTruthy();
     expect(screen.getByText('Not this time — the highlighted option is the SOP path.')).toBeTruthy();
 
-    // All options of that question are disabled after answering.
     within(group).getAllByRole('button').forEach((b) => expect(b.disabled).toBe(true));
   });
 
@@ -323,12 +354,10 @@ describe('TrainingModule drill interaction', () => {
     const { rerender } = render(<TrainingModule {...baseProps} domainId="routing" />);
     const first = screen.getByRole('group', { name: 'Drill scenario 1' });
     fireEvent.click(within(first).getAllByRole('button')[0]);
-    // Answered → locked.
     within(first).getAllByRole('button').forEach((b) => expect(b.disabled).toBe(true));
 
     rerender(<TrainingModule {...baseProps} domainId="boundaries" />);
     const fresh = screen.getByRole('group', { name: 'Drill scenario 1' });
-    // The new module's drill is unanswered — every option is clickable again.
     within(fresh).getAllByRole('button').forEach((b) => expect(b.disabled).toBe(false));
   });
 });
@@ -347,28 +376,49 @@ describe('TrainingModule roles', () => {
     expect(screen.getByRole('button', { name: 'Mark module complete' })).toBeTruthy();
   });
 
-  it('keeps the cohort hidden for navigators in every department', () => {
+  it('keeps peer names hidden from navigators in both departments', () => {
     const rows = [{ name: 'Dana Cohen', scores: { routing: 20 }, levels: { routing: 'learning' } }];
-    render(
+    const { rerender } = render(
       <TrainingModule
         {...baseProps}
         rows={rows}
+        department="pediatrics"
         showCohort={false}
         completionKind="module"
         onComplete={vi.fn()}
       />,
     );
     expect(screen.queryByText('Auto-assigned to')).toBeNull();
-    pickDept('OB/GYN');
+    expect(pageText()).not.toContain('Dana Cohen');
+
+    rerender(
+      <TrainingModule
+        {...baseProps}
+        rows={rows}
+        department="obgyn"
+        showCohort={false}
+        completionKind="module"
+        onComplete={vi.fn()}
+      />,
+    );
     expect(screen.queryByText('Auto-assigned to')).toBeNull();
     expect(pageText()).not.toContain('Dana Cohen');
   });
 
   it('shows the cohort panel for supervisors, in both departments', () => {
-    render(<TrainingModule {...baseProps} />);
+    const { rerender } = render(<TrainingModule {...baseProps} department="pediatrics" />);
     expect(screen.getByText('Auto-assigned to')).toBeTruthy();
-    pickDept('OB/GYN');
+    rerender(<TrainingModule {...baseProps} department="obgyn" />);
     expect(screen.getByText('Auto-assigned to')).toBeTruthy();
+  });
+
+  it('renders the cohort from the SAME rows it was given, alongside that department\'s content', () => {
+    // Supervisor passes department-scoped rows; content and cohort must agree.
+    const obRows = [{ name: 'Ob Only Navigator', scores: { routing: 20 }, levels: { routing: 'learning' } }];
+    render(<TrainingModule {...baseProps} rows={obRows} domainId="routing" department="obgyn" />);
+    expect(pageText()).toContain('Ob Only Navigator');
+    expect(pageText()).toContain('OB Portal');      // OB/GYN content
+    expect(pageText()).not.toContain('Sally Carilli'); // no Pediatrics content
   });
 
   it('lets a supervisor open a cohort navigator from the module', () => {
@@ -378,23 +428,38 @@ describe('TrainingModule roles', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Dana Cohen' }));
     expect(onOpenNavigator).toHaveBeenCalledWith('Dana Cohen');
   });
+});
 
-  it('a navigator marking the module complete calls onComplete with the kind', async () => {
+describe('TrainingModule completion integrity', () => {
+  it('calls onComplete with the kind AND the rendered Pediatrics department', async () => {
     const onComplete = vi.fn().mockResolvedValue(undefined);
     render(
       <TrainingModule
         {...baseProps}
+        department="pediatrics"
         showCohort={false}
         completionKind="module"
         onComplete={onComplete}
       />,
     );
     fireEvent.click(screen.getByRole('button', { name: 'Mark module complete' }));
-    // The action is async; wait for the save call to fire with the step kind.
-    // (`completed` is a parent-controlled prop, so the label only flips once the
-    // parent re-renders with completed=true — see the completed-prop case below.)
-    await vi.waitFor(() => expect(onComplete).toHaveBeenCalledWith('module'));
+    await vi.waitFor(() => expect(onComplete).toHaveBeenCalledWith('module', 'pediatrics'));
     expect(screen.queryByRole('alert')).toBeNull();
+  });
+
+  it('calls onComplete with the rendered OB/GYN department', async () => {
+    const onComplete = vi.fn().mockResolvedValue(undefined);
+    render(
+      <TrainingModule
+        {...baseProps}
+        department="obgyn"
+        showCohort={false}
+        completionKind="coaching"
+        onComplete={onComplete}
+      />,
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'Mark coaching reviewed' }));
+    await vi.waitFor(() => expect(onComplete).toHaveBeenCalledWith('coaching', 'obgyn'));
   });
 
   it('renders the completed state when the parent marks the step done', () => {
@@ -422,26 +487,27 @@ describe('TrainingModule roles', () => {
       />,
     );
     fireEvent.click(screen.getByRole('button', { name: 'Mark module complete' }));
-    // The error surfaces and the button returns to a retry-able state.
     expect(await screen.findByText('Network down')).toBeTruthy();
     expect(screen.getByRole('button', { name: 'Mark module complete' })).toBeTruthy();
   });
 
-  it('a completion save error survives a department switch on the same module', async () => {
-    const onComplete = vi.fn().mockRejectedValue(new Error('Network down'));
+  it('surfaces a rejected department-mismatch completion and stays retryable', async () => {
+    // Mirrors NavigatorApp's guard rejecting a drifted department.
+    const onComplete = vi
+      .fn()
+      .mockRejectedValue(new Error('Training department changed. Reopen the module and try again.'));
     render(
       <TrainingModule
         {...baseProps}
+        department="obgyn"
         showCohort={false}
         completionKind="module"
         onComplete={onComplete}
       />,
     );
     fireEvent.click(screen.getByRole('button', { name: 'Mark module complete' }));
-    expect(await screen.findByText('Network down')).toBeTruthy();
-    pickDept('OB/GYN');
-    // The completion control is department-independent — the error is still shown.
-    expect(screen.getByText('Network down')).toBeTruthy();
+    expect(await screen.findByText('Training department changed. Reopen the module and try again.')).toBeTruthy();
     expect(screen.getByRole('button', { name: 'Mark module complete' })).toBeTruthy();
+    expect(onComplete).toHaveBeenCalledWith('module', 'obgyn');
   });
 });

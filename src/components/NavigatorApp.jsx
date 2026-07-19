@@ -270,15 +270,23 @@ export default function NavigatorApp({ navigatorId, name, onSignOut }) {
     setView('module');
   };
 
-  const completeLearningStep = async (kind) => {
+  // `completionDepartment` is the department the training module actually
+  // RENDERED. If the navigator's active department changed underneath (e.g. a
+  // department switch while the module was open), the completion is rejected
+  // rather than silently recorded against the wrong department — a navigator
+  // must never get credit for a department whose content they did not review.
+  const completeLearningStep = async (kind, completionDepartment) => {
     if (!moduleDomain || (kind !== 'coaching' && kind !== 'module')) return;
-    await saveCompletion(navigatorId, name, moduleDomain, kind, dept);
+    if (completionDepartment !== dept) {
+      throw new Error('Training department changed. Reopen the module and try again.');
+    }
+    await saveCompletion(navigatorId, name, moduleDomain, kind, completionDepartment);
     setCompletions((prev) => [
       ...prev,
       {
         navigatorId,
         name,
-        department: dept,
+        department: completionDepartment,
         domainId: moduleDomain,
         kind,
         completedAt: clientTimestamp(),

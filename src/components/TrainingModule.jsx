@@ -1,6 +1,5 @@
 import { useMemo, useRef, useState } from 'react';
 import { domainName } from '../data/questions.js';
-import { departmentName } from '../data/departments.js';
 import {
   moduleForDomain,
   scopeForDept,
@@ -10,9 +9,11 @@ import {
 } from '../data/training.js';
 import { trainingByDomain } from '../lib/scoring.js';
 
-// Normalize any active-department value down to a department that actually has
-// training content (pediatrics is the fallback for the mockup departments).
-const trainingDeptFor = (dept) => (dept === 'obgyn' ? 'obgyn' : 'pediatrics');
+// Only these departments have authored training content. Anything else (the
+// Adult Medicine / Behavioural Health mockups, or a missing value) renders an
+// explicit "not available yet" state — it must NEVER fall back to Pediatrics,
+// which would show one department's rules to another department's navigator.
+const hasTrainingContent = (dept) => TRAINING_DEPARTMENTS.includes(dept);
 
 // ── Sub-blocks ───────────────────────────────────────────────────────────────
 
@@ -278,11 +279,17 @@ function Drill({ drill }) {
 // takeaways. Supervisors also see the auto-assigned cohort; navigators pass
 // `showCohort={false}` so other navigators' names never appear.
 //
-// DEPARTMENT SCOPE (single source of truth). This component owns the selected
-// department for the WHOLE page — the call simulation, lessons, lesson points,
-// script pairs, examples, model docs, mistakes, quick-reference rows, drills and
-// takeaways are all filtered to "shared + selected department". Nothing infers a
-// department from the content itself; scope is declared in the catalog data.
+// DEPARTMENT SCOPE — CONTROLLED. The `department` prop is the SOLE source of
+// truth and comes from the parent app (NavigatorApp's active department,
+// SupervisorApp's globally selected department). This component keeps NO local
+// department state and offers no local switcher, so the rendered content, the
+// `rows`/cohort it was given, and the department a completion is recorded under
+// can never diverge from the parent. Changing department is a parent action.
+//
+// Everything is filtered to "shared + that department": the call simulation,
+// lessons, lesson points, script pairs, examples, model docs, mistakes,
+// quick-reference rows, drills and takeaways. Nothing infers a department from
+// the content itself; scope is declared in the catalog data.
 export default function TrainingModule({
   rows,
   domainId,
@@ -293,47 +300,48 @@ export default function TrainingModule({
   completionKind = null,
   completed = false,
   onComplete = null,
-  department = 'pediatrics',
+  department,
 }) {
   const [saving, setSaving] = useState(false);
   const [completeError, setCompleteError] = useState('');
   const mod = moduleForDomain(domainId);
+  const supported = hasTrainingContent(department);
 
-  // The page-level department. Seeded from the app's active department so an
-  // OB/GYN navigator never opens on Pediatrics content, and switchable here
-  // (supervisors browse both). Re-seeds when the ACTIVE department prop changes,
-  // so a manual switch survives ordinary re-renders.
-  const [selectedDept, setSelectedDept] = useState(() => trainingDeptFor(department));
-  const deptPropRef = useRef(department);
-  if (deptPropRef.current !== department) {
-    deptPropRef.current = department;
-    setSelectedDept(trainingDeptFor(department));
-  }
-
-  // Everything the page renders, scoped to the selected department.
+  // Everything the page renders, scoped to the controlled department.
   const view = useMemo(() => {
-    if (!mod) return null;
-    const lessons = scopeForDept(mod.lessons, selectedDept)
+    if (!mod || !supported) return null;
+    const lessons = scopeForDept(mod.lessons, department)
       .map((lesson) => ({
         ...lesson,
-        points: scopeForDept(lesson.points, selectedDept),
-        script: scopeForDept(lesson.script, selectedDept),
-        example: lesson.example && belongsToDept(lesson.example, selectedDept) ? lesson.example : null,
-        doc: lesson.doc && belongsToDept(lesson.doc, selectedDept) ? lesson.doc : null,
+        points: scopeForDept(lesson.points, department),
+        script: scopeForDept(lesson.script, department),
+        example: lesson.example && belongsToDept(lesson.example, department) ? lesson.example : null,
+        doc: lesson.doc && belongsToDept(lesson.doc, department) ? lesson.doc : null,
       }))
       // A lesson whose every point belongs to the other department drops out.
       .filter((lesson) => lesson.points.length > 0);
     return {
       lessons,
-      mistakes: scopeForDept(mod.mistakes, selectedDept),
-      quickRefRows: scopeForDept(mod.quickRef?.rows, selectedDept),
-      drill: scopeForDept(mod.drill, selectedDept),
-      simulation: scopeForDept(mod.simulations, selectedDept)[0] ?? null,
-      keyTakeaways: scopeForDept(mod.keyTakeaways, selectedDept),
+      mistakes: scopeForDept(mod.mistakes, department),
+      quickRefRows: scopeForDept(mod.quickRef?.rows, department),
+      drill: scopeForDept(mod.drill, department),
+      simulation: scopeForDept(mod.simulations, department)[0] ?? null,
+      keyTakeaways: scopeForDept(mod.keyTakeaways, department),
     };
-  }, [mod, selectedDept]);
+  }, [mod, department, supported]);
 
   const cohort = trainingByDomain(rows).find((d) => d.domainId === domainId);
+
+  // Departments without authored training content get an explicit unavailable
+  // state — never another department's content, and never a completion control.
+  if (!supported) {
+    return (
+      <section className="module">
+        <button className="linkbtn navdetail__back" onClick={onBack}>{backLabel}</button>
+        <p className="readoff__empty">Training content is not available for this department yet.</p>
+      </section>
+    );
+  }
 
   if (!mod) {
     return (
@@ -357,21 +365,6 @@ export default function TrainingModule({
           <span>·</span>
           <span>{view.lessons.length} lesson{view.lessons.length === 1 ? '' : 's'}</span>
           <span className="module__preview-flag">Grounded in the department SOPs</span>
-        </div>
-        {/* One department control for the entire module — it scopes every block
-            below, not just the call simulation. */}
-        <div className="module__depts" role="group" aria-label="Choose department">
-          {TRAINING_DEPARTMENTS.map((id) => (
-            <button
-              key={id}
-              type="button"
-              className={`module__dept${id === selectedDept ? ' is-active' : ''}`}
-              aria-pressed={id === selectedDept}
-              onClick={() => setSelectedDept(id)}
-            >
-              {departmentName(id)}
-            </button>
-          ))}
         </div>
       </header>
 
@@ -440,7 +433,9 @@ export default function TrainingModule({
               setSaving(true);
               setCompleteError('');
               try {
-                await onComplete(completionKind);
+                // Pass the department this module actually RENDERED, so the
+                // caller can reject a completion whose department drifted.
+                await onComplete(completionKind, department);
               } catch (err) {
                 setCompleteError(err?.message || 'Could not save this step. Try again.');
               } finally {
