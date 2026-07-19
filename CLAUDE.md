@@ -11,28 +11,8 @@
 > [§8 Current System State](#8-current-system-state) and [§15 Current Priorities](#15-current-priorities)
 > accurate at all times.
 >
-> **Last updated:** 2026-07-19 (**post-merge hotfix — department-scoped training content.** PR #34
-> was already merged to `main` (`79358b9`); this is a separate hotfix branch
-> (`fix/training-department-content-scoping`), not a reopening of it. The Training page could show
-> OB/GYN as the selected department while still rendering Pediatrics-specific content (confirmed:
-> the "My daughter's strep test came back … refill her amoxicillin?" drill appearing under OB/GYN).
-> **Root cause:** the selected department lived inside `CallSimulator` and controlled only the
-> branching call simulation; every other block rendered module-level arrays unfiltered.
-> **Fix:** `TrainingModule` now owns the selected department for the whole page and renders the
-> selector; `CallSimulator` is fully controlled and holds no department state. The selected
-> department scopes lessons, lesson points, script pairs, annotated examples, model documents,
-> mistakes, quick-reference rows, drills, simulations, and key takeaways. Catalog items declare an
-> explicit `departments` array of **stable IDs** (`pediatrics` / `obgyn`; absent = genuinely
-> shared) — display strings like `OB-GYN` remain simulation labels only and are never business
-> identifiers. One pure, unit-tested helper set (`scopeForDept` / `belongsToDept` /
-> `itemDepartments` / `itemText`) does the filtering; there is no runtime keyword inference and no
-> per-term filter. All six modules were audited item by item; switching department or module resets
-> the simulation node, simulation history, and drill answers; and `NavigatorApp`/`SupervisorApp`
-> now pass their active department in. All current SOP rules are preserved unchanged, and no
-> scoring, Firestore, API, auth, Call QA, deployment, or production-data behavior changed.
-> Unit suite 1353 → **1379** tests across 67 files; browser-verified in real Chromium at 1280px and
-> 390px (338/338 checks, 0 console errors). See docs/HISTORY.md 2026-07-19.
-> Prior — **Last updated:** 2026-07-19 (PR #34 recovery + cleanup — the rich, SOP-grounded training modules
+> **Last updated:** 2026-07-19 (OB/GYN current-floor assessment bank v3 — the owner-confirmed Women's Health SOP v1.0 now drives a curated 24-item MCQ bank and 30-item Spot-the-Error bank; all 24 executable workflow rules and all 14 audit workflow types are covered; a marker-gated migration archives stale active non-manual OB/GYN content without deleting history or touching Pediatrics/manual drafts; exact SOP/rule/source provenance and deterministic one-Agent-error guards are enforced by tests) ·
+> **Prior same-day update:** 2026-07-19 (PR #34 recovery + cleanup — the rich, SOP-grounded training modules
 > (F9) are now flattened into the intended structure: the full `TRAINING_MODULES` catalog lives
 > directly in `src/data/training.js` (Pediatrics same-day-sick correction applied in the data, not a
 > runtime patch), the rich renderer directly in `src/components/TrainingModule.jsx`, and the
@@ -500,6 +480,7 @@ training assignments.
   attributing overrides to a specific supervisor.
 
 ### F16 — "Spot the Error" QA Audit Assessment
+- **Curated current-floor OB/GYN bank v3 (2026-07-19):** 30 pre-authored audits (5 per domain) cover every one of the 14 existing OB/GYN audit workflow types. Each expands to exactly 10 alternating turns, carries current SOP/rule/source provenance, and has one context-verifiable Agent error; the same marker migration archives stale active non-manual OB/GYN audits and activates these stable IDs.
 - **OB/GYN executable audit contract (2026-07-17):** OB/GYN generation uses the selected entries
   from the 14-workflow taxonomy in `src/data/auditWorkflows.js`, resolves stable rule IDs from
   `src/data/obgynWorkflowRules.js`, and sends only those rules plus resolved SOP grounding to
@@ -1167,6 +1148,7 @@ training assignments.
 - **Status:** Complete in code; real human pilot collection and adjudication remain operational work.
 
 ### F14 — Question Bank + Gemini Scenario Generation (review gate)
+- **Current-floor OB/GYN bank v3 (2026-07-19):** `src/data/questions-obgyn-current-floor-v3.js` provides 24 challenging, chart-first MCQs (4 per domain) pinned to `obgyn-current-floor-2026-07-17`, covering all 24 executable rules. `runObgynCurrentFloorBankMigration()` non-destructively archives stale active non-manual OB/GYN questions and activates the stable v3 IDs; Pediatrics, drafts, manual items, and archived history are preserved.
 - **Versioned OB/GYN generation (2026-07-17):** the endpoint selects applicable executable rules by
   domain/workflow/rule ID and includes only those rules plus the resolved SOP source. New questions
   persist `sourceSopVersion`, `sourceRuleVersion`, `sourceAuthority`, `ruleIds`, and `workflowType`.

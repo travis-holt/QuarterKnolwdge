@@ -56,6 +56,7 @@ import {
   archiveSop,
   deleteSop,
 } from '../lib/db.js';
+import { runObgynCurrentFloorBankMigration } from '../lib/obgynCurrentFloorBankMigration.js';
 import { isFirebaseConfigured } from '../lib/firebase.js';
 import { ALL_SEED_QUESTIONS } from '../data/questions.js';
 import { DEFAULT_DEPT, isAssessed as deptIsAssessed, departmentName } from '../data/departments.js';
@@ -136,13 +137,15 @@ export default function SupervisorApp({ onSignOut }) {
   // Question bank — seed once from the static seed, then live-subscribe.
   useEffect(() => {
     if (!isFirebaseConfigured) return undefined;
-    // Ordered so a fresh DB seeds first, then has its weak seed/generated content
-    // archived and replaced by the operating-model v2 bank. Both migrations are
-    // marker-gated and run once; the live subscription reflects each write.
+    // Ordered so a fresh DB seeds first, then receives the operating-model v2
+    // baseline, and finally replaces only the OB/GYN half with the current-floor
+    // v3 MCQ + curated audit banks. Every migration is marker-gated and preserves
+    // archived/manual history; the live subscriptions reflect each write.
     (async () => {
       await runContentQualityFixesMigration();
       await seedQuestionsIfEmpty(ALL_SEED_QUESTIONS);
       await runMcqV2OperatingModelMigration();
+      await runObgynCurrentFloorBankMigration();
     })().catch((err) => console.error('question-bank migrations:', err));
     const unsub = subscribeQuestions(setQuestions, (err) => {
       console.error('subscribeQuestions:', err);
