@@ -35,7 +35,19 @@ jobs:
       - name: Apply integration and documentation patches
         run: python scripts/apply-obgyn-current-floor-bank-v3.py
       - name: Targeted current-floor bank tests
-        run: npm test -- src/data/questions-obgyn-current-floor-v3.test.js src/data/audits-obgyn-current-floor-v3.test.js src/lib/obgynCurrentFloorBankMigration.test.js
+        id: targeted
+        continue-on-error: true
+        run: npm test -- src/data/questions-obgyn-current-floor-v3.test.js src/data/audits-obgyn-current-floor-v3.test.js src/lib/obgynCurrentFloorBankMigration.test.js 2>&1 | tee obgyn-v3-targeted-test.log
+      - name: Upload targeted-test diagnostics
+        if: steps.targeted.outcome == 'failure'
+        uses: actions/upload-artifact@v4
+        with:
+          name: obgyn-v3-targeted-test-log
+          path: obgyn-v3-targeted-test.log
+          if-no-files-found: error
+      - name: Stop on targeted-test failure
+        if: steps.targeted.outcome == 'failure'
+        run: exit 1
       - name: Full unit suite
         run: npm test
       - name: Production build
