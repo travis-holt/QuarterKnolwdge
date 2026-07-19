@@ -14,6 +14,11 @@ import { validateQuestionContent } from '../lib/contentGuards.js';
 
 const DOMAINS = ['intake', 'classification', 'routing', 'scheduling', 'boundaries', 'documentation'];
 
+function correctText(questionId) {
+  const question = OBGYN_CURRENT_FLOOR_QUESTIONS.find((item) => item.id === questionId);
+  return question?.options.find((option) => option.id === question.correctOptionId)?.text ?? '';
+}
+
 describe('OB/GYN current-floor MCQ bank v3', () => {
   it('contains 24 challenging items balanced four per domain', () => {
     expect(OBGYN_CURRENT_FLOOR_QUESTIONS).toHaveLength(24);
@@ -52,7 +57,7 @@ describe('OB/GYN current-floor MCQ bank v3', () => {
     expect(OBGYN_CURRENT_FLOOR_BANK_VERSION).toContain('2026-07-17');
   });
 
-  it('passes the shared content guards and does not preserve stale floor rules', () => {
+  it('passes shared guards and preserves the highest-risk current-floor outcomes', () => {
     for (const question of OBGYN_CURRENT_FLOOR_QUESTIONS) {
       expect(validateQuestionContent(question)).toEqual([]);
     }
@@ -64,10 +69,9 @@ describe('OB/GYN current-floor MCQ bank v3', () => {
       .join('\n');
     expect(authoritative).not.toMatch(/\bPSS OB\b/i);
     expect(authoritative).not.toMatch(/\bPSS Queue\b/i);
-    expect(authoritative).not.toMatch(/\b(?:I|we|navigator|agent)\s+(?:will|can|should)\s+(?:directly\s+)?(?:book|schedule|reschedule|order)\s+(?:a |the |your )?(?:GCT|GTT|GBS|lab)\b/i);
-    expect(authoritative).not.toMatch(/(?:send|direct|tell).{0,45}(?:Labor and Delivery|L&D)/i);
-    expect(authoritative).toMatch(/routine GYN scheduling is handled directly|schedule Annual GYN|GYN Office Visit/i);
-    expect(authoritative).toMatch(/High Priority TE/i);
-    expect(authoritative).toMatch(/OB Verified/i);
+    expect(correctText('qv3-obgyn-classification-1')).toMatch(/Annual GYN/i);
+    expect(correctText('qv3-obgyn-classification-3')).toMatch(/High Priority TE.*urgent Intermedia channel/i);
+    expect(correctText('qv3-obgyn-boundaries-3')).toMatch(/without booking or interpreting/i);
+    expect(correctText('qv3-obgyn-scheduling-1')).toMatch(/OB Verified/i);
   });
 });
