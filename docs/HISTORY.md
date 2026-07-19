@@ -1,5 +1,14 @@
 # Development History - Knowledge Check
 
+## 2026-07-19 — OB/GYN current-floor assessment bank v3
+
+- Replaced the stale OB/GYN half of the MCQ bank with **24 challenging current-floor scenarios** (4 per domain), authored against the owner-confirmed Women's Health Patient Navigator SOP v1.0 effective 2026-07-17. The bank covers all 24 executable OB/GYN rules and removes old PSS OB/PSS Queue routing, navigator lab scheduling, forced Confirmation for reliable LMP, and other legacy assumptions.
+- Added a **30-item curated Spot-the-Error bank** (5 per domain) covering all 14 OB/GYN audit workflow types. Every transcript has exactly 10 alternating turns, one indexed deterministic Agent violation, realistic chart facts, and exact SOP/rule/source provenance.
+- Added `runObgynCurrentFloorBankMigration()`: a marker-gated, non-destructive Firestore migration that archives stale active **non-manual OB/GYN** questions and audits, upserts the v3 stable IDs as active, and preserves Pediatrics, drafts, supervisor-authored content, and all archived history.
+- Wired the migration after seed/content-quality/MCQ-v2 initialization in `SupervisorApp`, avoiding a race with the older v2 migration.
+- Added regression tests for balance, partial-credit scoring shape, all-rule coverage, all-workflow coverage, deterministic exactly-one-error validation, stale-rule absence, provenance, and archive-preservation planning.
+- No direct production Firestore write or deployment was performed by this code change; the marker migration runs through the authenticated supervisor initialization path after merge/deploy.
+
 ### 2026-07-19 - PR #34 content precision: routine-GYN routing + serious-symptom TE separation
 - **Follow-up to the same-day recovery+cleanup below**, correcting two OB/GYN teaching defects
   against the owner-confirmed current-floor Women's Health SOP v1.0 (2026-07-17).
