@@ -47,7 +47,7 @@ export default [
     "difficulty": "hard",
     "opening": "I tested positive and know the exact first day of my last period.",
     "detail": "My cycles are regular, and the date is reliable.",
-    "error": "Since the test was done at home, I must schedule a Confirmation of Pregnancy before any New OB visit.",
+    "error": "Your reliable LMP still requires me to schedule a Confirmation of Pregnancy before any New OB visit.",
     "modelExplanation": "The agent forced Confirmation despite a reliable LMP. A home test alone does not block the normal New OB workflow.",
     "expectedCorrection": "Use the reliable LMP to target the 8–12-week New OB window and build the complete New OB pair.",
     "requiredChartFacts": ["Reliable LMP is documented.", "Patient is currently about six weeks.", "No conflicting clinical instruction exists."]
@@ -60,9 +60,9 @@ export default [
     "difficulty": "medium",
     "opening": "I am calling back after the pregnancy test because I do not remember my last period.",
     "detail": "The nurse could not reach me yesterday.",
-    "error": "I can send you for a sonogram on your own first, even though there is no order, and then we can decide the visit.",
-    "modelExplanation": "The agent invented an unapproved scan instead of using the unknown-LMP Confirmation workflow.",
+    "error": "Because your LMP is unknown, I'll schedule a New OB visit directly instead of Confirmation.",
+    "modelExplanation": "The agent skipped Confirmation and directly constructed New OB despite an unknown LMP.",
     "expectedCorrection": "Book the 15-minute provider Confirmation of Pregnancy; do not independently add lab or sonography.",
-    "requiredChartFacts": ["Unknown LMP.", "No sonography order is visible.", "No patient-specific clinical instruction authorizes a scan."]
+    "requiredChartFacts": ["Unknown LMP.", "No reliable gestational age is documented.", "No patient-specific clinical instruction authorizes direct New OB scheduling."]
   }
 ];
