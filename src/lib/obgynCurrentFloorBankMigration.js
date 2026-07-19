@@ -28,7 +28,7 @@ const MIGRATIONS = 'contentMigrations';
 export const OBGYN_CURRENT_FLOOR_BANK_MARKER =
   '2026-07-obgyn-current-floor-assessment-bank-v3-answer-balance';
 export const OBGYN_CURRENT_FLOOR_AUDIT_MARKER =
-  '2026-07-obgyn-current-floor-audit-bank-v4-challenging-calls';
+  '2026-07-obgyn-current-floor-audit-bank-v5-individually-authored';
 
 const departmentOf = (row) => row?.department ?? 'pediatrics';
 
@@ -114,8 +114,8 @@ export async function runObgynCurrentFloorBankMigration() {
   if (bankMarker.exists() && auditMarker.exists()) return false;
 
   // Fresh environments still need the complete current-floor bank. The same
-  // batch records the audit-v4 marker because the imported audits are already
-  // the challenging-call revision.
+  // batch records the audit-v5 marker because the imported audits are already
+  // the individually authored revision.
   if (!bankMarker.exists()) {
     const [questionSnap, auditSnap] = await Promise.all([
       getDocs(collection(db, QUESTIONS)),
@@ -172,7 +172,7 @@ export async function runObgynCurrentFloorBankMigration() {
     return true;
   }
 
-  // Existing environments already have the current MCQs, so the v4 follow-up
+  // Existing environments already have the current MCQs, so the v5 follow-up
   // refreshes only OB/GYN audits and leaves every question document untouched.
   const auditSnap = await getDocs(collection(db, AUDITS));
   const auditRows = auditSnap.docs.map((entry) => ({ id: entry.id, ...entry.data() }));

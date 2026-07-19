@@ -67,7 +67,7 @@ describe('OB/GYN current-floor assessment-bank migration planner', () => {
     expect(OBGYN_CURRENT_FLOOR_BANK_MARKER)
       .toBe('2026-07-obgyn-current-floor-assessment-bank-v3-answer-balance');
     expect(OBGYN_CURRENT_FLOOR_AUDIT_MARKER)
-      .toBe('2026-07-obgyn-current-floor-audit-bank-v4-challenging-calls');
+      .toBe('2026-07-obgyn-current-floor-audit-bank-v5-individually-authored');
   });
 
   it('refreshes only audits when the complete-bank marker already exists', async () => {
