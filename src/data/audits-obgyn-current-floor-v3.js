@@ -33,8 +33,8 @@ function buildAudit(item) {
     transcript: [
       { speaker: 'Agent', message: "Thank you for calling Aizer Health Women's Health. How may I help you?" },
       { speaker: 'Patient', message: item.opening },
-      { speaker: 'Agent', message: 'I can help with the next step. Please confirm your full name and date of birth.' },
-      { speaker: 'Patient', message: 'Yes, I can confirm both.' },
+      { speaker: 'Agent', message: 'I can help with the next step. Please verify the account details with me.' },
+      { speaker: 'Patient', message: 'Yes, I can verify them.' },
       { speaker: 'Agent', message: 'Thank you. I am reviewing the recent encounters, notes, and open messages now.' },
       { speaker: 'Patient', message: item.detail },
       { speaker: 'Agent', message: item.error },
