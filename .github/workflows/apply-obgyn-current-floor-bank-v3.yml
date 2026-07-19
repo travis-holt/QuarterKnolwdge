@@ -7,6 +7,10 @@ on:
     paths:
       - '.github/workflows/apply-obgyn-current-floor-bank-v3.yml'
       - 'scripts/apply-obgyn-current-floor-bank-v3.py'
+  pull_request:
+    branches:
+      - main
+    types: [opened, synchronize, reopened]
 
 permissions:
   contents: write
