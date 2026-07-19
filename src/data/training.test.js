@@ -281,6 +281,80 @@ describe('current-floor source authority (Pediatrics same-day sick)', () => {
   });
 });
 
+// ── Routing precision: routine GYN scheduling is DIRECT, not OB Portal ────────
+// The current-floor SOP handles routine GYN scheduling directly (Annual GYN UTD
+// rule + provider template). OB Portal owns the clinical/uncertain lane. These
+// guards stop the content from ever collapsing back to "almost everything → OB
+// Portal," which mis-teaches navigators to route routine bookings clinically.
+describe('current-floor source authority (OB/GYN routing precision)', () => {
+  const routing = moduleForDomain('routing');
+  const routingText = JSON.stringify(routing);
+
+  it('teaches routine GYN scheduling as DIRECT (Annual UTD + template), not OB Portal', () => {
+    expect(routingText).toMatch(/routine GYN scheduling/i);
+    expect(routingText).toMatch(/Annual GYN/i);
+    expect(routingText).toMatch(/template/i);
+    // The quick-reference pins routine GYN scheduling to a direct booking, not OB Portal.
+    const directRow = routing.quickRef.rows.find((r) => /routine GYN scheduling/i.test(r.label));
+    expect(directRow).toBeTruthy();
+    expect(directRow.value).toMatch(/direct/i);
+    expect(directRow.value).toMatch(/not OB Portal/i);
+  });
+
+  it('never reduces OB/GYN routing to "almost everything → OB Portal"', () => {
+    // The prior wording ("almost every clinical or uncertain call goes to OB
+    // Portal", "OB: almost everything → OB Portal") over-routed routine work.
+    expect(routingText).not.toMatch(/almost every/i);
+    const catalog = JSON.stringify(TRAINING_MODULES);
+    expect(catalog).not.toMatch(/everything\s*(?:→|goes to)\s*OB Portal/i);
+    // OB Portal must still own the clinical/uncertain lane.
+    expect(routingText).toMatch(/OB Portal/);
+  });
+});
+
+// ── Serious symptom keeps unrelated requests on separate TEs ──────────────────
+// A serious-symptom escalation (e.g. decreased fetal movement) must NOT teach
+// folding an unrelated request (e.g. a prenatal-vitamin refill) into the same TE.
+describe('current-floor source authority (serious symptom keeps requests separate)', () => {
+  // Affirmative mixing only — the corrective "never fold …" wording is correct
+  // and must NOT trip this guard, so match the defect phrasings directly.
+  const REFILL_MIXING = /note the (?:vitamins|refill) too|add the refill to the same/i;
+
+  it('no strong OB/GYN path folds an unrelated refill into the serious-symptom TE', () => {
+    for (const { m, sim } of allSims().filter((x) => x.sim.label === 'OB-GYN')) {
+      for (const [id, node] of Object.entries(sim.nodes)) {
+        if (node.choices) {
+          node.choices
+            .filter((c) => c.tone === 'good')
+            .forEach((c) => {
+              expect(
+                REFILL_MIXING.test(c.text),
+                `good choice in ${m.domainId}/${sim.label} node ${id} mixes an unrelated refill into a serious-symptom TE`,
+              ).toBe(false);
+            });
+        } else if (node.ending.verdict === 'strong') {
+          expect(REFILL_MIXING.test(`${node.ending.summary} ${node.ending.lesson}`)).toBe(false);
+        }
+      }
+    }
+  });
+
+  it('the decreased-fetal-movement strong path teaches a SEPARATE refill TE', () => {
+    const sim = moduleForDomain('classification').simulations.find((s) => s.label === 'OB-GYN');
+    // The good choice that reaches the strong ending commits to a separate refill TE.
+    const commitsSeparate = Object.values(sim.nodes)
+      .filter((n) => n.choices)
+      .flatMap((n) => n.choices)
+      .filter((c) => c.tone === 'good')
+      .some((c) => /separate refill TE/i.test(c.text));
+    expect(commitsSeparate).toBe(true);
+    // The strong debrief reinforces "separate / its own" for the unrelated refill.
+    const strong = Object.values(sim.nodes).find((n) => n.ending?.verdict === 'strong');
+    expect(`${strong.ending.summary} ${strong.ending.lesson}`).toMatch(/separate|its own/i);
+    expect(`${strong.ending.summary} ${strong.ending.lesson}`).toMatch(/refill/i);
+  });
+});
+
 describe('moduleForDomain', () => {
   it('returns the module for a known domain and null otherwise', () => {
     expect(moduleForDomain('routing')?.domainId).toBe('routing');

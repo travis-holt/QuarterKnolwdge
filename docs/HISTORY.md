@@ -1,5 +1,40 @@
 # Development History - Knowledge Check
 
+### 2026-07-19 - PR #34 content precision: routine-GYN routing + serious-symptom TE separation
+- **Follow-up to the same-day recovery+cleanup below**, correcting two OB/GYN teaching defects
+  against the owner-confirmed current-floor Women's Health SOP v1.0 (2026-07-17).
+- **Routine GYN scheduling is DIRECT, not OB Portal.** The routing module previously read "OB:
+  almost everything → OB Portal" (lesson bullet and key takeaway). That over-routes routine work.
+  Corrected across the routing lesson, quick-reference, and key takeaway to teach the split
+  explicitly: **routine GYN scheduling → schedule DIRECTLY** using the Annual GYN "up to date" rule
+  and the correct provider template (Annual UTD → GYN office visit; not UTD → schedule the Annual
+  GYN); **OB Portal owns the clinical / uncertain lane** — clinical questions, triage, missing or
+  unclear orders, labs, results, procedures, transfer review, pregnancy-related clinical questions,
+  and scheduling exceptions. **All MFM → Rebecca Wood; Dr. Bank annual/fertility → Waiting List
+  Portal; no `PSS OB`.** A new quick-ref row pins routine GYN scheduling to a direct booking. The
+  intake/scheduling GYN content already scheduled directly and was left intact.
+- **Serious symptom keeps unrelated requests on separate TEs.** In the decreased-fetal-movement
+  scenario (classification module simulation + its annotated call example), a strong response said
+  "I'll note the vitamins too," which can teach folding the unrelated prenatal-vitamin refill into
+  the serious-symptom TE. Rewritten so the strong path escalates the serious symptom (High Priority
+  TE to OB Portal → *Women's Health OB Urgent Calls* Intermedia channel → follow the clinical team)
+  and then creates a **separate** refill TE for the vitamins; the good-choice text, feedback, the
+  strong ending's summary/lesson, and the lesson's call example all now state the separation. The
+  documentation module already taught same-issue → Take Action / different-issue → separate TE and
+  showed mixing as the wrong choice; that content was already correct and is unchanged.
+- **Full-catalog sweep:** every lesson, script pair, annotated example, mistake card, quick-ref row,
+  drill option, simulation choice/feedback/ending, and takeaway was checked for "almost everything",
+  broad OB Portal claims, routine-GYN-misrouting, and TE-mixing wording. The only affirmative
+  offenders were the two above; the remaining "Almost everything…" string is a Pediatrics
+  documentation drill about a thin refill TE (correct content, unrelated to routing).
+- **Regression tests (`src/data/training.test.js`):** (1) routine GYN scheduling is taught as direct
+  (Annual UTD + template), the quick-ref has a routine-GYN → direct row, and the catalog contains no
+  "almost every…" / "everything → OB Portal" reduction; (2) no strong OB/GYN path uses affirmative
+  refill-mixing wording, and the decreased-fetal-movement strong path commits to a separate refill
+  TE and reinforces it in the debrief. Both would fail on the pre-fix wording.
+- **Boundaries held:** advisory-only training unchanged; no scoring, persistence, Firestore, API,
+  auth, Call QA, or PR #35/#36 behavior touched. No merge or deploy.
+
 ### 2026-07-19 - PR #34 recovery + cleanup: rich SOP-grounded training modules (F9)
 - **What shipped:** the abandoned PR #34 rich-training feature, recovered onto current `main`
   (`be8f7bb`, after PR #35/#36) and flattened into the intended project structure. Each of the six

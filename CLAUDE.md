@@ -23,7 +23,12 @@
 > Health SOP v1.0 (2026-07-17): OB Portal / Rebecca Wood / Waiting List Portal routing, no `PSS OB`,
 > serious-symptom escalation (High Priority TE → OB Portal → OB Urgent Calls Intermedia channel,
 > never L&D dispatch), New OB pairing + OB Verified, and TE discipline. Training remains advisory
-> (nothing scored/persisted). PR #35 and PR #36 work is untouched. See docs/HISTORY.md 2026-07-19.
+> (nothing scored/persisted). PR #35 and PR #36 work is untouched. **Content-precision follow-up
+> (same day):** OB/GYN routing now teaches that **routine GYN scheduling is handled DIRECTLY**
+> (Annual GYN UTD rule + provider template), not routed to OB Portal — the "almost everything → OB
+> Portal" reduction is removed; and a serious-symptom escalation (decreased fetal movement) keeps an
+> **unrelated prenatal-vitamin refill on its own separate TE** instead of "noting the vitamins too"
+> in the serious-symptom note. Two regression tests lock both. See docs/HISTORY.md 2026-07-19.
 > Prior — **Last updated:** 2026-07-18 (PR #35 merge-readiness pass — current main (`d4ee320`, PR #33) merged
 > in with the full calibration/readiness architecture preserved; grader prompt version is now
 > `call-qa-grader-v3` with its single source of truth in `api/_qa-grading-versions.js`; calibration/
@@ -311,14 +316,19 @@ training assignments.
 - **Content authority:** modules are grounded in the real department SOPs — Pediatrics (Aizer Health
   Pediatrics operational SOP) and **OB/GYN authored against the owner-confirmed current-floor
   Women's Health Patient Navigator SOP v1.0, 2026-07-17**. OB/GYN encodes: chart-first scheduling
-  (Encounters / Medical Summary RTO / last note / open TEs, never the patient's wording); routing to
-  **OB Portal** (questions/triage/missing orders/labs/results/procedures/transfer), **Rebecca Wood**
-  (all MFM), and the **Waiting List Portal** (Dr. Bank annual/fertility — never scheduled directly);
-  **no `PSS OB`** language; the serious-symptom workflow (gather without triaging → High Priority TE
-  to OB Portal → the *Women's Health OB Urgent Calls* Intermedia channel → follow the clinical team,
-  never dispatch to Labor & Delivery or decide urgency); an open OB/GYN Urgent slot is **not**
-  authorization; New OB = a back-to-back same-day 30-min sonogram + 30-min provider visit with the
-  second record **OB Verified**, reliable LMP → New OB directly, unknown/unreliable LMP → 15-min
+  (Encounters / Medical Summary RTO / last note / open TEs, never the patient's wording); **routing
+  that splits two ways** — **routine GYN scheduling is handled DIRECTLY** (Annual GYN "up to date"
+  rule + the correct provider template, *not* OB Portal), while **OB Portal** owns the clinical /
+  uncertain lane (clinical questions, triage, missing/unclear orders, labs, results, procedures,
+  transfer review, pregnancy-related clinical questions, and scheduling exceptions); **Rebecca Wood**
+  (all MFM) and the **Waiting List Portal** (Dr. Bank annual/fertility — never scheduled directly);
+  **no `PSS OB`** language and **no "almost everything → OB Portal"** reduction; the serious-symptom
+  workflow (gather without triaging → High Priority TE to OB Portal → the *Women's Health OB Urgent
+  Calls* Intermedia channel → follow the clinical team, never dispatch to Labor & Delivery or decide
+  urgency) — and **an unrelated request raised in the same call (e.g. a prenatal-vitamin refill) gets
+  its OWN separate TE, never folded into the serious-symptom note**; an open OB/GYN Urgent slot is
+  **not** authorization; New OB = a back-to-back same-day 30-min sonogram + 30-min provider visit with
+  the second record **OB Verified**, reliable LMP → New OB directly, unknown/unreliable LMP → 15-min
   Confirmation of Pregnancy; and TE discipline (Take Action for the same issue, a separate TE for a
   different one, priority via the High Priority checkbox never the typed word "urgent"). Pediatrics
   keeps the corrected same-day-sick rule: a same-day sick visit books **only on the day itself** — a
@@ -328,8 +338,9 @@ training assignments.
 - **Status:** Complete. Grounded in the department SOPs (not mockup filler). Content and graphs are
   guarded by [src/data/training.test.js](src/data/training.test.js) (catalog integrity, graph
   reachability/termination/strong-ending, source-authority destinations, L&D-only-on-wrong-paths,
-  and the Pediatrics future-day-booking guard) and behavior by
-  [src/components/trainingModule.test.jsx](src/components/trainingModule.test.jsx).
+  the Pediatrics future-day-booking guard, the **routine-GYN-is-direct / no "almost everything → OB
+  Portal"** guard, and the **serious-symptom-keeps-an-unrelated-refill-on-its-own-TE** guard) and
+  behavior by [src/components/trainingModule.test.jsx](src/components/trainingModule.test.jsx).
 
 ### F10 — Department Dimension
 - **Purpose:** Same domains measured across Pediatrics, OB/GYN, Adult Medicine, Behavioural Health.

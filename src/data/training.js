@@ -10,10 +10,17 @@
 //                  gather info without triaging → High Priority Telephone
 //                  Encounter (TE) to OB Portal → message the "Women's Health OB
 //                  Urgent Calls" Intermedia channel → follow the clinical team.
-//                  Route: OB Portal (questions/triage/missing orders/labs/
-//                  procedures/transfer review), Rebecca Wood (all MFM), Waiting
-//                  List Portal (Dr. Bank annual/fertility — never schedule
-//                  directly). Schedule from the CHART (Encounters, Medical
+//                  An unrelated request (e.g. a prenatal-vitamin refill) raised
+//                  in the same call gets its OWN separate TE — never folded into
+//                  the serious-symptom note.
+//                  Routing splits two ways: ROUTINE GYN scheduling is handled
+//                  DIRECTLY (Annual GYN "up to date" rule + correct provider
+//                  template), NOT via OB Portal. OB Portal owns the CLINICAL /
+//                  uncertain work: questions, triage, missing/unclear orders,
+//                  labs, results, procedures, transfer review, and scheduling
+//                  exceptions. Rebecca Wood (all MFM), Waiting List Portal
+//                  (Dr. Bank annual/fertility — never schedule directly).
+//                  Schedule from the CHART (Encounters, Medical
 //                  Summary RTO, last note, open TEs), never from the patient's
 //                  wording. New OB = a 30-min sonogram + 30-min provider visit,
 //                  back-to-back, same day (one appointment; mark the 2nd "OB
@@ -243,7 +250,7 @@ export const TRAINING_MODULES = [
           turns: [
             { speaker: 'caller', text: 'I\'m calling about my prenatal vitamin refill… also, the baby\'s been moving a lot less since yesterday. I\'m 31 weeks.' },
             { speaker: 'nav', text: 'Thank you for telling me that — that\'s something our clinical team needs to know right away. Let me get a few details.', note: 'The refill is parked. The navigator takes the symptom seriously but does not judge how urgent it is.' },
-            { speaker: 'nav', text: 'I\'m putting a High Priority note to our OB team — "Decreased Fetal Movement," 31 weeks — and alerting our urgent line so a nurse calls you quickly. I\'ll note the vitamins too.', note: 'High Priority TE to OB Portal + urgent Intermedia channel. No self-triage, no "go to L&D," no reassurance.' },
+            { speaker: 'nav', text: 'I\'m sending the decreased-movement concern as a High Priority TE to OB Portal and alerting the urgent channel now. After that\'s escalated, I\'ll create a separate refill TE for your prenatal vitamins.', note: 'Serious symptom first: High Priority TE to OB Portal + the urgent Intermedia channel, follow the clinical team. The unrelated vitamin refill gets its OWN separate TE — never folded into the serious-symptom note. No self-triage, no "go to L&D," no reassurance.' },
           ],
         },
       },
@@ -319,11 +326,11 @@ export const TRAINING_MODULES = [
           n3: {
             caller: 'Okay… so what happens now?',
             choices: [
-              { text: 'I\'m putting a High Priority telephone encounter to our OB team — "Decreased Fetal Movement," 31 weeks — and messaging our urgent calls channel. A nurse will call you. I\'ll note the vitamins too.', next: 'end_strong', tone: 'good', feedback: 'High Priority TE to OB Portal + the OB Urgent Calls channel. Textbook.' },
+              { text: 'I\'m putting a High Priority telephone encounter to our OB team — "Decreased Fetal Movement," 31 weeks — and messaging our urgent calls channel. A nurse will call you. Once that\'s sent, I\'ll create a separate refill TE for your prenatal vitamins.', next: 'end_strong', tone: 'good', feedback: 'High Priority TE to OB Portal + the OB Urgent Calls channel — then a SEPARATE refill TE. The serious symptom and the unrelated refill never share one note. Textbook.' },
               { text: 'I\'ll send a regular message to the nurses about the movement and they\'ll get to it.', next: 'end_routineTE', tone: 'bad', feedback: 'A routine note under-reacts — a serious symptom needs High Priority and the urgent channel.' },
             ],
           },
-          end_strong: { ending: { verdict: 'strong', title: 'Escalated, not triaged', summary: 'You caught the serious symptom under a routine request, gathered facts without judging urgency, sent a High Priority TE to OB Portal, and alerted the OB Urgent Calls channel — leaving the clinical decision to the clinical team.', lesson: 'Serious symptoms: gather → High Priority TE to OB Portal → urgent channel → follow the clinical team. Never triage or dispatch yourself.' } },
+          end_strong: { ending: { verdict: 'strong', title: 'Escalated, not triaged', summary: 'You caught the serious symptom under a routine request, gathered facts without judging urgency, sent a High Priority TE to OB Portal, alerted the OB Urgent Calls channel, and kept the unrelated vitamin refill on its own separate TE — leaving the clinical decision to the clinical team.', lesson: 'Serious symptoms: gather → High Priority TE to OB Portal → urgent channel → follow the clinical team. Never triage or dispatch — and never fold an unrelated refill into the serious-symptom TE; it gets its own.' } },
           end_missed: { ending: { verdict: 'weak', title: 'The red flag went unspoken', summary: 'You worked the refill first. Decreased fetal movement at 31 weeks is exactly the symptom the escalation workflow exists for — and it slipped behind vitamins.', lesson: 'Listen for serious symptoms the whole call. The moment one appears, it becomes the call.' } },
           end_overstep: { ending: { verdict: 'weak', title: 'You stepped outside the role', summary: 'Navigators are non-clinical and don\'t decide urgency or dispatch patients. Sending her to Labor & Delivery on your own judgment is triage you\'re not trained or authorized to do — you might under- or over-react.', lesson: 'Don\'t send patients to L&D yourself. Escalate to the clinical team via a High Priority TE + the urgent channel; they direct care.' } },
           end_reassure: { ending: { verdict: 'mixed', title: 'Reassurance you can\'t give', summary: 'You engaged the symptom but offered clinical reassurance ("babies slow down") that a navigator can\'t give — and it can undo the urgency the situation needs.', lesson: 'No navigator says whether a symptom is safe. Escalate and let the clinical team reassure or act.' } },
@@ -382,7 +389,8 @@ export const TRAINING_MODULES = [
         title: 'The routing table is the job',
         points: [
           'Pediatrics: medical questions, lab-result callbacks, and refills → PEDS Encounters queue. Referrals → Anisa Azeez (PE must be up to date). Shots, immunizations, and digital imaging → Marisa Kraft (TE only if PE is current). Controlled substances (Concerta, Adderall, Ritalin, Vyvanse, Focalin, Xanax…) → Sally Carilli, approved slots only.',
-          'OB/GYN — almost every clinical or uncertain call goes to OB Portal (questions, triage, missing orders, labs, results, procedures, transfer review, most scheduling exceptions). Two named exceptions: all MFM / high-risk → Rebecca Wood directly; Dr. Bank annual or fertility → the Waiting List Portal (never schedule Dr. Bank directly).',
+          'OB/GYN splits two ways. ROUTINE GYN scheduling you handle DIRECTLY — you do NOT route it to OB Portal: apply the Annual GYN "up to date" rule and book on the correct provider template (Annual UTD → a GYN office visit; Annual not UTD → schedule the Annual GYN so the concern is seen).',
+          'OB Portal owns the CLINICAL and uncertain work: clinical questions, triage, missing or unclear orders, labs, results, procedures, transfer review, pregnancy-related clinical questions, and scheduling EXCEPTIONS (no suitable slot, or you\'re unsure). Two named non-OB-Portal routes: all MFM / high-risk → Rebecca Wood directly; Dr. Bank annual or fertility → the Waiting List Portal (never schedule Dr. Bank directly).',
           'OB/GYN late arrival → an Intermedia message with the account number, appointment time, and expected lateness. The navigator does not decide whether the office will still see her.',
         ],
       },
@@ -432,7 +440,8 @@ export const TRAINING_MODULES = [
         { label: 'Peds: referrals', value: 'TE → Anisa Azeez — PE must be up to date' },
         { label: 'Peds: shots / imaging', value: 'TE → Marisa Kraft — only if PE is current' },
         { label: 'Peds: controlled substances', value: 'TE → Sally Carilli — approved slots only' },
-        { label: 'OB: questions / triage / missing orders / labs / results / procedures / transfer', value: 'TE → OB Portal' },
+        { label: 'OB: routine GYN scheduling', value: 'Schedule DIRECTLY — Annual GYN UTD rule + correct provider template. Not OB Portal.' },
+        { label: 'OB: clinical / unclear / labs / results / procedures / missing orders / transfer / scheduling exceptions', value: 'TE → OB Portal' },
         { label: 'OB: all MFM / high-risk', value: 'TE → Rebecca Wood directly (never the regular OB schedule)' },
         { label: 'OB: Dr. Bank annual / fertility', value: 'Waiting List Portal — never schedule Dr. Bank directly' },
         { label: 'OB: late arrival', value: 'Intermedia message — account #, appointment time, expected lateness' },
@@ -535,7 +544,7 @@ export const TRAINING_MODULES = [
       },
     ],
     keyTakeaways: [
-      'Peds: PEDS Encounters / Anisa / Marisa / Sally Carilli. OB: almost everything → OB Portal; MFM → Rebecca Wood; Dr. Bank → Waiting List Portal.',
+      'Peds: PEDS Encounters / Anisa / Marisa / Sally Carilli. OB/GYN: routine GYN scheduling is DIRECT (Annual GYN UTD rule + template); OB Portal owns clinical / unclear / labs / results / procedures / missing-order / exception work; MFM → Rebecca Wood; Dr. Bank annual/fertility → Waiting List Portal.',
       'Serious OB symptoms → High Priority TE to OB Portal + the OB Urgent Calls channel. Navigators never dispatch to L&D or judge urgency.',
       'An open OB/GYN Urgent slot is not authorization — book it only with written nurse/provider approval. Name the route out loud with a callback.',
     ],
