@@ -34,7 +34,7 @@ export default [
     "difficulty": "hard",
     "opening": "An outside doctor told me to schedule with MFM.",
     "detail": "I do not have a referral from one of your Women's Health providers.",
-    "error": "I'll route this through the standard OB scheduling team and have them create the MFM appointment.",
+    "error": "I'll route this through regular OB scheduling to create the MFM appointment.",
     "modelExplanation": "The agent ignored the MFM referral and ownership boundary.",
     "expectedCorrection": "Explain that the referral must come from a Women's Health provider in the department and route the inquiry directly to Rebecca Wood.",
     "requiredChartFacts": ["No in-department Women's Health referral/order exists.", "Request is for a new MFM appointment."]
@@ -47,7 +47,7 @@ export default [
     "difficulty": "medium",
     "opening": "I have severe non-pregnant pelvic pain and can barely stand.",
     "detail": "I saw a GYN Urgent slot open today.",
-    "error": "The available urgent slot means I can schedule the GYN Urgent visit without provider approval.",
+    "error": "The open urgent slot lets me schedule GYN Urgent without provider approval.",
     "modelExplanation": "The agent treated availability as approval for a clinically controlled appointment type.",
     "expectedCorrection": "Use High Priority OB Portal and urgent-channel escalation; schedule GYN Urgent only after nurse/provider approval.",
     "requiredChartFacts": ["Severe non-pregnant pelvic pain was reported.", "No written approval exists."]

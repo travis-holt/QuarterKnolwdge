@@ -23,7 +23,7 @@ const QUESTIONS = 'questions';
 const AUDITS = 'audits';
 const MIGRATIONS = 'contentMigrations';
 export const OBGYN_CURRENT_FLOOR_BANK_MARKER =
-  '2026-07-obgyn-current-floor-assessment-bank-v3';
+  '2026-07-obgyn-current-floor-assessment-bank-v3-answer-balance';
 
 const departmentOf = (row) => row?.department ?? 'pediatrics';
 

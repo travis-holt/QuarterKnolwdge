@@ -12,6 +12,10 @@ import { hasBlockingFlags, validateAuditContent } from '../lib/contentGuards.js'
 const DOMAINS = ['intake', 'classification', 'routing', 'scheduling', 'boundaries', 'documentation'];
 const EXPECTED_WORKFLOWS = [...new Set(Object.values(OBGYN_AUDIT_WORKFLOWS).flat())].sort();
 
+function wordCount(text) {
+  return text.trim().split(/\s+/).length;
+}
+
 describe('OB/GYN current-floor Spot-the-Error bank v3', () => {
   it('contains 30 difficult items balanced five per domain and covers all 14 workflows', () => {
     expect(OBGYN_CURRENT_FLOOR_AUDITS).toHaveLength(30);
@@ -37,6 +41,18 @@ describe('OB/GYN current-floor Spot-the-Error bank v3', () => {
       expect(audit.expectedCorrection.trim().length).toBeGreaterThan(25);
       expect(audit.requiredChartFacts.length).toBeGreaterThan(0);
       expect(['medium', 'hard']).toContain(audit.difficulty);
+    }
+  });
+
+  it('does not reveal the error through a longer Agent turn', () => {
+    for (const audit of OBGYN_CURRENT_FLOOR_AUDITS) {
+      const errorWords = wordCount(audit.transcript[audit.errorIndex].message);
+      const longestOtherAgentTurn = Math.max(
+        ...audit.transcript
+          .filter((turn, index) => turn.speaker === 'Agent' && index !== audit.errorIndex)
+          .map((turn) => wordCount(turn.message)),
+      );
+      expect(errorWords, audit.id).toBeLessThanOrEqual(longestOtherAgentTurn);
     }
   });
 

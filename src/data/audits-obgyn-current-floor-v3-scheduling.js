@@ -60,7 +60,7 @@ export default [
     "difficulty": "hard",
     "opening": "I can do the ultrasound at nine, but the next doctor opening is eleven.",
     "detail": "I cannot stay in the office for two hours.",
-    "error": "I'll keep the New OB sonogram at nine and provider visit at eleven with a gap between them.",
+    "error": "I'll keep the New OB sonogram and provider visit with a gap between them.",
     "modelExplanation": "The agent created a New OB pair with a waiting gap.",
     "expectedCorrection": "Find a same-day immediately back-to-back sonogram-then-provider pair, or escalate when no valid pair exists.",
     "requiredChartFacts": ["New OB workflow applies.", "The proposed appointments have a two-hour gap."]

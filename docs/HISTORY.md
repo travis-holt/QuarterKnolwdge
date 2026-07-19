@@ -1,5 +1,13 @@
 # Development History - Knowledge Check
 
+## 2026-07-19 — OB/GYN assessment answer-length balance
+
+- Shortened only the conspicuously long correct options in the 24-item current-floor OB/GYN MCQ bank. Scenarios, distractors, correct option IDs, point values, rationales, rule coverage, and medical workflow meaning remain unchanged.
+- Shortened the long indexed error lines in the 30-item OB/GYN Spot-the-Error bank so the target line no longer stands out from the surrounding Agent turns. Each transcript retains the same single deterministic workflow violation and explanation.
+- Added regression guards: an MCQ correct option can be at most four words longer than its longest distractor, and a Spot-the-Error target line can be no longer than the longest surrounding Agent turn.
+- Bumped the curated bank source version and added a distinct marker-gated migration ID so supervisor initialization upserts the concise wording even when an environment has already completed the original v3 migration. Stable question/audit document IDs are retained, and the existing archive scope remains limited to stale active non-manual OB/GYN content.
+- No Firestore write, migration execution, generation behavior, scoring change, or deployment was performed.
+
 ## 2026-07-19 — OB/GYN current-floor assessment bank v3
 
 - Replaced the stale OB/GYN half of the MCQ bank with **24 challenging current-floor scenarios** (4 per domain), authored against the owner-confirmed Women's Health Patient Navigator SOP v1.0 effective 2026-07-17. The bank covers all 24 executable OB/GYN rules and removes old PSS OB/PSS Queue routing, navigator lab scheduling, forced Confirmation for reliable LMP, and other legacy assumptions.

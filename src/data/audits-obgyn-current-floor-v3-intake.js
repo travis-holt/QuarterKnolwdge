@@ -8,7 +8,7 @@ export default [
     "difficulty": "hard",
     "opening": "I need a visit for mild pelvic discomfort. I had a Pap a few months ago.",
     "detail": "My actual annual may have been more than a year ago.",
-    "error": "Your last annual doesn't matter for this request; I can book whichever routine GYN visit type you prefer.",
+    "error": "Your last annual doesn't matter; I can book whichever routine GYN visit you prefer.",
     "modelExplanation": "The agent ignored the controlling Annual GYN status. Pap-only and other non-annual encounters do not make the annual current; routine visit selection must follow the actual in-department Annual GYN date.",
     "expectedCorrection": "Check the last completed in-department Annual GYN and use Annual GYN when it is over one year old, unless serious symptoms require escalation.",
     "requiredChartFacts": ["Last completed in-department Annual GYN was 16 months ago.", "Recent visit was Pap-only.", "Symptoms were described as non-emergency."]
@@ -47,7 +47,7 @@ export default [
     "difficulty": "hard",
     "opening": "I tested positive and know the exact first day of my last period.",
     "detail": "My cycles are regular, and the date is reliable.",
-    "error": "Your reliable LMP still requires me to schedule a Confirmation of Pregnancy before any New OB visit.",
+    "error": "With a reliable LMP, I still must use Confirmation before New OB.",
     "modelExplanation": "The agent forced Confirmation despite a reliable LMP. A home test alone does not block the normal New OB workflow.",
     "expectedCorrection": "Use the reliable LMP to target the 8–12-week New OB window and build the complete New OB pair.",
     "requiredChartFacts": ["Reliable LMP is documented.", "Patient is currently about six weeks.", "No conflicting clinical instruction exists."]
@@ -60,7 +60,7 @@ export default [
     "difficulty": "medium",
     "opening": "I am calling back after the pregnancy test because I do not remember my last period.",
     "detail": "The nurse could not reach me yesterday.",
-    "error": "Your unknown LMP is enough for me to schedule a New OB visit directly instead of Confirmation.",
+    "error": "An unknown LMP lets me schedule New OB directly instead of Confirmation.",
     "modelExplanation": "The agent skipped Confirmation and directly constructed New OB despite an unknown LMP.",
     "expectedCorrection": "Book the 15-minute provider Confirmation of Pregnancy; do not independently add lab or sonography.",
     "requiredChartFacts": ["Unknown LMP.", "No reliable gestational age is documented.", "No patient-specific clinical instruction authorizes direct New OB scheduling."]

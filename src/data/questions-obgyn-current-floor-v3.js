@@ -14,7 +14,7 @@ import {
 } from './obgynWorkflowRules.js';
 
 export const OBGYN_CURRENT_FLOOR_BANK_VERSION =
-  'obgyn-current-floor-assessment-bank-v3-2026-07-17';
+  'obgyn-current-floor-assessment-bank-v3-answer-balance-2026-07-19';
 
 const rawQuestions = [
   {
@@ -41,7 +41,7 @@ const rawQuestions = [
       },
       {
         "id": "c",
-        "text": "Treat the documented RTO as the controlling instruction and build the BPP plus provider visit as the required paired workflow, clarifying with OB Portal only if the order cannot be built.",
+        "text": "Follow the documented RTO: build the BPP-provider pair, using OB Portal only if clarification is needed.",
         "points": 100,
         "rationale": "Correct: chart documentation outranks the caller's broad label. The documented BPP with MD controls the scheduling components."
       },
@@ -77,7 +77,7 @@ const rawQuestions = [
       },
       {
         "id": "b",
-        "text": "Treat this as a new pregnancy, use the current reliable LMP, and build the New OB pair for when she will be in the normal 8–12-week window.",
+        "text": "Treat this as a new pregnancy and use the reliable LMP to build the New OB pair within the 8–12-week window.",
         "points": 100,
         "rationale": "Correct: old pregnancy history is context only. Current reliable LMP starts the current New OB workflow."
       },
@@ -167,7 +167,7 @@ const rawQuestions = [
       },
       {
         "id": "c",
-        "text": "Document gestational age and outside-practice details, send a TE to OB Portal asking the clinical team to confirm record receipt and review acceptance, and explain that sending records does not guarantee acceptance.",
+        "text": "Document the transfer details, ask OB Portal to confirm receipt and review acceptance, and make no promise of acceptance.",
         "points": 100,
         "rationale": "Correct: gather the transfer facts, use the clinical review path, and avoid promising acceptance."
       },
@@ -290,7 +290,7 @@ const rawQuestions = [
       },
       {
         "id": "c",
-        "text": "Escalate the decreased fetal movement immediately with a High Priority TE to OB Portal plus the urgent Intermedia channel, then handle the vitamin refill in its own separate refill TE.",
+        "text": "Send High Priority TE to OB Portal and use urgent Intermedia channel; put the refill in a separate TE.",
         "points": 100,
         "rationale": "Correct: prioritize the serious symptom and preserve clean issue ownership by separating the unrelated refill."
       },
@@ -328,7 +328,7 @@ const rawQuestions = [
       },
       {
         "id": "b",
-        "text": "Treat it as a serious clinical report: create or update a High Priority TE to OB Portal, use the urgent channel, and await instructions before changing appointments or pregnancy status.",
+        "text": "Escalate through a High Priority OB Portal TE and the urgent channel before changing the chart or appointments.",
         "points": 100,
         "rationale": "Correct: pregnancy loss requires urgent clinical review and the schedule remains unchanged until directed."
       },
@@ -369,7 +369,7 @@ const rawQuestions = [
       },
       {
         "id": "b",
-        "text": "Use Take Action on the open refill TE for the callback, and create a separate lab TE to OB Portal for the missed lab request; do not schedule the lab yourself.",
+        "text": "Take Action on the refill TE, and send the missed-lab request separately to OB Portal without scheduling it.",
         "points": 100,
         "rationale": "Correct: same issue updates the existing TE, while the unrelated lab request gets its own routed TE."
       },
@@ -417,7 +417,7 @@ const rawQuestions = [
       },
       {
         "id": "c",
-        "text": "Explain that the symptom must be escalated now, create a High Priority TE to OB Portal and use the urgent channel, offer another appropriate provider if clinically approved, and keep any Dr. Bank wait-list request separate.",
+        "text": "Escalate the bleeding through a High Priority OB Portal TE and urgent channel; keep the Dr. Bank wait-list request separate.",
         "points": 100,
         "rationale": "Correct: serious-symptom escalation takes priority; preference does not delay care."
       },
@@ -454,7 +454,7 @@ const rawQuestions = [
       },
       {
         "id": "b",
-        "text": "Build the routine one-hour Anatomy scan with Dr. Rosenberg on the scan record and the separate provider visit required by the OB workflow.",
+        "text": "Build the routine Anatomy scan with Dr. Rosenberg plus the required separate OB provider visit.",
         "points": 100,
         "rationale": "Correct: the scan-provider field does not convert routine Anatomy into MFM care."
       },
@@ -502,7 +502,7 @@ const rawQuestions = [
       },
       {
         "id": "c",
-        "text": "Explain that no supporting order is visible and send a clarification TE to OB Portal; schedule only after a documented order or clinical approval exists.",
+        "text": "Send OB Portal a clarification TE and schedule only after the missing sonogram order or approval is documented.",
         "points": 100,
         "rationale": "Correct: the chart must support the scan, and uncertainty is routed rather than guessed."
       },
@@ -543,7 +543,7 @@ const rawQuestions = [
       },
       {
         "id": "c",
-        "text": "Find another valid same-day back-to-back 30-minute sonogram-then-provider pair, confirm the provider line is appropriate, and mark the second appointment OB Verified.",
+        "text": "Find another valid back-to-back sonogram-provider pair on an appropriate line, then mark the second appointment OB Verified.",
         "points": 100,
         "rationale": "Correct: all construction rules must be satisfied, not only the times."
       },
@@ -578,7 +578,7 @@ const rawQuestions = [
       },
       {
         "id": "b",
-        "text": "Build the valid back-to-back BPP plus MD pair using the other appropriate OB provider, preserving the documented timing and components.",
+        "text": "Build the back-to-back BPP-provider pair with the other appropriate OB provider, preserving the documented window.",
         "points": 100,
         "rationale": "Correct: the workflow permits another appropriate OB provider when it creates a valid pair."
       },
@@ -621,7 +621,7 @@ const rawQuestions = [
       },
       {
         "id": "b",
-        "text": "Book the 15-minute postpartum visit, document the required delivery details and IUD insertion intent, and do not add the usual post-insertion GYN Sono for this provider exception.",
+        "text": "Book the 15-minute postpartum IUD visit and document delivery details; omit the usual post-insertion sonogram for this provider.",
         "points": 100,
         "rationale": "Correct: the later postpartum timing is acceptable, and Dr. Stanislawski is the no-post-insertion-sonogram exception."
       },
@@ -663,7 +663,7 @@ const rawQuestions = [
       },
       {
         "id": "b",
-        "text": "Book a 30-minute Annual GYN on the appropriate GYN template, followed immediately by GYN Sono, and mark the second appointment OB Verified.",
+        "text": "Book a 30-minute Annual GYN followed by GYN Sono, marking the second appointment OB Verified.",
         "points": 100,
         "rationale": "Correct: annual is not current, Dr. Klein uses the 30-minute GYN workflow, and the provider-first pair ends with OB Verified."
       },
@@ -705,7 +705,7 @@ const rawQuestions = [
       },
       {
         "id": "b",
-        "text": "Create or update a High Priority TE to OB Portal, message the urgent Intermedia channel, and wait for clinical direction rather than independently booking the slot.",
+        "text": "Send a High Priority OB Portal TE and urgent-channel message, then await clinical direction before booking.",
         "points": 100,
         "rationale": "Correct: serious symptoms use the urgent escalation path; clinical staff decide the appointment."
       },
@@ -747,7 +747,7 @@ const rawQuestions = [
       },
       {
         "id": "b",
-        "text": "Book the approved OB Urgent, overbook if the written instruction requires it, and ask the clinical team to clarify the sonogram order before completing the back-to-back pair.",
+        "text": "Follow the written OB Urgent approval, but clarify the sonogram sequence before completing the pair.",
         "points": 100,
         "rationale": "Correct: honor the written approval while clarifying the missing clinically directed sequence."
       },
@@ -794,7 +794,7 @@ const rawQuestions = [
       },
       {
         "id": "c",
-        "text": "Create or update a TE to OB Portal covering the specific lab scheduling/order question and the result question, without booking or interpreting anything.",
+        "text": "Send both lab questions to OB Portal in a TE, without booking or interpreting anything.",
         "points": 100,
         "rationale": "Correct: all OB/GYN lab appointment, order, missed-lab, and result questions go to OB Portal."
       },
@@ -829,7 +829,7 @@ const rawQuestions = [
       },
       {
         "id": "b",
-        "text": "Explain that MFM referral must come from a Women's Health provider in the department, do not schedule independently, and route the inquiry to Rebecca Wood for the MFM workflow.",
+        "text": "Require an in-department Women's Health referral and route the MFM inquiry to Rebecca Wood; do not schedule.",
         "points": 100,
         "rationale": "Correct: MFM has a dedicated owner and a referral boundary."
       },
@@ -870,7 +870,7 @@ const rawQuestions = [
       },
       {
         "id": "b",
-        "text": "Use Take Action on the existing TE with the worsening patient-reported facts, check High Priority, keep the correct OB Portal assignment, and send the urgent-channel message; keep the Reason concise, such as \"Severe Pelvic Pain.\"",
+        "text": "Take Action: add worsening facts to OB Portal TE, mark High Priority, and alert urgent channel.",
         "points": 100,
         "rationale": "Correct: update the same issue, use the system priority and urgent communication workflow, and document without diagnosing."
       },
@@ -913,7 +913,7 @@ const rawQuestions = [
       },
       {
         "id": "b",
-        "text": "Use Take Action on the open refill TE to add the new preferred pharmacy and callback details, retain the medication and prescriber context, and avoid promising approval or timing.",
+        "text": "Take Action on the refill TE, adding the new pharmacy and callback details without promising approval or timing.",
         "points": 100,
         "rationale": "Correct: update the existing request with the changed actionable detail."
       },
@@ -955,7 +955,7 @@ const rawQuestions = [
       },
       {
         "id": "b",
-        "text": "An Intermedia message with the patient account number, both appointment times, and expected lateness, then await the office decision without canceling, moving, or breaking the pair.",
+        "text": "Send Intermedia the account number, both appointment times, and expected lateness; await the office's decision.",
         "points": 100,
         "rationale": "Correct: provide the required operational facts and leave the see/reschedule decision to the office."
       },
@@ -997,7 +997,7 @@ const rawQuestions = [
       },
       {
         "id": "b",
-        "text": "Use the 15-minute postpartum template; document delivery date, infant weight, delivery type, delivering physician, and that the visit includes IUD discussion; do not add a sonogram.",
+        "text": "Book the 15-minute postpartum visit and document the delivery details plus IUD discussion; do not add a sonogram.",
         "points": 100,
         "rationale": "Correct: complete postpartum documentation plus the discussion-only exception."
       },
