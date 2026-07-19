@@ -1,5 +1,24 @@
 # Development History - Knowledge Check
 
+## 2026-07-19 — OB/GYN Spot-the-Error individually authored bank v5
+
+- Replaced the rejected v4 shared call constructor with 30 complete, individually authored ten-turn transcripts stored directly in the six OB/GYN domain files. Stable IDs, five items per domain, all 14 workflow types, and current SOP/rule/source provenance are unchanged.
+- Distributed the planted error across Agent indices 2/4/6/8 at 8/8/7/7 calls. Chart-opening placement now varies across three Agent positions; all non-greeting Agent messages and all final Agent actions are unique.
+- Reworked the wrong decisions as plausible near-misses: most of the workflow is handled correctly while one chart-dependent choice is wrong. Every call contains multiple substantive competing Agent decisions, and the error line remains no longer than the longest surrounding Agent line.
+- Re-authored every immediate post-error Patient turn so the caller continues with availability, contact, or scenario facts rather than correcting the navigator. A curated regression list blocks the rejected v4 correction lines, and each audit records a human-reviewed subtle trap, two correct distractor decisions, and blind-review confirmation.
+- Expanded deterministic OB/GYN contradiction detection for the subtler formulations, including recent non-annual visits used for GYN OV, estimated dating used for New OB, cross-day/gapped New OB construction, unchanged paired status, stale refill pharmacy, and latest-visit-provider refill routing.
+- Bumped the audit source to `obgyn-current-floor-audit-bank-v5-individually-authored-2026-07-19` and the audit-only marker to `2026-07-obgyn-current-floor-audit-bank-v5-individually-authored`. Existing environments refresh only stable OB/GYN audit documents; MCQs, Pediatrics, manual content, drafts, and history remain untouched.
+- Manually reviewed all 30 calls without the planted-error highlight against position bias, answer reveal, visual/tonal obviousness, competing judgment decisions, floor plausibility, and material distinctness. No production migration or deployment was run.
+
+## 2026-07-19 — OB/GYN Spot-the-Error challenging-call bank v4
+
+- Re-authored all 30 OB/GYN Spot-the-Error calls as hard, multi-fact scenarios. Each case now combines at least two controlling chart facts with a plausible near-miss, instead of relying on a generic one-line request and an obvious workflow mistake.
+- Replaced the repeated eight-line call frame with five safe verification/chart/wrap-up variants plus a unique patient follow-up for every case. The first Agent turn is always exactly one of the two owner-specified Aizer Womens Health greetings.
+- Standardized chart-review speech on "Let me open your chart" and removed spoken system-by-system narration such as checking encounters, messages, visits, or Rx logs; opening the chart represents reviewing the complete record.
+- Preserved the strict 10-turn alternating transcript, one indexed deterministic Agent error, all 14 workflow types, five items per domain, stable IDs, current SOP/rule/source provenance, and the error-line length guard. Pediatrics content and MCQs were not edited.
+- Added tests for the approved greetings, whole-chart phrasing, absence of system-list narration, all-hard difficulty, at least two required chart facts, substantive patient context, 30 unique patient follow-ups, audit bank version, and existing deterministic content guards.
+- Added audit bank version `obgyn-current-floor-audit-bank-v4-challenging-calls-2026-07-19` and a distinct audit-only migration marker. Existing environments update only stable OB/GYN audit documents; fresh environments still receive the complete current-floor OB/GYN bank. No direct Firestore write or deployment was performed.
+
 ## 2026-07-19 — OB/GYN assessment answer-length balance
 
 - Shortened only the conspicuously long correct options in the 24-item current-floor OB/GYN MCQ bank. Scenarios, distractors, correct option IDs, point values, rationales, rule coverage, and medical workflow meaning remain unchanged.
