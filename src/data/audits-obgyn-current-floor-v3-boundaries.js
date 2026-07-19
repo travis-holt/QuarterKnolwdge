@@ -47,7 +47,7 @@ export default [
     "difficulty": "medium",
     "opening": "I have severe non-pregnant pelvic pain and can barely stand.",
     "detail": "I saw a GYN Urgent slot open today.",
-    "error": "An available GYN Urgent slot means I can schedule it without provider approval.",
+    "error": "The available urgent slot means I can schedule the GYN Urgent visit without provider approval.",
     "modelExplanation": "The agent treated availability as approval for a clinically controlled appointment type.",
     "expectedCorrection": "Use High Priority OB Portal and urgent-channel escalation; schedule GYN Urgent only after nurse/provider approval.",
     "requiredChartFacts": ["Severe non-pregnant pelvic pain was reported.", "No written approval exists."]
