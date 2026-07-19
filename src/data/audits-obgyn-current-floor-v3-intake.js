@@ -60,7 +60,7 @@ export default [
     "difficulty": "medium",
     "opening": "I am calling back after the pregnancy test because I do not remember my last period.",
     "detail": "The nurse could not reach me yesterday.",
-    "error": "Because your LMP is unknown, I'll schedule a New OB visit directly instead of Confirmation.",
+    "error": "Your unknown LMP is enough for me to schedule a New OB visit directly instead of Confirmation.",
     "modelExplanation": "The agent skipped Confirmation and directly constructed New OB despite an unknown LMP.",
     "expectedCorrection": "Book the 15-minute provider Confirmation of Pregnancy; do not independently add lab or sonography.",
     "requiredChartFacts": ["Unknown LMP.", "No reliable gestational age is documented.", "No patient-specific clinical instruction authorizes direct New OB scheduling."]
