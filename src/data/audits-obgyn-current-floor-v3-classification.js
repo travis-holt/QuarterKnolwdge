@@ -21,8 +21,8 @@ export default [
     "difficulty": "medium",
     "opening": "I got a positive test, but I had spotting twice and cannot tell which date was a real period.",
     "detail": "I really do not trust the date I first gave.",
-    "error": "I'll book the New OB pair based on your first date anyway.",
-    "modelExplanation": "The agent used an unreliable date to construct New OB timing.",
+    "error": "Your unreliable LMP is enough for me to schedule a New OB pair now.",
+    "modelExplanation": "The agent used an unreliable LMP to construct New OB timing.",
     "expectedCorrection": "Use Confirmation of Pregnancy first when LMP is unknown or unreliable.",
     "requiredChartFacts": ["LMP is unreliable because of irregular bleeding.", "No reliable gestational age is documented."]
   },
@@ -60,7 +60,7 @@ export default [
     "difficulty": "medium",
     "opening": "I have a positive test and know my exact LMP.",
     "detail": "I am about five weeks today.",
-    "error": "My reliable LMP means I have to use Confirmation first before I can book New OB.",
+    "error": "Your reliable LMP still requires me to schedule Confirmation before New OB.",
     "modelExplanation": "The agent reversed the reliable-LMP rule by requiring Confirmation.",
     "expectedCorrection": "Use the reliable LMP to schedule the complete New OB pair in the standard 8–12-week window.",
     "requiredChartFacts": ["Reliable LMP is documented.", "Home pregnancy test is positive.", "No out-of-window timing issue exists."]
