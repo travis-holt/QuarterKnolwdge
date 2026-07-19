@@ -15,11 +15,24 @@ vi.mock('./firebase.js', () => ({
 }));
 
 import {
+  OBGYN_CURRENT_FLOOR_AUDIT_MARKER,
   OBGYN_CURRENT_FLOOR_BANK_MARKER,
   planObgynCurrentFloorBankMigration,
+  runObgynCurrentFloorBankMigration,
 } from './obgynCurrentFloorBankMigration.js';
 import { OBGYN_CURRENT_FLOOR_QUESTIONS } from '../data/questions-obgyn-current-floor-v3.js';
-import { OBGYN_CURRENT_FLOOR_AUDITS } from '../data/audits-obgyn-current-floor-v3.js';
+import {
+  OBGYN_CURRENT_FLOOR_AUDIT_BANK_VERSION,
+  OBGYN_CURRENT_FLOOR_AUDITS,
+} from '../data/audits-obgyn-current-floor-v3.js';
+import {
+  collection,
+  doc,
+  getDoc,
+  getDocs,
+  serverTimestamp,
+  writeBatch,
+} from 'firebase/firestore';
 
 describe('OB/GYN current-floor assessment-bank migration planner', () => {
   it('archives stale active non-manual OB/GYN content only', () => {
@@ -53,5 +66,36 @@ describe('OB/GYN current-floor assessment-bank migration planner', () => {
     expect(plan.auditIdsToUpsert).toHaveLength(30);
     expect(OBGYN_CURRENT_FLOOR_BANK_MARKER)
       .toBe('2026-07-obgyn-current-floor-assessment-bank-v3-answer-balance');
+    expect(OBGYN_CURRENT_FLOOR_AUDIT_MARKER)
+      .toBe('2026-07-obgyn-current-floor-audit-bank-v4-challenging-calls');
+  });
+
+  it('refreshes only audits when the complete-bank marker already exists', async () => {
+    vi.clearAllMocks();
+    collection.mockImplementation((_db, name) => ({ name }));
+    doc.mockImplementation((_db, name, id) => ({ name, id }));
+    getDoc
+      .mockResolvedValueOnce({ exists: () => true })
+      .mockResolvedValueOnce({ exists: () => false });
+    getDocs.mockResolvedValue({ docs: [] });
+    serverTimestamp.mockReturnValue('server-time');
+    const batch = {
+      update: vi.fn(),
+      set: vi.fn(),
+      commit: vi.fn().mockResolvedValue(undefined),
+    };
+    writeBatch.mockReturnValue(batch);
+
+    await expect(runObgynCurrentFloorBankMigration()).resolves.toBe(true);
+
+    expect(getDocs).toHaveBeenCalledTimes(1);
+    expect(collection).toHaveBeenCalledWith({}, 'audits');
+    expect(batch.set).toHaveBeenCalledTimes(OBGYN_CURRENT_FLOOR_AUDITS.length + 1);
+    expect(batch.set.mock.calls.some(([ref]) => ref.name === 'questions')).toBe(false);
+    const auditWrites = batch.set.mock.calls.filter(([ref]) => ref.name === 'audits');
+    expect(auditWrites).toHaveLength(OBGYN_CURRENT_FLOOR_AUDITS.length);
+    expect(auditWrites.every(([, payload]) => payload.source === OBGYN_CURRENT_FLOOR_AUDIT_BANK_VERSION))
+      .toBe(true);
+    expect(batch.commit).toHaveBeenCalledOnce();
   });
 });

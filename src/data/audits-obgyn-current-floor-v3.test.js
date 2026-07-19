@@ -1,5 +1,8 @@
 import { describe, expect, it } from 'vitest';
-import { OBGYN_CURRENT_FLOOR_AUDITS } from './audits-obgyn-current-floor-v3.js';
+import {
+  OBGYN_CURRENT_FLOOR_AUDIT_BANK_VERSION,
+  OBGYN_CURRENT_FLOOR_AUDITS,
+} from './audits-obgyn-current-floor-v3.js';
 import { OBGYN_AUDIT_WORKFLOWS, auditRuleIdsFor } from './auditWorkflows.js';
 import {
   OBGYN_RULE_SET_VERSION,
@@ -11,6 +14,10 @@ import { hasBlockingFlags, validateAuditContent } from '../lib/contentGuards.js'
 
 const DOMAINS = ['intake', 'classification', 'routing', 'scheduling', 'boundaries', 'documentation'];
 const EXPECTED_WORKFLOWS = [...new Set(Object.values(OBGYN_AUDIT_WORKFLOWS).flat())].sort();
+const ALLOWED_GREETINGS = new Set([
+  'Hi, thank you for calling Aizer Womens Health Department. How can I help?',
+  'Hello, thank you for calling Aizer Womens Health. How can I help you?',
+]);
 
 function wordCount(text) {
   return text.trim().split(/\s+/).length;
@@ -53,6 +60,35 @@ describe('OB/GYN current-floor Spot-the-Error bank v3', () => {
           .map((turn) => wordCount(turn.message)),
       );
       expect(errorWords, audit.id).toBeLessThanOrEqual(longestOtherAgentTurn);
+    }
+  });
+
+  it('uses the approved greetings and whole-chart language without system-by-system narration', () => {
+    for (const audit of OBGYN_CURRENT_FLOOR_AUDITS) {
+      expect(ALLOWED_GREETINGS.has(audit.transcript[0].message), audit.id).toBe(true);
+      expect(audit.transcript[4].message).toMatch(/let me open your chart/i);
+      const agentSpeech = audit.transcript
+        .filter((turn) => turn.speaker === 'Agent')
+        .map((turn) => turn.message)
+        .join('\n');
+      expect(agentSpeech).not.toMatch(
+        /\b(?:check(?:ing)?|review(?:ing)?)\b.{0,50}\b(?:encounters|messages|visits|rx logs)\b/i,
+      );
+    }
+    expect(new Set(OBGYN_CURRENT_FLOOR_AUDITS.map((audit) => audit.transcript[0].message)))
+      .toEqual(ALLOWED_GREETINGS);
+  });
+
+  it('keeps every case hard, multi-fact, and scenario-specific after the shared framing', () => {
+    const patientFollowUps = OBGYN_CURRENT_FLOOR_AUDITS.map((audit) => audit.transcript[7].message);
+    expect(new Set(patientFollowUps)).toHaveLength(30);
+    for (const audit of OBGYN_CURRENT_FLOOR_AUDITS) {
+      expect(audit.difficulty, audit.id).toBe('hard');
+      expect(audit.requiredChartFacts.length, audit.id).toBeGreaterThanOrEqual(2);
+      expect(wordCount(audit.transcript[1].message), audit.id).toBeGreaterThanOrEqual(12);
+      expect(wordCount(audit.transcript[5].message), audit.id).toBeGreaterThanOrEqual(12);
+      expect(wordCount(audit.transcript[7].message), audit.id).toBeGreaterThanOrEqual(12);
+      expect(audit.bankVersion).toBe(OBGYN_CURRENT_FLOOR_AUDIT_BANK_VERSION);
     }
   });
 

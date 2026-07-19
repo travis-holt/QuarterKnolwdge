@@ -11,9 +11,10 @@
 > [§8 Current System State](#8-current-system-state) and [§15 Current Priorities](#15-current-priorities)
 > accurate at all times.
 >
-> **Last updated:** 2026-07-19 (OB/GYN answer-length balancing — conspicuously long correct MCQ options and indexed Spot-the-Error lines were shortened without changing scenarios, distractors, correct mappings, workflow violations, or scoring; regression tests prevent answer length from revealing the target, and a new marker-gated bank version upserts the concise wording on already-migrated environments) ·
-> **Prior same-day update:** 2026-07-19 (OB/GYN current-floor assessment bank v3 — the owner-confirmed Women's Health SOP v1.0 now drives a curated 24-item MCQ bank and 30-item Spot-the-Error bank; all 24 executable workflow rules and all 14 audit workflow types are covered; a marker-gated migration archives stale active non-manual OB/GYN content without deleting history or touching Pediatrics/manual drafts; exact SOP/rule/source provenance and deterministic one-Agent-error guards are enforced by tests) ·
-> **Earlier same-day update:** 2026-07-19 (PR #34 recovery + cleanup — the rich, SOP-grounded training modules
+> **Last updated:** 2026-07-19 (OB/GYN Spot-the-Error bank v4 — all 30 calls are now hard, multi-fact scenarios with varied framing and unique patient follow-ups instead of a generic shared script; openings use one of the two owner-specified Aizer Womens Health greetings, chart review says "Let me open your chart" without narrating individual systems, and an audit-only marker refreshes already-migrated environments without rewriting MCQs) ·
+> **Prior same-day update:** 2026-07-19 (OB/GYN answer-length balancing — conspicuously long correct MCQ options and indexed Spot-the-Error lines were shortened without changing scenarios, distractors, correct mappings, workflow violations, or scoring; regression tests prevent answer length from revealing the target, and a new marker-gated bank version upserts the concise wording on already-migrated environments) ·
+> **Earlier same-day update:** 2026-07-19 (OB/GYN current-floor assessment bank v3 — the owner-confirmed Women's Health SOP v1.0 now drives a curated 24-item MCQ bank and 30-item Spot-the-Error bank; all 24 executable workflow rules and all 14 audit workflow types are covered; a marker-gated migration archives stale active non-manual OB/GYN content without deleting history or touching Pediatrics/manual drafts; exact SOP/rule/source provenance and deterministic one-Agent-error guards are enforced by tests) ·
+> **Earlier update:** 2026-07-19 (PR #34 recovery + cleanup — the rich, SOP-grounded training modules
 > (F9) are now flattened into the intended structure: the full `TRAINING_MODULES` catalog lives
 > directly in `src/data/training.js` (Pediatrics same-day-sick correction applied in the data, not a
 > runtime patch), the rich renderer directly in `src/components/TrainingModule.jsx`, and the
@@ -453,6 +454,7 @@ training assignments.
   attributing overrides to a specific supervisor.
 
 ### F16 — "Spot the Error" QA Audit Assessment
+- **OB/GYN challenging-call bank v4 (2026-07-19):** the 30 curated calls no longer expand from one generic eight-line frame. Every case is now hard and requires at least two controlling facts, with scenario-specific openings, chart context, plausible near-miss decisions, and a unique patient follow-up. The first Agent turn is exactly one of the two owner-approved Aizer Womens Health greetings; the chart-review turn uses "Let me open your chart" and never narrates checking encounters, messages, visits, or Rx logs separately. Greeting, whole-chart language, difficulty, multi-fact context, follow-up uniqueness, length balance, and exactly-one-error behavior are regression-tested. Audit bank version `obgyn-current-floor-audit-bank-v4-challenging-calls-2026-07-19` has a distinct audit-only migration marker for existing environments; fresh environments still receive the complete current-floor bank.
 - **Curated current-floor OB/GYN bank v3 (2026-07-19):** 30 pre-authored audits (5 per domain) cover every one of the 14 existing OB/GYN audit workflow types. Each expands to exactly 10 alternating turns, carries current SOP/rule/source provenance, and has one context-verifiable Agent error; the same marker migration archives stale active non-manual OB/GYN audits and activates these stable IDs.
 - **Answer-length balance (2026-07-19):** indexed error lines were made no longer than the longest surrounding Agent turn, while preserving the same single deterministic workflow violation. A bank test enforces that visual-length guard, and the follow-up content-migration marker upserts the concise bank on environments that already ran the initial v3 migration.
 - **OB/GYN executable audit contract (2026-07-17):** OB/GYN generation uses the selected entries
@@ -1776,6 +1778,8 @@ of this file on 2026-07-07 to cut per-session context cost (it was ~55% of the f
 ---
 
 ## 8. Current System State
+
+- **OB/GYN Spot-the-Error realism (2026-07-19):** all 30 current-floor audits are hard, multi-fact calls with varied safe framing and unique scenario-specific patient follow-ups. They use only the two owner-specified Aizer Womens Health greetings and whole-chart language ("Let me open your chart"), never a checklist narration of encounters/messages/visits/Rx logs. An audit-only v4 marker updates stable audit IDs on existing environments without touching question documents; the exactly-one deterministic Agent error, answer-length balance, workflow coverage, SOP provenance, and Pediatrics content remain unchanged.
 
 - **OB/GYN assessment answer-length balance (2026-07-19):** the active 24-item current-floor MCQ bank no longer exposes correct answers through paragraph-length options, and the 30-item Spot-the-Error bank no longer exposes its indexed error through a longer Agent turn. Scenarios, distractors, correct IDs, points, rationales, deterministic workflow violations, and SOP provenance are unchanged; bank tests enforce both length constraints. A distinct follow-up migration marker safely upserts the revised stable IDs on already-migrated environments.
 

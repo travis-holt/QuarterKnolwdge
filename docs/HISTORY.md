@@ -1,5 +1,14 @@
 # Development History - Knowledge Check
 
+## 2026-07-19 — OB/GYN Spot-the-Error challenging-call bank v4
+
+- Re-authored all 30 OB/GYN Spot-the-Error calls as hard, multi-fact scenarios. Each case now combines at least two controlling chart facts with a plausible near-miss, instead of relying on a generic one-line request and an obvious workflow mistake.
+- Replaced the repeated eight-line call frame with five safe verification/chart/wrap-up variants plus a unique patient follow-up for every case. The first Agent turn is always exactly one of the two owner-specified Aizer Womens Health greetings.
+- Standardized chart-review speech on "Let me open your chart" and removed spoken system-by-system narration such as checking encounters, messages, visits, or Rx logs; opening the chart represents reviewing the complete record.
+- Preserved the strict 10-turn alternating transcript, one indexed deterministic Agent error, all 14 workflow types, five items per domain, stable IDs, current SOP/rule/source provenance, and the error-line length guard. Pediatrics content and MCQs were not edited.
+- Added tests for the approved greetings, whole-chart phrasing, absence of system-list narration, all-hard difficulty, at least two required chart facts, substantive patient context, 30 unique patient follow-ups, audit bank version, and existing deterministic content guards.
+- Added audit bank version `obgyn-current-floor-audit-bank-v4-challenging-calls-2026-07-19` and a distinct audit-only migration marker. Existing environments update only stable OB/GYN audit documents; fresh environments still receive the complete current-floor OB/GYN bank. No direct Firestore write or deployment was performed.
+
 ## 2026-07-19 — OB/GYN assessment answer-length balance
 
 - Shortened only the conspicuously long correct options in the 24-item current-floor OB/GYN MCQ bank. Scenarios, distractors, correct option IDs, point values, rationales, rule coverage, and medical workflow meaning remain unchanged.
