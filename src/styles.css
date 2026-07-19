@@ -6025,3 +6025,716 @@ textarea:focus-visible {
 .gate__notice {
   text-wrap: pretty;
 }
+
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   TRAINING MODULE — rich content (call simulation, scripts, examples, model
+   docs, mistake cards, quick-reference, decision drills). Renders the
+   department-branching training modules in TrainingModule.jsx.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/* ── Training module — live call simulation (hero) ────────────────────────── */
+.tsim {
+  margin-bottom: 22px;
+  padding: 0;
+  overflow: hidden;
+  border: 1px solid var(--accent-soft);
+  box-shadow: var(--shadow-md);
+}
+
+.tsim__head {
+  padding: 20px 22px 16px;
+  background:
+    radial-gradient(120% 140% at 0% 0%, rgba(196, 116, 79, 0.12), transparent 60%),
+    var(--surface-2);
+  border-bottom: 1px solid var(--line-soft);
+}
+
+.tsim__live {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 11px;
+  font-weight: 750;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--accent-deep);
+}
+
+.tsim__dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #d23f3f;
+  box-shadow: 0 0 0 0 rgba(210, 63, 63, 0.5);
+  animation: tsim-pulse 1.8s var(--ease-out) infinite;
+}
+
+@keyframes tsim-pulse {
+  0% { box-shadow: 0 0 0 0 rgba(210, 63, 63, 0.5); }
+  70% { box-shadow: 0 0 0 7px rgba(210, 63, 63, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(210, 63, 63, 0); }
+}
+
+.tsim__title {
+  font-family: var(--font-display);
+  font-size: 22px;
+  margin: 8px 0 6px;
+}
+
+.tsim__intro {
+  margin: 0;
+  font-size: 14px;
+  color: var(--ink-soft);
+}
+
+.tsim__depts {
+  display: inline-flex;
+  gap: 4px;
+  margin: 10px 0 2px;
+  padding: 3px;
+  border-radius: 999px;
+  background: var(--surface-3);
+  border: 1px solid var(--line-soft);
+}
+
+.tsim__dept {
+  border: none;
+  background: none;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 650;
+  letter-spacing: 0.02em;
+  color: var(--ink-soft);
+  padding: 5px 14px;
+  border-radius: 999px;
+  cursor: pointer;
+  transition: background var(--dur-1) var(--ease-out), color var(--dur-1) var(--ease-out);
+}
+
+.tsim__dept:hover {
+  color: var(--ink);
+}
+
+.tsim__dept.is-active {
+  background: var(--surface);
+  color: var(--accent-deep);
+  box-shadow: var(--shadow-xs);
+}
+
+.tsim__dept:focus-visible {
+  outline: none;
+  box-shadow: var(--ring);
+}
+
+.tsim__thread {
+  padding: 18px 22px 6px;
+  display: grid;
+  gap: 18px;
+}
+
+.tsim__exchange {
+  display: grid;
+  gap: 8px;
+  padding-bottom: 16px;
+  border-bottom: 1px dashed var(--line-soft);
+}
+
+.tsim__line {
+  border-radius: var(--radius-sm);
+  padding: 10px 14px;
+  max-width: 88%;
+}
+
+.tsim__line p {
+  margin: 0;
+  font-size: 14.5px;
+  line-height: 1.5;
+}
+
+.tsim__line--caller {
+  background: var(--surface-3);
+  border: 1px solid var(--line-soft);
+}
+
+.tsim__line--nav {
+  margin-left: auto;
+  background: var(--surface);
+  border: 1px solid var(--accent-soft);
+  border-left: 4px solid var(--accent);
+}
+
+.tsim__line--nav.tsim__line--good { border-left-color: var(--level-canteach); }
+.tsim__line--nav.tsim__line--ok { border-left-color: var(--level-solid); }
+.tsim__line--nav.tsim__line--bad { border-left-color: var(--level-learning); }
+
+.tsim__who {
+  display: block;
+  font-size: 10.5px;
+  font-weight: 750;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--ink-faint);
+  margin-bottom: 3px;
+}
+
+.tsim__line--nav .tsim__who {
+  color: var(--accent-strong);
+  text-align: right;
+}
+
+.tsim__line--nav p {
+  text-align: right;
+}
+
+.tsim__feedback {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--ink-soft);
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+}
+
+.tsim__feedback-tag {
+  flex: 0 0 auto;
+  font-size: 10px;
+  font-weight: 750;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  padding: 2px 8px;
+  border-radius: 999px;
+}
+
+.tsim__feedback--good .tsim__feedback-tag {
+  background: color-mix(in srgb, var(--level-canteach) 14%, white);
+  color: var(--level-canteach);
+}
+
+.tsim__feedback--ok .tsim__feedback-tag {
+  background: color-mix(in srgb, var(--level-solid) 20%, white);
+  color: #8a6a12;
+}
+
+.tsim__feedback--bad .tsim__feedback-tag {
+  background: color-mix(in srgb, var(--level-learning) 11%, white);
+  color: var(--level-learning);
+}
+
+.tsim__now {
+  display: grid;
+  gap: 12px;
+}
+
+.tsim__choices {
+  display: grid;
+  gap: 9px;
+}
+
+.tsim__choice {
+  display: flex;
+  align-items: flex-start;
+  gap: 11px;
+  width: 100%;
+  text-align: left;
+  padding: 13px 16px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  font: inherit;
+  font-size: 14.5px;
+  line-height: 1.5;
+  color: var(--ink);
+  cursor: pointer;
+  transition: border-color var(--dur-1) var(--ease-out), background var(--dur-1) var(--ease-out),
+    transform var(--dur-1) var(--ease-out), box-shadow var(--dur-1) var(--ease-out);
+}
+
+.tsim__choice:hover {
+  border-color: var(--accent);
+  background: var(--surface-2);
+  transform: translateY(-1px);
+  box-shadow: var(--shadow-sm);
+}
+
+.tsim__choice:focus-visible {
+  outline: none;
+  box-shadow: var(--ring);
+}
+
+.tsim__choice-arrow {
+  color: var(--accent);
+  font-size: 13px;
+  margin-top: 2px;
+}
+
+.tsim__debrief {
+  margin: 6px 22px 22px;
+  padding: 18px 20px;
+  border-radius: var(--radius);
+  border: 1px solid var(--line);
+  border-top: 4px solid var(--accent);
+  background: var(--surface-2);
+}
+
+.tsim__debrief--strong { border-top-color: var(--level-canteach); }
+.tsim__debrief--mixed { border-top-color: var(--level-solid); }
+.tsim__debrief--weak { border-top-color: var(--level-learning); }
+
+.tsim__verdict {
+  display: inline-block;
+  font-size: 11px;
+  font-weight: 750;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  padding: 3px 11px;
+  border-radius: 999px;
+  color: #fff;
+}
+
+.tsim__debrief--strong .tsim__verdict { background: var(--level-canteach); }
+.tsim__debrief--mixed .tsim__verdict { background: #b98a1f; }
+.tsim__debrief--weak .tsim__verdict { background: var(--level-learning); }
+
+.tsim__debrief-title {
+  font-size: 18px;
+  margin: 10px 0 8px;
+}
+
+.tsim__summary {
+  margin: 0 0 10px;
+  font-size: 14.5px;
+  line-height: 1.55;
+}
+
+.tsim__lesson {
+  margin: 0 0 12px;
+  font-size: 14px;
+  line-height: 1.55;
+  padding: 10px 14px;
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  border-left: 3px solid var(--accent);
+}
+
+.tsim__count {
+  margin: 0 0 14px;
+  font-size: 12.5px;
+  color: var(--ink-faint);
+}
+
+.tsim__restart {
+  margin: 0;
+}
+
+@media (max-width: 640px) {
+  .tsim__line {
+    max-width: 100%;
+  }
+}
+
+/* ── Training module — "Say / Not" script pairs ───────────────────────────── */
+.tscript {
+  margin-top: 16px;
+  display: grid;
+  gap: 14px;
+}
+
+.tscript__pair {
+  border: 1px solid var(--line-soft);
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+  padding: 14px 16px;
+  display: grid;
+  gap: 8px;
+}
+
+.tscript__row {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+}
+
+.tscript__row p {
+  margin: 0;
+  font-size: 14.5px;
+  line-height: 1.5;
+}
+
+.tscript__row--say p {
+  font-weight: 550;
+}
+
+.tscript__row--not p {
+  color: var(--ink-soft);
+  text-decoration: line-through;
+  text-decoration-color: rgba(192, 57, 43, 0.45);
+  text-decoration-thickness: 1.5px;
+}
+
+.tscript__tag {
+  flex: 0 0 auto;
+  margin-top: 1px;
+  font-size: 10.5px;
+  font-weight: 750;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  padding: 2px 9px;
+  border-radius: 999px;
+}
+
+.tscript__tag--say {
+  background: color-mix(in srgb, var(--level-canteach) 14%, white);
+  color: var(--level-canteach);
+}
+
+.tscript__tag--not {
+  background: color-mix(in srgb, var(--level-learning) 11%, white);
+  color: var(--level-learning);
+}
+
+.tscript__why {
+  margin: 2px 0 0;
+  padding-top: 8px;
+  border-top: 1px dashed var(--line);
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--ink-soft);
+}
+
+/* ── Training module — annotated call example ─────────────────────────────── */
+.texample {
+  margin-top: 16px;
+  border: 1px solid var(--line-soft);
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+  padding: 14px 16px;
+}
+
+.texample__label {
+  display: inline-block;
+  font-size: 10.5px;
+  font-weight: 750;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--accent-deep);
+  background: var(--accent-soft);
+  padding: 2px 9px;
+  border-radius: 999px;
+  margin-bottom: 8px;
+}
+
+.texample__intro {
+  margin: 0 0 12px;
+  font-size: 13.5px;
+  color: var(--ink-soft);
+}
+
+.texample__turns {
+  display: grid;
+  gap: 10px;
+}
+
+.texample__bubble {
+  border-radius: var(--radius-sm);
+  padding: 10px 14px;
+  max-width: 92%;
+}
+
+.texample__turn--caller .texample__bubble {
+  background: var(--surface-3);
+  border: 1px solid var(--line-soft);
+}
+
+.texample__turn--nav .texample__bubble {
+  background: var(--surface);
+  border: 1px solid var(--accent-soft);
+  margin-left: 8%;
+}
+
+.texample__speaker {
+  display: block;
+  font-size: 10.5px;
+  font-weight: 750;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--ink-faint);
+  margin-bottom: 3px;
+}
+
+.texample__turn--nav .texample__speaker {
+  color: var(--accent-strong);
+}
+
+.texample__bubble p {
+  margin: 0;
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+.texample__note {
+  margin: 4px 0 0 8%;
+  padding-left: 14px;
+  font-size: 12.5px;
+  line-height: 1.45;
+  color: var(--ink-soft);
+  font-style: italic;
+}
+
+/* ── Training module — model document ("paper") block ─────────────────────── */
+.tdoc {
+  margin: 16px 0 0;
+}
+
+.tdoc__label {
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  color: var(--ink-soft);
+  margin-bottom: 8px;
+}
+
+.tdoc__paper {
+  border: 1px solid var(--line);
+  border-left: 4px solid var(--accent);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  box-shadow: var(--shadow-sm);
+  padding: 14px 18px;
+  font-family: ui-monospace, 'SF Mono', 'Cascadia Code', Consolas, monospace;
+}
+
+.tdoc__paper p {
+  margin: 0 0 4px;
+  font-size: 13px;
+  line-height: 1.55;
+}
+
+.tdoc__paper p:first-child {
+  font-weight: 700;
+}
+
+.tdoc__note {
+  margin: 8px 0 0;
+  font-size: 13px;
+  color: var(--ink-soft);
+}
+
+/* ── Training module — mistakes / quick-ref / drill panels ────────────────── */
+.tmistakes {
+  margin-bottom: 18px;
+}
+
+.tmistakes__grid {
+  display: grid;
+  gap: 12px;
+}
+
+.tmistake {
+  border: 1px solid var(--line-soft);
+  border-left: 4px solid var(--level-learning);
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+  padding: 12px 16px;
+}
+
+.tmistake p {
+  margin: 0 0 6px;
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+.tmistake p:last-child {
+  margin-bottom: 0;
+}
+
+.tmistake__mistake {
+  font-weight: 650;
+}
+
+.tmistake__consequence {
+  color: var(--ink-soft);
+}
+
+.tmistake__instead strong {
+  color: var(--level-canteach);
+}
+
+.tquickref {
+  margin-bottom: 18px;
+}
+
+.tquickref__rows {
+  margin: 0;
+  display: grid;
+  gap: 0;
+}
+
+.tquickref__row {
+  display: grid;
+  grid-template-columns: minmax(140px, 38%) 1fr;
+  gap: 14px;
+  padding: 9px 0;
+  border-bottom: 1px solid var(--line-soft);
+}
+
+.tquickref__row:last-child {
+  border-bottom: none;
+}
+
+.tquickref__row dt {
+  font-size: 13.5px;
+  font-weight: 650;
+}
+
+.tquickref__row dd {
+  margin: 0;
+  font-size: 13.5px;
+  line-height: 1.45;
+  color: var(--ink-soft);
+}
+
+.tdrill {
+  margin-bottom: 18px;
+}
+
+.tdrill__item {
+  margin-top: 16px;
+  padding-top: 16px;
+  border-top: 1px solid var(--line-soft);
+}
+
+.tdrill__item:first-of-type {
+  border-top: none;
+}
+
+.tdrill__prompt {
+  margin: 0 0 12px;
+  font-size: 15px;
+  font-weight: 600;
+  line-height: 1.5;
+}
+
+.tdrill__options {
+  display: grid;
+  gap: 8px;
+}
+
+.tdrill__option {
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  overflow: hidden;
+  transition: border-color var(--dur-1) var(--ease-out), background var(--dur-1) var(--ease-out),
+    opacity var(--dur-1) var(--ease-out);
+}
+
+.tdrill__option.is-correct {
+  border-color: var(--level-canteach);
+  background: color-mix(in srgb, var(--level-canteach) 7%, var(--surface));
+}
+
+.tdrill__option.is-wrong {
+  border-color: var(--level-learning);
+  background: color-mix(in srgb, var(--level-learning) 6%, var(--surface));
+}
+
+.tdrill__option.is-dim {
+  opacity: 0.55;
+}
+
+.tdrill__choice {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  width: 100%;
+  padding: 11px 14px;
+  border: none;
+  background: none;
+  font: inherit;
+  font-size: 14px;
+  line-height: 1.5;
+  text-align: left;
+  color: var(--ink);
+  cursor: pointer;
+}
+
+.tdrill__choice:disabled {
+  cursor: default;
+}
+
+.tdrill__choice:not(:disabled):hover {
+  background: var(--surface-2);
+}
+
+.tdrill__choice:focus-visible {
+  outline: none;
+  box-shadow: inset var(--ring);
+}
+
+.tdrill__letter {
+  flex: 0 0 auto;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  border: 1.5px solid var(--line);
+  color: var(--ink-soft);
+  font-size: 12px;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-top: 1px;
+}
+
+.tdrill__option.is-correct .tdrill__letter {
+  border-color: var(--level-canteach);
+  background: var(--level-canteach);
+  color: #fff;
+}
+
+.tdrill__option.is-wrong .tdrill__letter {
+  border-color: var(--level-learning);
+  background: var(--level-learning);
+  color: #fff;
+}
+
+.tdrill__why {
+  margin: 0;
+  padding: 0 14px 11px 50px;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--ink-soft);
+}
+
+.tdrill__verdict {
+  margin: 10px 0 0;
+  font-size: 13.5px;
+  font-weight: 650;
+}
+
+.tdrill__verdict--right {
+  color: var(--level-canteach);
+}
+
+.tdrill__verdict--wrong {
+  color: var(--level-learning);
+}
+
+@media (max-width: 640px) {
+  .tquickref__row {
+    grid-template-columns: 1fr;
+    gap: 2px;
+  }
+
+  .texample__bubble {
+    max-width: 100%;
+  }
+
+  .texample__turn--nav .texample__bubble,
+  .texample__note {
+    margin-left: 0;
+  }
+}
