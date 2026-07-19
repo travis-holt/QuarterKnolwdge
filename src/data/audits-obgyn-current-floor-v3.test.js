@@ -58,9 +58,9 @@ describe('OB/GYN current-floor Spot-the-Error bank v3', () => {
   it('passes deterministic content guards with one contextual error and no second Agent error', () => {
     for (const audit of OBGYN_CURRENT_FLOOR_AUDITS) {
       const flags = validateAuditContent(audit);
-      expect(flags.filter((flag) => flag.code === 'audit_error_not_deterministic')).toEqual([]);
-      expect(flags.filter((flag) => flag.code === 'audit_multiple_agent_errors')).toEqual([]);
-      expect(hasBlockingFlags(flags)).toBe(false);
+      expect(flags.filter((flag) => flag.code === 'audit_error_not_deterministic'), audit.id).toEqual([]);
+      expect(flags.filter((flag) => flag.code === 'audit_multiple_agent_errors'), audit.id).toEqual([]);
+      expect(hasBlockingFlags(flags), `${audit.id}: ${JSON.stringify(flags)}`).toBe(false);
     }
   });
 
