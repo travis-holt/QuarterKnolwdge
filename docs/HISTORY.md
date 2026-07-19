@@ -1,5 +1,94 @@
 # Development History - Knowledge Check
 
+### 2026-07-19 - Post-merge hotfix: department-scoped training content (F9)
+
+**PR #34 was already merged to `main` (`79358b9`).** This is a separate post-merge hotfix on
+`fix/training-department-content-scoping`; PR #34 was not reopened, reused, or amended.
+
+- **Defect.** The Training page could show OB/GYN as the selected department while still rendering
+  Pediatrics-specific content. Confirmed example: the drill *"My daughter's strep test came back —
+  is she contagious? And can you refill her amoxicillin?"* appeared with OB/GYN selected. The same
+  class of leak ran the other way (pregnancy/MFM/OB-route content under Pediatrics).
+- **Root cause — simulator-only department state.** The selected department lived *inside*
+  `CallSimulator` and controlled only which branching call simulation played. Every other block
+  (lessons, lesson points, script pairs, annotated examples, model documents, mistakes,
+  quick-reference rows, drills, key takeaways) rendered the module-level arrays unfiltered, so all
+  six modules mixed both departments' content on one page regardless of the toggle.
+- **Fix — one source of truth for the whole page.** `TrainingModule` now owns the selected
+  department and renders the page-level selector (`role="group"`, "Choose department").
+  `CallSimulator` is fully controlled: it receives the single simulation already chosen for the
+  selected department and holds no department state of its own. The selected department scopes
+  **every** block listed above, not just the simulation.
+- **Explicit department metadata, never keyword inference.** Catalog items carry an optional
+  `departments: ['pediatrics'] | ['obgyn'] | ['pediatrics','obgyn']` array of **stable department
+  IDs**; an item with no `departments` field is genuinely shared. Points and takeaways are either a
+  plain string (shared) or a `{ text, departments }` object (scoped). Display strings such as
+  `OB-GYN` remain simulation *labels* only and are never used as business identifiers — a catalog
+  test asserts this. One pure, directly unit-tested helper set does the filtering
+  (`scopeForDept`, `belongsToDept`, `itemDepartments`, `itemText`, `TRAINING_DEPARTMENTS`):
+  it includes shared items, includes selected-department items, excludes other-department items,
+  and is safe on missing/blank arrays. There are no per-keyword ("strep", "pregnancy") or
+  per-name filters anywhere.
+- **All six modules audited** (Call Opening & Identification, Call Classification, Routing &
+  Escalation, Scheduling & Appointment Rules, Scope & Privacy, Documentation & Follow-through).
+  Every item was classified shared / Pediatrics / OB/GYN. A lesson whose content is entirely one
+  department is scoped as a whole and drops out for the other (classification lesson 2, scheduling
+  lesson 2). A few genuinely-shared items that carried an incidental department marker were reworded
+  so they are shared in fact, not just in label — e.g. the shared workflow list no longer names
+  `MFM`, the shared documentation reason-field / priority / refill-field guidance dropped its
+  `(Peds)` and `OB Urgent Calls` riders (the OB-specific priority route moved to its own scoped
+  quick-ref row and takeaway), and comparative takeaways that named both departments were split
+  into a Pediatrics one and an OB/GYN one. One Pediatrics scheduling drill (Fidelis early-PE two
+  conditions) was added so that department has a usable drill in that module.
+- **Reset semantics.** Switching department or module resets the simulation node, the simulation
+  history, and all drill answers. `CallSimulator`/`Drill` reset on the identity of their
+  (memoized, per module+department) inputs rather than a React `key` — a keyed element among
+  unkeyed siblings under this parent mis-reconciles and leaves **two** simulators mounted at once,
+  which a browser check caught and now guards against.
+- **Active department respected.** `NavigatorApp` passes its active `dept` and `SupervisorApp`
+  passes `selectedDept` into `TrainingModule`, so an OB/GYN navigator never opens on Pediatrics
+  content. The selector still allows intentional supervisor switching, and a manual choice persists
+  across module browsing while re-seeding when the app's active department prop actually changes.
+- **SOP rules preserved unchanged**: routine GYN scheduling is direct; clinical/uncertain OB/GYN
+  work routes to OB Portal; all MFM → Rebecca Wood; Dr. Bank annual/fertility → Waiting List Portal;
+  no `PSS OB`; no navigator-directed Labor & Delivery; serious symptoms use a High Priority TE to
+  OB Portal plus the *Women's Health OB Urgent Calls* Intermedia channel; unrelated requests get
+  separate TEs; reliable LMP → New OB pair; unknown/unreliable LMP → Confirmation of Pregnancy;
+  second New OB record marked OB Verified; Pediatrics same-day sick cannot be pre-booked for
+  tomorrow; same open issue → Take Action; different issue → a separate TE. The pre-existing
+  source-authority guards in `training.test.js` still pass untouched.
+- **Regression coverage.** Unit suite **1353 → 1379 tests (+26)** across the same 67 files.
+  `training.test.js` adds helper unit tests, valid-department-ID and no-display-string-as-ID guards,
+  a per-department usable-content guard (every domain yields ≥1 lesson, exactly 1 simulation, and
+  ≥1 drill / mistake / quick-ref row / takeaway for **both** departments), and cross-department
+  leak guards over named routes, providers and workflows.
+  `trainingModule.test.jsx` adds selector, seeding/re-seeding, both confirmed-regression strings,
+  provider/route hiding in both directions, per-block scoping, department- and module-switch resets,
+  navigator privacy, supervisor cohort navigation, and completion/save-error behavior.
+- **Browser-verified** in real Chromium at 1280×900 and 390×844 against a throwaway harness
+  mounting the real component, stylesheet and catalog: **338/338 checks, 0 console errors** —
+  all six domains × both departments (no cross-department leak, usable content, correct pressed
+  state), strong and misstep simulation paths, drill answering/locking, department- and
+  module-switch resets, single-simulator-mounted guard, no horizontal overflow at either width,
+  navigator privacy, supervisor cohort navigation, and completion error/success. Also fixed the
+  now-reachable "1 lessons" pluralization.
+- **No behavior changed** in scoring, Firestore, APIs, auth, Call QA, deployment, or production
+  data. Files touched: `src/data/training.js`, `src/data/training.test.js`,
+  `src/components/TrainingModule.jsx`, `src/components/trainingModule.test.jsx`,
+  `src/components/NavigatorApp.jsx`, `src/components/SupervisorApp.jsx`, `src/styles.css`
+  (the orphaned in-simulator toggle rules became the module-level selector), plus these docs.
+- **Gate results.** `git diff --check` clean; `npm test` 1379/1379; `npm run test:rules` 76/76
+  (51 result-authorization + 25 Call QA, via a portable Temurin 21 JRE); `npm run build` clean incl.
+  the private-runtime bundle scan; `qa:pilot-smoke` `PILOT_SMOKE_VERIFIED` (15 cases);
+  `qa:calibrate` and `qa:coverage` both report **`INSUFFICIENT_DATA`** (0 human-pilot fixtures) —
+  the documented intended state, **not** a readiness signal. The safe Playwright suite is
+  **4 passed / 8 failed**, identical on unmodified `main`: every failure is the sign-in gate
+  (`select.gate__select` never populates; supervisor "Sign out" never appears) because this
+  container has no `FIREBASE_SERVICE_ACCOUNT_JSON` — `/api/navigator-roster` returns
+  `{"error":"Server authentication is not configured."}`. None of the 8 specs reference Training
+  (`grep -i training` over the whole safe suite returns nothing), so they do not exercise this
+  change. No test was skipped or weakened.
+
 ### 2026-07-19 - PR #34 content precision: routine-GYN routing + serious-symptom TE separation
 - **Follow-up to the same-day recovery+cleanup below**, correcting two OB/GYN teaching defects
   against the owner-confirmed current-floor Women's Health SOP v1.0 (2026-07-17).

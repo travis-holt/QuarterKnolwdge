@@ -11,7 +11,28 @@
 > [§8 Current System State](#8-current-system-state) and [§15 Current Priorities](#15-current-priorities)
 > accurate at all times.
 >
-> **Last updated:** 2026-07-19 (PR #34 recovery + cleanup — the rich, SOP-grounded training modules
+> **Last updated:** 2026-07-19 (**post-merge hotfix — department-scoped training content.** PR #34
+> was already merged to `main` (`79358b9`); this is a separate hotfix branch
+> (`fix/training-department-content-scoping`), not a reopening of it. The Training page could show
+> OB/GYN as the selected department while still rendering Pediatrics-specific content (confirmed:
+> the "My daughter's strep test came back … refill her amoxicillin?" drill appearing under OB/GYN).
+> **Root cause:** the selected department lived inside `CallSimulator` and controlled only the
+> branching call simulation; every other block rendered module-level arrays unfiltered.
+> **Fix:** `TrainingModule` now owns the selected department for the whole page and renders the
+> selector; `CallSimulator` is fully controlled and holds no department state. The selected
+> department scopes lessons, lesson points, script pairs, annotated examples, model documents,
+> mistakes, quick-reference rows, drills, simulations, and key takeaways. Catalog items declare an
+> explicit `departments` array of **stable IDs** (`pediatrics` / `obgyn`; absent = genuinely
+> shared) — display strings like `OB-GYN` remain simulation labels only and are never business
+> identifiers. One pure, unit-tested helper set (`scopeForDept` / `belongsToDept` /
+> `itemDepartments` / `itemText`) does the filtering; there is no runtime keyword inference and no
+> per-term filter. All six modules were audited item by item; switching department or module resets
+> the simulation node, simulation history, and drill answers; and `NavigatorApp`/`SupervisorApp`
+> now pass their active department in. All current SOP rules are preserved unchanged, and no
+> scoring, Firestore, API, auth, Call QA, deployment, or production-data behavior changed.
+> Unit suite 1353 → **1379** tests across 67 files; browser-verified in real Chromium at 1280px and
+> 390px (338/338 checks, 0 console errors). See docs/HISTORY.md 2026-07-19.
+> Prior — **Last updated:** 2026-07-19 (PR #34 recovery + cleanup — the rich, SOP-grounded training modules
 > (F9) are now flattened into the intended structure: the full `TRAINING_MODULES` catalog lives
 > directly in `src/data/training.js` (Pediatrics same-day-sick correction applied in the data, not a
 > runtime patch), the rich renderer directly in `src/components/TrainingModule.jsx`, and the
@@ -308,11 +329,31 @@ training assignments.
   `keyTakeaways`); the assignment logic still only reads `domainId`.
   [src/components/TrainingModule.jsx](src/components/TrainingModule.jsx) renders every block and
   owns the interactive state: the `CallSimulator` (branching Patient/Navigator turns → strong/mixed/
-  weak debrief, restart, and a reset-on-render guard when the module or department changes) and the
-  `Drill` (pick locks the question, each question independent, reset on module change). Supervisors
-  see the auto-assigned cohort (clickable to the navigator dashboard); navigators pass
+  weak debrief, restart) and the `Drill` (pick locks the question, each question independent).
+  Supervisors see the auto-assigned cohort (clickable to the navigator dashboard); navigators pass
   `showCohort={false}` so other navigators' names never appear, and get the completion control
   (which surfaces a save failure as an inline error).
+- **Department scoping (hotfix 2026-07-19 — single source of truth).** `TrainingModule` owns the
+  selected department for the ENTIRE page and renders the page-level selector
+  (`role="group"`, "Choose department"), seeded from the app's active department
+  (`NavigatorApp` passes its active `dept`, `SupervisorApp` passes `selectedDept`) and re-seeded
+  when that prop changes, so an OB/GYN navigator never opens on Pediatrics content while
+  intentional supervisor switching still works. `CallSimulator` is **fully controlled** — it takes
+  the one simulation already chosen for the selected department and holds no department state.
+  The selection scopes lessons, lesson points, script pairs, annotated examples, model documents,
+  mistakes, quick-reference rows, drills, simulations, and key takeaways. Catalog items declare an
+  optional `departments` array of **stable IDs** (`'pediatrics'` / `'obgyn'`; a missing field means
+  genuinely shared); points and takeaways are a plain string (shared) or `{ text, departments }`
+  (scoped); a wholly single-department lesson is scoped as a unit and drops out entirely for the
+  other department. Display labels like `OB-GYN` remain simulation labels only and are never used
+  as identifiers (a catalog test enforces this). Filtering goes through one pure, directly
+  unit-tested helper set — `scopeForDept`, `belongsToDept`, `itemDepartments`, `itemText`,
+  `TRAINING_DEPARTMENTS` — which includes shared + selected-department items, excludes
+  other-department items, and is safe on missing arrays. **No runtime keyword inference and no
+  per-term filters.** Switching department or module resets the simulation node, simulation
+  history, and all drill answers; `CallSimulator`/`Drill` reset on the identity of their memoized
+  per-(module, department) inputs rather than a React `key`, because a keyed element among unkeyed
+  siblings under this parent mis-reconciles and leaves two simulators mounted.
 - **Content authority:** modules are grounded in the real department SOPs — Pediatrics (Aizer Health
   Pediatrics operational SOP) and **OB/GYN authored against the owner-confirmed current-floor
   Women's Health Patient Navigator SOP v1.0, 2026-07-17**. OB/GYN encodes: chart-first scheduling
@@ -339,8 +380,16 @@ training assignments.
   guarded by [src/data/training.test.js](src/data/training.test.js) (catalog integrity, graph
   reachability/termination/strong-ending, source-authority destinations, L&D-only-on-wrong-paths,
   the Pediatrics future-day-booking guard, the **routine-GYN-is-direct / no "almost everything → OB
-  Portal"** guard, and the **serious-symptom-keeps-an-unrelated-refill-on-its-own-TE** guard) and
-  behavior by [src/components/trainingModule.test.jsx](src/components/trainingModule.test.jsx).
+  Portal"** guard, the **serious-symptom-keeps-an-unrelated-refill-on-its-own-TE** guard, and the
+  2026-07-19 **department-scoping** guards — scoping-helper unit tests, valid-stable-department-ID
+  and no-display-string-as-ID checks, a per-department usable-content guard [every domain yields
+  ≥1 lesson, exactly 1 simulation, and ≥1 drill / mistake / quick-ref row / takeaway for BOTH
+  departments], and cross-department leak guards over named routes, providers and workflows) and
+  behavior by [src/components/trainingModule.test.jsx](src/components/trainingModule.test.jsx)
+  (content blocks, simulation paths, drill interaction, the department selector, seeding/re-seeding
+  from the active-department prop, both confirmed-regression strings, provider/route hiding in both
+  directions, department- and module-switch resets, navigator privacy, supervisor cohort
+  navigation, and completion/save-error behavior).
 
 ### F10 — Department Dimension
 - **Purpose:** Same domains measured across Pediatrics, OB/GYN, Adult Medicine, Behavioural Health.
@@ -1902,7 +1951,7 @@ of this file on 2026-07-07 to cut per-session context cost (it was ~55% of the f
   (init → chat/voice turns → `/api/live` relay) for caller consistency. Scored Call QA deliberately
   does not: its caller receives no grading context, expected actions, critical misses, scoring notes,
   rule/workflow metadata, or hidden chart state. Final verification: `npm test` =
-  **1,281/1,281 across 65 files**; Firestore Rules emulator assertions = **76/76**
+  **1,379/1,379 across 67 files**; Firestore Rules emulator assertions = **76/76**
   (51 result authorization + 25 Call QA); production build
   includes the private-runtime bundle scan. GitHub Actions mirrors the
   normal local gate on `main` pushes and PRs: `npm ci` → `npm test` → `npm run build` (no deploy step).
@@ -1936,11 +1985,14 @@ of this file on 2026-07-07 to cut per-session context cost (it was ~55% of the f
 - **Training content:** SOP-grounded (no longer mockup filler) — the rich domain modules (F9) teach
   from the real Pediatrics SOP and the owner-confirmed current-floor OB/GYN SOP v1.0 (2026-07-17),
   with branching call simulations, script pairs, model docs, mistake cards, quick-refs, and drills.
-  Advisory only (nothing scored/persisted). Adult Medicine / Behavioural Health modules will follow
+  Advisory only (nothing scored/persisted). Since the 2026-07-19 hotfix the page is **department-
+  scoped end to end**: one selector in `TrainingModule` scopes every block to "shared + the selected
+  department" via explicit `departments` metadata on catalog items, so Pediatrics-specific and
+  OB/GYN-specific content can never appear under the other department. Adult Medicine / Behavioural Health modules will follow
   once their SOPs land.
 - **Experimental / mockup:**
   - **Adult Medicine and Behavioural Health** are not assessed; **Pediatrics and OB/GYN** are live.
-- **Test coverage:** **1,281 unit tests across 65 files** and **76 Firestore Rules emulator
+- **Test coverage:** **1,379 unit tests across 67 files** and **76 Firestore Rules emulator
   assertions** (51 result authorization + 25 Call QA) after the 2026-07-18 merge-readiness pass
   (calibration-private-bank adaptation, callerCaseFile, randomized selection, contextual audit
   guard + 14-workflow generation smoke, encoding guard, provisioning tool) atop the 2026-07-17
@@ -2065,7 +2117,7 @@ of this file on 2026-07-07 to cut per-session context cost (it was ~55% of the f
   OB/GYN = **37** seed questions (offline fallback) + the **48-item MCQ v2 operating-model bank**
   (24 Pediatrics + 24 OB/GYN) that replaces the weak active bank via a marker-gated
   archive-and-replace migration (bank grows in Firestore per dept) · 4 departments (**Pediatrics
-  + OB/GYN live**, 2 mockup) · **1,281 unit tests across 65 files** + **76 assertions**
+  + OB/GYN live**, 2 mockup) · **1,379 unit tests across 67 files** + **76 assertions**
   across two committed Firestore Rules emulator suites (`npm run test:rules`; require Java, run in
   CI, not part of the unit-test count) ·
   **14** Firestore collections
@@ -2353,7 +2405,7 @@ npm run test:e2e     # run the Playwright browser tests (auto-builds + starts th
 - Heatmap intensity toggle (show % inside matrix cells).
 
 ### Technical Debt
-- **1,281 unit tests across 65 files** as of 2026-07-18 (plus **76 assertions** across two
+- **1,379 unit tests across 67 files** as of 2026-07-19 (plus **76 assertions** across two
   committed Firestore Rules emulator suites, `npm run test:rules`, run separately from the unit-test
   gate). **Role-app
   coverage** (`App`, `Start`,

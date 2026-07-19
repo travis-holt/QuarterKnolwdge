@@ -611,6 +611,7 @@ export default function NavigatorApp({ navigatorId, name, onSignOut }) {
           onBack={() => setView('training')}
           onOpenNavigator={null}
           showCohort={false}
+          department={dept}
           backLabel="← Back to my training"
           completionKind={moduleCompletionKind}
           completed={completions.some((c) => c.domainId === moduleDomain && c.kind === moduleCompletionKind)}

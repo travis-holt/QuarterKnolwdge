@@ -1,7 +1,18 @@
-import { useRef, useState } from 'react';
+import { useMemo, useRef, useState } from 'react';
 import { domainName } from '../data/questions.js';
-import { moduleForDomain } from '../data/training.js';
+import { departmentName } from '../data/departments.js';
+import {
+  moduleForDomain,
+  scopeForDept,
+  belongsToDept,
+  itemText,
+  TRAINING_DEPARTMENTS,
+} from '../data/training.js';
 import { trainingByDomain } from '../lib/scoring.js';
+
+// Normalize any active-department value down to a department that actually has
+// training content (pediatrics is the fallback for the mockup departments).
+const trainingDeptFor = (dept) => (dept === 'obgyn' ? 'obgyn' : 'pediatrics');
 
 // ── Sub-blocks ───────────────────────────────────────────────────────────────
 
@@ -104,28 +115,28 @@ function QuickRef({ quickRef }) {
 const SIM_TONE_LABEL = { good: 'Strong', ok: 'Shaky', bad: 'Misstep' };
 const SIM_VERDICT_LABEL = { strong: 'Strong call', mixed: 'Mixed call', weak: 'Weak call' };
 
-function CallSimulator({ simulations }) {
-  const [active, setActive] = useState(0);
-  const [nodeId, setNodeId] = useState(simulations[0].start);
+// The simulation is chosen upstream by the module's selected department, so this
+// component owns no department state of its own.
+function CallSimulator({ simulation }) {
+  const [nodeId, setNodeId] = useState(simulation.start);
   const [history, setHistory] = useState([]); // committed { caller, choice } turns
 
-  // Reset when the module (simulations) changes — the supported "adjust state
-  // during render" pattern, so switching modules never leaves a stale call on
-  // screen. (A `key` was avoided: mixing keyed + unkeyed siblings under one
-  // parent mis-reconciled and left two simulators mounted.)
-  const simsRef = useRef(simulations);
-  let activeIdx = active;
-  if (simsRef.current !== simulations) {
-    simsRef.current = simulations;
-    activeIdx = 0;
-    setActive(0);
-    setNodeId(simulations[0].start);
+  // Reset when the module OR the department changes. `simulation` is the stable
+  // catalog object for the selected (domain, department) pair, so its identity
+  // is the signal — the supported "adjust state during render" pattern. (A `key`
+  // is deliberately avoided: a keyed element among unkeyed siblings under this
+  // parent mis-reconciles and leaves two simulators mounted at once.)
+  const simRef = useRef(simulation);
+  let activeNodeId = nodeId;
+  if (simRef.current !== simulation) {
+    simRef.current = simulation;
+    activeNodeId = simulation.start;
+    setNodeId(simulation.start);
     setHistory([]);
   }
 
-  const simulation = simulations[activeIdx];
   // Fall back to the start node on the discarded render right after a reset.
-  const node = simulation.nodes[nodeId] ?? simulation.nodes[simulation.start];
+  const node = simulation.nodes[activeNodeId] ?? simulation.nodes[simulation.start];
   const isEnding = Boolean(node.ending);
 
   const choose = (choice) => {
@@ -136,31 +147,11 @@ function CallSimulator({ simulations }) {
     setHistory([]);
     setNodeId(simulation.start);
   };
-  const switchSim = (i) => {
-    setActive(i);
-    setNodeId(simulations[i].start);
-    setHistory([]);
-  };
 
   return (
     <div className="card tsim">
       <div className="tsim__head">
         <span className="tsim__live"><span className="tsim__dot" aria-hidden="true" />Live call simulation</span>
-        {simulations.length > 1 && (
-          <div className="tsim__depts" role="group" aria-label="Choose department scenario">
-            {simulations.map((s, i) => (
-              <button
-                key={i}
-                type="button"
-                className={`tsim__dept${i === activeIdx ? ' is-active' : ''}`}
-                aria-pressed={i === activeIdx}
-                onClick={() => switchSim(i)}
-              >
-                {s.label}
-              </button>
-            ))}
-          </div>
-        )}
         <h2 className="tsim__title">{simulation.title}</h2>
         <p className="tsim__intro">{simulation.intro}</p>
       </div>
@@ -224,7 +215,7 @@ function CallSimulator({ simulations }) {
 function Drill({ drill }) {
   const [picks, setPicks] = useState({}); // { [drillIndex]: optionIndex }
 
-  // Reset answers when the module (drill set) changes — see CallSimulator.
+  // Reset answers when the module OR department (drill set) changes — see CallSimulator.
   const drillRef = useRef(drill);
   if (drillRef.current !== drill) {
     drillRef.current = drill;
@@ -286,6 +277,12 @@ function Drill({ drill }) {
 // mistake breakdowns, a pin-this quick reference, an interactive drill, and key
 // takeaways. Supervisors also see the auto-assigned cohort; navigators pass
 // `showCohort={false}` so other navigators' names never appear.
+//
+// DEPARTMENT SCOPE (single source of truth). This component owns the selected
+// department for the WHOLE page — the call simulation, lessons, lesson points,
+// script pairs, examples, model docs, mistakes, quick-reference rows, drills and
+// takeaways are all filtered to "shared + selected department". Nothing infers a
+// department from the content itself; scope is declared in the catalog data.
 export default function TrainingModule({
   rows,
   domainId,
@@ -296,10 +293,46 @@ export default function TrainingModule({
   completionKind = null,
   completed = false,
   onComplete = null,
+  department = 'pediatrics',
 }) {
   const [saving, setSaving] = useState(false);
   const [completeError, setCompleteError] = useState('');
   const mod = moduleForDomain(domainId);
+
+  // The page-level department. Seeded from the app's active department so an
+  // OB/GYN navigator never opens on Pediatrics content, and switchable here
+  // (supervisors browse both). Re-seeds when the ACTIVE department prop changes,
+  // so a manual switch survives ordinary re-renders.
+  const [selectedDept, setSelectedDept] = useState(() => trainingDeptFor(department));
+  const deptPropRef = useRef(department);
+  if (deptPropRef.current !== department) {
+    deptPropRef.current = department;
+    setSelectedDept(trainingDeptFor(department));
+  }
+
+  // Everything the page renders, scoped to the selected department.
+  const view = useMemo(() => {
+    if (!mod) return null;
+    const lessons = scopeForDept(mod.lessons, selectedDept)
+      .map((lesson) => ({
+        ...lesson,
+        points: scopeForDept(lesson.points, selectedDept),
+        script: scopeForDept(lesson.script, selectedDept),
+        example: lesson.example && belongsToDept(lesson.example, selectedDept) ? lesson.example : null,
+        doc: lesson.doc && belongsToDept(lesson.doc, selectedDept) ? lesson.doc : null,
+      }))
+      // A lesson whose every point belongs to the other department drops out.
+      .filter((lesson) => lesson.points.length > 0);
+    return {
+      lessons,
+      mistakes: scopeForDept(mod.mistakes, selectedDept),
+      quickRefRows: scopeForDept(mod.quickRef?.rows, selectedDept),
+      drill: scopeForDept(mod.drill, selectedDept),
+      simulation: scopeForDept(mod.simulations, selectedDept)[0] ?? null,
+      keyTakeaways: scopeForDept(mod.keyTakeaways, selectedDept),
+    };
+  }, [mod, selectedDept]);
+
   const cohort = trainingByDomain(rows).find((d) => d.domainId === domainId);
 
   if (!mod) {
@@ -322,17 +355,34 @@ export default function TrainingModule({
         <div className="module__meta">
           <span>~{mod.estMinutes} min</span>
           <span>·</span>
-          <span>{mod.lessons.length} lessons</span>
+          <span>{view.lessons.length} lesson{view.lessons.length === 1 ? '' : 's'}</span>
           <span className="module__preview-flag">Grounded in the department SOPs</span>
+        </div>
+        {/* One department control for the entire module — it scopes every block
+            below, not just the call simulation. */}
+        <div className="module__depts" role="group" aria-label="Choose department">
+          {TRAINING_DEPARTMENTS.map((id) => (
+            <button
+              key={id}
+              type="button"
+              className={`module__dept${id === selectedDept ? ' is-active' : ''}`}
+              aria-pressed={id === selectedDept}
+              onClick={() => setSelectedDept(id)}
+            >
+              {departmentName(id)}
+            </button>
+          ))}
         </div>
       </header>
 
       {/* ── Live call simulation (hero practice) ──────────────────────── */}
-      {mod.simulations?.length > 0 && <CallSimulator simulations={mod.simulations} />}
+      {/* Resets internally when the module or department changes — see
+          CallSimulator on why a `key` is not used here. */}
+      {view.simulation && <CallSimulator simulation={view.simulation} />}
 
       {/* ── Lessons ───────────────────────────────────────────────────── */}
       <ol className="lessons">
-        {mod.lessons.map((lesson, i) => (
+        {view.lessons.map((lesson, i) => (
           <li key={i} className="card lesson">
             <div className="lesson__head">
               <span className="lesson__num">{i + 1}</span>
@@ -340,10 +390,10 @@ export default function TrainingModule({
             </div>
             <ul className="lesson__points">
               {lesson.points.map((p, j) => (
-                <li key={j}>{p}</li>
+                <li key={j}>{itemText(p)}</li>
               ))}
             </ul>
-            {lesson.script && <ScriptPairs script={lesson.script} />}
+            {lesson.script.length > 0 && <ScriptPairs script={lesson.script} />}
             {lesson.example && <CallExample example={lesson.example} />}
             {lesson.doc && <ModelDoc doc={lesson.doc} />}
           </li>
@@ -351,20 +401,24 @@ export default function TrainingModule({
       </ol>
 
       {/* ── Where calls go wrong ──────────────────────────────────────── */}
-      {mod.mistakes && <Mistakes mistakes={mod.mistakes} />}
+      {view.mistakes.length > 0 && <Mistakes mistakes={view.mistakes} />}
 
       {/* ── Quick reference ───────────────────────────────────────────── */}
-      {mod.quickRef && <QuickRef quickRef={mod.quickRef} />}
+      {view.quickRefRows.length > 0 && (
+        <QuickRef quickRef={{ title: mod.quickRef.title, rows: view.quickRefRows }} />
+      )}
 
       {/* ── Interactive drill ─────────────────────────────────────────── */}
-      {mod.drill && <Drill key={domainId} drill={mod.drill} />}
+      {/* The scoped drill array is memoized per (module, department), so Drill's
+          own identity check clears the answers whenever either changes. */}
+      {view.drill.length > 0 && <Drill drill={view.drill} />}
 
       {/* ── Key takeaways ─────────────────────────────────────────────── */}
       <div className="card module__takeaways">
         <h2 className="overview__panel-title">Key takeaways</h2>
         <ul className="takeaways">
-          {mod.keyTakeaways.map((t, i) => (
-            <li key={i}>{t}</li>
+          {view.keyTakeaways.map((t, i) => (
+            <li key={i}>{itemText(t)}</li>
           ))}
         </ul>
       </div>
