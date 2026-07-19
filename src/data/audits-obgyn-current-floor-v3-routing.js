@@ -47,7 +47,7 @@ export default [
     "difficulty": "hard",
     "opening": "I am pregnant and having severe pelvic pain.",
     "detail": "I noticed an urgent slot online, so can you put me there?",
-    "error": "The open OB Urgent slot is enough authorization, so I'll book it without nurse approval.",
+    "error": "The open urgent slot is enough authorization, so I will schedule the OB Urgent visit without nurse approval.",
     "modelExplanation": "The agent treated slot availability as clinical authorization.",
     "expectedCorrection": "Create or update a High Priority TE to OB Portal, use the urgent channel, and book an urgent appointment only after written nurse/provider approval.",
     "requiredChartFacts": ["Serious pregnancy-related pain was reported.", "No written nurse/provider approval exists.", "An OB Urgent slot is open."]
@@ -60,7 +60,7 @@ export default [
     "difficulty": "hard",
     "opening": "My bleeding has become much heavier since I called this morning.",
     "detail": "There is already a TE, but the symptoms are worse now.",
-    "error": "I'll update the TE, but there is no need to use the urgent Intermedia channel.",
+    "error": "No need to use the urgent channel; updating the TE is enough.",
     "modelExplanation": "The agent omitted the required urgent communication step for worsening serious symptoms.",
     "expectedCorrection": "Use Take Action on the existing TE, mark High Priority as needed, and message the Women's Health OB Urgent Calls Intermedia channel.",
     "requiredChartFacts": ["Serious bleeding worsened.", "An existing TE is open.", "Urgent-channel escalation is required in addition to the TE."]
