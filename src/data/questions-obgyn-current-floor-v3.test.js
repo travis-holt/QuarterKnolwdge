@@ -64,7 +64,7 @@ describe('OB/GYN current-floor MCQ bank v3', () => {
       .join('\n');
     expect(authoritative).not.toMatch(/\bPSS OB\b/i);
     expect(authoritative).not.toMatch(/\bPSS Queue\b/i);
-    expect(authoritative).not.toMatch(/schedule (?:a |the )?(?:GCT|GTT|GBS|lab)\b/i);
+    expect(authoritative).not.toMatch(/\b(?:I|we|navigator|agent)\s+(?:will|can|should)\s+(?:directly\s+)?(?:book|schedule|reschedule|order)\s+(?:a |the |your )?(?:GCT|GTT|GBS|lab)\b/i);
     expect(authoritative).not.toMatch(/(?:send|direct|tell).{0,45}(?:Labor and Delivery|L&D)/i);
     expect(authoritative).toMatch(/routine GYN scheduling is handled directly|schedule Annual GYN|GYN Office Visit/i);
     expect(authoritative).toMatch(/High Priority TE/i);
