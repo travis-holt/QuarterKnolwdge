@@ -209,6 +209,78 @@ describe('call simulations', () => {
   });
 });
 
+// ── Current-floor source-authority guards ────────────────────────────────────
+// The OB/GYN content is authored against the owner-confirmed current-floor
+// Women's Health SOP (v1.0, 2026-07-17). These guards lock the destinations and
+// escalation workflow that SOP mandates so a future content edit can't silently
+// reintroduce a legacy rule (e.g. "PSS OB") or an out-of-scope instruction.
+const catalogText = JSON.stringify(TRAINING_MODULES);
+const pedsSims = () => allSims().filter((x) => x.sim.label === 'Pediatrics');
+// Pre-booking a future-day "same-day" sick slot: "book … tomorrow" in either order.
+const FUTURE_DAY_BOOKING = /book[^.]{0,80}tomorrow|tomorrow[^.]{0,80}book/i;
+
+describe('current-floor source authority (OB/GYN)', () => {
+  it('never uses the legacy PSS OB routing destination anywhere', () => {
+    expect(catalogText).not.toMatch(/\bPSS\s*OB\b/i);
+  });
+
+  it('routes to the owner-confirmed OB destinations', () => {
+    expect(catalogText).toContain('OB Portal'); // questions / triage / missing orders / labs / results
+    expect(catalogText).toContain('Rebecca Wood'); // all MFM / high-risk
+    expect(catalogText).toContain('Waiting List Portal'); // Dr. Bank annual / fertility
+  });
+
+  it('teaches the full serious-symptom escalation workflow', () => {
+    // Gather → High Priority TE → OB Portal → the Women's Health OB Urgent Calls
+    // Intermedia channel → follow the clinical team.
+    expect(catalogText).toMatch(/High Priority/);
+    expect(catalogText).toMatch(/OB Urgent Calls/); // the urgent Intermedia channel
+    const routing = moduleForDomain('routing');
+    const routingText = JSON.stringify(routing);
+    expect(routingText).toContain('High Priority');
+    expect(routingText).toContain('OB Portal');
+    expect(routingText).toContain('OB Urgent Calls');
+  });
+
+  it('keeps New OB pairing and OB Verified guidance in scheduling', () => {
+    const scheduling = JSON.stringify(moduleForDomain('scheduling'));
+    expect(scheduling).toContain('New OB');
+    expect(scheduling).toContain('OB Verified');
+    expect(scheduling).toMatch(/back-to-back/i);
+    expect(scheduling).toMatch(/Confirmation of Pregnancy/i); // unknown/unreliable LMP path
+  });
+});
+
+describe('current-floor source authority (Pediatrics same-day sick)', () => {
+  it('never teaches a future-day same-day-sick booking on a correct path', () => {
+    for (const { m, sim } of pedsSims()) {
+      for (const [id, node] of Object.entries(sim.nodes)) {
+        if (node.choices) {
+          node.choices
+            .filter((c) => c.tone === 'good')
+            .forEach((c) => {
+              expect(
+                FUTURE_DAY_BOOKING.test(c.text),
+                `good choice in ${m.domainId}/${sim.label} node ${id} pre-books a future-day sick slot`,
+              ).toBe(false);
+            });
+        } else if (node.ending.verdict === 'strong') {
+          expect(FUTURE_DAY_BOOKING.test(`${node.ending.summary} ${node.ending.lesson}`)).toBe(false);
+        }
+      }
+    }
+  });
+
+  it('the intake same-day node keeps the corrected "call tomorrow" wording', () => {
+    const intake = moduleForDomain('intake');
+    const peds = intake.simulations.find((s) => s.label === 'Pediatrics');
+    const good = peds.nodes.n3.choices.find((c) => c.tone === 'good');
+    expect(good.text).toMatch(/only books for the day itself/i);
+    expect(good.text).toMatch(/call us tomorrow/i);
+    expect(good.text).not.toMatch(/book it as a same-day visit tomorrow/i);
+  });
+});
+
 describe('moduleForDomain', () => {
   it('returns the module for a known domain and null otherwise', () => {
     expect(moduleForDomain('routing')?.domainId).toBe('routing');

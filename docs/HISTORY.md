@@ -1,5 +1,60 @@
 # Development History - Knowledge Check
 
+### 2026-07-19 - PR #34 recovery + cleanup: rich SOP-grounded training modules (F9)
+- **What shipped:** the abandoned PR #34 rich-training feature, recovered onto current `main`
+  (`be8f7bb`, after PR #35/#36) and flattened into the intended project structure. Each of the six
+  domain modules now teaches the navigator *decision* — a branching **live call simulation** with a
+  Pediatrics/OB-GYN department toggle, "Say / Not" script pairs, annotated call examples, a model TE
+  document, mistake→consequence→instead cards, a pin-this quick-reference, and interactive decision
+  drills. Advisory only: nothing is scored or persisted; the assignment logic still reads only
+  `domainId`.
+- **Cleanup (why the recovery form was not merge-acceptable):** the recovery branch imported an
+  entire older global stylesheet (`src/styles-pr34-base.css`, 6.7k lines) into a cascade-layer shim
+  (`src/styles-training.css`), re-exported the renderer through a wrapper
+  (`src/components/TrainingModuleRich.jsx`), and kept a duplicate catalog
+  (`src/data/training-rich-catalog.js`) that `training.js` deep-cloned and runtime-patched. All of
+  that was removed. The full `TRAINING_MODULES` catalog now lives directly in
+  [src/data/training.js](src/data/training.js); the rich renderer directly in
+  [src/components/TrainingModule.jsx](src/components/TrainingModule.jsx); and only the training-
+  specific selectors (`.tsim*`, `.tscript*`, `.texample*`, `.tdoc*`, `.tmistake(s)*`, `.tquickref*`,
+  `.tdrill*` + their keyframes/responsive rules) were extracted into
+  [src/styles.css](src/styles.css). No legacy global selectors (nav, matrix, gate, SOP manager, Call
+  QA, typography, etc.) were copied.
+- **Content authority (OB/GYN):** authored against the owner-confirmed current-floor Women's Health
+  Patient Navigator SOP v1.0 (2026-07-17). Encodes chart-first scheduling (Encounters / Medical
+  Summary RTO / last note / open TEs, never the patient's wording); routing to **OB Portal**
+  (questions/triage/missing orders/labs/results/procedures/transfer), **Rebecca Wood** (all MFM), and
+  the **Waiting List Portal** (Dr. Bank annual/fertility — never scheduled directly); **no `PSS OB`**
+  language anywhere; the serious-symptom workflow (gather without triaging → High Priority TE to OB
+  Portal → the *Women's Health OB Urgent Calls* Intermedia channel → follow the clinical team, never
+  dispatch to Labor & Delivery or decide urgency); an open OB/GYN Urgent slot is **not**
+  authorization; New OB = a back-to-back same-day 30-min sonogram + 30-min provider visit with the
+  second record **OB Verified**, reliable LMP → New OB directly, unknown/unreliable LMP → 15-min
+  Confirmation of Pregnancy; and TE discipline (Take Action for the same issue, a separate TE for a
+  different one, priority via the High Priority checkbox, never the typed word "urgent"). L&D appears
+  only on explicitly-wrong choices and weak/mixed teaching endings, never a correct path.
+- **Pediatrics same-day-sick correction (applied in the data):** a same-day sick visit books **only
+  on the day itself**. A correct path offers availability today; when tomorrow suits the parent
+  better it instructs the parent to *call tomorrow for that day's* availability. The recovery branch
+  taught pre-booking tomorrow's "same-day" slot as correct on the intake simulation's strong path;
+  that node's good-choice text/feedback and the `end_sameday` lesson are corrected directly in
+  `training.js` (not via a runtime clone-and-patch). All strong Pediatrics paths were audited for the
+  same defect and are clean.
+- **Tests:** [src/data/training.test.js](src/data/training.test.js) keeps the catalog-integrity and
+  simulation-graph guards (every domain once; valid base/optional fields; exactly one correct drill
+  option; valid start; every `next` exists; every node reachable; acyclic/terminating; ≥1 strong
+  ending; L&D only on wrong paths) and gains the source-authority guards merged from the deleted
+  `training-current-floor.test.js` (no `PSS OB`; OB Portal / Rebecca Wood / Waiting List Portal
+  present; serious-symptom High Priority + OB Portal + OB Urgent Calls; New OB pairing + OB Verified;
+  no future-day Pediatrics same-day booking on a correct path).
+  [src/components/trainingModule.test.jsx](src/components/trainingModule.test.jsx) covers rich-content
+  rendering, department-toggle reset, module-switch reset of both simulation and drill, strong/weak
+  debriefs, restart, drill lock/independence, navigator-hides-cohort, supervisor-shows-cohort, and
+  the completion control (fires `onComplete`, keeps a save failure visible, renders the completed
+  state).
+- **Boundaries held:** advisory-only training unchanged; no scoring, persistence, Firestore, API,
+  auth, Call QA, or PR #35/#36 behavior touched. No merge or deploy performed by this change.
+
 ### 2026-07-18 - PR #36 blocker follow-up: safe 403 rotation + saved-grading wait
 - **403 rotation restored:** a 403 now rotates to another configured key because one stale key must
   not randomly break every Gemini endpoint. HTTP 400/401 remain immediate fatal request failures;

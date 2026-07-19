@@ -11,7 +11,20 @@
 > [§8 Current System State](#8-current-system-state) and [§15 Current Priorities](#15-current-priorities)
 > accurate at all times.
 >
-> **Last updated:** 2026-07-18 (PR #35 merge-readiness pass — current main (`d4ee320`, PR #33) merged
+> **Last updated:** 2026-07-19 (PR #34 recovery + cleanup — the rich, SOP-grounded training modules
+> (F9) are now flattened into the intended structure: the full `TRAINING_MODULES` catalog lives
+> directly in `src/data/training.js` (Pediatrics same-day-sick correction applied in the data, not a
+> runtime patch), the rich renderer directly in `src/components/TrainingModule.jsx`, and the
+> training-only CSS directly in `src/styles.css`. The temporary recovery wrappers
+> (`TrainingModuleRich.jsx`, `training-rich-catalog.js`), the imported legacy global stylesheet
+> (`styles-pr34-base.css`) and its cascade-layer shim (`styles-training.css`), and the standalone
+> `training-current-floor.test.js` were removed; its source-authority guards were merged into
+> `training.test.js`. OB/GYN content is authored against the owner-confirmed current-floor Women's
+> Health SOP v1.0 (2026-07-17): OB Portal / Rebecca Wood / Waiting List Portal routing, no `PSS OB`,
+> serious-symptom escalation (High Priority TE → OB Portal → OB Urgent Calls Intermedia channel,
+> never L&D dispatch), New OB pairing + OB Verified, and TE discipline. Training remains advisory
+> (nothing scored/persisted). PR #35 and PR #36 work is untouched. See docs/HISTORY.md 2026-07-19.
+> Prior — **Last updated:** 2026-07-18 (PR #35 merge-readiness pass — current main (`d4ee320`, PR #33) merged
 > in with the full calibration/readiness architecture preserved; grader prompt version is now
 > `call-qa-grader-v3` with its single source of truth in `api/_qa-grading-versions.js`; calibration/
 > pilot-smoke run on committed non-production synthetic descriptors or an ignored local
@@ -158,7 +171,7 @@
 - Per-domain scoring → Learning/Solid/Can-Teach levels with editable thresholds. ✅ Done.
 - Capability matrix (hero) with column gaps, can-teach roster, readiness tally. ✅ Done.
 - Analytics dashboards (team overview + per-navigator). ✅ Done.
-- Auto-assign training by weak point, with previewable mockup content. ✅ Done.
+- Auto-assign training by weak point, with previewable SOP-grounded module content. ✅ Done.
 - Department dimension (Pediatrics + 3 mockup departments). ✅ Done.
 - A persistent public deployment for showcasing. ✅ Done (Railway).
 
@@ -277,13 +290,46 @@ training assignments.
   ([src/data/config.js](src/data/config.js)); [src/components/Training.jsx](src/components/Training.jsx).
 - **Status:** Complete.
 
-### F9 — Training Module Preview (mockup content)
-- **Purpose:** Previewable lesson content per domain module.
-- **User benefit:** Shows what a navigator would actually receive.
-- **Technical implementation:** [src/data/training.js](src/data/training.js) (`TRAINING_MODULES`
-  with `lessons` + `keyTakeaways`); [src/components/TrainingModule.jsx](src/components/TrainingModule.jsx)
-  shows lessons, takeaways, and the auto-assigned cohort.
-- **Status:** Complete (content is **mockup**, flagged in-UI; swap for real materials later).
+### F9 — Rich Training Modules (SOP-grounded, interactive)
+- **Purpose:** A full training module per knowledge domain that teaches the navigator *decision*
+  — the exact phrasing, the routing, and the documentation — not SOP-wording recall.
+- **User benefit:** Each module is a practice surface: a branching **live call simulation** with a
+  department toggle, "Say / Not" script pairs, annotated call examples, a model TE document,
+  "where calls go wrong" mistake→consequence→instead cards, a pin-this quick-reference, and
+  interactive decision drills — advisory only (nothing scored or persisted).
+- **Technical implementation:** [src/data/training.js](src/data/training.js) holds the full
+  `TRAINING_MODULES` catalog directly (one entry per domain: `lessons`
+  [with optional `script`/`example`/`doc`], `mistakes`, `quickRef`, `drill`, `simulations`,
+  `keyTakeaways`); the assignment logic still only reads `domainId`.
+  [src/components/TrainingModule.jsx](src/components/TrainingModule.jsx) renders every block and
+  owns the interactive state: the `CallSimulator` (branching Patient/Navigator turns → strong/mixed/
+  weak debrief, restart, and a reset-on-render guard when the module or department changes) and the
+  `Drill` (pick locks the question, each question independent, reset on module change). Supervisors
+  see the auto-assigned cohort (clickable to the navigator dashboard); navigators pass
+  `showCohort={false}` so other navigators' names never appear, and get the completion control
+  (which surfaces a save failure as an inline error).
+- **Content authority:** modules are grounded in the real department SOPs — Pediatrics (Aizer Health
+  Pediatrics operational SOP) and **OB/GYN authored against the owner-confirmed current-floor
+  Women's Health Patient Navigator SOP v1.0, 2026-07-17**. OB/GYN encodes: chart-first scheduling
+  (Encounters / Medical Summary RTO / last note / open TEs, never the patient's wording); routing to
+  **OB Portal** (questions/triage/missing orders/labs/results/procedures/transfer), **Rebecca Wood**
+  (all MFM), and the **Waiting List Portal** (Dr. Bank annual/fertility — never scheduled directly);
+  **no `PSS OB`** language; the serious-symptom workflow (gather without triaging → High Priority TE
+  to OB Portal → the *Women's Health OB Urgent Calls* Intermedia channel → follow the clinical team,
+  never dispatch to Labor & Delivery or decide urgency); an open OB/GYN Urgent slot is **not**
+  authorization; New OB = a back-to-back same-day 30-min sonogram + 30-min provider visit with the
+  second record **OB Verified**, reliable LMP → New OB directly, unknown/unreliable LMP → 15-min
+  Confirmation of Pregnancy; and TE discipline (Take Action for the same issue, a separate TE for a
+  different one, priority via the High Priority checkbox never the typed word "urgent"). Pediatrics
+  keeps the corrected same-day-sick rule: a same-day sick visit books **only on the day itself** — a
+  correct path offers availability today, and when tomorrow suits the parent better it instructs the
+  parent to call tomorrow for that day's availability; pre-booking a future-day "same-day" slot is
+  never taught as correct.
+- **Status:** Complete. Grounded in the department SOPs (not mockup filler). Content and graphs are
+  guarded by [src/data/training.test.js](src/data/training.test.js) (catalog integrity, graph
+  reachability/termination/strong-ending, source-authority destinations, L&D-only-on-wrong-paths,
+  and the Pediatrics future-day-booking guard) and behavior by
+  [src/components/trainingModule.test.jsx](src/components/trainingModule.test.jsx).
 
 ### F10 — Department Dimension
 - **Purpose:** Same domains measured across Pediatrics, OB/GYN, Adult Medicine, Behavioural Health.
@@ -1876,8 +1922,12 @@ of this file on 2026-07-07 to cut per-session context cost (it was ~55% of the f
   the "Strength across departments" strip are clickable buttons — clicking jumps directly to that
   dept's dashboard (if result exists) or check (if not). All assessed dept results are pre-fetched
   on mount so the strip shows real scores, not "Take the check →", for depts already completed.
+- **Training content:** SOP-grounded (no longer mockup filler) — the rich domain modules (F9) teach
+  from the real Pediatrics SOP and the owner-confirmed current-floor OB/GYN SOP v1.0 (2026-07-17),
+  with branching call simulations, script pairs, model docs, mistake cards, quick-refs, and drills.
+  Advisory only (nothing scored/persisted). Adult Medicine / Behavioural Health modules will follow
+  once their SOPs land.
 - **Experimental / mockup:**
-  - Training **content** is mockup (flagged in UI). Logic is real.
   - **Adult Medicine and Behavioural Health** are not assessed; **Pediatrics and OB/GYN** are live.
 - **Test coverage:** **1,281 unit tests across 65 files** and **76 Firestore Rules emulator
   assertions** (51 result authorization + 25 Call QA) after the 2026-07-18 merge-readiness pass
@@ -2602,7 +2652,9 @@ npm run test:e2e     # run the Playwright browser tests (auto-builds + starts th
   provisioned to production; rules deployed; live microphone smoke still outstanding).
 - Adult Medicine and Behavioural Health remain mockup — each needs an owner-provided SOP before
   they can become live checks.
-- Real training materials needed to replace mockup module content.
+- Adult Medicine and Behavioural Health training modules (F9) still need their SOP-grounded content
+  once those departments' SOPs land; the Pediatrics and OB/GYN modules are now SOP-grounded, not
+  mockup.
 
 **Upcoming milestones:**
 - ✅ First automated tests for `scoring.js` — done 2026-06-23 (Vitest, now 46 tests).

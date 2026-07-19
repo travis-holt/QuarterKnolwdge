@@ -196,6 +196,19 @@ describe('TrainingModule drill interaction', () => {
     const second = screen.getByRole('group', { name: 'Drill scenario 2' });
     within(second).getAllByRole('button').forEach((b) => expect(b.disabled).toBe(false));
   });
+
+  it('switching modules resets drill answers (fresh, unlocked options)', () => {
+    const { rerender } = render(<TrainingModule {...baseProps} domainId="routing" />);
+    const first = screen.getByRole('group', { name: 'Drill scenario 1' });
+    fireEvent.click(within(first).getAllByRole('button')[0]);
+    // Answered → locked.
+    within(first).getAllByRole('button').forEach((b) => expect(b.disabled).toBe(true));
+
+    rerender(<TrainingModule {...baseProps} domainId="boundaries" />);
+    const fresh = screen.getByRole('group', { name: 'Drill scenario 1' });
+    // The new module's drill is unanswered — every option is clickable again.
+    within(fresh).getAllByRole('button').forEach((b) => expect(b.disabled).toBe(false));
+  });
 });
 
 describe('TrainingModule roles', () => {
@@ -215,5 +228,53 @@ describe('TrainingModule roles', () => {
   it('shows the cohort panel for supervisors', () => {
     render(<TrainingModule {...baseProps} />);
     expect(screen.getByText('Auto-assigned to')).toBeTruthy();
+  });
+
+  it('a navigator marking the module complete calls onComplete with the kind', async () => {
+    const onComplete = vi.fn().mockResolvedValue(undefined);
+    render(
+      <TrainingModule
+        {...baseProps}
+        showCohort={false}
+        completionKind="module"
+        onComplete={onComplete}
+      />,
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'Mark module complete' }));
+    // The action is async; wait for the save call to fire with the step kind.
+    // (`completed` is a parent-controlled prop, so the label only flips once the
+    // parent re-renders with completed=true — see the completed-prop case below.)
+    await vi.waitFor(() => expect(onComplete).toHaveBeenCalledWith('module'));
+    expect(screen.queryByRole('alert')).toBeNull();
+  });
+
+  it('renders the completed state when the parent marks the step done', () => {
+    render(
+      <TrainingModule
+        {...baseProps}
+        showCohort={false}
+        completionKind="module"
+        completed
+        onComplete={vi.fn()}
+      />,
+    );
+    const btn = screen.getByRole('button', { name: '✓ Completed' });
+    expect(btn.disabled).toBe(true);
+  });
+
+  it('keeps a failed completion save visible as an inline error', async () => {
+    const onComplete = vi.fn().mockRejectedValue(new Error('Network down'));
+    render(
+      <TrainingModule
+        {...baseProps}
+        showCohort={false}
+        completionKind="module"
+        onComplete={onComplete}
+      />,
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'Mark module complete' }));
+    // The error surfaces and the button returns to a retry-able state.
+    expect(await screen.findByText('Network down')).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Mark module complete' })).toBeTruthy();
   });
 });
