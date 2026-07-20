@@ -58,11 +58,24 @@ describe('invariant: shared 0–100 scale and thresholds', () => {
   });
 
   it('levels derive from scoreToLevel with the documented bands everywhere', () => {
-    expect(THRESHOLDS).toEqual({ learning: 60, canTeach: 85 });
-    expect(scoreToLevel(59)).toBe('learning');
-    expect(scoreToLevel(60)).toBe('solid');
-    expect(scoreToLevel(84)).toBe('solid');
-    expect(scoreToLevel(85)).toBe('canTeach');
+    // Capability bands (2026-07-20 redesign): 0–39 Critical · 40–64 Learning ·
+    // 65–89 Solid · 90–100 Can-Teach. Non-overlapping, centralized in config.js.
+    expect(THRESHOLDS).toEqual({ critical: 40, solid: 65, canTeach: 90 });
+    expect(scoreToLevel(0)).toBe('critical');
+    expect(scoreToLevel(39)).toBe('critical');
+    expect(scoreToLevel(40)).toBe('learning');
+    expect(scoreToLevel(64)).toBe('learning');
+    expect(scoreToLevel(65)).toBe('solid');
+    expect(scoreToLevel(89)).toBe('solid');
+    expect(scoreToLevel(90)).toBe('canTeach');
+    expect(scoreToLevel(100)).toBe('canTeach');
+  });
+
+  it('the capability pass mark is independent of the Call QA rubric pass mark', () => {
+    // QA_PASS_THRESHOLD (85) grades one call against the rubric; THRESHOLDS
+    // classifies a navigator's six-domain average. They are separate scales and
+    // must never be conflated.
+    expect(QA_PASS_THRESHOLD).not.toBe(THRESHOLDS.canTeach);
   });
 
   it('the QA pass mark is the documented 85 and the review margin absorbs rounding', () => {

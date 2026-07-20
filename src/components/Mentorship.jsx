@@ -36,8 +36,10 @@ export default function Mentorship({ rows, savedPairings = [], onSavePairing, on
       <header className="overview__head">
         <h1 className="overview__title">Mentorship</h1>
         <p className="overview__lede">
-          Load-balanced mentor pairings from the current capability map. Assign a pairing to persist
-          it — outcome deltas update automatically as mentees retake the check.
+          Load-balanced mentor pairings from the current capability map. A navigator may mentor a
+          domain only when they are <strong>Can-Teach overall</strong> and scored at least{' '}
+          <strong>90% in that domain</strong>. Assign a pairing to persist it — outcome deltas update
+          automatically as mentees retake the check.
         </p>
       </header>
 
@@ -77,10 +79,10 @@ export default function Mentorship({ rows, savedPairings = [], onSavePairing, on
                           {p.menteeName}
                         </button>
                         <span
-                          className="level-chip"
-                          style={{ background: LEVELS[p.menteeLevel]?.color, color: LEVELS[p.menteeLevel]?.text, fontSize: '0.7rem', padding: '1px 8px' }}
+                          className="score-chip"
+                          style={{ background: LEVELS[p.menteeDomainBand ?? p.menteeLevel]?.tint, fontSize: '0.7rem', padding: '1px 8px' }}
                         >
-                          {LEVELS[p.menteeLevel]?.label}
+                          {p.baselineDomainScore ?? p.baselineScore ?? 0}% in this domain
                         </span>
                       </div>
                     </div>
@@ -144,9 +146,12 @@ export default function Mentorship({ rows, savedPairings = [], onSavePairing, on
       {readiness.length > 0 && (
         <div className="card overview__panel">
           <h2 className="overview__panel-title">Mentor capacity</h2>
-          <p className="readoff__sub">Navigators by Can-Teach depth — deepest pool is highest load capacity.</p>
+          <p className="readoff__sub">
+            Only navigators who are Can-Teach overall can carry pairings. Domain depth is shown as
+            supporting context.
+          </p>
           <ul className="readoff__list">
-            {readiness.slice(0, 8).map((r) => {
+            {readiness.filter((r) => r.readyForMore).slice(0, 8).map((r) => {
               const currentLoad = savedPairings.filter(
                 (p) => p.mentorName === r.name && p.status === 'active'
               ).length;
@@ -155,7 +160,10 @@ export default function Mentorship({ rows, savedPairings = [], onSavePairing, on
                   <button className="linkbtn ac__name" onClick={() => onOpenNavigator(r.name)}>
                     {r.name}
                   </button>
-                  <span className="ac__note">{r.canTeachCount} Can-Teach domains</span>
+                  <span className="ac__note">
+                    {r.overallScore}% overall · Can-Teach
+                    {' · '}{r.canTeachDomainCount} domain{r.canTeachDomainCount === 1 ? '' : 's'} at 90%+
+                  </span>
                   {currentLoad > 0 && (
                     <span className="ac__note">{currentLoad} active pairing{currentLoad !== 1 ? 's' : ''}</span>
                   )}

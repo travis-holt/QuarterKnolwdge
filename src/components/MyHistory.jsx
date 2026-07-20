@@ -1,7 +1,8 @@
 import { useState, useEffect } from 'react';
 import { domainName } from '../data/questions.js';
 import { LEVELS } from '../data/config.js';
-import { scoreToLevel, optionPoints } from '../lib/scoring.js';
+import { domainBand, overallStatus, optionPoints } from '../lib/scoring.js';
+import { OverallBadge } from './OverallStatus.jsx';
 import { getResultHistory } from '../lib/db.js';
 import { isFirebaseConfigured } from '../lib/firebase.js';
 import { timestampMillis } from '../lib/time.js';
@@ -93,20 +94,30 @@ export default function MyHistory({ navigatorId, department = 'pediatrics', dept
                   <span className="tag">{TYPE_LABEL[h.assessmentType] ?? 'Assessment'}</span>
                   {i === 0 && <span className="tag tag--accent">Latest</span>}
                 </div>
+                {overallStatus(h.scores).score != null && (
+                  <p className="history__overall">
+                    <OverallBadge
+                      score={overallStatus(h.scores).score}
+                      level={overallStatus(h.scores).level}
+                      label={overallStatus(h.scores).label}
+                      complete={overallStatus(h.scores).complete}
+                      size="sm"
+                    />
+                  </p>
+                )}
+                {/* Domain scores are diagnostic evidence — score tints, no level labels. */}
                 <div className="chip-wrap history__chips">
-                  {Object.entries(h.scores ?? {}).map(([domainId, pct]) => {
-                    const lvl = LEVELS[scoreToLevel(pct)];
-                    return (
-                      <span
-                        key={domainId}
-                        className="level-chip"
-                        style={{ background: lvl.color, color: lvl.text }}
-                        title={`${domainName(domainId)}: ${Math.round(pct)}%`}
-                      >
-                        {domainName(domainId)} · {Math.round(pct)}%
-                      </span>
-                    );
-                  })}
+                  {Object.entries(h.scores ?? {}).map(([domainId, pct]) => (
+                    <span
+                      key={domainId}
+                      className="score-chip"
+                      style={{ background: LEVELS[domainBand(pct)].tint }}
+                      title={`${domainName(domainId)}: ${Math.round(pct)}%`}
+                    >
+                      {domainName(domainId)} · {Math.round(pct)}%
+                      {pct < 40 && <strong> · Critical gap</strong>}
+                    </span>
+                  ))}
                 </div>
               </li>
             ))}

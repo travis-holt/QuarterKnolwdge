@@ -1,4 +1,191 @@
-# Development History - Knowledge Check
+﻿# Development History - Knowledge Check
+
+## 2026-07-20 — One official capability status per navigator per department
+
+**This reverses an original product principle.** Since 2026-06-23 the app deliberately produced
+"per-domain scoring, never a single total". That optimised for actionability but made the
+supervisor experience unusable: with six domain levels per person per department, a supervisor had
+to reconcile six separate classifications to answer "how is this navigator doing?" — and different
+readers reconciled them differently. Each department assessment now produces **exactly one official
+capability status**, calculated from the **arithmetic mean of all six domain scores**. The
+individual domain percentages remain visible everywhere as **diagnostic evidence** for targeted
+training, coaching, development paths, trends, critical-gap alerts, question-health evidence, and
+safe mentor qualification.
+
+Supervisors now read:
+
+```
+72% Overall · Solid
+```
+
+### The exact bands
+
+Non-overlapping, centralized in `src/data/config.js`, with every boundary pinned by tests:
+
+| Range | Status |
+|-------|--------|
+| 0–39 | **Critical** |
+| 40–64 | **Learning** |
+| 65–89 | **Solid** |
+| 90–100 | **Can-Teach** |
+
+`0 → Critical · 39 → Critical · 40 → Learning · 64 → Learning · 65 → Solid · 89 → Solid ·
+90 → Can-Teach · 100 → Can-Teach`.
+
+```js
+export const THRESHOLDS = { critical: 40, solid: 65, canTeach: 90 };
+```
+
+A fourth **Critical** band was added because the previous three-band scale had no way to separate
+"needs development" from "needs attention now".
+
+### Colour scheme
+
+A four-step **Burgundy → Orange → Gold → Green** progression replaces the old three-step traffic
+light. Every level carries a strong `color`, a readable `text`, and a light `tint`:
+
+| Level | color | text | tint |
+|-------|-------|------|------|
+| Critical | `#8B1E2D` | `#FFFFFF` | `#F4DADD` |
+| Learning | `#C9682C` | `#FFFFFF` | `#F7E1D2` |
+| Solid | `#D8A72E` | `#3F3210` | `#F6EBC8` |
+| Can-Teach | `#347A4D` | `#FFFFFF` | `#DCECDF` |
+
+**Strong colours** are reserved for the official overall badge. **Tints** wash the diagnostic domain
+score cells, bars and critical-gap callouts. Mirrored into CSS as `--level-{critical,learning,solid,
+canteach}` plus `-tint` variants. **Status is never communicated by colour alone** — every badge and
+chip renders the percentage and the written label, and a sub-40 domain carries explicit
+"Critical gap" text.
+
+### The averaging formula
+
+One canonical implementation in `src/lib/scoring.js`; `departmentOverall()` became a thin alias of
+`overallScore()` so exactly **one** averaging formula exists in the app.
+
+```
+92 + 88 + 96 + 90 + 94 + 86 = 546
+546 ÷ 6 = 91          →  91% Overall · Can-Teach
+```
+
+Rules enforced by tests: all six configured domains; rounding **only after** the complete average;
+never blending MCQ / Spot the Error / Call QA; never averaging across departments; the existing
+active-result selection preserved; **no Firestore migration** — status is derived at runtime from
+the `scores` object result documents already carry.
+
+### Missing-domain safety
+
+An incomplete profile can never be inflated. `overallComplete()` requires all six domains to be
+numeric; `overallStatus()` labels an incomplete profile **"Incomplete"**; and `overallLevel()` caps
+it at `learning` (or `critical` when genuinely low). So `{ intake: 100 }` reports 100% across 1 of 6
+domains but resolves to `learning`, never `canTeach`.
+
+A useful consequence: because the cap makes `overallLevel === 'canTeach'` imply completeness, every
+downstream mentor and readiness check inherits the safety by construction rather than re-checking.
+
+### Domain scores stay diagnostic — and critical gaps stay loud
+
+Domain percentages keep the same bands, but only as **score ranges** driving tints and training
+priority. Nothing renders "Routing · Solid" any more. A domain below 40 is flagged as a
+**Critical gap** even when the overall status is higher:
+
+```
+Overall: 72% · Solid
+Routing: 34% · Critical gap
+```
+
+The navigator remains officially Solid; the supervisor still gets the urgent Routing warning.
+`buildMatrixRows` rows now expose `overallScore` / `overallLevel` / `overallComplete` /
+`overallLabel` as the official fields and `domainDevelopmentBands` for diagnostics, with `levels`
+retained as a deprecated read-only alias so no legacy caller breaks.
+
+### Targeted training is preserved and independent of the overall status
+
+Training is assigned **purely from individual domain scores**:
+
+| Domain score | Priority | Assignment | Rank |
+|---|---|---|---|
+| 0–39 | Critical | required | 0 |
+| 40–64 | Required | required | 1 |
+| 65–89 | Stretch | optional | 2 |
+| 90–100 | — | none | — |
+
+A navigator who is **Can-Teach overall (91%) still receives a Required assignment for Routing at
+58%** — a high average never suppresses a weak-domain assignment. Explanations now cite the measured
+score ("Assigned because Routing scored 54%", "Immediate focus because Routing scored 34%") instead
+of a level name.
+
+### Mentorship safeguards
+
+A navigator may mentor a domain only when **both** hold: their official overall status is
+**Can-Teach** *and* they scored **≥ 90% in that specific domain**.
+
+- Overall 94, Routing 95 → eligible Routing mentor
+- Overall 94, Routing 62 → not eligible for Routing
+- Overall 84, Routing 100 → not an official mentor at all
+
+`canTeachRoster()` became `domainMentorRoster()` (old name kept as an alias). New pairing records
+carry `mentorOverallScore` / `mentorOverallLevel` / `mentorDomainScore` / `menteeOverallScore` /
+`menteeOverallLevel` / `baselineDomainScore`, while still writing the legacy `menteeLevel` and
+`baselineScore` fields — **no existing pairing document is rewritten**.
+
+### Everything else that moved
+
+- **Action Center** — new `criticalOverall` (first, "Immediate supervisor attention recommended"),
+  `criticalDomainGaps`, and `learningOverall` categories; `readyForMore` now admits **only**
+  overall-Can-Teach navigators; critical training assignments escalate to `severity:'high'`.
+  Critical is explicitly a developmental/supervisory signal — it drives no automatic employment
+  decision, restriction, suspension, or access removal, and the UI says so.
+- **Team Overview** — cell-based KPIs replaced with navigator-level ones (% Solid-or-above,
+  Can-Teach count, **Critical count**, average overall score, assessed) plus an official
+  overall-status distribution. The domain panel is relabelled a diagnostic score distribution and
+  now reports each domain's average score and sub-40 count.
+- **Readiness / trends** — `readinessTally()` ranks by official status then overall score and
+  exposes `readyForMore`; `teamTrend()` reports `avgOverallScore` / `solidPlusRate` /
+  `canTeachRate` / `criticalCount`, preserving the existing MCQ-vs-Spot comparability rule.
+- **Question health** — the Can-Teach-miss signal now keys off the navigator's **overall** status at
+  submission time, not their score in the question's own domain; incomplete profiles never count.
+- **Learning Loop** — evidence wording moved to measured scores ("Routing scored 54%. No completed
+  practice is recorded."); critical gaps rank ahead of ordinary required-training gaps; a new
+  `overallRisks` signal surfaces Critical and Learning overall statuses.
+- **Competencies** — untouched as a scoring axis, but the Coaching screen now states explicitly that
+  competency analysis is separate from the official department status.
+- **Spot the Error** — only a full six-domain run shows an official status; a single-domain run
+  shows its percentage without a level. Per-domain review rows show percentages, not level pills.
+
+### Files changed
+
+`src/data/config.js` · `src/lib/scoring.js` · **new** `src/components/OverallStatus.jsx` ·
+`src/components/{Matrix,Navigators,NavigatorDetail,Overview,ActionCenter,Mentorship,Training,MyTraining,MyHistory,Coaching,SpotTheError,TrainingModule}.jsx` ·
+`src/styles.css` · `src/lib/scoring.test.js` · `src/lib/gradingInvariants.test.js` ·
+**new** `src/components/capabilityStatus.test.jsx` ·
+**new** `src/components/navigatorDetail.capability.test.jsx` · `playwright.config.js` ·
+`CLAUDE.md` · `docs/HISTORY.md`.
+
+`playwright.config.js` got a one-line `testIgnore` addition (`**/.claude/worktrees/**`, alongside
+the existing `**/.codex-worktrees/**`): a stray agent worktree carries its own `node_modules`, so
+globbing a spec from it loaded a **second** copy of `@playwright/test` and Playwright aborted at
+config load. That was blocking the E2E verification step; it is test-infrastructure hygiene and
+changes no product behaviour.
+
+### Verification
+
+- `npx vitest run` — **1,512 passed / 1,512** across 73 files (up from 1,417 across 71).
+- `npm run build` — clean, including the `check-call-qa-client-bundle` private-runtime scan.
+- `npm run test:e2e:safe` — **12/12 passed** (real Chromium, real server, 1.8m).
+- `node scripts/check-encoding.mjs` — passed.
+
+**One pre-existing failure is unrelated to this work:** `api/encoding.test.js > finds no mojibake in
+tracked source files` fails on Windows with `spawnSync git ENOENT`, because the test passes
+`new URL('..', import.meta.url).pathname` (which yields `/C:/Users/...`) as a cwd. Confirmed
+identical on a clean `git worktree` of untouched `main`, and the underlying
+`scripts/check-encoding.mjs` — the check CI actually runs — passes.
+
+### Explicitly not touched
+
+No OB/GYN question bank, audit transcript, SOP rule, training content, private Call QA scenario,
+grading pipeline, relay, persistence, migration, or Firestore security rule was modified. No
+production deployment, production write, or migration was performed.
+
 
 ## 2026-07-20 — Department-controlled training modules (PR #38 integration + integrity fixes)
 

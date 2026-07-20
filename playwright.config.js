@@ -36,7 +36,15 @@ export default defineConfig({
   testDir: '.',
   testMatch: ['e2e/**/*.spec.js', 'tests/e2e/**/*.spec.js'],
   // Don't pick up specs copied into nested worktrees / stress / deps.
-  testIgnore: ['**/.codex-worktrees/**', '**/node_modules/**', 'stress/**'],
+  // `.claude/worktrees/**` matters as much as `.codex-worktrees/**`: an agent
+  // worktree carries its own node_modules, so globbing a spec from there loads a
+  // SECOND copy of @playwright/test and Playwright aborts at config load.
+  testIgnore: [
+    '**/.codex-worktrees/**',
+    '**/.claude/worktrees/**',
+    '**/node_modules/**',
+    'stress/**',
+  ],
   fullyParallel: false,
   workers: 1,
   timeout: 45_000,

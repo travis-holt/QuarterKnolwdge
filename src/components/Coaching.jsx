@@ -1,8 +1,8 @@
 import { useState, useEffect } from 'react';
 import { domainName } from '../data/questions.js';
 import { COMPETENCIES, competencyName } from '../data/competencies.js';
-import { LEVELS } from '../data/config.js';
-import { scoreToLevel, optionPoints } from '../lib/scoring.js';
+import { LEVELS, THRESHOLDS } from '../data/config.js';
+import { domainBand, optionPoints } from '../lib/scoring.js';
 import { apiFetch } from '../lib/apiFetch.js';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -49,8 +49,10 @@ export default function Coaching({ questions, answers, competencyScores, name, c
   const scored = COMPETENCIES.map((c) => ({ id: c.id, pct: competencyScores?.[c.id] })).filter(
     (c) => typeof c.pct === 'number'
   );
-  const strengths = scored.filter((c) => scoreToLevel(c.pct) === 'canTeach');
-  const growth = scored.filter((c) => scoreToLevel(c.pct) === 'learning');
+  // Competency analysis is a SEPARATE axis from the official department status.
+  // These are competency score ranges, not the navigator's overall classification.
+  const strengths = scored.filter((c) => c.pct >= THRESHOLDS.canTeach);
+  const growth = scored.filter((c) => c.pct < THRESHOLDS.solid);
 
   // Competencies that have an AI note to show (only when coaching loaded)
   const aiEntries = aiCoaching && typeof aiCoaching === 'object'
@@ -62,8 +64,9 @@ export default function Coaching({ questions, answers, competencyScores, name, c
       <header className="coaching__head">
         <h1 className="navdetail__title">Nice work, {name} — here&rsquo;s your coaching</h1>
         <p className="navdetail__lede">
-          Feedback is per competency, never a single grade. Review the calls below, then continue to
-          your dashboard.
+          This is your <strong>competency analysis</strong> — how you think, decide and communicate.
+          It is separate from your official department status, which comes from the average across
+          all six domains. Review the calls below, then continue to your dashboard.
         </p>
       </header>
 
@@ -72,16 +75,16 @@ export default function Coaching({ questions, answers, competencyScores, name, c
         <div className="card callout">
           <h2 className="callout__title">Competency strengths</h2>
           {strengths.length === 0 ? (
-            <p className="readoff__empty">No Can-Teach competency yet — keep building.</p>
+            <p className="readoff__empty">No competency is at 90% or above yet — keep building.</p>
           ) : (
             <div className="chip-wrap">
               {strengths.map((c) => (
                 <span
                   key={c.id}
-                  className="level-chip"
-                  style={{ background: LEVELS.canTeach.color, color: LEVELS.canTeach.text }}
+                  className="score-chip"
+                  style={{ background: LEVELS[domainBand(c.pct)].tint }}
                 >
-                  {competencyName(c.id)}
+                  {competencyName(c.id)} <strong>{Math.round(c.pct)}%</strong>
                 </span>
               ))}
             </div>
@@ -90,16 +93,16 @@ export default function Coaching({ questions, answers, competencyScores, name, c
         <div className="card callout">
           <h2 className="callout__title">Focus areas</h2>
           {growth.length === 0 ? (
-            <p className="readoff__empty">No Learning-level competencies — strong across the board.</p>
+            <p className="readoff__empty">Every competency scored 65% or above — strong across the board.</p>
           ) : (
             <div className="chip-wrap">
               {growth.map((c) => (
                 <span
                   key={c.id}
-                  className="level-chip"
-                  style={{ background: LEVELS.learning.color, color: LEVELS.learning.text }}
+                  className="score-chip"
+                  style={{ background: LEVELS[domainBand(c.pct)].tint }}
                 >
-                  {competencyName(c.id)}
+                  {competencyName(c.id)} <strong>{Math.round(c.pct)}%</strong>
                 </span>
               ))}
             </div>

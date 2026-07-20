@@ -19,7 +19,8 @@ function Category({ title, items, renderItem, emptyMsg }) {
 
 export default function ActionCenter({ rows, history = [], interviews = [], completions = [], onOpenNavigator }) {
   const ac = buildActionCenter(rows, { history, interviews, completions });
-  const totalFlags = ac.criticalGaps.length + ac.trainingOverdue.length +
+  const totalFlags = ac.criticalOverall.length + ac.criticalDomainGaps.length +
+    ac.learningOverall.length + ac.trainingOverdue.length +
     ac.decliningTrends.length + ac.failedPractice.length;
 
   return (
@@ -30,18 +31,60 @@ export default function ActionCenter({ rows, history = [], interviews = [], comp
           {totalFlags > 0 && <span className="ac__badge">{totalFlags}</span>}
         </h1>
         <p className="overview__lede">
-          Who needs attention right now — gaps, overdue training, declining trends, failed practice,
-          and who is ready for more responsibility.
+          Who needs attention right now — critical overall statuses first, then critical domain gaps,
+          Learning statuses, overdue training, declining trends, failed practice, and who is ready
+          for more responsibility. These are developmental signals for coaching, not employment
+          decisions.
         </p>
       </header>
 
       <div className="ac__grid">
+        {/* Most urgent: official overall status below 40%. */}
         <Category
-          title="Critical gaps"
-          items={ac.criticalGaps}
-          emptyMsg="No Learning-level domains on the floor."
+          title="Critical overall"
+          items={ac.criticalOverall}
+          emptyMsg="No navigator is Critical overall."
           renderItem={(item) => (
-            <li key={`${item.name}-${item.domainId}`} className="ac__row">
+            <li key={`critical-overall-${item.name}`} className="ac__row ac__row--critical">
+              <button className="linkbtn ac__name" onClick={() => onOpenNavigator(item.name)}>
+                {item.name}
+              </button>
+              <span
+                className="level-chip ac__chip"
+                style={{ background: LEVELS.critical.color, color: LEVELS.critical.text }}
+              >
+                {item.overallScore}% overall
+              </span>
+              <span className="ac__note ac__note--critical">
+                Immediate supervisor attention recommended
+              </span>
+            </li>
+          )}
+        />
+
+        <Category
+          title="Critical domain gaps"
+          items={ac.criticalDomainGaps}
+          emptyMsg="No domain score is below 40%."
+          renderItem={(item) => (
+            <li key={`critical-domain-${item.name}-${item.domainId}`} className="ac__row">
+              <button className="linkbtn ac__name" onClick={() => onOpenNavigator(item.name)}>
+                {item.name}
+              </button>
+              <span className="score-chip score-chip--critical" style={{ background: LEVELS.critical.tint }}>
+                {domainName(item.domainId)} {item.score}%
+              </span>
+              <span className="ac__note">Critical domain gap</span>
+            </li>
+          )}
+        />
+
+        <Category
+          title="Learning overall"
+          items={ac.learningOverall}
+          emptyMsg="No navigator is Learning overall."
+          renderItem={(item) => (
+            <li key={`learning-overall-${item.name}`} className="ac__row">
               <button className="linkbtn ac__name" onClick={() => onOpenNavigator(item.name)}>
                 {item.name}
               </button>
@@ -49,7 +92,7 @@ export default function ActionCenter({ rows, history = [], interviews = [], comp
                 className="level-chip ac__chip"
                 style={{ background: LEVELS.learning.color, color: LEVELS.learning.text }}
               >
-                {domainName(item.domainId)}
+                {item.overallScore}% overall
               </span>
             </li>
           )}
@@ -109,14 +152,14 @@ export default function ActionCenter({ rows, history = [], interviews = [], comp
         <Category
           title="Ready for more"
           items={ac.readyForMore}
-          emptyMsg="Nominate navigators to mentor once they reach Can-Teach."
+          emptyMsg="Nominate navigators to mentor once they reach Can-Teach overall."
           renderItem={(item) => (
             <li key={item.name} className="ac__row">
               <button className="linkbtn ac__name" onClick={() => onOpenNavigator(item.name)}>
                 {item.name}
               </button>
               <span className="ac__note ac__note--positive">
-                {item.canTeachCount} Can-Teach domain{item.canTeachCount !== 1 ? 's' : ''}
+                {item.overallScore}% overall · Can-Teach
               </span>
             </li>
           )}

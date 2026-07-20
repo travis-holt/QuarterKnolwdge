@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import { DOMAINS, domainName } from '../data/questions.js';
 import { pickDiverseAudits } from '../data/auditWorkflows.js';
 import { LEVELS, SPOT_ASSESSMENT_SIZE } from '../data/config.js';
-import { scoreSpotTheError, scoreSpotTheErrorByDomain, scoreToLevel } from '../lib/scoring.js';
+import { scoreSpotTheError, scoreSpotTheErrorByDomain, domainBand, overallStatus } from '../lib/scoring.js';
 import { apiFetch, runPooled, fetchErrorMessage } from '../lib/apiFetch.js';
 import { getActiveAudits } from '../lib/db.js';
 import { isFirebaseConfigured } from '../lib/firebase.js';
@@ -312,7 +312,10 @@ export default function SpotTheError({
   // ── Review (final score + per-item breakdown) ─────────────────────────────────
 
   if (phase === 'review' || phase === 'saving') {
-    const level = LEVELS[scoreToLevel(overallScore)];
+    // Only a FULL run (one item per domain) produces an official overall status.
+    // A single-domain run is a domain score, so it shows the number without a level.
+    const status = isFull ? overallStatus(domainScores) : null;
+    const level = LEVELS[domainBand(overallScore)];
     const correctCount = picks.filter((p) => p?.correct).length;
     return (
       <section className="spot-error view-enter">
@@ -321,9 +324,14 @@ export default function SpotTheError({
           <h1 className="spot-error__title">Assessment results</h1>
           <div className="spot-error__score" style={{ color: level.color }}>
             <span className="spot-error__score-value">{overallScore}%</span>
-            <span className="spot-error__score-level" style={{ background: level.color, color: level.text }}>
-              {level.label}
-            </span>
+            {status?.level && (
+              <span
+                className="spot-error__score-level"
+                style={{ background: LEVELS[status.level].color, color: LEVELS[status.level].text }}
+              >
+                {status.label} overall
+              </span>
+            )}
           </div>
           <p className="readoff__sub">
             You correctly identified <strong>{correctCount} of {items.length}</strong> policy errors.
@@ -337,12 +345,12 @@ export default function SpotTheError({
             <ul className="spot-error__domain-list">
               {(domains ?? []).map((d) => {
                 const pct = domainScores[d] ?? 0;
-                const lvl = LEVELS[scoreToLevel(pct)];
+                const band = domainBand(pct);
                 return (
                   <li key={d} className="spot-error__domain-row">
                     <span className="spot-error__domain-name">{domainName(d)}</span>
-                    <span className="spot-error__domain-level" style={{ background: lvl.color, color: lvl.text }}>
-                      {lvl.label}
+                    <span className="score-chip" style={{ background: LEVELS[band].tint }}>
+                      {pct}%{pct < 40 && ' · Critical gap'}
                     </span>
                   </li>
                 );

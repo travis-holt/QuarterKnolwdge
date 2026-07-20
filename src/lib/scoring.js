@@ -1,16 +1,23 @@
 // ─────────────────────────────────────────────────────────────────────────────
 // SCORING + MATRIX READ-OFFS
 //
-// Two scoring axes, both derived from the same answers and never reduced to a
-// single overall grade:
-//   • per-DOMAIN  (topic: scheduling, insurance, …)        — scorePerDomain
+// Two scoring axes, both derived from the same answers:
+//   • per-DOMAIN  (topic: routing, scheduling, …)          — scorePerDomain
 //   • per-COMPETENCY (capability: critical thinking, …)    — scorePerCompetency
 // Each option carries a `points` value (0–100 = quality of that choice), so an
-// answer earns partial credit, not just right/wrong. Levels are derived from
-// THRESHOLDS in data/config.js so the bands are easy to change in one place.
+// answer earns partial credit, not just right/wrong.
+//
+// ONE OFFICIAL STATUS PER NAVIGATOR PER DEPARTMENT.
+// Each department assessment produces exactly one official capability status,
+// calculated from the arithmetic mean of all six domain scores
+// (`overallScore` / `overallLevel` / `overallStatus`). The six domain
+// percentages remain visible as DIAGNOSTIC evidence — they drive targeted
+// training, coaching, trends, critical-gap alerts, question-health evidence and
+// mentor qualification, but they are never presented as six official navigator
+// classifications. Bands come from THRESHOLDS in data/config.js.
 // ─────────────────────────────────────────────────────────────────────────────
 
-import { THRESHOLDS, LEVELS, COLUMN_GAP_THRESHOLD, TRAINING_RULES, TREND_SYNTH_POINTS, MENTOR_MAX_LOAD, INTERVIEW_SCORE_BANDS } from '../data/config.js';
+import { THRESHOLDS, LEVELS, LEVEL_ORDER, INCOMPLETE_LABEL, COLUMN_GAP_THRESHOLD, TRAINING_RULES, REQUIRED_TRAINING_PRIORITIES, TREND_SYNTH_POINTS, MENTOR_MAX_LOAD, INTERVIEW_SCORE_BANDS } from '../data/config.js';
 import { DOMAINS, SEED_QUESTIONS } from '../data/questions.js';
 import { COMPETENCIES } from '../data/competencies.js';
 import { moduleForDomain } from '../data/training.js';
@@ -109,19 +116,121 @@ export function scorePerCompetency(answers = {}, questions = SEED_QUESTIONS) {
 }
 
 /**
- * Map a per-domain percentage to a capability level id.
+ * THE canonical band mapping. Non-overlapping ranges:
+ *   0–39 Critical · 40–64 Learning · 65–89 Solid · 90–100 Can-Teach
+ *
+ * Used for BOTH the official overall status and the diagnostic band of a single
+ * domain score. Never re-derive these bands inline.
  * @param {number} pct
- * @returns {'learning'|'solid'|'canTeach'}
+ * @returns {'critical'|'learning'|'solid'|'canTeach'}
  */
 export function scoreToLevel(pct) {
-  if (pct >= THRESHOLDS.canTeach) return 'canTeach';
-  if (pct < THRESHOLDS.learning) return 'learning';
-  return 'solid';
+  const score = Number.isFinite(pct) ? pct : 0;
+  if (score < THRESHOLDS.critical) return 'critical';
+  if (score < THRESHOLDS.solid) return 'learning';
+  if (score < THRESHOLDS.canTeach) return 'solid';
+  return 'canTeach';
 }
 
-/** Convenience: full level descriptor ({id,label,color,text}) for a percentage. */
+/** Convenience: full level descriptor ({id,label,color,text,tint}) for a percentage. */
 export function levelFor(pct) {
   return LEVELS[scoreToLevel(pct)];
+}
+
+/**
+ * Diagnostic band for ONE domain percentage. Same maths as `scoreToLevel`, but
+ * named so call sites read as "this is a score range, not an official status".
+ * @param {number} pct
+ * @returns {'critical'|'learning'|'solid'|'canTeach'}
+ */
+export function domainBand(pct) {
+  return scoreToLevel(pct);
+}
+
+/** True when a single domain score is a critical gap (below 40) needing urgent focus. */
+export function isCriticalDomainGap(pct) {
+  return Number.isFinite(pct) && pct < THRESHOLDS.critical;
+}
+
+/** A profile is complete only when every one of the six domains has a numeric score. */
+export function overallComplete(scores) {
+  return DOMAINS.every((d) => Number.isFinite(scores?.[d.id]));
+}
+
+/**
+ * THE canonical overall score for one department: the arithmetic mean of the
+ * configured domain scores, rounded only after the complete average.
+ *
+ * Averages within a single department only, over the six configured domains,
+ * and never mixes MCQ / Spot the Error / Call QA instruments — callers pass one
+ * result's `scores` object.
+ *
+ * Returns null when no domain has a numeric score. When SOME domains are
+ * missing the mean is taken over the domains actually present (an honest
+ * average of the evidence that exists) — `overallComplete` reports the gap and
+ * `overallLevel` refuses to promote an incomplete profile.
+ *
+ * @param {Record<string, number>} scores
+ * @returns {number|null}
+ */
+export function overallScore(scores) {
+  const vals = DOMAINS.map((d) => scores?.[d.id]).filter((v) => Number.isFinite(v));
+  if (vals.length === 0) return null;
+  return Math.round(vals.reduce((a, b) => a + b, 0) / vals.length);
+}
+
+/**
+ * THE official capability level for one department.
+ *
+ * MISSING-DOMAIN SAFETY: an incomplete profile can never be promoted to Solid
+ * or Can-Teach. `{ intake: 100 }` averages to 100 but only covers one of six
+ * domains, so it resolves to 'learning', not 'canTeach'. Because of this cap,
+ * `overallLevel(scores) === 'canTeach'` on its own already implies a complete
+ * profile — every downstream mentor/readiness check inherits that safety.
+ *
+ * @param {Record<string, number>} scores
+ * @returns {'critical'|'learning'|'solid'|'canTeach'|null} null when unassessed
+ */
+export function overallLevel(scores) {
+  const score = overallScore(scores);
+  if (score == null) return null;
+  const band = scoreToLevel(score);
+  if (overallComplete(scores)) return band;
+  // Incomplete: allow Critical (a genuinely low partial average stays urgent)
+  // but cap everything else at Learning so a thin profile is never promoted.
+  return band === 'critical' ? 'critical' : 'learning';
+}
+
+/**
+ * The single official status object a supervisor sees, e.g. "72% Overall · Solid".
+ *
+ * @param {Record<string, number>} scores
+ * @returns {{
+ *   score: number|null, level: string|null, complete: boolean, label: string,
+ *   assessedDomains: number, totalDomains: number,
+ * }}
+ */
+export function overallStatus(scores) {
+  const score = overallScore(scores);
+  const complete = overallComplete(scores);
+  const level = overallLevel(scores);
+  const assessedDomains = DOMAINS.filter((d) => Number.isFinite(scores?.[d.id])).length;
+  return {
+    score,
+    level,
+    complete,
+    // An incomplete profile is labelled explicitly rather than borrowing an
+    // official level name it has not earned.
+    label: score == null ? 'Not assessed' : complete ? LEVELS[level].label : INCOMPLETE_LABEL,
+    assessedDomains,
+    totalDomains: DOMAINS.length,
+  };
+}
+
+/** Rank helper: higher is stronger. Unassessed sorts below Critical. */
+export function overallLevelRank(level) {
+  const idx = LEVEL_ORDER.indexOf(level);
+  return idx === -1 ? -1 : idx;
 }
 
 /**
@@ -177,11 +286,17 @@ export function scoreQaAcrossDomains(qa) {
 
 /**
  * Build the matrix rows from sample navigators + the optional live taker.
- * Each row carries both scoring axes:
- *   { name, isLive, scores, levels,                 // per-domain
- *     competencyScores, competencyLevels }          // per-competency
- * `competencyLevels` only includes competencies the row actually has a score for
- * (a bank may not exercise all 9), so consumers can iterate it safely.
+ *
+ * The OFFICIAL fields are `overallScore` and `overallLevel` — one status per
+ * navigator per department. `domainDevelopmentBands` holds the per-domain
+ * DIAGNOSTIC bands used for tints and training assignment; it is deliberately
+ * not called "levels" so no surface renders "Routing · Solid" as if it were an
+ * official classification.
+ *
+ * `levels` is retained as a read-only backward-compatibility alias of
+ * `domainDevelopmentBands` for legacy/third-party callers; first-party code
+ * uses `domainDevelopmentBands`.
+ *
  * @param {{name,scores,competencyScores?}[]} samples
  * @param {{name,scores,competencyScores?}|null} liveResult
  */
@@ -189,15 +304,24 @@ export function buildMatrixRows(samples, liveResult) {
   const toRow = (nav, isLive) => {
     const scores = nav.scores ?? {};
     const competencyScores = nav.competencyScores ?? {};
+    const status = overallStatus(scores);
+    const domainDevelopmentBands = Object.fromEntries(
+      DOMAINS.map((d) => [d.id, domainBand(scores[d.id] ?? 0)])
+    );
     return {
       navigatorId: nav.navigatorId ?? null,
       name: nav.name,
       isLive,
       assessmentType: nav.assessmentType ?? 'mcq',
       scores,
-      levels: Object.fromEntries(
-        DOMAINS.map((d) => [d.id, scoreToLevel(scores[d.id] ?? 0)])
-      ),
+      // ── The one official status ───────────────────────────────────────
+      overallScore: status.score,
+      overallLevel: status.level,
+      overallComplete: status.complete,
+      overallLabel: status.label,
+      // ── Diagnostic evidence ───────────────────────────────────────────
+      domainDevelopmentBands,
+      levels: domainDevelopmentBands, // deprecated alias — see doc comment
       competencyScores,
       competencyLevels: Object.fromEntries(
         COMPETENCIES.filter((c) => typeof competencyScores[c.id] === 'number').map((c) => [
@@ -213,6 +337,26 @@ export function buildMatrixRows(samples, liveResult) {
   return rows;
 }
 
+/** Per-domain diagnostic bands for a row, tolerating legacy row shapes. */
+function bandsOf(row) {
+  return row?.domainDevelopmentBands ?? row?.levels ?? {};
+}
+
+/** The diagnostic band for one domain on a row. */
+function bandFor(row, domainId) {
+  return bandsOf(row)[domainId] ?? domainBand(row?.scores?.[domainId] ?? 0);
+}
+
+/** The official overall level for a row, tolerating legacy row shapes. */
+function levelOf(row) {
+  return row?.overallLevel !== undefined ? row.overallLevel : overallLevel(row?.scores);
+}
+
+/** The official overall score for a row, tolerating legacy row shapes. */
+function scoreOf(row) {
+  return row?.overallScore !== undefined ? row.overallScore : overallScore(row?.scores);
+}
+
 /**
  * Pull one department's per-domain scores out of the nested navigator data,
  * returning the flat { name, scores } shape the rest of the app expects.
@@ -225,11 +369,12 @@ export function deptSamples(samples, deptId) {
   }));
 }
 
-/** Overall score for a department = mean of its domain scores (or null if none). */
+/**
+ * Overall score for a department. Thin alias of the canonical `overallScore` so
+ * there is exactly ONE averaging formula in the app.
+ */
 export function departmentOverall(scores) {
-  const vals = DOMAINS.map((d) => scores?.[d.id]).filter((v) => typeof v === 'number');
-  if (vals.length === 0) return null;
-  return Math.round(vals.reduce((a, b) => a + b, 0) / vals.length);
+  return overallScore(scores);
 }
 
 /**
@@ -243,8 +388,19 @@ export function departmentMatrix(samples, liveResult) {
   const cellsFor = (getScores) =>
     Object.fromEntries(
       DEPARTMENTS.map((dep) => {
-        const overall = departmentOverall(getScores(dep.id));
-        return [dep.id, overall == null ? null : { overall, level: scoreToLevel(overall) }];
+        const deptScores = getScores(dep.id);
+        const status = overallStatus(deptScores);
+        return [
+          dep.id,
+          status.score == null
+            ? null
+            : {
+                overall: status.score,
+                level: status.level,
+                complete: status.complete,
+                label: status.label,
+              },
+        ];
       })
     );
 
@@ -271,92 +427,165 @@ export function departmentMatrix(samples, liveResult) {
 
 /**
  * Column gaps — domains where a majority (COLUMN_GAP_THRESHOLD) of navigators
- * sit at "Learning". These are floor-wide training priorities.
- * @returns {{domainId:string, learningCount:number, total:number, share:number}[]}
+ * score below the Solid threshold. These are floor-wide training priorities.
+ * Diagnostic only: a column gap describes scores, not official statuses.
+ * @returns {{domainId:string, belowSolidCount:number, criticalCount:number,
+ *            learningCount:number, total:number, share:number}[]}
  */
 export function columnGaps(rows) {
   const gaps = [];
   for (const domain of DOMAINS) {
-    const learningCount = rows.filter((r) => r.levels[domain.id] === 'learning').length;
-    const share = rows.length === 0 ? 0 : learningCount / rows.length;
+    const criticalCount = rows.filter((r) => bandFor(r, domain.id) === 'critical').length;
+    const learningCount = rows.filter((r) => bandFor(r, domain.id) === 'learning').length;
+    const belowSolidCount = criticalCount + learningCount;
+    const share = rows.length === 0 ? 0 : belowSolidCount / rows.length;
     if (share >= COLUMN_GAP_THRESHOLD) {
-      gaps.push({ domainId: domain.id, learningCount, total: rows.length, share });
+      gaps.push({
+        domainId: domain.id,
+        belowSolidCount,
+        criticalCount,
+        learningCount,
+        total: rows.length,
+        share,
+      });
     }
   }
   return gaps;
 }
 
 /**
- * Can-Teach roster — for each domain, the navigators who can teach it.
+ * Domain mentor roster — for each domain, the navigators QUALIFIED to mentor it.
+ *
+ * SAFETY: a navigator may mentor a domain only when BOTH hold:
+ *   1. their OFFICIAL overall status is Can-Teach, and
+ *   2. they scored at least THRESHOLDS.canTeach (90%) in that specific domain.
+ * A high domain score alone never qualifies someone whose overall status is
+ * lower, and a Can-Teach overall never qualifies someone for a domain they are
+ * weak in. The domain itself is never described as "Can-Teach" — the domain
+ * score is only the subject qualification.
+ *
  * @returns {Record<string, string[]>} domainId -> [names]
  */
-export function canTeachRoster(rows) {
+export function domainMentorRoster(rows) {
   const roster = {};
   for (const domain of DOMAINS) {
     roster[domain.id] = rows
-      .filter((r) => r.levels[domain.id] === 'canTeach')
+      .filter(
+        (r) =>
+          levelOf(r) === 'canTeach' &&
+          Number.isFinite(r.scores?.[domain.id]) &&
+          r.scores[domain.id] >= THRESHOLDS.canTeach
+      )
       .map((r) => r.name);
   }
   return roster;
 }
 
+/** @deprecated Backward-compatibility wrapper — use `domainMentorRoster`. */
+export const canTeachRoster = domainMentorRoster;
+
 /**
- * Readiness tally — each navigator's count of Can-Teach cells, highest first.
- * A data-backed "who's ready for more" signal.
- * @returns {{name:string, isLive:boolean, canTeachCount:number}[]}
+ * Readiness — navigators ranked by OFFICIAL overall status, then overall score.
+ * `canTeachDomainCount` is supporting depth only; it is never the official
+ * classification. `readyForMore` is true only for overall Can-Teach navigators.
+ * @returns {{name, isLive, overallScore, overallLevel, overallLabel,
+ *            canTeachDomainCount, readyForMore}[]}
  */
 export function readinessTally(rows) {
   return rows
-    .map((r) => ({
-      navigatorId: r.navigatorId ?? null,
-      name: r.name,
-      isLive: r.isLive,
-      canTeachCount: Object.values(r.levels).filter((lvl) => lvl === 'canTeach').length,
-    }))
-    .sort((a, b) => b.canTeachCount - a.canTeachCount);
+    .map((r) => {
+      const level = levelOf(r);
+      return {
+        navigatorId: r.navigatorId ?? null,
+        name: r.name,
+        isLive: r.isLive,
+        overallScore: scoreOf(r),
+        overallLevel: level,
+        overallLabel: r.overallLabel ?? overallStatus(r.scores).label,
+        canTeachDomainCount: DOMAINS.filter(
+          (d) => Number.isFinite(r.scores?.[d.id]) && r.scores[d.id] >= THRESHOLDS.canTeach
+        ).length,
+        readyForMore: level === 'canTeach',
+      };
+    })
+    .sort(
+      (a, b) =>
+        overallLevelRank(b.overallLevel) - overallLevelRank(a.overallLevel)
+        || (b.overallScore ?? -1) - (a.overallScore ?? -1)
+        || b.canTeachDomainCount - a.canTeachDomainCount
+    );
 }
 
 /**
- * Floor-wide headline stats for the Team Overview dashboard.
- * @returns {{assessed:number, solidPlusRate:number, coveredDomains:number,
- *            totalDomains:number, avgReadiness:number, learningRate:number}}
+ * Official overall-status distribution across the floor — how many navigators
+ * hold each official status. Incomplete profiles are counted separately so they
+ * never inflate a status band.
+ * @returns {{critical:number, learning:number, solid:number, canTeach:number,
+ *            incomplete:number, unassessed:number, total:number}}
+ */
+export function overallDistribution(rows) {
+  const counts = { critical: 0, learning: 0, solid: 0, canTeach: 0, incomplete: 0, unassessed: 0 };
+  for (const r of rows) {
+    const score = scoreOf(r);
+    if (score == null) { counts.unassessed += 1; continue; }
+    const complete = r.overallComplete ?? overallComplete(r.scores);
+    if (!complete) counts.incomplete += 1;
+    counts[levelOf(r)] += 1;
+  }
+  return { ...counts, total: rows.length };
+}
+
+/**
+ * Floor-wide headline stats for the Team Overview dashboard — NAVIGATOR-level,
+ * not cell-level. Every rate below counts people holding an official status,
+ * never individual domain cells.
+ * @returns {{assessed:number, solidPlusRate:number, canTeachCount:number,
+ *            criticalCount:number, avgOverallScore:number,
+ *            totalDomains:number, distribution:object}}
  */
 export function floorStats(rows) {
-  const totalCells = rows.length * DOMAINS.length;
-  let solidPlus = 0;
-  let learning = 0;
-  for (const r of rows) {
-    for (const d of DOMAINS) {
-      if (r.levels[d.id] === 'learning') learning += 1;
-      else solidPlus += 1;
-    }
-  }
-  const roster = canTeachRoster(rows);
-  const coveredDomains = DOMAINS.filter((d) => roster[d.id].length > 0).length;
-  const totalCanTeach = rows.reduce(
-    (sum, r) => sum + Object.values(r.levels).filter((l) => l === 'canTeach').length,
-    0
-  );
+  const distribution = overallDistribution(rows);
+  const assessed = rows.length;
+  const solidPlus = distribution.solid + distribution.canTeach;
+  const scores = rows.map(scoreOf).filter((s) => Number.isFinite(s));
   return {
-    assessed: rows.length,
-    solidPlusRate: totalCells ? Math.round((solidPlus / totalCells) * 100) : 0,
-    learningRate: totalCells ? Math.round((learning / totalCells) * 100) : 0,
-    coveredDomains,
+    assessed,
+    solidPlusRate: assessed ? Math.round((solidPlus / assessed) * 100) : 0,
+    canTeachCount: distribution.canTeach,
+    criticalCount: distribution.critical,
+    learningCount: distribution.learning,
+    avgOverallScore: scores.length
+      ? Math.round(scores.reduce((a, b) => a + b, 0) / scores.length)
+      : 0,
     totalDomains: DOMAINS.length,
-    avgReadiness: rows.length ? totalCanTeach / rows.length : 0,
+    distribution,
   };
 }
 
 /**
- * Per-domain level distribution (counts) — drives the stacked bars on the
- * Team Overview dashboard.
- * @returns {{domainId:string, learning:number, solid:number, canTeach:number, total:number}[]}
+ * Per-domain DIAGNOSTIC score distribution — drives the stacked bars on the
+ * Team Overview dashboard. These are score-range counts, not navigator statuses.
+ * @returns {{domainId, critical, learning, solid, canTeach, total,
+ *            avgScore, belowCritical, belowSolid, needsTraining}[]}
  */
 export function domainDistribution(rows) {
   return DOMAINS.map((d) => {
-    const counts = { learning: 0, solid: 0, canTeach: 0 };
-    for (const r of rows) counts[r.levels[d.id]] += 1;
-    return { domainId: d.id, ...counts, total: rows.length };
+    const counts = { critical: 0, learning: 0, solid: 0, canTeach: 0 };
+    const scores = [];
+    for (const r of rows) {
+      counts[bandFor(r, d.id)] += 1;
+      const s = r.scores?.[d.id];
+      if (Number.isFinite(s)) scores.push(s);
+    }
+    return {
+      domainId: d.id,
+      ...counts,
+      total: rows.length,
+      avgScore: scores.length ? Math.round(scores.reduce((a, b) => a + b, 0) / scores.length) : 0,
+      belowCritical: counts.critical,
+      belowSolid: counts.critical + counts.learning,
+      needsTraining: counts.critical + counts.learning + counts.solid,
+    };
   });
 }
 
@@ -387,27 +616,45 @@ export function findRow(rows, identifier) {
     ?? null;
 }
 
+/** True when a training assignment priority counts as required (Critical or Required). */
+export function isRequiredAssignment(priority) {
+  return REQUIRED_TRAINING_PRIORITIES.includes(priority);
+}
+
 /**
- * Auto-assigned training for a single navigator, driven by TRAINING_RULES.
- * Each weak domain pulls in its training module, tagged with priority and the
- * level it was assigned at. Required (Learning) items come before Stretch.
- * @returns {{domainId:string, level:string, priority:string, goal:string,
- *            module:object|null}[]}
+ * Auto-assigned training for a single navigator, driven ENTIRELY by individual
+ * DOMAIN scores via TRAINING_RULES — never by the official overall status.
+ *
+ * A navigator who is Can-Teach overall still receives targeted training for a
+ * weaker domain; a high average never suppresses a domain assignment.
+ * Critical (0–39) items come first, then Required (40–64), then Stretch (65–89).
+ *
+ * @returns {{domainId, band, score, priority, assignment, goal, isCritical,
+ *            module, level}[]}  (`level` is a deprecated alias of `band`)
  */
 export function trainingForRow(row) {
-  return DOMAINS.map((d) => ({ domainId: d.id, level: row.levels[d.id] }))
-    .filter(({ level }) => TRAINING_RULES[level]?.assign)
-    .map(({ domainId, level }) => {
-      const rule = TRAINING_RULES[level];
+  const scores = row?.scores ?? {};
+  return DOMAINS.map((d) => ({
+    domainId: d.id,
+    band: bandFor(row, d.id),
+    score: Number.isFinite(scores[d.id]) ? scores[d.id] : 0,
+  }))
+    .filter(({ band }) => TRAINING_RULES[band]?.assign)
+    .map(({ domainId, band, score }) => {
+      const rule = TRAINING_RULES[band];
       return {
         domainId,
-        level,
+        band,
+        level: band, // deprecated alias
+        score,
         priority: rule.priority,
+        assignment: rule.assignment,
         goal: rule.goal,
+        isCritical: band === 'critical',
         module: moduleForDomain(domainId),
       };
     })
-    .sort((a, b) => TRAINING_RULES[a.level].rank - TRAINING_RULES[b.level].rank);
+    .sort((a, b) => TRAINING_RULES[a.band].rank - TRAINING_RULES[b.band].rank);
 }
 
 /**
@@ -419,14 +666,18 @@ export function trainingPlan(rows) {
   return rows
     .map((r) => {
       const assignments = trainingForRow(r);
+      const criticalCount = assignments.filter((a) => a.priority === 'Critical').length;
       return {
         name: r.name,
         isLive: r.isLive,
         assignments,
-        requiredCount: assignments.filter((a) => a.priority === 'Required').length,
+        criticalCount,
+        // Required = Critical + Required (both are mandatory assignments).
+        requiredCount: assignments.filter((a) => isRequiredAssignment(a.priority)).length,
+        stretchCount: assignments.filter((a) => a.priority === 'Stretch').length,
       };
     })
-    .sort((a, b) => b.requiredCount - a.requiredCount);
+    .sort((a, b) => b.criticalCount - a.criticalCount || b.requiredCount - a.requiredCount);
 }
 
 /**
@@ -435,15 +686,18 @@ export function trainingPlan(rows) {
  */
 export function trainingByDomain(rows) {
   return DOMAINS.map((d) => {
+    const critical = [];
     const required = [];
     const stretch = [];
     for (const r of rows) {
-      const rule = TRAINING_RULES[r.levels[d.id]];
+      const rule = TRAINING_RULES[bandFor(r, d.id)];
       if (!rule?.assign) continue;
-      (rule.priority === 'Required' ? required : stretch).push(r.name);
+      if (rule.priority === 'Critical') critical.push(r.name);
+      else if (rule.priority === 'Required') required.push(r.name);
+      else stretch.push(r.name);
     }
-    return { domainId: d.id, module: moduleForDomain(d.id), required, stretch };
-  }).filter((x) => x.required.length > 0 || x.stretch.length > 0);
+    return { domainId: d.id, module: moduleForDomain(d.id), critical, required, stretch };
+  }).filter((x) => x.critical.length > 0 || x.required.length > 0 || x.stretch.length > 0);
 }
 
 /**
@@ -454,11 +708,18 @@ export function trainingByDomain(rows) {
 export function trainingStats(rows) {
   const byDomain = trainingByDomain(rows);
   const plan = trainingPlan(rows);
+  const totalCritical = byDomain.reduce((s, d) => s + d.critical.length, 0);
   return {
-    totalRequired: byDomain.reduce((s, d) => s + d.required.length, 0),
+    totalCritical,
+    // "Required" is the mandatory total: Critical + Required assignments.
+    totalRequired: totalCritical + byDomain.reduce((s, d) => s + d.required.length, 0),
     totalStretch: byDomain.reduce((s, d) => s + d.stretch.length, 0),
+    navigatorsWithCritical: plan.filter((p) => p.criticalCount > 0).length,
     navigatorsWithRequired: plan.filter((p) => p.requiredCount > 0).length,
-    domainsNeedingTraining: byDomain.filter((d) => d.required.length > 0).length,
+    domainsNeedingTraining: byDomain.filter(
+      (d) => d.critical.length > 0 || d.required.length > 0
+    ).length,
+    domainsWithCritical: byDomain.filter((d) => d.critical.length > 0).length,
   };
 }
 
@@ -470,9 +731,12 @@ export function trainingStats(rows) {
  * answers selected the correct option. This can signal a poorly worded question
  * OR a real SOP/floor-practice mismatch ("Reverse QA").
  *
- * An extra signal — `canTeachFailCount` — surfaces when Can-Teach navigators
- * (domain score ≥ canTeach threshold at submission time) are also missing the
- * question, the strongest indicator that the SOP itself is the problem.
+ * An extra signal — `canTeachFailCount` — surfaces when Can-Teach navigators are
+ * also missing the question, the strongest indicator that the SOP itself is the
+ * problem. "Can-Teach" here means the navigator's OFFICIAL OVERALL status for
+ * that submission (the mean of all six domain scores), not their score in the
+ * question's individual domain. An incomplete profile is never counted as
+ * Can-Teach, because `overallLevel` refuses to promote one.
  *
  * Only result docs that carry an `answers` field (written by the updated client)
  * contribute; legacy docs without it are silently skipped.
@@ -508,8 +772,8 @@ export function computeQuestionHealth(questions, results) {
       const isCorrect = chosen === q.correctOptionId;
       if (isCorrect) correctCount += 1;
 
-      const domainScore = r.scores?.[q.domainId];
-      if (typeof domainScore === 'number' && scoreToLevel(domainScore) === 'canTeach') {
+      // OFFICIAL overall status of the whole submission — not the domain score.
+      if (overallLevel(r.scores) === 'canTeach') {
         canTeachCount += 1;
         if (!isCorrect) canTeachFailCount += 1;
       }
@@ -582,20 +846,24 @@ export function buildLearningSignals({
     const result = (row.navigatorId && resultByIdentity.get(`id:${row.navigatorId}`))
       ?? resultByIdentity.get(`name:${row.name}`);
     for (const d of DOMAINS) {
-      const level = row.levels?.[d.id] ?? scoreToLevel(row.scores?.[d.id] ?? 0);
-      if (level !== 'canTeach') {
+      const band = bandFor(row, d.id);
+      if (band !== 'canTeach') {
+        const score = row.scores?.[d.id] ?? 0;
         const navCompletions = completions.filter((c) => sameNavigator(c, row) && c.domainId === d.id);
         const navInterviews = interviews.filter((iv) => isDomainInterview(iv) && sameNavigator(iv, row) && iv.domainId === d.id);
         weakDomains.push({
           name: row.name,
           domainId: d.id,
-          score: row.scores?.[d.id] ?? 0,
-          level,
+          score,
+          band,
+          level: band, // deprecated alias
+          isCriticalGap: band === 'critical',
           practiceCount: navCompletions.filter((c) => !c.kind || c.kind === 'practice').length,
           miniCheckCount: navCompletions.filter((c) => c.kind === 'minicheck').length,
           interviewCount: navInterviews.filter((iv) => effectiveInterviewScore(iv) != null).length,
           evidence: [
-            `${level} in ${d.id}`,
+            // Evidence is stated as a measured score, not an official level.
+            `${d.id} scored ${Math.round(score)}%.${band === 'critical' ? ' Critical domain gap.' : ''}`,
             `${navCompletions.length} completed exercise${navCompletions.length === 1 ? '' : 's'}`,
           ],
         });
@@ -636,17 +904,26 @@ export function buildLearningSignals({
     const rowTraining = trainingForRow(row);
     for (const assignment of rowTraining) {
       const practiced = completions.some((c) => sameNavigator(c, row) && c.domainId === assignment.domainId && (!c.kind || c.kind === 'practice'));
-      if (assignment.priority === 'Required' && !practiced) {
+      if (isRequiredAssignment(assignment.priority) && !practiced) {
         trainingGaps.push({
           name: row.name,
           domainId: assignment.domainId,
           priority: assignment.priority,
-          reason: 'Required practice has not been completed yet.',
-          evidence: [`${assignment.domainId} is ${assignment.level}`],
+          isCritical: assignment.isCritical,
+          reason: assignment.isCritical
+            ? 'Critical domain gap — required practice has not been completed yet.'
+            : 'Required practice has not been completed yet.',
+          evidence: [
+            `${assignment.domainId} scored ${Math.round(assignment.score)}%.`,
+            'No completed practice is recorded.',
+          ],
         });
       }
     }
   }
+
+  // Critical domain gaps rank ahead of ordinary required-training gaps.
+  trainingGaps.sort((a, b) => (b.isCritical ? 1 : 0) - (a.isCritical ? 1 : 0));
 
   for (const iv of interviews) {
     if (!isDomainInterview(iv)) continue;
@@ -665,8 +942,33 @@ export function buildLearningSignals({
   const questionRisks = buildQuestionImprovementSuggestions(questions, results, feedback);
   const feedbackRisks = feedbackInsights(feedback).risks;
 
+  // Supervisor-level signal on the OFFICIAL overall status, Critical first.
+  const overallRisks = rows
+    .filter((row) => levelOf(row) === 'critical' || levelOf(row) === 'learning')
+    .map((row) => {
+      const level = levelOf(row);
+      return {
+        navigatorId: row.navigatorId ?? null,
+        name: row.name,
+        overallScore: scoreOf(row),
+        overallLevel: level,
+        severity: level === 'critical' ? 'high' : 'medium',
+        reason: level === 'critical'
+          ? 'Immediate supervisor attention recommended.'
+          : 'Overall status is Learning — targeted development recommended.',
+      };
+    })
+    .sort(
+      (a, b) =>
+        overallLevelRank(a.overallLevel) - overallLevelRank(b.overallLevel)
+        || (a.overallScore ?? 0) - (b.overallScore ?? 0)
+    );
+
   return {
-    weakDomains: weakDomains.sort((a, b) => a.score - b.score),
+    overallRisks,
+    weakDomains: weakDomains.sort(
+      (a, b) => (b.isCriticalGap ? 1 : 0) - (a.isCriticalGap ? 1 : 0) || a.score - b.score
+    ),
     weakCompetencies: weakCompetencies.sort((a, b) => a.score - b.score),
     repeatedMisses: repeatedMisses.sort((a, b) => a.points - b.points),
     questionRisks,
@@ -709,7 +1011,7 @@ export function buildQuestionImprovementSuggestions(questions, results, feedback
       }
       if (h.canTeachFailCount > 0) {
         labels.push('canTeachMisses');
-        reasons.push(`${h.canTeachFailCount} Can-Teach navigator${h.canTeachFailCount === 1 ? '' : 's'} missed it.`);
+        reasons.push(`${h.canTeachFailCount} navigator${h.canTeachFailCount === 1 ? '' : 's'} with an overall Can-Teach status missed it.`);
       }
       if (feedbackSummary?.negative > 0) {
         labels.push('supervisorConcern');
@@ -767,7 +1069,7 @@ export function adaptiveTrainingRecommendations(row, {
 
   const feedbackSummary = feedbackInsights(feedback).byTarget;
 
-  return trainingForRow(row).map((assignment) => {
+  const recommendations = trainingForRow(row).map((assignment) => {
     const domainId = assignment.domainId;
     const domainCompletions = completions.filter((c) => c.domainId === domainId);
     const hasPractice = domainCompletions.some((c) => !c.kind || c.kind === 'practice');
@@ -781,7 +1083,11 @@ export function adaptiveTrainingRecommendations(row, {
 
     let kind = 'module';
     let label = 'Review the training module';
-    const reasons = [`${domainId} is ${assignment.level} (${row.scores?.[domainId] ?? 0}%).`];
+    // Evidence wording states the measured score, not an official level name.
+    const reasons = [
+      `${domainId} scored ${Math.round(assignment.score)}%.`
+      + (assignment.isCritical ? ' Critical domain gap — immediate focus.' : ''),
+    ];
 
     if (!hasPractice) {
       kind = 'practice';
@@ -811,11 +1117,13 @@ export function adaptiveTrainingRecommendations(row, {
       kind,
       label,
       priority: assignment.priority,
+      isCritical: assignment.isCritical,
       module: assignment.module,
       reasons,
       evidence: {
-        score: row.scores?.[domainId] ?? 0,
-        level: assignment.level,
+        score: assignment.score,
+        band: assignment.band,
+        level: assignment.band, // deprecated alias
         missedQuestions: misses,
         completionCount: domainCompletions.length,
         latestInterviewScore: effectiveInterviewScore(latestInterview),
@@ -823,6 +1131,11 @@ export function adaptiveTrainingRecommendations(row, {
       },
     };
   });
+
+  // Critical domain gaps rank ahead of ordinary required-training work.
+  return recommendations.sort(
+    (a, b) => (b.isCritical ? 1 : 0) - (a.isCritical ? 1 : 0) || a.evidence.score - b.evidence.score
+  );
 }
 
 /**
@@ -875,35 +1188,43 @@ export function feedbackInsights(feedback = []) {
 }
 
 /**
- * Suggested mentors for one navigator: for each domain where they are not yet
- * Can-Teach, list colleagues who can teach it (excluding themselves).
- * @returns {{domainId:string, level:string, mentors:string[]}[]}
+ * Suggested mentors for one navigator: for each domain they have not yet
+ * mastered, list qualified colleagues (excluding themselves). Mentors come from
+ * `domainMentorRoster`, so every suggestion satisfies BOTH mentor safety rules
+ * (overall Can-Teach AND ≥90% in that domain).
+ * @returns {{domainId, score, band, isCriticalGap, mentors}[]}
  */
 export function mentorSuggestions(rows, name) {
   const me = findRow(rows, name);
   if (!me) return [];
-  const roster = canTeachRoster(rows);
-  return DOMAINS.filter((d) => me.levels[d.id] !== 'canTeach')
-    .map((d) => ({
-      domainId: d.id,
-      level: me.levels[d.id],
-      mentors: roster[d.id].filter((n) => n !== name),
-    }))
+  const roster = domainMentorRoster(rows);
+  return DOMAINS.filter((d) => bandFor(me, d.id) !== 'canTeach')
+    .map((d) => {
+      const band = bandFor(me, d.id);
+      return {
+        domainId: d.id,
+        score: me.scores?.[d.id] ?? 0,
+        band,
+        level: band, // deprecated alias
+        isCriticalGap: band === 'critical',
+        mentors: roster[d.id].filter((n) => n !== name),
+      };
+    })
     .filter((x) => x.mentors.length > 0)
-    // surface the biggest gaps first (Learning before Solid)
-    .sort((a, b) => (a.level === 'learning' ? -1 : 1) - (b.level === 'learning' ? -1 : 1));
+    // surface the biggest gaps first (Critical, then Learning, then Solid)
+    .sort((a, b) => TRAINING_RULES[a.band].rank - TRAINING_RULES[b.band].rank || a.score - b.score);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
 // LONGITUDINAL TRENDS (Feature 1)
 // ─────────────────────────────────────────────────────────────────────────────
 
-/** Mean of all domain scores, or 0 if empty. */
+/**
+ * Chart-friendly overall: the canonical `overallScore`, coerced to 0 when there
+ * is nothing to average (sparklines need a number, not null).
+ */
 function computeOverall(scores) {
-  if (!scores) return 0;
-  const vals = DOMAINS.map((d) => scores[d.id]).filter((v) => typeof v === 'number');
-  if (vals.length === 0) return 0;
-  return Math.round(vals.reduce((a, b) => a + b, 0) / vals.length);
+  return overallScore(scores) ?? 0;
 }
 
 function formatTrendLabel(ts) {
@@ -1010,12 +1331,16 @@ export function trainingImpact(history, completions, domainId) {
 }
 
 /**
- * Floor-level trend: solidPlusRate and avgReadiness over time.
+ * Floor-level trend over time, measured on each navigator's OFFICIAL OVERALL
+ * status — never on a count of Can-Teach domain cells.
  * Groups all history snapshots chronologically; for each distinct timestamp,
  * builds the floor state using each navigator's latest snapshot up to that point.
+ * The existing assessment-type comparability rule is preserved, so MCQ and Spot
+ * the Error snapshots are never mixed within one navigator's series.
  *
  * @param {object[]} allHistory  subscribeResultHistory() output (all navigators)
- * @returns {{ ts:number, label:string, solidPlusRate:number, avgReadiness:number, assessed:number }[]}
+ * @returns {{ ts, label, avgOverallScore, solidPlusRate, canTeachRate,
+ *             criticalCount, assessed }[]}
  */
 export function teamTrend(allHistory) {
   if (allHistory.length === 0) return [];
@@ -1043,20 +1368,25 @@ export function teamTrend(allHistory) {
       .filter(Boolean);
 
     if (snapshots.length === 0) return null;
-    const rows = snapshots.map((s) => ({
-      name: s.name,
-      isLive: false,
-      scores: s.scores ?? {},
-      levels: Object.fromEntries(DOMAINS.map((d) => [d.id, scoreToLevel(s.scores?.[d.id] ?? 0)])),
-      competencyScores: s.competencyScores ?? {},
-      competencyLevels: {},
-    }));
+    const rows = buildMatrixRows(
+      snapshots.map((s) => ({
+        navigatorId: s.navigatorId ?? null,
+        name: s.name,
+        scores: s.scores ?? {},
+        competencyScores: s.competencyScores ?? {},
+      })),
+      null
+    );
     const stats = floorStats(rows);
     return {
       ts,
       label: formatTrendLabel(ts),
+      avgOverallScore: stats.avgOverallScore,
       solidPlusRate: stats.solidPlusRate,
-      avgReadiness: parseFloat(stats.avgReadiness.toFixed(1)),
+      canTeachRate: stats.assessed
+        ? Math.round((stats.canTeachCount / stats.assessed) * 100)
+        : 0,
+      criticalCount: stats.criticalCount,
       assessed: stats.assessed,
     };
   }).filter(Boolean);
@@ -1140,31 +1470,72 @@ export function buildDossier(row, answers, questions, interviews = [], completio
 
 /**
  * Build a prioritized supervisor action center from the current floor state.
- * Returns five categorized lists; each item identifies the navigator and reason.
+ *
+ * `criticalOverall` is the most urgent category: a navigator whose OFFICIAL
+ * overall status is Critical (below 40%). It ranks above ordinary Learning
+ * cases. This is a developmental and supervisory signal only — it never drives
+ * an automatic employment decision, restriction, or suspension.
+ *
+ * `criticalDomainGaps` is separate: a navigator with a healthy overall status
+ * can still have one domain below 40, and the supervisor must see it.
  *
  * @param {object[]} rows      buildMatrixRows output
  * @param {{ history?: object[], interviews?: object[], completions?: object[] }} [opts]
  * @returns {{
- *   criticalGaps:   {name,reason,domainId,severity}[],
- *   trainingOverdue:{name,reason,domainId,severity}[],
- *   decliningTrends:{name,reason,delta,severity}[],
- *   failedPractice: {name,reason,domainId,score,interviewId,severity}[],
- *   readyForMore:   {name,reason,canTeachCount,severity}[],
+ *   criticalOverall:    {name,overallScore,reason,severity}[],
+ *   criticalDomainGaps: {name,domainId,score,reason,severity}[],
+ *   learningOverall:    {name,overallScore,reason,severity}[],
+ *   trainingOverdue:    {name,reason,domainId,severity}[],
+ *   decliningTrends:    {name,reason,delta,severity}[],
+ *   failedPractice:     {name,reason,domainId,score,interviewId,severity}[],
+ *   readyForMore:       {name,overallScore,reason,severity}[],
+ *   criticalGaps:       alias of criticalDomainGaps (deprecated),
  * }}
  */
 export function buildActionCenter(rows, { history = [], interviews = [], completions = [] } = {}) {
-  const criticalGaps = [];
+  const criticalOverall = [];
+  const criticalDomainGaps = [];
+  const learningOverall = [];
   const trainingOverdue = [];
   const decliningTrends = [];
   const failedPractice = [];
   const readyForMore = [];
 
-  const tally = readinessTally(rows);
-
   for (const row of rows) {
+    const level = levelOf(row);
+    const score = scoreOf(row);
+
+    // ── Official overall status signals ──────────────────────────────────
+    if (level === 'critical') {
+      criticalOverall.push({
+        navigatorId: row.navigatorId ?? null,
+        name: row.name,
+        overallScore: score,
+        reason: 'Immediate supervisor attention recommended',
+        severity: 'high',
+      });
+    } else if (level === 'learning') {
+      learningOverall.push({
+        navigatorId: row.navigatorId ?? null,
+        name: row.name,
+        overallScore: score,
+        reason: 'Overall status is Learning',
+        severity: 'medium',
+      });
+    }
+
+    // ── Critical domain gaps (independent of overall status) ─────────────
     for (const d of DOMAINS) {
-      if (row.levels[d.id] === 'learning') {
-        criticalGaps.push({ navigatorId: row.navigatorId ?? null, name: row.name, reason: `Learning in ${d.id}`, domainId: d.id, severity: 'high' });
+      const domainScore = row.scores?.[d.id];
+      if (bandFor(row, d.id) === 'critical') {
+        criticalDomainGaps.push({
+          navigatorId: row.navigatorId ?? null,
+          name: row.name,
+          domainId: d.id,
+          score: Number.isFinite(domainScore) ? domainScore : 0,
+          reason: 'Critical domain gap',
+          severity: 'high',
+        });
       }
     }
 
@@ -1175,8 +1546,15 @@ export function buildActionCenter(rows, { history = [], interviews = [], complet
         .map((c) => c.domainId)
     );
     for (const a of training) {
-      if (a.priority === 'Required' && !navCompleted.has(a.domainId)) {
-        trainingOverdue.push({ navigatorId: row.navigatorId ?? null, name: row.name, reason: `Required training pending: ${a.domainId}`, domainId: a.domainId, severity: 'medium' });
+      if (isRequiredAssignment(a.priority) && !navCompleted.has(a.domainId)) {
+        trainingOverdue.push({
+          navigatorId: row.navigatorId ?? null,
+          name: row.name,
+          reason: `Required training pending: ${a.domainId}`,
+          domainId: a.domainId,
+          isCritical: a.isCritical,
+          severity: a.isCritical ? 'high' : 'medium',
+        });
       }
     }
 
@@ -1223,20 +1601,37 @@ export function buildActionCenter(rows, { history = [], interviews = [], complet
     }
   }
 
-  const avgCanTeach = tally.length > 0 ? tally.reduce((s, t) => s + t.canTeachCount, 0) / tally.length : 0;
-  for (const t of tally) {
-    if (t.canTeachCount >= Math.ceil(avgCanTeach) + 1 && t.canTeachCount >= 3) {
+  // Ready for more = OFFICIAL overall Can-Teach only. Domain depth is shown as
+  // supporting context, never as the qualifying signal.
+  for (const t of readinessTally(rows)) {
+    if (t.readyForMore) {
       readyForMore.push({
         navigatorId: t.navigatorId ?? null,
         name: t.name,
-        reason: `Can-Teach in ${t.canTeachCount} of ${DOMAINS.length} domains`,
-        canTeachCount: t.canTeachCount,
+        overallScore: t.overallScore,
+        overallLevel: t.overallLevel,
+        canTeachDomainCount: t.canTeachDomainCount,
+        reason: `${t.overallScore}% overall · Can-Teach`,
         severity: 'info',
       });
     }
   }
 
-  return { criticalGaps, trainingOverdue, decliningTrends, failedPractice, readyForMore };
+  criticalDomainGaps.sort((a, b) => a.score - b.score);
+  criticalOverall.sort((a, b) => (a.overallScore ?? 0) - (b.overallScore ?? 0));
+  learningOverall.sort((a, b) => (a.overallScore ?? 0) - (b.overallScore ?? 0));
+
+  return {
+    criticalOverall,
+    criticalDomainGaps,
+    learningOverall,
+    trainingOverdue,
+    decliningTrends,
+    failedPractice,
+    readyForMore,
+    /** @deprecated use `criticalDomainGaps` */
+    criticalGaps: criticalDomainGaps,
+  };
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1257,7 +1652,7 @@ export function buildActionCenter(rows, { history = [], interviews = [], complet
  * }[]}
  */
 export function buildDevPath(row, completions = [], interviews = []) {
-  return trainingForRow(row).map(({ domainId, level, priority }) => {
+  return trainingForRow(row).map(({ domainId, band, score, priority, isCritical }) => {
     const hasCoaching = completions.some((c) => c.domainId === domainId && c.kind === 'coaching');
     const hasPractice = completions.some((c) => c.domainId === domainId && (!c.kind || c.kind === 'practice'));
     const hasInterview = interviews.some((iv) => isDomainInterview(iv) && iv.domainId === domainId && effectiveInterviewScore(iv) != null);
@@ -1278,8 +1673,11 @@ export function buildDevPath(row, completions = [], interviews = []) {
 
     return {
       domainId,
-      level,
+      band,
+      level: band, // deprecated alias
+      score,
       priority,
+      isCritical,
       steps,
       percentComplete: Math.round((steps.filter((s) => s.status === 'done').length / steps.length) * 100),
     };
@@ -1308,35 +1706,55 @@ export function sequenceDevSteps(steps = []) {
 
 /**
  * Build load-balanced mentor-mentee pairings for all domains.
- * Assigns each Learning/Solid navigator to the least-loaded Can-Teach mentor,
- * capped at maxLoad. Learning navigators are prioritized over Solid.
+ *
+ * MENTOR SAFETY: only navigators returned by `domainMentorRoster` may mentor a
+ * domain — official overall status Can-Teach AND ≥90% in that specific domain.
+ * A navigator who is Can-Teach overall but weak in a domain cannot mentor it,
+ * and a strong domain score never qualifies someone whose overall status is
+ * lower. Mentees are prioritized Critical → Learning → Solid by domain score.
+ *
+ * New pairing records carry explicit overall/domain provenance; the legacy
+ * `menteeLevel` / `baselineScore` fields are preserved so existing saved
+ * pairing documents keep rendering unchanged.
  *
  * @param {object[]} rows
  * @param {{ maxLoad?: number }} [opts]
- * @returns {{
- *   pairings: {domainId, mentorName, menteeName, menteeLevel, baselineScore}[],
- *   load: Record<string, number>,
- *   unmatched: {domainId, menteeName, menteeLevel}[],
- * }}
  */
 export function buildMentorMatches(rows, { maxLoad = MENTOR_MAX_LOAD } = {}) {
   const pairings = [];
   const unmatched = [];
   const load = {}; // mentorName → total pairings assigned
+  const roster = domainMentorRoster(rows);
+  const rowByName = new Map(rows.map((r) => [r.name, r]));
+
+  const menteeShape = (mentee, domainId) => {
+    const band = bandFor(mentee, domainId);
+    return {
+      domainId,
+      menteeName: mentee.name,
+      menteeOverallScore: scoreOf(mentee),
+      menteeOverallLevel: levelOf(mentee),
+      baselineDomainScore: mentee.scores?.[domainId] ?? 0,
+      menteeDomainBand: band,
+      // Legacy fields kept for backward compatibility with saved pairings.
+      menteeLevel: band,
+      baselineScore: mentee.scores?.[domainId] ?? 0,
+    };
+  };
 
   for (const d of DOMAINS) {
-    const mentors = rows.filter((r) => r.levels[d.id] === 'canTeach').map((r) => r.name);
+    const mentors = roster[d.id];
+    const mentorNames = new Set(mentors);
     const mentees = rows
-      .filter((r) => r.levels[d.id] !== 'canTeach')
-      .sort((a, b) => {
-        const order = { learning: 0, solid: 1 };
-        return (order[a.levels[d.id]] ?? 2) - (order[b.levels[d.id]] ?? 2);
-      });
+      .filter((r) => !mentorNames.has(r.name) && bandFor(r, d.id) !== 'canTeach')
+      .sort(
+        (a, b) =>
+          TRAINING_RULES[bandFor(a, d.id)].rank - TRAINING_RULES[bandFor(b, d.id)].rank
+          || (a.scores?.[d.id] ?? 0) - (b.scores?.[d.id] ?? 0)
+      );
 
     if (mentors.length === 0) {
-      for (const mentee of mentees) {
-        unmatched.push({ domainId: d.id, menteeName: mentee.name, menteeLevel: mentee.levels[d.id] });
-      }
+      for (const mentee of mentees) unmatched.push(menteeShape(mentee, d.id));
       continue;
     }
 
@@ -1347,18 +1765,19 @@ export function buildMentorMatches(rows, { maxLoad = MENTOR_MAX_LOAD } = {}) {
         .sort((a, b) => a.currentLoad - b.currentLoad);
 
       if (available.length === 0) {
-        unmatched.push({ domainId: d.id, menteeName: mentee.name, menteeLevel: mentee.levels[d.id] });
+        unmatched.push(menteeShape(mentee, d.id));
         continue;
       }
 
       const mentor = available[0];
+      const mentorRow = rowByName.get(mentor.name);
       load[mentor.name] = (load[mentor.name] ?? 0) + 1;
       pairings.push({
-        domainId: d.id,
+        ...menteeShape(mentee, d.id),
         mentorName: mentor.name,
-        menteeName: mentee.name,
-        menteeLevel: mentee.levels[d.id],
-        baselineScore: mentee.scores?.[d.id] ?? 0,
+        mentorOverallScore: scoreOf(mentorRow),
+        mentorOverallLevel: levelOf(mentorRow),
+        mentorDomainScore: mentorRow?.scores?.[d.id] ?? null,
       });
     }
   }
@@ -1378,7 +1797,10 @@ export function pairingOutcomes(savedPairings, rows) {
   return savedPairings.map((p) => {
     const menteeRow = findRow(rows, p.menteeName);
     const currentScore = menteeRow?.scores?.[p.domainId] ?? null;
-    const delta = currentScore !== null ? currentScore - (p.baselineScore ?? 0) : null;
-    return { ...p, currentScore, delta, improved: delta !== null && delta > 0 };
+    // Legacy pairing documents only carry `baselineScore`; newer ones also
+    // carry `baselineDomainScore`. Both keep working.
+    const baseline = p.baselineDomainScore ?? p.baselineScore ?? 0;
+    const delta = currentScore !== null ? currentScore - baseline : null;
+    return { ...p, baseline, currentScore, delta, improved: delta !== null && delta > 0 };
   });
 }

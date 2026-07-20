@@ -1,7 +1,8 @@
 import { useState } from 'react';
-import { DOMAINS } from '../data/questions.js';
-import { LEVELS, LEVEL_ORDER } from '../data/config.js';
+import { DOMAINS, domainName } from '../data/questions.js';
+import { LEVELS } from '../data/config.js';
 import { findRow } from '../lib/scoring.js';
+import { OverallBadge } from './OverallStatus.jsx';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Navigators — supervisor's roster management tab.
@@ -17,12 +18,6 @@ import { findRow } from '../lib/scoring.js';
 //   - Deactivate / Reactivate
 // All destructive actions are gated behind an inline confirmation prompt.
 // ─────────────────────────────────────────────────────────────────────────────
-
-function levelCounts(row) {
-  const counts = { learning: 0, solid: 0, canTeach: 0 };
-  for (const d of DOMAINS) counts[row.levels[d.id]] += 1;
-  return counts;
-}
 
 export default function Navigators({
   rows,
@@ -83,6 +78,9 @@ export default function Navigators({
       'card nav-card',
       isInactive && 'nav-card--inactive',
       !row && !isInactive && 'nav-card--pending',
+      // A Critical overall status is visibly urgent, but stays professional and
+      // readable — the badge always carries the number and the written label too.
+      row && row.overallLevel === 'critical' && 'nav-card--critical',
     ]
       .filter(Boolean)
       .join(' ');
@@ -97,34 +95,33 @@ export default function Navigators({
           ) : !row ? (
             <span className="nav-card__pending-tag">Not yet taken</span>
           ) : (
-            <span className="nav-card__ready">{levelCounts(row).canTeach} Can-Teach</span>
+            <OverallBadge row={row} size="sm" />
           )}
         </div>
 
-        {/* Domain color strip (only for navigators with results) */}
+        {/* Domain score strip — each segment is a SCORE RANGE, not a status. */}
         {row && (
-          <div className="nav-card__strip" aria-hidden="true">
-            {DOMAINS.map((d) => (
-              <span
-                key={d.id}
-                className="nav-card__cell"
-                title={`${d.name}: ${LEVELS[row.levels[d.id]].label}`}
-                style={{ background: LEVELS[row.levels[d.id]].color }}
-              />
-            ))}
+          <div className="nav-card__strip">
+            {DOMAINS.map((d) => {
+              const score = row.scores?.[d.id];
+              const band = row.domainDevelopmentBands[d.id];
+              return (
+                <span
+                  key={d.id}
+                  className="nav-card__cell"
+                  title={`${domainName(d.id)}: ${Number.isFinite(score) ? `${score}%` : 'not scored'}`}
+                  style={{ background: LEVELS[band].tint }}
+                />
+              );
+            })}
           </div>
         )}
 
-        {/* Level counts */}
         {row && (
-          <div className="nav-card__counts">
-            {LEVEL_ORDER.map((lvl) => (
-              <span key={lvl} className="nav-card__count">
-                <span className="legend-swatch" style={{ background: LEVELS[lvl].color }} />
-                {levelCounts(row)[lvl]} {LEVELS[lvl].label}
-              </span>
-            ))}
-          </div>
+          <p className="nav-card__strip-note">
+            Six domain scores behind this status
+            {row.overallComplete === false && ' · partial profile'}
+          </p>
         )}
 
         {/* Pending note */}

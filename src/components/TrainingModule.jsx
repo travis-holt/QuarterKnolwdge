@@ -455,10 +455,23 @@ export default function TrainingModule({
         <p className="readoff__sub">
           Based on this quarter&rsquo;s check — navigators weak in {domainName(domainId)}.
         </p>
-        {!cohort || (cohort.required.length === 0 && cohort.stretch.length === 0) ? (
+        {!cohort || (cohort.critical.length === 0 && cohort.required.length === 0 && cohort.stretch.length === 0) ? (
           <p className="readoff__empty">No one needs this module right now — the floor has it covered.</p>
         ) : (
           <div className="train-domain__cohorts">
+            {cohort.critical.length > 0 && (
+              <div className="cohort">
+                <span className="cohort__tag cohort__tag--critical">Critical ({cohort.critical.length})</span>
+                <span className="cohort__names">
+                  {cohort.critical.map((n, i) => (
+                    <span key={n}>
+                      {i > 0 && ', '}
+                      <button className="linkbtn" onClick={() => onOpenNavigator(n)}>{n}</button>
+                    </span>
+                  ))}
+                </span>
+              </div>
+            )}
             {cohort.required.length > 0 && (
               <div className="cohort">
                 <span className="cohort__tag cohort__tag--req">Required ({cohort.required.length})</span>

@@ -22,18 +22,23 @@ export default function Training({ rows, deptName, onOpenNavigator, onPreviewMod
           Training assignments{deptName && <span className="title-dept"> · {deptName}</span>}
         </h1>
         <p className="overview__lede">
-          Auto-assigned from each navigator&rsquo;s check results — Required where they&rsquo;re at
-          Learning, Stretch where they&rsquo;re Solid and climbing toward Can-Teach. Course content
-          is placeholder for now and plugs in later.
+          Auto-assigned from each navigator&rsquo;s individual <strong>domain scores</strong>, never
+          from their overall status — Critical below 40%, Required 40–64%, Stretch 65–89%. A
+          navigator who is Can-Teach overall still receives targeted training for a weaker domain.
         </p>
       </header>
 
       {/* ── KPIs ──────────────────────────────────────────────────────── */}
       <div className="kpis">
+        <div className={`card kpi ${stats.totalCritical > 0 ? 'kpi--critical' : ''}`}>
+          <span className="kpi__value">{stats.totalCritical}</span>
+          <span className="kpi__label">critical assignments</span>
+          <span className="kpi__sub">domain scores below 40%</span>
+        </div>
         <div className="card kpi">
           <span className="kpi__value">{stats.totalRequired}</span>
           <span className="kpi__label">required assignments</span>
-          <span className="kpi__sub">navigators at Learning level</span>
+          <span className="kpi__sub">domain scores below 65% (includes critical)</span>
         </div>
         <div className="card kpi">
           <span className="kpi__value">{stats.navigatorsWithRequired}</span>
@@ -41,14 +46,9 @@ export default function Training({ rows, deptName, onOpenNavigator, onPreviewMod
           <span className="kpi__sub">of {rows.length} assessed</span>
         </div>
         <div className="card kpi">
-          <span className="kpi__value">{stats.domainsNeedingTraining}</span>
-          <span className="kpi__label">domains needing a session</span>
-          <span className="kpi__sub">at least one Required learner</span>
-        </div>
-        <div className="card kpi">
           <span className="kpi__value">{stats.totalStretch}</span>
           <span className="kpi__label">stretch assignments</span>
-          <span className="kpi__sub">Solid → Can-Teach growth</span>
+          <span className="kpi__sub">domain scores 65–89%</span>
         </div>
       </div>
 
@@ -71,6 +71,19 @@ export default function Training({ rows, deptName, onOpenNavigator, onPreviewMod
               </div>
               {d.module?.blurb && <p className="train-domain__blurb">{d.module.blurb}</p>}
               <div className="train-domain__cohorts">
+                {d.critical.length > 0 && (
+                  <div className="cohort">
+                    <span className="cohort__tag cohort__tag--critical">Critical ({d.critical.length})</span>
+                    <span className="cohort__names">
+                      {d.critical.map((n, i) => (
+                        <span key={n}>
+                          {i > 0 && ', '}
+                          <button className="linkbtn" onClick={() => onOpenNavigator(n)}>{n}</button>
+                        </span>
+                      ))}
+                    </span>
+                  </div>
+                )}
                 {d.required.length > 0 && (
                   <div className="cohort">
                     <span className="cohort__tag cohort__tag--req">Required ({d.required.length})</span>
@@ -117,7 +130,11 @@ export default function Training({ rows, deptName, onOpenNavigator, onPreviewMod
                 <span className="train-person__count">
                   {p.assignments.length === 0
                     ? 'No training assigned'
-                    : `${p.requiredCount} required · ${p.assignments.length - p.requiredCount} stretch`}
+                    : [
+                        p.criticalCount > 0 && `${p.criticalCount} critical`,
+                        `${p.requiredCount} required`,
+                        `${p.stretchCount} stretch`,
+                      ].filter(Boolean).join(' · ')}
                 </span>
               </div>
               {p.assignments.length > 0 && (
@@ -126,7 +143,13 @@ export default function Training({ rows, deptName, onOpenNavigator, onPreviewMod
                     const practiced = hasPracticed(p.name, a.domainId);
                     return (
                       <li key={a.domainId} className="train-assign">
-                        <span className={`cohort__tag ${a.priority === 'Required' ? 'cohort__tag--req' : 'cohort__tag--stretch'}`}>
+                        <span className={`cohort__tag ${
+                          a.priority === 'Critical'
+                            ? 'cohort__tag--critical'
+                            : a.priority === 'Required'
+                              ? 'cohort__tag--req'
+                              : 'cohort__tag--stretch'
+                        }`}>
                           {a.priority}
                         </span>
                         <button className="linkbtn train-assign__title" onClick={() => onPreviewModule(a.domainId)}>

@@ -2,8 +2,9 @@ import { useState, useEffect } from 'react';
 import { DOMAINS, domainName } from '../data/questions.js';
 import { COMPETENCIES, competencyName } from '../data/competencies.js';
 import { DEPARTMENTS, isAssessed } from '../data/departments.js';
-import { LEVELS, interviewScoreColor } from '../data/config.js';
+import { LEVELS, THRESHOLDS, interviewScoreColor } from '../data/config.js';
 import { findRow, mentorSuggestions, trainingForRow, buildTrend, trainingImpact, buildDossier } from '../lib/scoring.js';
+import { OverallBadge, DomainScore } from './OverallStatus.jsx';
 import { getInterviews, getResultHistory, updateInterviewGradeOverride, updateQaFinalReview } from '../lib/db.js';
 import { qaFinalReviewLabel, qaFinalVerdict, qaHistoryBadgeLabel, qaBadgeTone } from '../lib/qaFinalReview.js';
 import { compareTimestampValues, timestampMillis } from '../lib/time.js';
@@ -196,10 +197,17 @@ export default function NavigatorDetail({ rows, name, deptName, dept, deptMatrix
     );
   }
 
-  const domainsByLevel = (lvl) => DOMAINS.filter((d) => row.levels[d.id] === lvl);
-  const strengths = domainsByLevel('canTeach');
-  const growth = domainsByLevel('learning');
-  const canTeachCount = strengths.length;
+  // Sections derive from RAW DOMAIN SCORES, not from official level labels.
+  const scoreOfDomain = (d) => (Number.isFinite(row.scores?.[d.id]) ? row.scores[d.id] : 0);
+  const strongest = [...DOMAINS]
+    .filter((d) => scoreOfDomain(d) >= THRESHOLDS.canTeach)
+    .sort((a, b) => scoreOfDomain(b) - scoreOfDomain(a));
+  const criticalGaps = [...DOMAINS]
+    .filter((d) => scoreOfDomain(d) < THRESHOLDS.critical)
+    .sort((a, b) => scoreOfDomain(a) - scoreOfDomain(b));
+  const priorityFocus = [...DOMAINS]
+    .filter((d) => scoreOfDomain(d) >= THRESHOLDS.critical && scoreOfDomain(d) < THRESHOLDS.solid)
+    .sort((a, b) => scoreOfDomain(a) - scoreOfDomain(b));
   const mentors = mentorSuggestions(rows, name);
   const training = trainingForRow(row);
 
@@ -232,15 +240,16 @@ export default function NavigatorDetail({ rows, name, deptName, dept, deptMatrix
             {row.isLive && <span className="matrix__you">you</span>}
           </h1>
           <p className="navdetail__lede">
-            {deptName} · {canTeachCount > 0
-              ? `can teach ${canTeachCount} of ${DOMAINS.length} domains`
-              : 'building toward first Can-Teach domain'}
-            {growth.length > 0 && ` · ${growth.length} growth ${growth.length === 1 ? 'area' : 'areas'}`}
+            {deptName} · official status from the average across all six domains
+            {criticalGaps.length > 0 && (
+              <span className="navdetail__critical-note">
+                {' '}· {criticalGaps.length} critical domain {criticalGaps.length === 1 ? 'gap' : 'gaps'}
+              </span>
+            )}
           </p>
         </div>
         <div className="navdetail__ready">
-          <span className="navdetail__ready-num">{canTeachCount}</span>
-          <span className="navdetail__ready-label">Can-Teach domains</span>
+          <OverallBadge row={row} size="lg" />
         </div>
       </header>
 
@@ -297,33 +306,48 @@ export default function NavigatorDetail({ rows, name, deptName, dept, deptMatrix
       {/* ── Strengths / growth callouts ───────────────────────────────── */}
       <div className="navdetail__callouts">
         <div className="card callout">
-          <h2 className="callout__title">Strengths</h2>
-          {strengths.length === 0 ? (
-            <p className="readoff__empty">No Can-Teach domains yet — keep going.</p>
+          <h2 className="callout__title">Strongest domains</h2>
+          {strongest.length === 0 ? (
+            <p className="readoff__empty">No domain is at 90% or above yet — keep going.</p>
           ) : (
             <div className="chip-wrap">
-              {strengths.map((d) => (
-                <span key={d.id} className="level-chip" style={{ background: LEVELS.canTeach.color, color: LEVELS.canTeach.text }}>
-                  {domainName(d.id)}
+              {strongest.map((d) => (
+                <span key={d.id} className="score-chip" style={{ background: LEVELS.canTeach.tint }}>
+                  {domainName(d.id)} <strong>{scoreOfDomain(d)}%</strong>
                 </span>
               ))}
             </div>
           )}
         </div>
         <div className="card callout">
-          <h2 className="callout__title">Growth areas</h2>
-          {growth.length === 0 ? (
-            <p className="readoff__empty">No Learning-level domains — solid across the board.</p>
+          <h2 className="callout__title">Priority focus areas</h2>
+          {priorityFocus.length === 0 ? (
+            <p className="readoff__empty">No domain is between 40% and 64%.</p>
           ) : (
             <div className="chip-wrap">
-              {growth.map((d) => (
-                <span key={d.id} className="level-chip" style={{ background: LEVELS.learning.color, color: LEVELS.learning.text }}>
-                  {domainName(d.id)}
+              {priorityFocus.map((d) => (
+                <span key={d.id} className="score-chip" style={{ background: LEVELS.learning.tint }}>
+                  {domainName(d.id)} <strong>{scoreOfDomain(d)}%</strong>
                 </span>
               ))}
             </div>
           )}
         </div>
+        {criticalGaps.length > 0 && (
+          <div className="card callout callout--critical">
+            <h2 className="callout__title">Critical domain gaps</h2>
+            <p className="readoff__sub">
+              Below 40% — required training, highest urgency, regardless of the overall status above.
+            </p>
+            <div className="chip-wrap">
+              {criticalGaps.map((d) => (
+                <span key={d.id} className="score-chip score-chip--critical" style={{ background: LEVELS.critical.tint }}>
+                  {domainName(d.id)} <strong>{scoreOfDomain(d)}%</strong> · Critical gap
+                </span>
+              ))}
+            </div>
+          </div>
+        )}
       </div>
 
       {/* ── Longitudinal trend (when history is available) ───────────── */}
@@ -355,7 +379,7 @@ export default function NavigatorDetail({ rows, name, deptName, dept, deptMatrix
               return (
                 <div key={d.id} className="trend__domain-row">
                   <span className="trend__domain-name">{domainName(d.id)}</span>
-                  <Sparkline values={series} color={LEVELS[row.levels[d.id]]?.color ?? 'var(--accent)'} />
+                  <Sparkline values={series} color={LEVELS[row.domainDevelopmentBands[d.id]]?.color ?? 'var(--accent)'} />
                   <span className="trend__domain-pct">{Math.round(series[series.length - 1])}%</span>
                   {impact?.delta != null && (
                     <span className={`trend__delta ${impact.delta >= 0 ? 'trend__delta--up' : 'trend__delta--down'}`}>
@@ -372,22 +396,35 @@ export default function NavigatorDetail({ rows, name, deptName, dept, deptMatrix
       {/* ── Per-domain breakdown ──────────────────────────────────────── */}
       <div className="card navdetail__panel">
         <h2 className="overview__panel-title">Per-domain detail</h2>
+        <p className="readoff__sub">
+          Diagnostic evidence behind the overall status. These are scores, not separate official
+          classifications — only the Overall badge above carries an official level.
+        </p>
         <div className="results__grid navdetail__grid">
           {ordered.map((d) => {
             const pct = row.scores[d.id];
-            const level = LEVELS[row.levels[d.id]];
+            const band = row.domainDevelopmentBands[d.id];
+            const descriptor = LEVELS[band];
+            // Neutral diagnostic wording — never an official level name.
+            const note = band === 'critical'
+              ? 'Critical gap'
+              : band === 'learning'
+                ? 'Focus area'
+                : band === 'solid'
+                  ? 'Developing'
+                  : 'Strong score';
             return (
-              <div key={d.id} className="result-card navdetail__card">
+              <div key={d.id} className={`result-card navdetail__card ${band === 'critical' ? 'result-card--critical' : ''}`}>
                 <div className="result-card__top">
                   <span className="result-card__domain">{domainName(d.id)}</span>
-                  <span className="level-chip" style={{ background: level.color, color: level.text }}>
-                    {level.label}
+                  <span className="score-chip" style={{ background: descriptor.tint }}>
+                    {Number.isFinite(pct) ? `${pct}%` : '—'} · {note}
                   </span>
                 </div>
                 <div className="result-card__bar">
-                  <div className="result-card__bar-fill" style={{ width: `${pct}%`, background: level.color }} />
+                  <div className="result-card__bar-fill" style={{ width: `${pct ?? 0}%`, background: descriptor.color }} />
                 </div>
-                <div className="result-card__pct">{pct}% in this domain</div>
+                <div className="result-card__pct">{Number.isFinite(pct) ? `${pct}% in this domain` : 'Not scored'}</div>
               </div>
             );
           })}
@@ -465,23 +502,28 @@ export default function NavigatorDetail({ rows, name, deptName, dept, deptMatrix
         <h2 className="overview__panel-title">Assigned training</h2>
         <p className="readoff__sub">Auto-assigned from this quarter&rsquo;s results.</p>
         {training.length === 0 ? (
-          <p className="readoff__empty">Nothing assigned — Can-Teach across the board.</p>
+          <p className="readoff__empty">Nothing assigned — every domain is at 90% or above.</p>
         ) : (
           <ul className="readoff__list">
             {training.map((a) => {
               const practiced = completedDomains.has(a.domainId);
+              const tagClass = a.priority === 'Critical'
+                ? 'cohort__tag--critical'
+                : a.priority === 'Required'
+                  ? 'cohort__tag--req'
+                  : 'cohort__tag--stretch';
               return (
                 <li key={a.domainId} className="train-assign train-assign--detail">
-                  <span className={`cohort__tag ${a.priority === 'Required' ? 'cohort__tag--req' : 'cohort__tag--stretch'}`}>
-                    {a.priority}
-                  </span>
+                  <span className={`cohort__tag ${tagClass}`}>{a.priority}</span>
                   <span className="train-assign__body">
                     <button className="linkbtn train-assign__title" onClick={() => onPreviewModule(a.domainId)}>
                       {a.module?.title ?? domainName(a.domainId)}
                     </button>
                     <span className="train-assign__why">
-                      Assigned because {domainName(a.domainId)} is at{' '}
-                      {LEVELS[a.level].label} · {a.goal}
+                      {a.isCritical
+                        ? `Immediate focus because ${domainName(a.domainId)} scored ${a.score}%`
+                        : `Assigned because ${domainName(a.domainId)} scored ${a.score}%`}
+                      {' · '}{a.goal}
                       {a.module && ` · ~${a.module.estMinutes} min`}
                     </span>
                   </span>
@@ -506,11 +548,17 @@ export default function NavigatorDetail({ rows, name, deptName, dept, deptMatrix
       {mentors.length > 0 && (
         <div className="card navdetail__panel">
           <h2 className="overview__panel-title">Suggested mentors</h2>
-          <p className="readoff__sub">Colleagues who can teach {row.name}&rsquo;s growth domains.</p>
+          <p className="readoff__sub">
+            Colleagues qualified to mentor {row.name}&rsquo;s weaker domains — Can-Teach overall and
+            at least 90% in that domain.
+          </p>
           <ul className="readoff__list">
             {mentors.map((m) => (
               <li key={m.domainId} className="readoff__row">
-                <span className="tag">{domainName(m.domainId)}</span>
+                <span className="tag">
+                  {domainName(m.domainId)} · {m.score}%
+                  {m.isCriticalGap && <span className="readoff__critical"> Critical gap</span>}
+                </span>
                 <span className="readoff__people">
                   {m.mentors.map((mentorName, i) => (
                     <span key={mentorName}>

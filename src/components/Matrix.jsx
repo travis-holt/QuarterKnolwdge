@@ -1,12 +1,13 @@
 import { DOMAINS, domainName } from '../data/questions.js';
 import { LEVELS, LEVEL_ORDER } from '../data/config.js';
-import { columnGaps, canTeachRoster, readinessTally } from '../lib/scoring.js';
+import { columnGaps, domainMentorRoster, readinessTally } from '../lib/scoring.js';
+import { OverallBadge, DomainScore } from './OverallStatus.jsx';
 import Reveal from './Reveal.jsx';
 
 export default function Matrix({ rows, deptName, onTakeCheck, onOpenNavigator }) {
   const hasLive = rows.some((r) => r.isLive);
   const gaps = columnGaps(rows);
-  const roster = canTeachRoster(rows);
+  const roster = domainMentorRoster(rows);
   const readiness = readinessTally(rows);
   const gapDomainIds = new Set(gaps.map((g) => g.domainId));
 
@@ -17,8 +18,8 @@ export default function Matrix({ rows, deptName, onTakeCheck, onOpenNavigator })
           Capability matrix{deptName && <span className="title-dept"> · {deptName}</span>}
         </h1>
         <p className="matrix-view__lede">
-          Each navigator across every domain — colour shows the level. This is a development
-          map, not a scoreboard.
+          Overall status is calculated from the average across all six domains. Domain columns show
+          the diagnostic scores behind that status. This is a development map, not a scoreboard.
         </p>
         <p className="matrix-view__hint">
           {onTakeCheck && !hasLive && (
@@ -41,6 +42,9 @@ export default function Matrix({ rows, deptName, onTakeCheck, onOpenNavigator })
             <thead>
               <tr>
                 <th className="matrix__corner">Navigator</th>
+                <th className="matrix__colhead matrix__colhead--overall" title="Official status — the average across all six domains">
+                  Overall
+                </th>
                 {DOMAINS.map((d) => (
                   <th
                     key={d.id}
@@ -62,19 +66,17 @@ export default function Matrix({ rows, deptName, onTakeCheck, onOpenNavigator })
                       {row.isLive && <span className="matrix__you">you</span>}
                     </button>
                   </th>
-                  {DOMAINS.map((d) => {
-                    const level = LEVELS[row.levels[d.id]];
-                    return (
-                      <td key={d.id} className="matrix__cell">
-                        <span
-                          className="matrix__pill"
-                          style={{ background: level.color, color: level.text }}
-                        >
-                          {level.label}
-                        </span>
-                      </td>
-                    );
-                  })}
+                  <td className="matrix__cell matrix__cell--overall">
+                    <OverallBadge row={row} />
+                  </td>
+                  {DOMAINS.map((d) => (
+                    <td key={d.id} className="matrix__cell">
+                      <DomainScore
+                        score={row.scores?.[d.id]}
+                        band={row.domainDevelopmentBands[d.id]}
+                      />
+                    </td>
+                  ))}
                 </tr>
               ))}
             </tbody>
@@ -86,9 +88,20 @@ export default function Matrix({ rows, deptName, onTakeCheck, onOpenNavigator })
             <span key={id} className="legend-item">
               <span className="legend-swatch" style={{ background: LEVELS[id].color }} />
               {LEVELS[id].label}
+              <span className="legend-range">
+                {id === 'critical' && '0–39%'}
+                {id === 'learning' && '40–64%'}
+                {id === 'solid' && '65–89%'}
+                {id === 'canTeach' && '90–100%'}
+              </span>
             </span>
           ))}
         </div>
+        <p className="matrix__legend-note">
+          These four levels are the official <strong>Overall</strong> status. Domain columns use the
+          same score ranges as a lighter diagnostic tint — a domain score is evidence behind the
+          status, not a status of its own.
+        </p>
       </div>
 
       {/* ── The "so what" read-offs ───────────────────────────────────── */}
@@ -96,7 +109,7 @@ export default function Matrix({ rows, deptName, onTakeCheck, onOpenNavigator })
         {/* Column gaps */}
         <Reveal className="card readoff">
           <h2 className="readoff__title">Column gaps</h2>
-          <p className="readoff__sub">Domains where most navigators are still Learning — floor-wide training priorities.</p>
+          <p className="readoff__sub">Domains where most navigators score below 65% — floor-wide training priorities.</p>
           {gaps.length === 0 ? (
             <p className="readoff__empty">No floor-wide gaps right now.</p>
           ) : (
@@ -105,7 +118,10 @@ export default function Matrix({ rows, deptName, onTakeCheck, onOpenNavigator })
                 <li key={g.domainId} className="readoff__row">
                   <span className="tag tag--accent">{domainName(g.domainId)}</span>
                   <span className="readoff__count">
-                    {g.learningCount} of {g.total} Learning
+                    {g.belowSolidCount} of {g.total} below 65%
+                    {g.criticalCount > 0 && (
+                      <span className="readoff__critical"> · {g.criticalCount} critical</span>
+                    )}
                   </span>
                 </li>
               ))}
@@ -113,10 +129,13 @@ export default function Matrix({ rows, deptName, onTakeCheck, onOpenNavigator })
           )}
         </Reveal>
 
-        {/* Can-Teach roster */}
+        {/* Domain mentor roster */}
         <Reveal className="card readoff" delay={80}>
-          <h2 className="readoff__title">Can-Teach roster</h2>
-          <p className="readoff__sub">Who can mentor in each domain.</p>
+          <h2 className="readoff__title">Domain mentors</h2>
+          <p className="readoff__sub">
+            Who is qualified to mentor each domain — Can-Teach overall <em>and</em> at least 90% in
+            that domain.
+          </p>
           <ul className="readoff__list">
             {DOMAINS.map((d) => (
               <li key={d.id} className="readoff__row readoff__row--col">
@@ -132,7 +151,10 @@ export default function Matrix({ rows, deptName, onTakeCheck, onOpenNavigator })
         {/* Readiness tally */}
         <Reveal className="card readoff" delay={160}>
           <h2 className="readoff__title">Readiness signal</h2>
-          <p className="readoff__sub">Can-Teach domains per navigator — a data-backed &ldquo;who&rsquo;s ready for more.&rdquo;</p>
+          <p className="readoff__sub">
+            Navigators ranked by official overall status — a data-backed &ldquo;who&rsquo;s ready for
+            more.&rdquo;
+          </p>
           <ul className="readoff__list">
             {readiness.map((r) => (
               <li key={r.name} className={`readoff__row readiness ${r.isLive ? 'is-live' : ''}`}>
@@ -143,10 +165,15 @@ export default function Matrix({ rows, deptName, onTakeCheck, onOpenNavigator })
                 <span className="readiness__bar">
                   <span
                     className="readiness__bar-fill"
-                    style={{ width: `${(r.canTeachCount / DOMAINS.length) * 100}%` }}
+                    style={{
+                      width: `${r.overallScore ?? 0}%`,
+                      background: r.overallLevel ? LEVELS[r.overallLevel].color : undefined,
+                    }}
                   />
                 </span>
-                <span className="readiness__count">{r.canTeachCount}</span>
+                <span className="readiness__count">
+                  {r.overallScore == null ? '—' : `${r.overallScore}% · ${r.overallLabel}`}
+                </span>
               </li>
             ))}
           </ul>
