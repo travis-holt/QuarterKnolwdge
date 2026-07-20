@@ -1,8 +1,8 @@
 import { useState, useEffect } from 'react';
 import { domainName } from '../data/questions.js';
 import { COMPETENCIES, competencyName } from '../data/competencies.js';
-import { LEVELS, THRESHOLDS } from '../data/config.js';
-import { domainBand, optionPoints } from '../lib/scoring.js';
+import { LEVELS, COMPETENCY_THRESHOLDS } from '../data/config.js';
+import { competencyScoreToLevel, optionPoints } from '../lib/scoring.js';
 import { apiFetch } from '../lib/apiFetch.js';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -49,10 +49,11 @@ export default function Coaching({ questions, answers, competencyScores, name, c
   const scored = COMPETENCIES.map((c) => ({ id: c.id, pct: competencyScores?.[c.id] })).filter(
     (c) => typeof c.pct === 'number'
   );
-  // Competency analysis is a SEPARATE axis from the official department status.
+  // Competency analysis is a SEPARATE axis from the official department status,
+  // with its OWN thresholds (<60 Learning · 60–84 Solid · 85+ Can-Teach).
   // These are competency score ranges, not the navigator's overall classification.
-  const strengths = scored.filter((c) => c.pct >= THRESHOLDS.canTeach);
-  const growth = scored.filter((c) => c.pct < THRESHOLDS.solid);
+  const strengths = scored.filter((c) => c.pct >= COMPETENCY_THRESHOLDS.canTeach);
+  const growth = scored.filter((c) => c.pct < COMPETENCY_THRESHOLDS.learning);
 
   // Competencies that have an AI note to show (only when coaching loaded)
   const aiEntries = aiCoaching && typeof aiCoaching === 'object'
@@ -75,14 +76,14 @@ export default function Coaching({ questions, answers, competencyScores, name, c
         <div className="card callout">
           <h2 className="callout__title">Competency strengths</h2>
           {strengths.length === 0 ? (
-            <p className="readoff__empty">No competency is at 90% or above yet — keep building.</p>
+            <p className="readoff__empty">No competency is at 85% or above yet — keep building.</p>
           ) : (
             <div className="chip-wrap">
               {strengths.map((c) => (
                 <span
                   key={c.id}
                   className="score-chip"
-                  style={{ background: LEVELS[domainBand(c.pct)].tint }}
+                  style={{ background: LEVELS[competencyScoreToLevel(c.pct)].tint }}
                 >
                   {competencyName(c.id)} <strong>{Math.round(c.pct)}%</strong>
                 </span>
@@ -93,14 +94,14 @@ export default function Coaching({ questions, answers, competencyScores, name, c
         <div className="card callout">
           <h2 className="callout__title">Focus areas</h2>
           {growth.length === 0 ? (
-            <p className="readoff__empty">Every competency scored 65% or above — strong across the board.</p>
+            <p className="readoff__empty">Every competency scored 60% or above — strong across the board.</p>
           ) : (
             <div className="chip-wrap">
               {growth.map((c) => (
                 <span
                   key={c.id}
                   className="score-chip"
-                  style={{ background: LEVELS[domainBand(c.pct)].tint }}
+                  style={{ background: LEVELS[competencyScoreToLevel(c.pct)].tint }}
                 >
                   {competencyName(c.id)} <strong>{Math.round(c.pct)}%</strong>
                 </span>

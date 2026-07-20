@@ -30,7 +30,18 @@
 > a developmental/supervisory signal, never an automatic employment decision; and status is never
 > communicated by colour alone. **No Firestore migration** — everything derives at runtime from the
 > `scores` object result documents already carry, and legacy result/pairing records keep rendering.
-> Unit suite 1417 → **1512** across 73 files; build + 12/12 safe Playwright E2E green.
+> **Merge-blocker review pass (same day):** three defects in the first implementation are fixed —
+> (1) a MISSING domain was being coerced to `0` and read as `'critical'`, fabricating gaps, training,
+> column gaps, learning signals, mentor suggestions and alerts; a missing domain is now an explicit
+> unassessed `null` band and only a RECORDED 0–39 is a Critical gap; (2) an incomplete profile was
+> double-counted (as `incomplete` AND inside Learning/Critical) and could inflate the floor average,
+> so `overallScore` now returns null unless all six domains are numeric, `partialAverage` is a
+> separate diagnostic field, distribution buckets are mutually exclusive and sum exactly to total,
+> and official KPIs use complete profiles only; (3) competency scores were being passed through the
+> new four-band capability mapper, producing `NaN` distribution counts and dropping sub-40
+> competencies from the Overview — competencies now keep their ORIGINAL thresholds via
+> `competencyScoreToLevel`/`COMPETENCY_THRESHOLDS`.
+> Unit suite 1417 → **1552** across 73 files; build + 12/12 safe Playwright E2E green.
 > See docs/HISTORY.md 2026-07-20) ·
 > **Prior same-day update:** 2026-07-20 (**department-controlled training modules** — PR #38 merged onto the
 > latest `main` after PR #37, the answer-length balance, and PR #39 (OB/GYN Spot-the-Error bank v5),
@@ -216,8 +227,10 @@
 ### Short-Term Goals (current)
 - Deliver a credible, self-contained **prototype to demo to management**. ✅ Done.
 - Derive domains/questions from the real SOP. ✅ Done.
-- Per-domain scoring → Learning/Solid/Can-Teach levels with editable thresholds. ✅ Done.
-- Capability matrix (hero) with column gaps, can-teach roster, readiness tally. ✅ Done.
+- Per-domain scoring → **one official overall status** (Critical/Learning/Solid/Can-Teach) per
+  department, with editable thresholds; domain percentages kept as diagnostic evidence. ✅ Done.
+- Capability matrix (hero) with an Overall column, column gaps, domain-mentor roster, and
+  overall-status readiness ranking. ✅ Done.
 - Analytics dashboards (team overview + per-navigator). ✅ Done.
 - Auto-assign training by weak point, with previewable SOP-grounded module content. ✅ Done.
 - Department dimension (Pediatrics + 3 mockup departments). ✅ Done.
@@ -226,8 +239,10 @@
 ### Mid-Term Goals
 - ✅ **Multi-department live checks:** Pediatrics and OB/GYN are now live checks. Adult Medicine
   and Behavioural Health remain mockups pending their SOPs.
-- **Mentor pairing (floor-wide):** auto-match Learning ↔ Can-Teach with balanced mentor load.
-- **Coverage / bus-factor risk view:** flag domains with only 0–1 teachers (single point of failure).
+- **Mentor pairing (floor-wide):** auto-match weaker navigators to qualified mentors (Can-Teach
+  overall **and** ≥90% in the domain) with balanced mentor load.
+- **Coverage / bus-factor risk view:** flag domains with only 0–1 qualified mentors (single point
+  of failure).
 - **Training completion tracking:** Assigned → In progress → Done states (in-memory for the demo).
 
 ### Long-Term Vision
@@ -245,10 +260,12 @@ capability map and dashboards and act on them (assign training, plan mentorship)
 1. **Take the check** — Start → step through ~20 domain-tagged multiple-choice scenarios → submit.
 2. **See results** — one official overall status (Critical/Learning/Solid/Can-Teach) from the
    six-domain average, plus every per-domain % as the diagnostic evidence behind it.
-3. **Read the matrix** — sample navigators + the taker's new row, color-coded; with column gaps,
-   can-teach roster, readiness tally.
-4. **Explore analytics** — Team Overview (floor KPIs, distribution, cross-department strength) and
-   per-navigator dashboards (strengths, growth areas, assigned training, suggested mentors).
+3. **Read the matrix** — every navigator's one official Overall status beside the six diagnostic
+   domain scores; with column gaps, the domain-mentor roster, and the overall-status readiness
+   ranking.
+4. **Explore analytics** — Team Overview (navigator-level KPIs, official status distribution,
+   diagnostic domain distribution, cross-department strength) and per-navigator dashboards
+   (strongest domains, priority focus areas, critical domain gaps, assigned training, mentors).
 5. **Manage training** — Training tab shows auto-assigned modules by domain cohort and by
    navigator; preview a module's mockup lesson content.
 6. **Switch departments** — the department bar re-scopes the matrix/dashboards/training to
@@ -301,11 +318,29 @@ training assignments.
   complete average**, within a single department, from a single instrument's stored `scores`
   (MCQ / Spot / Call QA are never blended, and departments are never averaged together). Derived at
   runtime — **no Firestore migration**.
-- **Missing-domain safety:** `overallComplete()` requires all six domains to be numeric. An
-  incomplete profile is labelled **"Incomplete"** and `overallLevel()` caps it at `learning` (or
-  `critical` if genuinely low), so `{intake: 100}` can never read as 100% Can-Teach. Because of the
-  cap, `overallLevel === 'canTeach'` already implies a complete profile — every downstream
-  mentor/readiness check inherits that safety.
+- **Missing-domain safety (hardened 2026-07-20 review):** `overallScore()` returns **null unless
+  all six domains are numeric** — a partial profile has NO official score and NO official level.
+  `{intake: 100}` is **Incomplete**, not "100% Can-Teach" and not "Learning". `overallStatus()`
+  distinguishes three mutually exclusive states — `unassessed` (nothing scored) · `!complete`
+  (Incomplete, no official level) · `complete` (exactly one official level). Because an incomplete
+  profile has no level at all, `overallLevel === 'canTeach'` already implies completeness, so every
+  downstream mentor / readiness / question-health check inherits that safety.
+  `partialAverage(scores)` exposes the mean of the evidence that exists, but it is **explicitly
+  diagnostic**: it is never called an overall score, never rendered with a level, and never feeds an
+  official KPI.
+- **Missing evidence is never a zero (hardened 2026-07-20 review):** `domainBand(pct)` returns
+  **null** for a missing or non-numeric domain — never `'critical'`. Only a genuinely recorded
+  number in 0–39 is a Critical gap. An absent domain therefore produces **no** critical-gap alert,
+  **no** required/critical training assignment, **no** column gap, **no** distribution band count,
+  **no** Learning Loop weak-domain signal, **no** mentor suggestion or pairing, and **no** Action
+  Center entry. A recorded `0` still does all of those things — the two cases are deliberately
+  distinguishable everywhere, and regression-tested as such.
+- **Competency axis is separate:** `competencyScoreToLevel()` + `COMPETENCY_THRESHOLDS`
+  (`<60` Learning · `60–84` Solid · `85+` Can-Teach) keep the competency axis on its **original**
+  bands. The capability re-band deliberately did not touch competencies. Never call the capability
+  `scoreToLevel()` on a competency score: it would silently re-band every rating and emit a
+  `'critical'` id the competency distribution has no bucket for (which produced `NaN` counts and
+  dropped sub-40 competencies from the Overview until the 2026-07-20 review fixed it).
 - **Status:** Complete.
 - **Dependencies:** `THRESHOLDS`, `LEVELS`, `LEVEL_ORDER`, `COMPETENCIES`.
 - **Notes:** Domain scores keep the same bands, but only as **diagnostic ranges** driving tints and
@@ -352,10 +387,20 @@ training assignments.
   overall** (highlighted) · average overall score · navigators assessed. The old cell-based KPIs
   ("avg Can-Teach domains / navigator", "domains have a teacher", solid-rate across every domain
   cell) are **removed**.
-- **Distribution:** an official overall-status distribution (Critical / Learning / Solid /
-  Can-Teach, plus a separate Incomplete-profile count) sits above the per-domain panel; the
-  per-domain panel is explicitly labelled a **diagnostic score distribution** and reports each
-  domain's average score and how many navigators fall below 40.
+- **Eligible profiles (hardened 2026-07-20 review):** every official-status KPI is computed over
+  **complete six-domain profiles only**. `floorStats().assessed` counts complete profiles — the
+  population the KPIs actually describe — while `rowCount`, `incompleteCount` and `unassessedCount`
+  report the rest. A one-domain `{intake: 100}` therefore cannot inflate the floor average, and an
+  unassessed navigator is never counted as assessed. The Overview renders an eligibility note
+  explaining any exclusion.
+- **Distribution:** an official overall-status distribution sits above the per-domain panel and is
+  **mutually exclusive** — each navigator lands in exactly one of Critical / Learning / Solid /
+  Can-Teach / Incomplete / Unassessed, so `critical + learning + solid + canTeach + incomplete +
+  unassessed === total` exactly. (Before the 2026-07-20 review an incomplete row was counted twice:
+  once as `incomplete` and again inside Learning or Critical.) The per-domain panel is explicitly a
+  **diagnostic score distribution**, reports each domain's average score and sub-40 count, and
+  carries its own `unassessed` bucket so an unscored domain is never bucketed into a band (which
+  previously produced `NaN`).
 - **Status:** Complete.
 
 ### F6 — Navigators List + Per-Navigator Dashboard
@@ -1788,6 +1833,54 @@ stateDiagram-v2
 - **Not an employment decision:** Critical is a developmental/supervisory signal. It never drives
   automatic employment decisions, punitive action, restrictions, suspension, or access removal.
 
+### 2026-07-20 — Absent evidence is a distinct state, not a zero (PR #40 review)
+- **Decision:** A domain with no recorded score is an explicit **unassessed** state (`null` band),
+  never `0` and never `'critical'`. A profile missing any of the six domains holds **no official
+  capability status at all** — no score, no level — and is counted only as `incomplete`.
+- **Reasoning:** The first implementation used `scores[d.id] ?? 0`, which silently converted "we
+  never measured this" into "they scored zero". A navigator who had answered one domain was
+  therefore reported with five Critical gaps, five Critical training assignments, five column gaps
+  and a batch of Action Center alerts — all fabricated from absent data. The same coercion let a
+  one-domain `{intake: 100}` average to "100% overall" and inflate the floor KPIs, while
+  `overallDistribution` counted that row twice (as `incomplete` *and* inside Learning). Reporting
+  invented findings against a real person is a correctness and fairness failure, not a cosmetic one.
+- **Alternatives considered:** *keep the zero-fill and filter at each call site* (rejected — a dozen
+  independent call sites, each an opportunity to forget); *treat incomplete as Critical so it stays
+  visible* (rejected — that is the fabrication being removed, and it punishes an unfinished
+  assessment); *drop incomplete rows entirely from the UI* (rejected — a supervisor needs to see
+  that someone's assessment is unfinished; it just must not be a status).
+- **Impact:** `domainBand()` returns null for non-numeric input; `overallScore()` returns null
+  unless all six domains are numeric; new `partialAverage()` carries the diagnostic mean separately
+  and never feeds a KPI; `overallStatus()` reports three mutually exclusive states
+  (`unassessed`/`incomplete`/`complete`); `overallDistribution()` buckets are mutually exclusive and
+  sum exactly to total; `floorStats()` computes official KPIs over complete profiles only and
+  reports `rowCount`/`incompleteCount`/`unassessedCount` alongside; `columnGaps()` measures only the
+  navigators actually scored on that domain; `domainDistribution()` gains an `unassessed` bucket (it
+  previously produced `NaN` for an unbucketed band); and `trainingForRow`, `mentorSuggestions`,
+  `buildMentorMatches`, `buildLearningSignals` and `buildActionCenter` all skip unscored domains.
+  A recorded `0` still produces a Critical gap, Critical training and a weak-domain signal — the two
+  cases are deliberately distinguishable and regression-tested as such.
+
+### 2026-07-20 — The competency axis keeps its own thresholds (PR #40 review)
+- **Decision:** Competency scores are mapped by `competencyScoreToLevel()` against
+  `COMPETENCY_THRESHOLDS` (`<60` Learning · `60–84` Solid · `85+` Can-Teach) — the values they had
+  before the capability re-band. The capability `scoreToLevel()` must never be applied to a
+  competency score.
+- **Reasoning:** The capability redesign was about the official department status. Routing
+  competencies through the new four-band mapper silently re-banded every competency rating AND
+  emitted a `'critical'` id that `competencyDistribution` had no bucket for, so `counts.critical`
+  became `NaN` and any competency below 40 vanished from the Team Overview entirely. That is a
+  regression in a feature nobody asked to change.
+- **Alternatives considered:** *adopt the four capability bands for competencies too* (rejected as
+  an undocumented scope expansion — it would move real ratings with no owner decision behind it;
+  it remains available later if the owner asks); *add a `critical` bucket to the competency
+  distribution* (rejected — it hides the real problem, which is that two different scales were
+  being conflated).
+- **Impact:** New `competencyScoreToLevel()` + `COMPETENCY_THRESHOLDS`/`COMPETENCY_LEVEL_ORDER`.
+  `buildMatrixRows`, `competencyDistribution`, `buildLearningSignals` and `Coaching.jsx` all use it.
+  `competencyDistribution` derives from the score (not a precomputed level) and skips ids it has no
+  bucket for, so a stray capability band on a legacy row can no longer produce `NaN`.
+
 ### 2026-07-13 — Bind Firestore result document IDs to BOTH path and body ownership
 - **Decision:** `results/{docId}` `get`/`create`/`update` now require the document ID to be one of
   the authenticated navigator's own deterministic result IDs (`isOwnResultDocId(docId)`) AND the
@@ -2117,8 +2210,14 @@ of this file on 2026-07-07 to cut per-session context cost (it was ~55% of the f
   any domain below 40 is flagged **"Critical gap"** even when the overall status is higher. Training
   is still assigned purely from domain scores (Critical/Required/Stretch), so a Can-Teach-overall
   navigator still gets targeted work on a weak domain. Mentoring requires **both** Can-Teach overall
-  and ≥90% in that domain. Incomplete profiles are labelled "Incomplete" and can never be promoted
-  to Solid or Can-Teach. Everything is derived at runtime from the existing `scores` object —
+  and ≥90% in that domain. **Missing evidence is never a zero:** an unscored domain is an explicit
+  unassessed state (`null` band), so it produces no critical gap, training assignment, column gap,
+  distribution count, learning signal, mentor suggestion, or alert — while a recorded `0` still
+  produces all of them. **Incomplete profiles hold no official status at all** (no score, no level),
+  are counted only as `incomplete`, and are excluded from every official KPI; the distribution
+  buckets are mutually exclusive and sum exactly to the row total. Competencies stay on their own
+  original thresholds via `competencyScoreToLevel`. Everything is derived at runtime from the
+  existing `scores` object —
   **no Firestore migration, no result/pairing/history document rewritten**. Critical is a
   developmental and supervisory signal only, never an automatic employment decision.
 - **Working end to end (logic + UI):** supervisor adds navigators / generates+curates questions
@@ -2213,7 +2312,7 @@ of this file on 2026-07-07 to cut per-session context cost (it was ~55% of the f
   Pediatrics; their modules will follow once their SOPs land.
 - **Experimental / mockup:**
   - **Adult Medicine and Behavioural Health** are not assessed; **Pediatrics and OB/GYN** are live.
-- **Test coverage:** **1,512 unit tests across 73 files** and **76 Firestore Rules emulator
+- **Test coverage:** **1,552 unit tests across 73 files** and **76 Firestore Rules emulator
   assertions** (51 result authorization + 25 Call QA) after the 2026-07-18 merge-readiness pass
   (calibration-private-bank adaptation, callerCaseFile, randomized selection, contextual audit
   guard + 14-workflow generation smoke, encoding guard, provisioning tool) atop the 2026-07-17
@@ -2341,7 +2440,7 @@ of this file on 2026-07-07 to cut per-session context cost (it was ~55% of the f
   OB/GYN = **37** seed questions (offline fallback) + the **48-item MCQ v2 operating-model bank**
   (24 Pediatrics + 24 OB/GYN) that replaces the weak active bank via a marker-gated
   archive-and-replace migration (bank grows in Firestore per dept) · 4 departments (**Pediatrics
-  + OB/GYN live**, 2 mockup) · **1,512 unit tests across 73 files** + **76 assertions**
+  + OB/GYN live**, 2 mockup) · **1,552 unit tests across 73 files** + **76 assertions**
   across two committed Firestore Rules emulator suites (`npm run test:rules`; require Java, run in
   CI, not part of the unit-test count) ·
   **14** Firestore collections
@@ -2363,13 +2462,18 @@ of this file on 2026-07-07 to cut per-session context cost (it was ~55% of the f
   - `scorePerCompetency(answers, questions)` → `{ [competencyId]: percent|null }` (null = untagged)
   - `scoreToLevel(pct)` → `'critical'|'learning'|'solid'|'canTeach'` — THE canonical band mapping
     (`0–39`/`40–64`/`65–89`/`90–100`); `levelFor(pct)` → full descriptor;
-    `domainBand(pct)` → the same mapping, named for diagnostic use;
-    `isCriticalDomainGap(pct)` → below 40
-  - **THE official status:** `overallScore(scores)` → rounded mean of the six domain scores (null if
-    none); `overallComplete(scores)` → all six numeric; `overallLevel(scores)` → official level,
-    **capped so an incomplete profile is never promoted past `learning`**;
-    `overallStatus(scores)` → `{ score, level, complete, label, assessedDomains, totalDomains }`;
-    `overallLevelRank(level)`
+    `domainBand(pct)` → the same mapping for a single domain, but **null when the domain has no
+    numeric score** (missing evidence is never a zero and never `'critical'`);
+    `isCriticalDomainGap(pct)` → true only for a RECORDED number below 40
+  - **THE official status:** `overallScore(scores)` → rounded mean of the six domain scores,
+    **null unless all six are numeric**; `overallComplete(scores)`; `assessedDomainCount(scores)`;
+    `partialAverage(scores)` → **diagnostic-only** mean of the domains present (never an official
+    score, never feeds a KPI); `overallLevel(scores)` → official level, **null for an incomplete or
+    unassessed profile**; `overallStatus(scores)` → `{ score, level, complete, unassessed, label,
+    assessedDomains, totalDomains, partialAverage }`; `overallLevelRank(level)`
+  - **Competency axis (separate):** `competencyScoreToLevel(pct)` →
+    `'learning'|'solid'|'canTeach'|null` using `COMPETENCY_THRESHOLDS` (`<60`/`60–84`/`85+`).
+    Never use the capability `scoreToLevel()` on a competency score.
   - `buildMatrixRows(samples, liveResult)` → rows `{ navigatorId, name, isLive, assessmentType,
     scores, overallScore, overallLevel, overallComplete, overallLabel, domainDevelopmentBands,
     competencyScores, competencyLevels }` (`levels` kept as a deprecated alias of
@@ -2390,8 +2494,10 @@ of this file on 2026-07-07 to cut per-session context cost (it was ~55% of the f
 
 ### Data modules (the "knobs")
 - **[src/data/config.js](src/data/config.js):** `THRESHOLDS` (`critical`/`solid`/`canTeach` — the
-  ONLY place capability bands are defined), `LEVELS` (4 bands, each with `color`/`text`/`tint`),
-  `LEVEL_ORDER`, `INCOMPLETE_LABEL`, `REQUIRED_TRAINING_PRIORITIES`,
+  ONLY place capability bands are defined), `COMPETENCY_THRESHOLDS` (the SEPARATE competency axis:
+  `learning`/`canTeach`), `LEVELS` (4 bands, each with `color`/`text`/`tint`),
+  `LEVEL_ORDER`, `COMPETENCY_LEVEL_ORDER`, `INCOMPLETE_LABEL`, `UNASSESSED_LABEL`,
+  `REQUIRED_TRAINING_PRIORITIES`,
   `COLUMN_GAP_THRESHOLD`, `TRAINING_RULES`, `PALETTE`.
 - **[src/data/questions.js](src/data/questions.js):** `DOMAINS` (`{id,name,blurb}` — since
   2026-07-02 the 6 job-aligned ids: `intake`, `classification`, `routing`, `scheduling`,
@@ -2415,13 +2521,18 @@ of this file on 2026-07-07 to cut per-session context cost (it was ~55% of the f
 // matrix row — ONE official status + diagnostic evidence
 { navigatorId, name, isLive, assessmentType,
   scores: {domainId: pct},
-  // official (the only fields that may render a capability level):
+  // official (the only fields that may render a capability level).
+  // score AND level are null unless all six domains are numeric:
   overallScore, overallLevel: 'critical'|'learning'|'solid'|'canTeach'|null,
-  overallComplete, overallLabel,
-  // diagnostic (score ranges, NOT official statuses):
-  domainDevelopmentBands: {domainId: 'critical'|'learning'|'solid'|'canTeach'},
+  overallComplete, overallUnassessed, overallLabel, assessedDomains,
+  partialAverage,  // diagnostic only — never an official score
+  // diagnostic (score ranges, NOT official statuses).
+  // null = that domain was never scored — never 0, never 'critical':
+  domainDevelopmentBands: {domainId: 'critical'|'learning'|'solid'|'canTeach'|null},
   levels,  // deprecated read-only alias of domainDevelopmentBands
-  competencyScores: {competencyId: pct}, competencyLevels: {competencyId: level} }
+  // competency axis uses COMPETENCY_THRESHOLDS, not the capability bands:
+  competencyScores: {competencyId: pct},
+  competencyLevels: {competencyId: 'learning'|'solid'|'canTeach'} }
 // department-matrix row (cross-department)
 { name, isLive, depts: { [deptId]: { overall, level, complete, label } | null } } // null = not assessed
 // question (Firestore `questions` doc + seed)
@@ -2658,7 +2769,7 @@ npm run test:e2e     # run the Playwright browser tests (auto-builds + starts th
 - Heatmap intensity toggle (show % inside matrix cells).
 
 ### Technical Debt
-- **1,512 unit tests across 73 files** as of 2026-07-20 (plus **76 assertions** across two
+- **1,552 unit tests across 73 files** as of 2026-07-20 (plus **76 assertions** across two
   committed Firestore Rules emulator suites, `npm run test:rules`, run separately from the unit-test
   gate). **Role-app
   coverage** (`App`, `Start`,

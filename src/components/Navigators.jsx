@@ -108,9 +108,10 @@ export default function Navigators({
               return (
                 <span
                   key={d.id}
-                  className="nav-card__cell"
+                  className={`nav-card__cell ${band == null ? 'nav-card__cell--na' : ''}`.trim()}
                   title={`${domainName(d.id)}: ${Number.isFinite(score) ? `${score}%` : 'not scored'}`}
-                  style={{ background: LEVELS[band].tint }}
+                  // An unscored domain gets a neutral surface, never a band tint.
+                  style={band == null ? undefined : { background: LEVELS[band].tint }}
                 />
               );
             })}
@@ -119,8 +120,9 @@ export default function Navigators({
 
         {row && (
           <p className="nav-card__strip-note">
-            Six domain scores behind this status
-            {row.overallComplete === false && ' · partial profile'}
+            {row.overallComplete === false
+              ? `Incomplete — ${row.assessedDomains} of ${row.totalDomains ?? DOMAINS.length} domains scored`
+              : 'Six domain scores behind this status'}
           </p>
         )}
 

@@ -71,9 +71,35 @@ export const LEVELS = {
 export const LEVEL_ORDER = ['critical', 'learning', 'solid', 'canTeach'];
 
 // Shown instead of an official level when a navigator's profile is missing one
-// or more of the six domain scores. An incomplete profile can never be promoted
-// to Solid or Can-Teach — see `overallStatus()` in lib/scoring.js.
+// or more of the six domain scores. An incomplete profile has NO official
+// capability status at all — see `overallStatus()` in lib/scoring.js.
 export const INCOMPLETE_LABEL = 'Incomplete';
+
+// Shown when a navigator has no domain score at all for this department.
+export const UNASSESSED_LABEL = 'Not assessed';
+
+// ─────────────────────────────────────────────────────────────────────────────
+// COMPETENCY AXIS — deliberately SEPARATE from the capability bands above.
+//
+// The 2026-07-20 redesign re-banded the OFFICIAL DEPARTMENT STATUS only. The
+// competency axis (how a navigator thinks/decides/communicates) keeps its own
+// original 3-level thresholds, because nothing in that decision was about
+// competencies and silently re-banding them would move ratings no one asked to
+// move. Use `competencyScoreToLevel()` — never the capability `scoreToLevel()`.
+//
+// Change these only on an explicit, documented owner decision.
+//   < 60      → Learning
+//   60 … 84   → Solid
+//   >= 85     → Can-Teach
+// ─────────────────────────────────────────────────────────────────────────────
+export const COMPETENCY_THRESHOLDS = {
+  learning: 60, // below this = Learning
+  canTeach: 85, // at/above this = Can-Teach
+};
+
+// The competency axis has no "Critical" band — it reuses the three shared LEVELS
+// descriptors for colour/label only.
+export const COMPETENCY_LEVEL_ORDER = ['learning', 'solid', 'canTeach'];
 
 // Interview practice-call score → colour band. This is a SEPARATE scale from the
 // capability THRESHOLDS above: an interview grade is a one-off call score (0–100),

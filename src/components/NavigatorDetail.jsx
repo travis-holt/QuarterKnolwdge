@@ -198,21 +198,30 @@ export default function NavigatorDetail({ rows, name, deptName, dept, deptMatrix
   }
 
   // Sections derive from RAW DOMAIN SCORES, not from official level labels.
-  const scoreOfDomain = (d) => (Number.isFinite(row.scores?.[d.id]) ? row.scores[d.id] : 0);
-  const strongest = [...DOMAINS]
+  // A domain with no recorded score is excluded from every section — missing
+  // evidence is never a strength, a focus area, or a critical gap.
+  const hasScore = (d) => Number.isFinite(row.scores?.[d.id]);
+  const scoreOfDomain = (d) => row.scores[d.id];
+  const scoredDomains = DOMAINS.filter(hasScore);
+  const strongest = scoredDomains
     .filter((d) => scoreOfDomain(d) >= THRESHOLDS.canTeach)
     .sort((a, b) => scoreOfDomain(b) - scoreOfDomain(a));
-  const criticalGaps = [...DOMAINS]
+  const criticalGaps = scoredDomains
     .filter((d) => scoreOfDomain(d) < THRESHOLDS.critical)
     .sort((a, b) => scoreOfDomain(a) - scoreOfDomain(b));
-  const priorityFocus = [...DOMAINS]
+  const priorityFocus = scoredDomains
     .filter((d) => scoreOfDomain(d) >= THRESHOLDS.critical && scoreOfDomain(d) < THRESHOLDS.solid)
     .sort((a, b) => scoreOfDomain(a) - scoreOfDomain(b));
   const mentors = mentorSuggestions(rows, name);
   const training = trainingForRow(row);
 
   // Ordered worst → best so the bars read as a development priority list.
-  const ordered = [...DOMAINS].sort((a, b) => row.scores[a.id] - row.scores[b.id]);
+  // Unscored domains sort last rather than producing a NaN comparison.
+  const ordered = [...DOMAINS].sort((a, b) => {
+    const sa = hasScore(a) ? row.scores[a.id] : Infinity;
+    const sb = hasScore(b) ? row.scores[b.id] : Infinity;
+    return sa - sb;
+  });
 
   // Competency axis — only those the bank actually exercised, worst → best.
   const competencyScores = row.competencyScores ?? {};
@@ -402,8 +411,22 @@ export default function NavigatorDetail({ rows, name, deptName, dept, deptMatrix
         </p>
         <div className="results__grid navdetail__grid">
           {ordered.map((d) => {
-            const pct = row.scores[d.id];
+            const pct = row.scores?.[d.id];
             const band = row.domainDevelopmentBands[d.id];
+            // A domain that was never scored renders as an explicit "Not scored"
+            // — never 0%, never a band tint, never a Critical gap.
+            if (band == null) {
+              return (
+                <div key={d.id} className="result-card navdetail__card result-card--unassessed">
+                  <div className="result-card__top">
+                    <span className="result-card__domain">{domainName(d.id)}</span>
+                    <span className="score-chip score-chip--na">Not scored</span>
+                  </div>
+                  <div className="result-card__bar" />
+                  <div className="result-card__pct">No result recorded for this domain</div>
+                </div>
+              );
+            }
             const descriptor = LEVELS[band];
             // Neutral diagnostic wording — never an official level name.
             const note = band === 'critical'
@@ -418,13 +441,13 @@ export default function NavigatorDetail({ rows, name, deptName, dept, deptMatrix
                 <div className="result-card__top">
                   <span className="result-card__domain">{domainName(d.id)}</span>
                   <span className="score-chip" style={{ background: descriptor.tint }}>
-                    {Number.isFinite(pct) ? `${pct}%` : '—'} · {note}
+                    {pct}% · {note}
                   </span>
                 </div>
                 <div className="result-card__bar">
-                  <div className="result-card__bar-fill" style={{ width: `${pct ?? 0}%`, background: descriptor.color }} />
+                  <div className="result-card__bar-fill" style={{ width: `${pct}%`, background: descriptor.color }} />
                 </div>
-                <div className="result-card__pct">{Number.isFinite(pct) ? `${pct}% in this domain` : 'Not scored'}</div>
+                <div className="result-card__pct">{pct}% in this domain</div>
               </div>
             );
           })}

@@ -262,3 +262,126 @@ describe('ActionCenter — critical signals', () => {
     expect(screen.getByText(/not employment\s+decisions/i)).toBeInTheDocument();
   });
 });
+
+// â”€â”€ Incomplete / unassessed profiles (2026-07-20 merge-blocker review) â”€â”€â”€â”€â”€â”€â”€
+
+const PARTIAL = { [DOMAIN_IDS[0]]: 100 }; // one domain only
+const NOTHING = {};
+
+describe('Incomplete and unassessed profiles never fabricate a status', () => {
+  const mixedRows = () => rowsFor([
+    { navigatorId: 'p1', name: 'Pat Halloran', scores: PARTIAL },
+    { navigatorId: 'p2', name: 'Nia Osei', scores: NOTHING },
+  ]);
+
+  it('Matrix shows Incomplete with no percentage and no official level', () => {
+    const { container } = render(
+      <Matrix rows={mixedRows()} deptName="Pediatrics" onTakeCheck={null} onOpenNavigator={vi.fn()} />
+    );
+    const row = container.querySelectorAll('tbody tr')[0];
+    const badge = row.querySelector('.overall-badge');
+    expect(badge.textContent).toContain('Incomplete');
+    expect(badge.textContent).toContain('—');
+    // A one-domain 100% must never be printed as an overall percentage.
+    expect(badge.textContent).not.toContain('100%');
+    expect(badge.textContent).not.toMatch(/Critical|Learning|Solid|Can-Teach/);
+  });
+
+  it('Matrix shows unscored domain cells as a dash, never 0% or a Critical gap', () => {
+    const { container } = render(
+      <Matrix rows={mixedRows()} deptName="Pediatrics" onTakeCheck={null} onOpenNavigator={vi.fn()} />
+    );
+    const row = container.querySelectorAll('tbody tr')[0];
+    const domainCells = [...row.querySelectorAll('.matrix__cell')]
+      .filter((c) => !c.classList.contains('matrix__cell--overall'));
+    // First domain is scored; the other five are not.
+    expect(domainCells[0].textContent).toContain('100%');
+    for (const cell of domainCells.slice(1)) {
+      expect(cell.textContent).toContain('—');
+      expect(cell.textContent).not.toContain('0%');
+      expect(cell.textContent).not.toContain('Critical gap');
+    }
+  });
+
+  it('Matrix shows a fully unassessed navigator as Not assessed', () => {
+    const { container } = render(
+      <Matrix rows={mixedRows()} deptName="Pediatrics" onTakeCheck={null} onOpenNavigator={vi.fn()} />
+    );
+    const badge = container.querySelectorAll('tbody tr')[1].querySelector('.overall-badge');
+    expect(badge.textContent).toContain('Not assessed');
+  });
+
+  it('ActionCenter raises no alerts for missing domains', () => {
+    const { container } = render(
+      <ActionCenter rows={mixedRows()} history={[]} interviews={[]} completions={[]} onOpenNavigator={vi.fn()} />
+    );
+    const criticalCards = [...container.querySelectorAll('.ac__card')]
+      .filter((c) => /Critical overall|Critical domain gaps/.test(c.textContent));
+    for (const card of criticalCards) {
+      expect(card.textContent).not.toContain('Pat Halloran');
+      expect(card.textContent).not.toContain('Nia Osei');
+    }
+    // The flag badge counts nothing for these two rows.
+    expect(container.querySelector('.ac__badge')).toBeNull();
+  });
+
+  it('Overview excludes partial profiles from the official KPIs', () => {
+    const rows = rowsFor([
+      { navigatorId: 'p1', name: 'Pat Halloran', scores: PARTIAL },
+      { navigatorId: 'n1', name: 'Ahmed Mustafa', scores: CAN_TEACH },
+    ]);
+    const { container } = render(
+      <Overview
+        rows={rows}
+        deptName="Pediatrics"
+        deptMatrix={[]}
+        onOpenNavigator={vi.fn()}
+        onViewMatrix={vi.fn()}
+        teamHistory={[]}
+      />
+    );
+    // Average overall must be the single complete profile's 91, not (91+100)/2.
+    expect(container.textContent).toContain('across 1 complete profile');
+    expect(container.textContent).toMatch(/Incomplete profiles/);
+    // The eligibility note explains the exclusion.
+    expect(container.querySelector('.overview__eligibility-note')).toBeTruthy();
+  });
+
+  it('Navigators roster card reports how many domains are scored', () => {
+    const roster = [{ id: 'p1', name: 'Pat Halloran', status: 'active' }];
+    const { container } = render(
+      <Navigators
+        rows={rowsFor([{ navigatorId: 'p1', name: 'Pat Halloran', scores: PARTIAL }])}
+        roster={roster}
+        deptName="Pediatrics"
+        onOpenNavigator={vi.fn()}
+        onAddNavigator={vi.fn()}
+        onUpdateNavigator={vi.fn()}
+        onDeactivateNavigator={vi.fn()}
+        onReactivateNavigator={vi.fn()}
+        onResetResult={vi.fn()}
+      />
+    );
+    const card = container.querySelector('.nav-card');
+    expect(card.textContent).toContain('Incomplete');
+    expect(card.textContent).toContain('1 of 6 domains scored');
+    // Not styled as a Critical navigator — it has no official status at all.
+    expect(card.classList.contains('nav-card--critical')).toBe(false);
+  });
+
+  it('a RECORDED 0 still renders as a Critical gap in the Matrix', () => {
+    const zeroScores = Object.fromEntries(DOMAIN_IDS.map((id, i) => [id, i === 0 ? 0 : 80]));
+    const { container } = render(
+      <Matrix
+        rows={rowsFor([{ navigatorId: 'z', name: 'Zed Marlow', scores: zeroScores }])}
+        deptName="Pediatrics"
+        onTakeCheck={null}
+        onOpenNavigator={vi.fn()}
+      />
+    );
+    const row = container.querySelector('tbody tr');
+    expect(row.textContent).toContain('0%');
+    expect(row.textContent).toContain('Critical gap');
+  });
+});
+

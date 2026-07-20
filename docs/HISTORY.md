@@ -1,5 +1,167 @@
 ﻿# Development History - Knowledge Check
 
+## 2026-07-20 — PR #40 merge-blocker review: three correctness fixes
+
+A review of PR #40 against the latest `main` found three defects in the first implementation of the
+overall-status redesign. The architecture, exact thresholds, colours, domain training rules, mentor
+safeguards, OB/GYN content, Call QA logic, Firestore rules, migrations and result history are all
+preserved unchanged; only the defects below are fixed.
+
+### Blocker 1 — missing domain evidence was being converted into a score of 0
+
+`buildMatrixRows` derived `domainDevelopmentBands` with `scores[d.id] ?? 0`, and `bandFor` /
+`trainingForRow` repeated the same fallback. Because 0 falls in the Critical band, **"we never
+measured this domain" was reported as "they scored 0%, which is critical."**
+
+A navigator with a single recorded domain produced, entirely from absent data:
+
+```
+bands:              5 × "critical"
+training:           5 × Critical (required)
+criticalDomainGaps: 5
+columnGaps:         5
+```
+
+Reporting five invented critical findings against a real person is a correctness and fairness
+failure, not a cosmetic one.
+
+**Fix.** `domainBand(pct)` now returns **`null`** for a missing or non-numeric value — an explicit
+*unassessed* diagnostic state. Only a genuinely recorded number in 0–39 is a Critical gap. A missing
+domain now produces **no** critical-gap alert, **no** required/critical training assignment, **no**
+column gap, **no** distribution band count, **no** Learning Loop weak-domain signal, **no** mentor
+suggestion or pairing (and no "unmatched mentee" entry either), and **no** Action Center row.
+
+Call sites hardened: `buildMatrixRows`, `bandFor` (which now derives from the raw score first, so a
+legacy `levels` map cannot reintroduce a phantom band), `trainingForRow`, `columnGaps` — which now
+measures only the navigators actually scored on that domain, in both numerator and denominator —
+`domainDistribution` (new `unassessed` bucket; it previously did `counts[null] += 1` and produced
+`NaN`), `buildLearningSignals`, `mentorSuggestions`, `buildMentorMatches`, and `buildActionCenter`.
+
+A **recorded `0` still behaves exactly as before**: Critical band, Critical training, critical-gap
+alert, weak-domain signal. The two cases are deliberately distinguishable everywhere and are
+regression-tested against each other.
+
+The UI follows: `DomainScore`, the Matrix cells, the roster strip and the NavigatorDetail per-domain
+cards render an explicit "Not scored" dash on a neutral hatched surface — never `0%`, never a band
+tint, never a Critical gap.
+
+The test that asserted the old behaviour (*"defaults a missing domain score to 0 → critical band"*)
+was **removed and replaced** by one asserting the opposite.
+
+### Blocker 2 — incomplete profiles were double-counted and could inflate KPIs
+
+`overallDistribution` incremented `incomplete` **and then also** incremented Learning or Critical
+for the same row, so the categories overlapped and did not sum to the total:
+
+```
+{ learning: 1, incomplete: 1, unassessed: 1, total: 2 }   // sums to 3
+```
+
+Separately, `overallScore` averaged whatever domains happened to exist, so a one-domain
+`{intake: 100}` reported **100% overall** and dragged the floor average up with it, and
+`floorStats.assessed` counted every row including fully unassessed ones.
+
+**Fix.** `overallScore()` now returns **null unless all six domains are numeric**. An incomplete
+profile therefore has no official score *and* no official level — it is neither Learning nor
+Critical, it is **Incomplete**. `overallStatus()` reports three mutually exclusive states —
+`unassessed` (nothing scored) · `!complete` (Incomplete) · `complete` (exactly one official level) —
+and `overallDistribution` buckets are mutually exclusive, so:
+
+```
+critical + learning + solid + canTeach + incomplete + unassessed === total
+```
+
+`floorStats` now computes every official KPI over **complete six-domain profiles only**:
+`assessed` is the count of complete profiles (the population the KPIs describe), with `rowCount`,
+`incompleteCount` and `unassessedCount` reported alongside. A partial profile can no longer move the
+average, the Solid+ rate, or the Can-Teach/Critical counts. The Team Overview renders an eligibility
+note whenever rows were excluded.
+
+`partialAverage(scores)` is kept as a **separate, explicitly diagnostic** field for surfaces that
+genuinely need the mean of the evidence that exists. It is never called an overall score, never
+rendered with a capability level, and never feeds an official KPI. `PhaseHub` uses it as the
+fallback for its "avg X%" phase-progress summary — a progress readout, not a status.
+
+A useful consequence of the stricter rule: because an incomplete profile has no level at all,
+`overallLevel === 'canTeach'` now *implies* completeness, so the mentor, readiness and
+question-health checks inherit the safety without re-checking it.
+
+The declining-trend comparison in `buildActionCenter` now skips a snapshot with no official score
+rather than treating it as 0, which would otherwise have fabricated a large "decline".
+
+### Blocker 3 — competency regression (NaN counts, disappearing competencies)
+
+`buildMatrixRows` had been changed to pass competency scores through the new four-band capability
+`scoreToLevel`, while `competencyDistribution` still initialised only `{learning, solid, canTeach}`.
+A competency below 40 therefore hit `counts['critical'] += 1` on an undefined bucket:
+
+```
+{ competencyId: 'sopKnowledge', learning: 0, solid: 0, canTeach: 0, critical: NaN, total: 1 }
+```
+
+The competency vanished from the Team Overview entirely.
+
+**Fix.** The competency axis keeps its **original independent thresholds**. New
+`competencyScoreToLevel()` maps against `COMPETENCY_THRESHOLDS` (`<60` Learning · `60–84` Solid ·
+`85+` Can-Teach) and has no Critical band. `buildMatrixRows`, `competencyDistribution`,
+`buildLearningSignals` and `Coaching.jsx` all use it. `competencyDistribution` now derives the level
+from the **score** rather than trusting a precomputed level, and skips any id it has no bucket for,
+so a stray capability band on a legacy row can no longer produce `NaN`.
+
+The requested feature concerned the official department status, not competency re-banding. Adopting
+the four capability bands for competencies remains available as a future owner decision; it is not
+made here.
+
+### Regression tests added
+
+`src/lib/scoring.test.js` (+53 tests) and `src/components/capabilityStatus.test.jsx` (+7 tests):
+
+- `{one domain: 100}` is Incomplete; zero critical gaps; zero training assignments; zero column
+  gaps; zero weak-domain signals; zero mentor suggestions/pairings; no official band; does not
+  inflate the floor average.
+- A recorded `0` still yields a Critical gap, Critical training and a weak-domain signal — asserted
+  side by side with the missing-domain case.
+- Distribution categories are mutually exclusive and sum exactly to total, for a seven-row fixture
+  covering all six states.
+- Unassessed rows do not count as assessed; `floorStats` KPIs use complete profiles only.
+- Competency scores at **0, 39, 40, 59, 60, 84, 85, 100**; every distribution count finite; counts
+  sum to total; a below-40 competency neither NaNs nor disappears; a stray `'critical'` id on a
+  legacy row is ignored.
+- Complete profiles retain all prior threshold, training, readiness, mentorship and question-health
+  behaviour.
+- UI: Matrix renders "Incomplete" with no percentage and no level; unscored cells render a dash, not
+  `0%` or a Critical gap; Action Center raises nothing for missing domains; Overview excludes partial
+  profiles from official KPIs; roster cards report "1 of 6 domains scored".
+
+### Also in this pass
+
+`docs/HISTORY.md` and `CLAUDE.md` corrected: the stale "can-teach roster" / "readiness tally" /
+"Can-Teach depth" terminology in §2 Product Goals and §3 Product Usage now reads as the
+domain-mentor roster and the overall-status readiness ranking, and the F2/F5/§8/§9 sections document
+the unassessed contract, eligible-profile KPIs and the separate competency axis.
+
+One self-inflicted issue worth recording: appending the new test blocks via PowerShell
+`Add-Content` round-tripped the files through Latin-1 and mangled every em-dash into the classic
+three-byte mojibake sequence. The repository's own `scripts/check-encoding.mjs` guard caught it
+immediately, and the files were repaired before commit — a good demonstration that the encoding
+guard earns its place.
+
+### Verification
+
+- `npx vitest run` — **1,552 passed / 1,552** across 73 files (1,512 before this pass).
+- `npm run build` — clean, including the `check-call-qa-client-bundle` private-runtime scan.
+- `npm run test:e2e:safe` — **12/12 passed** (real Chromium, real server).
+- `npm run test:rules` — Firestore Rules emulator suite, **76/76 assertions**.
+- `npm run qa:pilot-smoke`, `npm run qa:calibrate`, `npm run qa:coverage` — offline Call QA checks.
+- `node scripts/check-encoding.mjs` — passed.
+
+`api/encoding.test.js > finds no mojibake in tracked source files` still fails on Windows with
+`spawnSync git ENOENT` (the test passes `new URL('..', import.meta.url).pathname`, i.e.
+`/C:/Users/...`, as a cwd). Pre-existing and unrelated — confirmed identical on a clean worktree of
+untouched `main` — and the underlying script that CI runs passes.
+
+No production deployment, migration, or write was performed.
+
 ## 2026-07-20 — One official capability status per navigator per department
 
 **This reverses an original product principle.** Since 2026-06-23 the app deliberately produced

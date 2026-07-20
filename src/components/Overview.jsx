@@ -124,9 +124,22 @@ export default function Overview({ rows, deptName, deptMatrix, onOpenNavigator, 
         <div className="card kpi">
           <span className="kpi__value"><CountUp value={stats.avgOverallScore} suffix="%" /></span>
           <span className="kpi__label">average overall score</span>
-          <span className="kpi__sub">across {stats.assessed} navigator{stats.assessed === 1 ? '' : 's'} assessed</span>
+          <span className="kpi__sub">
+            across {stats.assessed} complete profile{stats.assessed === 1 ? '' : 's'}
+          </span>
         </div>
       </div>
+
+      {(stats.incompleteCount > 0 || stats.unassessedCount > 0) && (
+        <p className="overview__eligibility-note">
+          Official status KPIs above cover the <strong>{stats.assessed}</strong> navigator
+          {stats.assessed === 1 ? '' : 's'} with a complete six-domain profile.
+          {stats.incompleteCount > 0 && ` ${stats.incompleteCount} incomplete`}
+          {stats.incompleteCount > 0 && stats.unassessedCount > 0 && ' and'}
+          {stats.unassessedCount > 0 && ` ${stats.unassessedCount} not yet assessed`}
+          {' '}excluded — a partial profile has no official status and never moves these numbers.
+        </p>
+      )}
 
       {/* ── Official overall-status distribution ──────────────────────── */}
       <div className="card overview__panel">
@@ -144,8 +157,14 @@ export default function Overview({ rows, deptName, deptMatrix, onOpenNavigator, 
           ))}
           {stats.distribution.incomplete > 0 && (
             <li className="statusdist__row statusdist__row--note">
-              <span className="statusdist__label">Incomplete profiles</span>
+              <span className="statusdist__label">Incomplete profiles — no official status</span>
               <span className="statusdist__count">{stats.distribution.incomplete}</span>
+            </li>
+          )}
+          {stats.distribution.unassessed > 0 && (
+            <li className="statusdist__row statusdist__row--note">
+              <span className="statusdist__label">Not yet assessed</span>
+              <span className="statusdist__count">{stats.distribution.unassessed}</span>
             </li>
           )}
         </ul>

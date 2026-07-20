@@ -27,6 +27,9 @@ import {
   overallStatus,
   overallComplete,
   overallDistribution,
+  partialAverage,
+  assessedDomainCount,
+  competencyScoreToLevel,
   domainMentorRoster,
   isRequiredAssignment,
   scoreSpotTheError,
@@ -65,7 +68,7 @@ import {
   optionPoints,
 } from './scoring.js';
 
-import { THRESHOLDS, LEVELS, LEVEL_ORDER, COLUMN_GAP_THRESHOLD } from '../data/config.js';
+import { THRESHOLDS, COMPETENCY_THRESHOLDS, LEVELS, LEVEL_ORDER, COLUMN_GAP_THRESHOLD } from '../data/config.js';
 import { DOMAINS, QUESTIONS } from '../data/questions.js';
 import { COMPETENCIES } from '../data/competencies.js';
 import { DEPARTMENTS, ASSESSED_DEPT, isAssessed } from '../data/departments.js';
@@ -306,30 +309,54 @@ describe('overall capability status', () => {
 
   // ── MISSING-DOMAIN SAFETY ──────────────────────────────────────────────────
 
-  it('never promotes an incomplete profile to Can-Teach', () => {
+  it('gives an incomplete profile NO official score and NO official level', () => {
     const partial = { [DOMAIN_IDS[0]]: 100 };
     expect(overallComplete(partial)).toBe(false);
-    expect(overallLevel(partial)).not.toBe('canTeach');
-    expect(overallLevel(partial)).toBe('learning');
-    expect(overallStatus(partial).label).toBe('Incomplete');
-    expect(overallStatus(partial).assessedDomains).toBe(1);
+    // No official score at all — a one-domain profile is not "100% overall".
+    expect(overallScore(partial)).toBeNull();
+    expect(overallLevel(partial)).toBeNull();
+    const status = overallStatus(partial);
+    expect(status.label).toBe('Incomplete');
+    expect(status.assessedDomains).toBe(1);
+    expect(status.unassessed).toBe(false);
+    // The partial mean is available as an explicitly diagnostic field only.
+    expect(status.partialAverage).toBe(100);
+    expect(status.score).toBeNull();
   });
 
-  it('never promotes an incomplete profile to Solid', () => {
-    const partial = { [DOMAIN_IDS[0]]: 80, [DOMAIN_IDS[1]]: 85 };
-    expect(overallLevel(partial)).not.toBe('solid');
-    expect(overallLevel(partial)).not.toBe('canTeach');
-    expect(overallLevel(partial)).toBe('learning');
+  it('gives a mostly-complete profile no official status either', () => {
+    const five = Object.fromEntries(DOMAIN_IDS.slice(0, 5).map((id) => [id, 80]));
+    expect(overallComplete(five)).toBe(false);
+    expect(overallScore(five)).toBeNull();
+    expect(overallLevel(five)).toBeNull();
+    expect(overallStatus(five).label).toBe('Incomplete');
+    expect(overallStatus(five).assessedDomains).toBe(5);
   });
 
-  it('still reports Critical for a genuinely low incomplete profile', () => {
-    expect(overallLevel({ [DOMAIN_IDS[0]]: 10 })).toBe('critical');
+  it('does not report a low incomplete profile as Critical either', () => {
+    // Critical is an official status, and an incomplete profile has none.
+    expect(overallLevel({ [DOMAIN_IDS[0]]: 10 })).toBeNull();
+    expect(overallStatus({ [DOMAIN_IDS[0]]: 10 }).label).toBe('Incomplete');
   });
 
-  it('rejects non-numeric domain scores as incomplete', () => {
+  it('treats a non-numeric domain score as missing, not as a value', () => {
     const bad = { ...Object.fromEntries(DOMAINS.map((d) => [d.id, 95])), [DOMAIN_IDS[3]]: 'high' };
     expect(overallComplete(bad)).toBe(false);
-    expect(overallLevel(bad)).not.toBe('canTeach');
+    expect(overallScore(bad)).toBeNull();
+    expect(overallLevel(bad)).toBeNull();
+    // …and the bad domain is unassessed, not a critical gap.
+    expect(domainBand(bad[DOMAIN_IDS[3]])).toBeNull();
+    expect(isCriticalDomainGap(bad[DOMAIN_IDS[3]])).toBe(false);
+  });
+
+  it('partialAverage is diagnostic only and never an official score', () => {
+    const partial = { [DOMAIN_IDS[0]]: 100, [DOMAIN_IDS[1]]: 50 };
+    expect(partialAverage(partial)).toBe(75);
+    expect(overallScore(partial)).toBeNull();
+    // A complete profile reports no partialAverage — the official score stands.
+    const complete = Object.fromEntries(DOMAIN_IDS.map((id) => [id, 70]));
+    expect(overallStatus(complete).partialAverage).toBeNull();
+    expect(overallStatus(complete).score).toBe(70);
   });
 
   it('an incomplete profile can never qualify as a mentor', () => {
@@ -458,12 +485,20 @@ describe('buildMatrixRows', () => {
     expect(last.name).toBe('You');
   });
 
-  it('defaults a missing domain score to 0 → "critical" band', () => {
+  // REPLACES the former "missing domain defaults to 0 → critical" test.
+  // Missing evidence must never be converted into a score of 0.
+  it('marks a missing domain as unassessed (null), NEVER as 0 or "critical"', () => {
     const rows = buildMatrixRows([{ name: 'Sparse', scores: {} }], null);
-    for (const id of DOMAIN_IDS) expect(rows[0].domainDevelopmentBands[id]).toBe('critical');
+    for (const id of DOMAIN_IDS) {
+      expect(rows[0].domainDevelopmentBands[id]).toBeNull();
+      expect(rows[0].domainDevelopmentBands[id]).not.toBe('critical');
+      expect(rows[0].scores[id]).toBeUndefined();
+    }
     // No scores at all → not assessed, never a promoted status.
     expect(rows[0].overallScore).toBeNull();
     expect(rows[0].overallLevel).toBeNull();
+    expect(rows[0].overallUnassessed).toBe(true);
+    expect(rows[0].overallLabel).toBe('Not assessed');
   });
 
   it('returns an empty array for no samples and no live taker', () => {
@@ -1936,3 +1971,309 @@ describe('teamTrend', () => {
     expect(trend.at(-1).avgOverallScore).toBe(90);
   });
 });
+
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// MERGE-BLOCKER REGRESSIONS (2026-07-20 review of PR #40)
+//
+// 1. Missing domain evidence must never become a score of 0.
+// 2. Incomplete/unassessed profiles are mutually exclusive from official bands.
+// 3. Competencies keep their own axis and never produce NaN counts.
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+
+describe('BLOCKER 1 — missing domain evidence is never a zero', () => {
+  const oneDomain = { [D0]: 100 };
+  const oneDomainRows = () => buildMatrixRows([{ name: 'Partial', scores: oneDomain }], null);
+
+  it('is Incomplete, with no official score or level', () => {
+    const [row] = oneDomainRows();
+    expect(row.overallLabel).toBe('Incomplete');
+    expect(row.overallScore).toBeNull();
+    expect(row.overallLevel).toBeNull();
+    expect(row.overallComplete).toBe(false);
+    expect(row.assessedDomains).toBe(1);
+  });
+
+  it('creates ZERO critical domain gaps from the five missing domains', () => {
+    const ac = buildActionCenter(oneDomainRows());
+    expect(ac.criticalDomainGaps).toHaveLength(0);
+    expect(ac.criticalOverall).toHaveLength(0);
+    expect(ac.learningOverall).toHaveLength(0);
+    expect(ac.trainingOverdue).toHaveLength(0);
+  });
+
+  it('creates ZERO training assignments for missing domains', () => {
+    const [row] = oneDomainRows();
+    expect(trainingForRow(row)).toHaveLength(0);
+    expect(buildDevPath(row)).toHaveLength(0);
+    expect(adaptiveTrainingRecommendations(row)).toHaveLength(0);
+  });
+
+  it('creates ZERO column gaps from missing domains', () => {
+    expect(columnGaps(oneDomainRows())).toHaveLength(0);
+  });
+
+  it('creates ZERO Learning Loop weak-domain signals from missing domains', () => {
+    const signals = buildLearningSignals({ rows: oneDomainRows() });
+    expect(signals.weakDomains).toHaveLength(0);
+    expect(signals.trainingGaps).toHaveLength(0);
+  });
+
+  it('creates ZERO mentor suggestions for missing domains', () => {
+    const rows = buildMatrixRows([...MENTOR_SAMPLES, { name: 'Partial', scores: oneDomain }], null);
+    expect(mentorSuggestions(rows, 'Partial')).toHaveLength(0);
+    // …and it is never paired or reported as an unmatched mentee either.
+    const { pairings, unmatched } = buildMentorMatches(rows);
+    expect(pairings.every((p) => p.menteeName !== 'Partial')).toBe(true);
+    expect(unmatched.every((u) => u.menteeName !== 'Partial')).toBe(true);
+  });
+
+  it('does not bucket missing domains into a distribution band', () => {
+    const dist = domainDistribution(oneDomainRows());
+    const missing = dist.find((d) => d.domainId === D1);
+    expect(missing.critical).toBe(0);
+    expect(missing.unassessed).toBe(1);
+    expect(missing.assessed).toBe(0);
+    // Every count is a real number — no NaN leaks from an unbucketed band.
+    for (const d of dist) {
+      for (const key of ['critical', 'learning', 'solid', 'canTeach', 'unassessed', 'avgScore']) {
+        expect(Number.isFinite(d[key])).toBe(true);
+      }
+      expect(d.critical + d.learning + d.solid + d.canTeach + d.unassessed).toBe(d.total);
+    }
+  });
+
+  it('does not inflate the floor average', () => {
+    const rows = buildMatrixRows([
+      { name: 'Partial', scores: oneDomain },              // 100 in one domain
+      { name: 'Real', scores: makeScores({}, 60) },        // genuine 60 overall
+    ], null);
+    const stats = floorStats(rows);
+    // The 100 must not drag the floor average upward.
+    expect(stats.avgOverallScore).toBe(60);
+    expect(stats.assessed).toBe(1);
+    expect(stats.rowCount).toBe(2);
+  });
+
+  it('a RECORDED score of 0 still creates a Critical gap and Critical training', () => {
+    const rows = buildMatrixRows([{ name: 'Zero', scores: makeScores({ [D0]: 0 }, 80) }], null);
+    const [row] = rows;
+    expect(row.domainDevelopmentBands[D0]).toBe('critical');
+    expect(isCriticalDomainGap(0)).toBe(true);
+
+    const gaps = buildActionCenter(rows).criticalDomainGaps;
+    expect(gaps).toHaveLength(1);
+    expect(gaps[0]).toMatchObject({ domainId: D0, score: 0 });
+
+    const assignment = trainingForRow(row).find((a) => a.domainId === D0);
+    expect(assignment.priority).toBe('Critical');
+    expect(assignment.score).toBe(0);
+
+    // …and it IS a real weak-domain signal.
+    expect(buildLearningSignals({ rows }).weakDomains.some((w) => w.domainId === D0)).toBe(true);
+  });
+
+  it('distinguishes a recorded 0 from a missing domain everywhere', () => {
+    const recorded = buildMatrixRows([{ name: 'Zero', scores: makeScores({ [D0]: 0 }, 80) }], null);
+    const missing = buildMatrixRows([{ name: 'Gap', scores: makeScores({}, 80) }], null);
+    // Same domain, opposite meaning.
+    delete missing[0].scores[D0];
+    const rebuiltMissing = buildMatrixRows([{ name: 'Gap', scores: missing[0].scores }], null);
+    expect(recorded[0].domainDevelopmentBands[D0]).toBe('critical');
+    expect(rebuiltMissing[0].domainDevelopmentBands[D0]).toBeNull();
+    expect(buildActionCenter(recorded).criticalDomainGaps).toHaveLength(1);
+    expect(buildActionCenter(rebuiltMissing).criticalDomainGaps).toHaveLength(0);
+  });
+});
+
+describe('BLOCKER 2 — distribution categories are mutually exclusive', () => {
+  const mixedRows = () => buildMatrixRows([
+    { name: 'Teach', scores: makeScores({}, 95) },   // complete â†’ canTeach
+    { name: 'Sol', scores: makeScores({}, 70) },     // complete â†’ solid
+    { name: 'Learn', scores: makeScores({}, 50) },   // complete â†’ learning
+    { name: 'Crit', scores: makeScores({}, 20) },    // complete â†’ critical
+    { name: 'Partial', scores: { [D0]: 100 } },      // incomplete
+    { name: 'Partial2', scores: { [D0]: 10 } },      // incomplete (low)
+    { name: 'None', scores: {} },                    // unassessed
+  ], null);
+
+  it('sums exactly to total with no double counting', () => {
+    const dist = overallDistribution(mixedRows());
+    const sum = dist.critical + dist.learning + dist.solid + dist.canTeach
+      + dist.incomplete + dist.unassessed;
+    expect(sum).toBe(dist.total);
+    expect(dist.total).toBe(7);
+  });
+
+  it('places each navigator in exactly one bucket', () => {
+    const dist = overallDistribution(mixedRows());
+    expect(dist).toMatchObject({
+      canTeach: 1, solid: 1, learning: 1, critical: 1, incomplete: 2, unassessed: 1,
+    });
+  });
+
+  it('never counts an incomplete navigator inside an official band', () => {
+    // Both a high and a low partial profile stay out of every official band.
+    const dist = overallDistribution(buildMatrixRows([
+      { name: 'High', scores: { [D0]: 100 } },
+      { name: 'Low', scores: { [D0]: 5 } },
+    ], null));
+    expect(dist.incomplete).toBe(2);
+    expect(dist.critical).toBe(0);
+    expect(dist.learning).toBe(0);
+    expect(dist.solid).toBe(0);
+    expect(dist.canTeach).toBe(0);
+  });
+
+  it('counts an unassessed navigator only as unassessed', () => {
+    const dist = overallDistribution(buildMatrixRows([{ name: 'None', scores: {} }], null));
+    expect(dist.unassessed).toBe(1);
+    expect(dist.incomplete).toBe(0);
+    expect(dist.critical + dist.learning + dist.solid + dist.canTeach).toBe(0);
+  });
+
+  it('floorStats KPIs use complete profiles only', () => {
+    const stats = floorStats(mixedRows());
+    expect(stats.assessed).toBe(4);          // only the four complete profiles
+    expect(stats.rowCount).toBe(7);
+    expect(stats.incompleteCount).toBe(2);
+    expect(stats.unassessedCount).toBe(1);
+    expect(stats.canTeachCount).toBe(1);
+    expect(stats.criticalCount).toBe(1);
+    // Solid+ is 2 of the 4 eligible navigators, not 2 of 7.
+    expect(stats.solidPlusRate).toBe(50);
+    // (95 + 70 + 50 + 20) / 4 = 58.75 â†’ 59
+    expect(stats.avgOverallScore).toBe(59);
+  });
+
+  it('unassessed rows do not count as assessed', () => {
+    const stats = floorStats(buildMatrixRows([
+      { name: 'None', scores: {} },
+      { name: 'AlsoNone', scores: {} },
+    ], null));
+    expect(stats.assessed).toBe(0);
+    expect(stats.avgOverallScore).toBe(0);
+    expect(stats.solidPlusRate).toBe(0);
+  });
+});
+
+describe('BLOCKER 3 — competencies are a separate axis', () => {
+  it('uses its own thresholds, not the capability bands', () => {
+    expect(COMPETENCY_THRESHOLDS).toEqual({ learning: 60, canTeach: 85 });
+    expect(COMPETENCY_THRESHOLDS.canTeach).not.toBe(THRESHOLDS.canTeach);
+  });
+
+  it.each([
+    [0, 'learning'],
+    [39, 'learning'],
+    [40, 'learning'],
+    [59, 'learning'],
+    [60, 'solid'],
+    [84, 'solid'],
+    [85, 'canTeach'],
+    [100, 'canTeach'],
+  ])('maps a competency score of %i to "%s"', (score, expected) => {
+    expect(competencyScoreToLevel(score)).toBe(expected);
+  });
+
+  it('never emits a "critical" id the competency distribution has no bucket for', () => {
+    for (const score of [0, 39, 40, 59, 60, 84, 85, 100]) {
+      expect(competencyScoreToLevel(score)).not.toBe('critical');
+    }
+    expect(competencyScoreToLevel(undefined)).toBeNull();
+  });
+
+  it('a below-40 competency neither produces NaN nor disappears', () => {
+    const rows = buildMatrixRows([
+      { name: 'A', scores: {}, competencyScores: { [C0]: 30 } },
+      { name: 'B', scores: {}, competencyScores: { [C0]: 0 } },
+    ], null);
+    const dist = competencyDistribution(rows);
+    const c0 = dist.find((x) => x.competencyId === C0);
+    expect(c0).toBeDefined();                 // did not disappear
+    expect(c0.learning).toBe(2);              // both counted
+    expect(c0.total).toBe(2);
+    expect(Number.isNaN(c0.critical)).toBe(false);
+    expect(c0.critical).toBeUndefined();      // no critical bucket on this axis
+  });
+
+  it('every competency distribution count is finite and sums to total', () => {
+    const rows = buildMatrixRows([
+      { name: 'A', scores: {}, competencyScores: { [C0]: 0, [C1]: 60 } },
+      { name: 'B', scores: {}, competencyScores: { [C0]: 39, [C1]: 85 } },
+      { name: 'C', scores: {}, competencyScores: { [C0]: 100, [C1]: 59 } },
+    ], null);
+    const dist = competencyDistribution(rows);
+    expect(dist.length).toBeGreaterThan(0);
+    for (const c of dist) {
+      for (const key of ['learning', 'solid', 'canTeach', 'total']) {
+        expect(Number.isFinite(c[key])).toBe(true);
+      }
+      expect(c.learning + c.solid + c.canTeach).toBe(c.total);
+    }
+  });
+
+  it('buildMatrixRows tags competency levels with the competency mapper', () => {
+    const [row] = buildMatrixRows([
+      { name: 'A', scores: {}, competencyScores: { [C0]: 30, [C1]: 88 } },
+    ], null);
+    // 30 would be 'critical' on the capability scale; on this axis it is Learning.
+    expect(row.competencyLevels[C0]).toBe('learning');
+    // 88 would be 'solid' on the capability scale; on this axis it is Can-Teach.
+    expect(row.competencyLevels[C1]).toBe('canTeach');
+  });
+
+  it('ignores a stray capability band id carried on a legacy row', () => {
+    const legacy = [{
+      name: 'Legacy',
+      scores: {},
+      competencyScores: {},
+      competencyLevels: { [C0]: 'critical' }, // not a competency level
+    }];
+    const dist = competencyDistribution(legacy);
+    // The unknown id is skipped rather than producing NaN.
+    expect(dist).toEqual([]);
+  });
+});
+
+describe('complete profiles retain all prior behaviour', () => {
+  const complete = () => buildMatrixRows([
+    { name: 'Teach', scores: makeScores({}, 95) },
+    { name: 'Mixed', scores: makeScores({ [D0]: 34, [D1]: 50, [D2]: 70 }, 95) },
+  ], null);
+
+  it('keeps threshold, training, readiness, mentorship and health behaviour', () => {
+    const rows = complete();
+    const [teach, mixed] = rows;
+
+    // Thresholds / official status
+    expect(teach.overallLevel).toBe('canTeach');
+    expect(teach.overallScore).toBe(95);
+    expect(mixed.overallComplete).toBe(true);
+
+    // Training still driven by domain score
+    const assignments = trainingForRow(mixed);
+    expect(assignments.find((a) => a.domainId === D0).priority).toBe('Critical');
+    expect(assignments.find((a) => a.domainId === D1).priority).toBe('Required');
+    expect(assignments.find((a) => a.domainId === D2).priority).toBe('Stretch');
+
+    // Readiness / mentorship
+    expect(readinessTally(rows)[0].name).toBe('Teach');
+    expect(readinessTally(rows)[0].readyForMore).toBe(true);
+    expect(domainMentorRoster(rows)[D0]).toEqual(['Teach']);
+
+    // Question health still keys off the official overall status
+    const Q = { id: 'q1', correctOptionId: 'a', domainId: D0 };
+    const results = Array.from({ length: 10 }, () => ({
+      answers: { q1: 'b' }, scores: makeScores({}, 95),
+    }));
+    expect(computeQuestionHealth([Q], results).q1.canTeachCount).toBe(10);
+  });
+
+  it('still produces a critical gap alongside a healthy overall status', () => {
+    // 34 + 80*5 = 434 â†’ 72 overall (Solid) with one critical domain.
+    const rows = buildMatrixRows([{ name: 'X', scores: makeScores({ [D0]: 34 }, 80) }], null);
+    expect(rows[0].overallLevel).toBe('solid');
+    expect(buildActionCenter(rows).criticalDomainGaps).toHaveLength(1);
+  });
+});
+
