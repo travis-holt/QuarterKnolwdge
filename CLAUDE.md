@@ -2009,11 +2009,16 @@ of this file on 2026-07-07 to cut per-session context cost (it was ~55% of the f
 - **Training content:** SOP-grounded (no longer mockup filler) — the rich domain modules (F9) teach
   from the real Pediatrics SOP and the owner-confirmed current-floor OB/GYN SOP v1.0 (2026-07-17),
   with branching call simulations, script pairs, model docs, mistake cards, quick-refs, and drills.
-  Advisory only (nothing scored/persisted). Since the 2026-07-19 hotfix the page is **department-
-  scoped end to end**: one selector in `TrainingModule` scopes every block to "shared + the selected
-  department" via explicit `departments` metadata on catalog items, so Pediatrics-specific and
-  OB/GYN-specific content can never appear under the other department. Adult Medicine / Behavioural Health modules will follow
-  once their SOPs land.
+  Advisory only (nothing scored/persisted). Since the 2026-07-20 hotfix the page is **department-
+  scoped end to end**: the parent application's **controlled `department` prop** scopes every
+  `TrainingModule` block to "shared content + the selected department" via explicit `departments`
+  metadata on catalog items, so Pediatrics-specific and OB/GYN-specific content can never appear
+  under the other department. `TrainingModule` contains **no independent department selector and no
+  department state** — `NavigatorApp` passes its active department and `SupervisorApp` passes
+  `selectedDept`, so content, cohort rows, and the department a completion is recorded under cannot
+  diverge. Departments without authored content (Adult Medicine, Behavioural Health) render
+  "Training content is not available for this department yet." rather than falling back to
+  Pediatrics; their modules will follow once their SOPs land.
 - **Experimental / mockup:**
   - **Adult Medicine and Behavioural Health** are not assessed; **Pediatrics and OB/GYN** are live.
 - **Test coverage:** **1,417 unit tests across 71 files** and **76 Firestore Rules emulator
