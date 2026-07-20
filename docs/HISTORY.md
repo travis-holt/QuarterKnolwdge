@@ -1,13 +1,18 @@
 # Development History - Knowledge Check
 
-## 2026-07-19 — Department-controlled training modules (PR #38 integration + integrity fixes)
+## 2026-07-20 — Department-controlled training modules (PR #38 integration + integrity fixes)
 
-**PR #38 was merged onto the latest `main` after PR #37** and again after the answer-length-balance
-commit, so the branch is zero commits behind `origin/main`. Every PR #37 change is preserved — the
-v3 MCQ/audit banks, the marker-gated migration, its tests, the `SupervisorApp` migration wiring, and
-the PR #37 / answer-balance `CLAUDE.md` and `docs/HISTORY.md` entries. Only the department-scoping
-work was integrated on top; no file was resolved by taking the hotfix branch's older whole-file
-version.
+**PR #38 was merged onto the latest `main` three times** — after PR #37, after the answer-length
+balance, and finally after **PR #39 (OB/GYN Spot-the-Error individually authored bank v5)** — so the
+branch is zero commits behind `origin/main`. Every one of those changes is preserved intact: the v3
+MCQ bank, the v5 individually authored audit bank (30 ten-turn transcripts, shared builder removed,
+errors distributed 8/8/7/7 across Agent indices 2/4/6/8, varied chart-opening placement, natural
+post-error patient continuation, human-review metadata, the audit-only v5 migration marker), the
+expanded deterministic contradiction guards in `contentGuards.js`, their tests, the `SupervisorApp`
+migration wiring, and every PR #37 / answer-balance / PR #39 `CLAUDE.md` and `docs/HISTORY.md`
+entry. Documentation conflicts were resolved by keeping **both** sides — no entry was dropped and no
+file was resolved by taking one side wholesale. The PR diff touches no PR #39 audit file, migration,
+guard, stable ID, or marker.
 
 ### What the first PR #38 implementation got wrong
 
@@ -68,24 +73,43 @@ quick-ref row / takeaway). Every current-floor SOP rule is unchanged.
 
 ### Verification
 
-Unit suite **1366 → 1409** across **71 files**; Firestore Rules emulator **76/76**; build clean
+Unit suite **1374 → 1417** across **71 files**; Firestore Rules emulator **76/76**; build clean
 including the private-runtime bundle scan; `qa:pilot-smoke` `PILOT_SMOKE_VERIFIED` (15 cases);
 `qa:calibrate` and `qa:coverage` both **`INSUFFICIENT_DATA`** (0 human-pilot fixtures — the intended
 state, not a readiness signal). `trainingModule.test.jsx` (38) was rewritten for the controlled
 contract; new `src/components/trainingDepartmentIntegrity.test.jsx` (11) drives the real callers for
 completion integrity, supervisor content/cohort agreement, and unsupported-department behavior.
-Browser-verified in real Chromium at 1280×900 and 390×844 (**556/556 checks, 0 console errors**).
+Browser-verified in real Chromium at 1280×900 and 390×844 (**582/582 checks, 0 console errors**), including a completion-department mismatch that surfaces the error and writes nothing.
 
-The safe Playwright suite is **4 passed / 8 failed**, identically on unmodified `main`: all eight
-fail at the sign-in gate because the run had no `FIREBASE_SERVICE_ACCOUNT_JSON`, and no spec in that
-suite references Training. The real signed-in app route was deliberately **not** driven, because
-mounting `SupervisorApp` runs PR #37's marker-gated Firestore migrations against the live project
-and completing a module would write a real completion — owner-local testing should cover it.
+The safe Playwright suite passes **12/12**, identically on unmodified `main` (an earlier run in a
+partially-configured tree — client Firebase vars present, server credentials absent — failed at the
+sign-in gate; with no configuration at all the app degrades gracefully and the whole suite passes).
+The real signed-in app route was deliberately **not** driven, because mounting `SupervisorApp` runs
+the marker-gated Firestore migrations against the live project and completing a module would write a
+real completion — owner-local testing should cover it.
 
 ### Not changed
 
 No scoring, API, Firestore rules, Call QA, assessment-bank content, dependency, deployment, or
 production-data behavior.
+## 2026-07-19 — OB/GYN Spot-the-Error individually authored bank v5
+
+- Replaced the rejected v4 shared call constructor with 30 complete, individually authored ten-turn transcripts stored directly in the six OB/GYN domain files. Stable IDs, five items per domain, all 14 workflow types, and current SOP/rule/source provenance are unchanged.
+- Distributed the planted error across Agent indices 2/4/6/8 at 8/8/7/7 calls. Chart-opening placement now varies across three Agent positions; all non-greeting Agent messages and all final Agent actions are unique.
+- Reworked the wrong decisions as plausible near-misses: most of the workflow is handled correctly while one chart-dependent choice is wrong. Every call contains multiple substantive competing Agent decisions, and the error line remains no longer than the longest surrounding Agent line.
+- Re-authored every immediate post-error Patient turn so the caller continues with availability, contact, or scenario facts rather than correcting the navigator. A curated regression list blocks the rejected v4 correction lines, and each audit records a human-reviewed subtle trap, two correct distractor decisions, and blind-review confirmation.
+- Expanded deterministic OB/GYN contradiction detection for the subtler formulations, including recent non-annual visits used for GYN OV, estimated dating used for New OB, cross-day/gapped New OB construction, unchanged paired status, stale refill pharmacy, and latest-visit-provider refill routing.
+- Bumped the audit source to `obgyn-current-floor-audit-bank-v5-individually-authored-2026-07-19` and the audit-only marker to `2026-07-obgyn-current-floor-audit-bank-v5-individually-authored`. Existing environments refresh only stable OB/GYN audit documents; MCQs, Pediatrics, manual content, drafts, and history remain untouched.
+- Manually reviewed all 30 calls without the planted-error highlight against position bias, answer reveal, visual/tonal obviousness, competing judgment decisions, floor plausibility, and material distinctness. No production migration or deployment was run.
+
+## 2026-07-19 — OB/GYN Spot-the-Error challenging-call bank v4
+
+- Re-authored all 30 OB/GYN Spot-the-Error calls as hard, multi-fact scenarios. Each case now combines at least two controlling chart facts with a plausible near-miss, instead of relying on a generic one-line request and an obvious workflow mistake.
+- Replaced the repeated eight-line call frame with five safe verification/chart/wrap-up variants plus a unique patient follow-up for every case. The first Agent turn is always exactly one of the two owner-specified Aizer Womens Health greetings.
+- Standardized chart-review speech on "Let me open your chart" and removed spoken system-by-system narration such as checking encounters, messages, visits, or Rx logs; opening the chart represents reviewing the complete record.
+- Preserved the strict 10-turn alternating transcript, one indexed deterministic Agent error, all 14 workflow types, five items per domain, stable IDs, current SOP/rule/source provenance, and the error-line length guard. Pediatrics content and MCQs were not edited.
+- Added tests for the approved greetings, whole-chart phrasing, absence of system-list narration, all-hard difficulty, at least two required chart facts, substantive patient context, 30 unique patient follow-ups, audit bank version, and existing deterministic content guards.
+- Added audit bank version `obgyn-current-floor-audit-bank-v4-challenging-calls-2026-07-19` and a distinct audit-only migration marker. Existing environments update only stable OB/GYN audit documents; fresh environments still receive the complete current-floor OB/GYN bank. No direct Firestore write or deployment was performed.
 
 ## 2026-07-19 — OB/GYN assessment answer-length balance
 

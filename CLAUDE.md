@@ -11,8 +11,9 @@
 > [§8 Current System State](#8-current-system-state) and [§15 Current Priorities](#15-current-priorities)
 > accurate at all times.
 >
-> **Last updated:** 2026-07-19 (**department-controlled training modules** — PR #38 merged onto the
-> latest `main` after PR #37. The first PR #38 implementation fixed the content leak but gave
+> **Last updated:** 2026-07-20 (**department-controlled training modules** — PR #38 merged onto the
+> latest `main` after PR #37, the answer-length balance, and PR #39 (OB/GYN Spot-the-Error bank v5),
+> which are all preserved intact. The first PR #38 implementation fixed the content leak but gave
 > `TrainingModule` a **private department state** plus a module-local selector, which allowed three
 > integrity failures found in pre-merge review: a completion could be saved under a different
 > department than the content reviewed; supervisor content could diverge from the cohort `deptRows`;
@@ -23,9 +24,11 @@
 > actually rendered and `completeLearningStep` rejects a mismatch without writing. Adult Medicine and
 > Behavioural Health render "Training content is not available for this department yet." The catalog
 > metadata and pure filtering helpers are unchanged; both regression directions and every current-floor
-> SOP rule still hold. Unit suite 1366 → **1409** across 71 files. See docs/HISTORY.md 2026-07-19) ·
-> **Prior same-day update:** 2026-07-19 (OB/GYN answer-length balancing — conspicuously long correct MCQ options and indexed Spot-the-Error lines were shortened without changing scenarios, distractors, correct mappings, workflow violations, or scoring; regression tests prevent answer length from revealing the target, and a new marker-gated bank version upserts the concise wording on already-migrated environments) ·
-> **Earlier same-day update:** 2026-07-19 (OB/GYN current-floor assessment bank v3 — the owner-confirmed Women's Health SOP v1.0 now drives a curated 24-item MCQ bank and 30-item Spot-the-Error bank; all 24 executable workflow rules and all 14 audit workflow types are covered; a marker-gated migration archives stale active non-manual OB/GYN content without deleting history or touching Pediatrics/manual drafts; exact SOP/rule/source provenance and deterministic one-Agent-error guards are enforced by tests) ·
+> SOP rule still hold. Unit suite 1374 → **1417** across 71 files. See docs/HISTORY.md 2026-07-20) ·
+> **Prior same-day update:** 2026-07-19 (OB/GYN Spot-the-Error bank v5 — all 30 calls are individually authored as literal ten-turn transcripts in their six domain files; the shared transcript builder is removed, error turns are distributed 8/8/7/7 across Agent indices 2/4/6/8, chart-opening placement varies, post-error patients continue naturally, and human-review metadata records the subtle trap plus two correct distractor decisions for every call; an audit-only marker refreshes already-migrated environments without rewriting MCQs) ·
+> **Earlier same-day update:** 2026-07-19 (OB/GYN Spot-the-Error bank v4 — all 30 calls were expanded into multi-fact scenarios with approved greetings and whole-chart language, but subsequent review found the shared structure, fixed error position, and direct-correction follow-ups still made the target too easy) ·
+> **Earlier update:** 2026-07-19 (OB/GYN answer-length balancing — conspicuously long correct MCQ options and indexed Spot-the-Error lines were shortened without changing scenarios, distractors, correct mappings, workflow violations, or scoring; regression tests prevent answer length from revealing the target, and a new marker-gated bank version upserts the concise wording on already-migrated environments) ·
+> **Earlier update:** 2026-07-19 (OB/GYN current-floor assessment bank v3 — the owner-confirmed Women's Health SOP v1.0 now drives a curated 24-item MCQ bank and 30-item Spot-the-Error bank; all 24 executable workflow rules and all 14 audit workflow types are covered; a marker-gated migration archives stale active non-manual OB/GYN content without deleting history or touching Pediatrics/manual drafts; exact SOP/rule/source provenance and deterministic one-Agent-error guards are enforced by tests) ·
 > **Earlier update:** 2026-07-19 (PR #34 recovery + cleanup — the rich, SOP-grounded training modules
 > (F9) are now flattened into the intended structure: the full `TRAINING_MODULES` catalog lives
 > directly in `src/data/training.js` (Pediatrics same-day-sick correction applied in the data, not a
@@ -511,6 +514,8 @@ training assignments.
   attributing overrides to a specific supervisor.
 
 ### F16 — "Spot the Error" QA Audit Assessment
+- **OB/GYN individually authored bank v5 (2026-07-19):** each of the 30 stable audit IDs now owns a complete literal ten-turn transcript in its domain file; the shared `buildAudit()` frame and reusable verification/chart/wrap-up pools are gone. Error turns are distributed across Agent indices 2/4/6/8 (8/8/7/7), chart-opening language appears at varied decision points, non-greeting Agent messages and final Agent actions are unique, and the Patient turn after the error continues the call instead of explaining the rule. Each case carries a human-review record naming its subtle trap and two valid distractor decisions. The two exact approved greetings, current-floor provenance, all 14 workflows, deterministic one-error guards, length neutrality, five-per-domain balance, and stable IDs remain intact. Audit bank version `obgyn-current-floor-audit-bank-v5-individually-authored-2026-07-19` uses a new audit-only migration marker so existing environments refresh audits without rewriting MCQs.
+- **Superseded v4 attempt (2026-07-19):** v4 added more facts and surface variation, but still expanded every case through a shared frame, fixed every error at turn 6, and often let the next Patient line restate the rule. It is retained only in history and is replaced by v5.
 - **Curated current-floor OB/GYN bank v3 (2026-07-19):** 30 pre-authored audits (5 per domain) cover every one of the 14 existing OB/GYN audit workflow types. Each expands to exactly 10 alternating turns, carries current SOP/rule/source provenance, and has one context-verifiable Agent error; the same marker migration archives stale active non-manual OB/GYN audits and activates these stable IDs.
 - **Answer-length balance (2026-07-19):** indexed error lines were made no longer than the longest surrounding Agent turn, while preserving the same single deterministic workflow violation. A bank test enforces that visual-length guard, and the follow-up content-migration marker upserts the concise bank on environments that already ran the initial v3 migration.
 - **OB/GYN executable audit contract (2026-07-17):** OB/GYN generation uses the selected entries
@@ -1835,6 +1840,8 @@ of this file on 2026-07-07 to cut per-session context cost (it was ~55% of the f
 
 ## 8. Current System State
 
+- **OB/GYN Spot-the-Error realism (2026-07-19):** all 30 current-floor audits are hard, multi-fact calls with varied safe framing and unique scenario-specific patient follow-ups. They use only the two owner-specified Aizer Womens Health greetings and whole-chart language ("Let me open your chart"), never a checklist narration of encounters/messages/visits/Rx logs. An audit-only v4 marker updates stable audit IDs on existing environments without touching question documents; the exactly-one deterministic Agent error, answer-length balance, workflow coverage, SOP provenance, and Pediatrics content remain unchanged.
+
 - **OB/GYN assessment answer-length balance (2026-07-19):** the active 24-item current-floor MCQ bank no longer exposes correct answers through paragraph-length options, and the 30-item Spot-the-Error bank no longer exposes its indexed error through a longer Agent turn. Scenarios, distractors, correct IDs, points, rationales, deterministic workflow violations, and SOP provenance are unchanged; bank tests enforce both length constraints. A distinct follow-up migration marker safely upserts the revised stable IDs on already-migrated environments.
 
 - **Scored Call QA upstream deadline (2026-07-18):** `geminiWithRotation` accepts optional
@@ -1968,7 +1975,7 @@ of this file on 2026-07-07 to cut per-session context cost (it was ~55% of the f
   (init → chat/voice turns → `/api/live` relay) for caller consistency. Scored Call QA deliberately
   does not: its caller receives no grading context, expected actions, critical misses, scoring notes,
   rule/workflow metadata, or hidden chart state. Final verification: `npm test` =
-  **1,409/1,409 across 71 files**; Firestore Rules emulator assertions = **76/76**
+  **1,417/1,417 across 71 files**; Firestore Rules emulator assertions = **76/76**
   (51 result authorization + 25 Call QA); production build
   includes the private-runtime bundle scan. GitHub Actions mirrors the
   normal local gate on `main` pushes and PRs: `npm ci` → `npm test` → `npm run build` (no deploy step).
@@ -2009,7 +2016,7 @@ of this file on 2026-07-07 to cut per-session context cost (it was ~55% of the f
   once their SOPs land.
 - **Experimental / mockup:**
   - **Adult Medicine and Behavioural Health** are not assessed; **Pediatrics and OB/GYN** are live.
-- **Test coverage:** **1,409 unit tests across 71 files** and **76 Firestore Rules emulator
+- **Test coverage:** **1,417 unit tests across 71 files** and **76 Firestore Rules emulator
   assertions** (51 result authorization + 25 Call QA) after the 2026-07-18 merge-readiness pass
   (calibration-private-bank adaptation, callerCaseFile, randomized selection, contextual audit
   guard + 14-workflow generation smoke, encoding guard, provisioning tool) atop the 2026-07-17
@@ -2134,7 +2141,7 @@ of this file on 2026-07-07 to cut per-session context cost (it was ~55% of the f
   OB/GYN = **37** seed questions (offline fallback) + the **48-item MCQ v2 operating-model bank**
   (24 Pediatrics + 24 OB/GYN) that replaces the weak active bank via a marker-gated
   archive-and-replace migration (bank grows in Firestore per dept) · 4 departments (**Pediatrics
-  + OB/GYN live**, 2 mockup) · **1,409 unit tests across 71 files** + **76 assertions**
+  + OB/GYN live**, 2 mockup) · **1,417 unit tests across 71 files** + **76 assertions**
   across two committed Firestore Rules emulator suites (`npm run test:rules`; require Java, run in
   CI, not part of the unit-test count) ·
   **14** Firestore collections
@@ -2422,7 +2429,7 @@ npm run test:e2e     # run the Playwright browser tests (auto-builds + starts th
 - Heatmap intensity toggle (show % inside matrix cells).
 
 ### Technical Debt
-- **1,409 unit tests across 71 files** as of 2026-07-19 (plus **76 assertions** across two
+- **1,417 unit tests across 71 files** as of 2026-07-20 (plus **76 assertions** across two
   committed Firestore Rules emulator suites, `npm run test:rules`, run separately from the unit-test
   gate). **Role-app
   coverage** (`App`, `Start`,
