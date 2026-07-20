@@ -263,7 +263,7 @@ describe('ActionCenter — critical signals', () => {
   });
 });
 
-// â”€â”€ Incomplete / unassessed profiles (2026-07-20 merge-blocker review) â”€â”€â”€â”€â”€â”€â”€
+// ── Incomplete / unassessed profiles (2026-07-20 merge-blocker review) ───────
 
 const PARTIAL = { [DOMAIN_IDS[0]]: 100 }; // one domain only
 const NOTHING = {};
@@ -385,3 +385,83 @@ describe('Incomplete and unassessed profiles never fabricate a status', () => {
   });
 });
 
+
+// ── Cross-department table rendering (Overview "Strength by department") ────
+
+describe('Overview cross-department table — Incomplete stays visible', () => {
+  const nDomains = (n, fill) => Object.fromEntries(DOMAIN_IDS.slice(0, n).map((id) => [id, fill]));
+
+  // Renders one navigator whose Pediatrics record has `n` of 6 domains scored.
+  const renderDept = (pediatricsScores) => {
+    const samples = [{ navigatorId: 'n1', name: 'Pat Halloran', departments: { pediatrics: pediatricsScores } }];
+    return render(
+      <Overview
+        rows={rowsFor([{ navigatorId: 'n1', name: 'Pat Halloran', scores: pediatricsScores }])}
+        deptName="Pediatrics"
+        deptMatrix={departmentMatrix(samples, null)}
+        onOpenNavigator={vi.fn()}
+        onViewMatrix={vi.fn()}
+        teamHistory={[]}
+      />
+    );
+  };
+
+  /** The Pediatrics cell of the cross-department table. */
+  const deptCell = (container) =>
+    container.querySelector('.deptmatrix tbody tr .matrix__cell');
+
+  it('0 of 6 renders Not assessed', () => {
+    const { container } = renderDept({});
+    const cell = deptCell(container);
+    expect(cell.textContent).toContain('—');
+    expect(cell.querySelector('.deptcell--na')).toBeTruthy();
+    expect(cell.textContent).not.toMatch(/Incomplete/);
+  });
+
+  it('1 of 6 renders Incomplete with no percentage and no official level', () => {
+    const { container } = renderDept(nDomains(1, 100));
+    const cell = deptCell(container);
+    expect(cell.textContent).toContain('Incomplete');
+    expect(cell.textContent).toContain('—');
+    expect(cell.textContent).not.toMatch(/\d+%/);
+    expect(cell.textContent).not.toMatch(/Critical|Learning|Solid|Can-Teach/);
+  });
+
+  it('5 of 6 renders Incomplete with no percentage and no official level', () => {
+    const { container } = renderDept(nDomains(5, 80));
+    const cell = deptCell(container);
+    expect(cell.textContent).toContain('Incomplete');
+    expect(cell.textContent).not.toMatch(/\d+%/);
+    expect(cell.textContent).not.toMatch(/Critical|Learning|Solid|Can-Teach/);
+  });
+
+  it('6 of 6 renders the percentage and the official status', () => {
+    const { container } = renderDept(CAN_TEACH); // averages to 91
+    const cell = deptCell(container);
+    expect(cell.textContent).toContain('91%');
+    expect(cell.textContent).toContain('Can-Teach');
+  });
+
+  it('a 1/6 profile containing 100% never renders 100% overall', () => {
+    const { container } = renderDept(nDomains(1, 100));
+    expect(deptCell(container).textContent).not.toContain('100%');
+  });
+
+  it('a 1/6 profile containing 100% never renders Can-Teach', () => {
+    const { container } = renderDept(nDomains(1, 100));
+    expect(deptCell(container).textContent).not.toContain('Can-Teach');
+  });
+
+  it('explains the partial state in a tooltip rather than a percentage', () => {
+    const { container } = renderDept(nDomains(3, 70));
+    const badge = deptCell(container).querySelector('.overall-badge');
+    expect(badge.getAttribute('title')).toContain('3 of 6 domains scored');
+  });
+
+  it('an unassessed department is visually distinct from an incomplete one', () => {
+    const unassessed = renderDept({}).container;
+    const incomplete = renderDept(nDomains(2, 70)).container;
+    expect(deptCell(unassessed).textContent).not.toContain('Incomplete');
+    expect(deptCell(incomplete).textContent).toContain('Incomplete');
+  });
+});

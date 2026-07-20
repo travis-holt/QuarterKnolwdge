@@ -1,5 +1,134 @@
 ﻿# Development History - Knowledge Check
 
+## 2026-07-20 — PR #40 final cleanup: encoding guard, stale docs, cross-department Incomplete
+
+A narrow third pass over PR #40. The overall-capability architecture, the exact thresholds, the
+colours, the domain training rules, the mentor safeguards and the three previously-fixed merge
+blockers are all preserved unchanged.
+
+### 1. Remaining encoding corruption removed, and the guard widened
+
+The earlier repair pass fixed only the curly-quote/dash family, because that is the only family
+`scripts/check-encoding.mjs` could detect. Two other families survived the same PowerShell
+`Add-Content` round-trip:
+
+| Corrupted | Intended | Where |
+|---|---|---|
+| a-circumflex + dagger + right-quote | `→` U+2192 | 6x in `src/lib/scoring.test.js` |
+| a-circumflex + right-double-quote + euro | `─` U+2500 | 154x `scoring.test.js`, 9x `capabilityStatus.test.jsx`, 30x `call-qa-interviews.rules.mjs` |
+
+Every sequence was enumerated and verified by reversing the Windows-1252 remap and strictly decoding
+the result as UTF-8, rather than guessing at a search-and-replace. Repair only rewrote a run when it
+decoded cleanly **and** produced a character outside Latin-1, so genuinely accented prose was never
+touched. The box-drawing damage in `tests/firestore-rules/call-qa-interviews.rules.mjs` was
+**pre-existing on `main`**, not introduced by this branch; it is fixed here because the task was to
+leave zero corruption in the tracked tree.
+
+**Root cause of the survival:** the guard matched only the literal lead pair for the cp1252 euro
+byte. Every 3-byte UTF-8 character in U+2000–U+2FFF shares the same 0xE2 lead, so arrows and box
+drawing corrupt into the same shape with a different second byte. The pattern is now
+`a-circumflex` followed by the **full continuation class** already used for the 2-byte Latin path,
+which covers punctuation, arrows, box drawing, math, block and geometric shapes in one rule.
+Requiring a continuation-class character immediately after the lead keeps real words safe: French
+spells a-circumflex followed by a letter, never by a dagger or a euro sign.
+
+**The guard also never ran on Windows.** `api/encoding.test.js` passed
+`new URL('..', import.meta.url).pathname`, which yields `/C:/Users/...` — not a valid cwd — so
+`git ls-files` failed with `spawnSync git ENOENT` and the repository scan silently no-oped on every
+Windows checkout. That is why the corruption reached the branch at all despite a green-looking
+guard. Fixed with `fileURLToPath`. The full unit suite is now green **including** the encoding
+guard, for the first time in this branch.
+
+New tests in `api/encoding.test.js` (3 tests -> 7): detects corrupted arrows (`34 -> 72`,
+`complete -> canTeach`); detects corrupted box drawing (`-- section`, a long rule); allows the real
+arrows, real box-drawing characters, em dashes, curly quotes, accents and Arabic this repo actually
+uses; and does not flag French words where a-circumflex precedes a letter.
+
+### 2. Stale "capped at Learning" documentation corrected
+
+The first implementation of the redesign capped an incomplete profile at `learning`. The
+merge-blocker review replaced that with a hard null, but two documents still described the cap as
+current behaviour.
+
+The final rule, now stated consistently everywhere:
+
+| Domains scored | Result |
+|---|---|
+| 0 of 6 | **Not assessed** — `overallScore` null, `overallLevel` null |
+| 1–5 of 6 | **Incomplete** — `overallScore` null, `overallLevel` null, no capability classification |
+| 6 of 6 | Official overall score **and** official capability level |
+
+`partialAverage` remains available as diagnostic progress data only.
+
+Corrected: the `CLAUDE.md` decision-log entry (which claimed the profile was "capped at `learning`")
+and the `docs/HISTORY.md` "Missing-domain safety" section. Both now state the current rule and carry
+an explicit superseded note explaining that the cap existed briefly and why it was replaced — a cap
+still hands out an official level the navigator has not earned, and it allowed incomplete rows to be
+double-counted in the status distribution. Historical narrative is preserved, not rewritten.
+
+### 3. Cross-department view keeps Incomplete distinct from Unassessed
+
+`departmentMatrix()` returned `null` for a cell whenever `status.score` was null. Since an
+incomplete profile deliberately has `score === null`, the cross-department table rendered these two
+very different situations identically:
+
+- a navigator who has never started that department, and
+- a navigator who is part-way through it
+
+**Fix.** A cell is null **only** when the department is genuinely unassessed (0 of 6 domains). An
+incomplete department (1–5 of 6) now returns a real cell:
+
+```js
+{ overall: null, level: null, complete: false, label: 'Incomplete',
+  assessedDomains: 3, totalDomains: 6 }
+```
+
+`Overview`'s "Strength by department" table and `NavigatorDetail`'s department strip both pass
+`assessedDomains`/`totalDomains` through to `OverallBadge`. Without that metadata the badge would
+fall back to "Not assessed" and reintroduce the same conflation at the render layer;
+`NavigatorDetail` additionally stopped indexing `LEVELS` with a null level id. Neither surface ever
+renders `partialAverage` as an official percentage.
+
+`PhaseHub` keeps its `partialAverage` fallback: it is a progress summary that prints a plain
+`avg X%` and never attaches a capability level to a partial profile.
+
+Regression tests — 8 in `scoring.test.js` (0/6 null; absent department null; 1/6 and 5/6 real
+Incomplete cells; 6/6 official percentage and level; a 1/6 profile holding 100% reporting neither
+100% nor Can-Teach; all three states side by side; `assessedDomains` carried through) and 8 in
+`capabilityStatus.test.jsx` (the same matrix at the render layer, plus the tooltip wording and the
+visual distinction between unassessed and incomplete).
+
+### Files changed
+
+`scripts/check-encoding.mjs` · `api/encoding.test.js` · `src/lib/scoring.js` (`departmentMatrix`
+only) · `src/components/Overview.jsx` · `src/components/NavigatorDetail.jsx` ·
+`src/lib/scoring.test.js` · `src/components/capabilityStatus.test.jsx` ·
+`tests/firestore-rules/call-qa-interviews.rules.mjs` (encoding repair only, no logic change) ·
+`CLAUDE.md` · `docs/HISTORY.md`.
+
+### Verification
+
+| Command | Result |
+|---|---|
+| `npx vitest run` | **1,572 passed / 1,572** across 73 files — fully green |
+| `npm run build` | clean, incl. the private-runtime bundle scan |
+| `npm run test:e2e:safe` | **12/12** passed (real Chromium) |
+| `npm run test:rules` | **76/76** assertions (51 result-authorization + 25 Call QA), exit 0 |
+| `npm run qa:pilot-smoke` | `PILOT_SMOKE_VERIFIED`, exit 0 |
+| `npm run qa:calibrate` | `INSUFFICIENT_DATA` (documented expected state), exit 0 |
+| `npm run qa:coverage` | exit 0 |
+| `node scripts/check-encoding.mjs` | passed |
+| `git diff --check` | clean |
+
+Repository-wide searches for the three mojibake lead sequences and for "capped at learning" /
+"capped at Learning" all return **zero matches**.
+
+The Firestore Rules suite required a JRE, which is not on this machine's PATH; it was run against
+the portable Temurin 21 JRE already present under the user's temp directory from an earlier session.
+No Java was installed and no PATH was permanently modified.
+
+No production deployment, migration, or write was performed, and PR #40 remains unmerged.
+
 ## 2026-07-20 — PR #40 merge-blocker review: three correctness fixes
 
 A review of PR #40 against the latest `main` found three defects in the first implementation of the
@@ -237,12 +366,21 @@ the `scores` object result documents already carry.
 ### Missing-domain safety
 
 An incomplete profile can never be inflated. `overallComplete()` requires all six domains to be
-numeric; `overallStatus()` labels an incomplete profile **"Incomplete"**; and `overallLevel()` caps
-it at `learning` (or `critical` when genuinely low). So `{ intake: 100 }` reports 100% across 1 of 6
-domains but resolves to `learning`, never `canTeach`.
+numeric and `overallStatus()` labels an incomplete profile **"Incomplete"**.
 
-A useful consequence: because the cap makes `overallLevel === 'canTeach'` imply completeness, every
-downstream mentor and readiness check inherits the safety by construction rather than re-checking.
+> **⚠ Superseded the same day.** As first written, this section shipped a *cap*: `overallLevel()`
+> returned `learning` (or `critical` when genuinely low) for an incomplete profile, so
+> `{ intake: 100 }` "resolved to `learning`, never `canTeach`". **That behaviour no longer exists.**
+> The merge-blocker review below replaced the cap with a hard null: an incomplete profile now has
+> `overallScore === null` and `overallLevel === null` and holds **no official capability status at
+> all** — not Can-Teach, not Solid, not Learning, not Critical. A cap still hands out an official
+> level the navigator has not earned, and it allowed incomplete rows to be counted twice in the
+> status distribution. See *"PR #40 merge-blocker review: three correctness fixes"* at the top of
+> this file for the final rule.
+
+A useful consequence that survived the correction: because an incomplete profile carries no level at
+all, `overallLevel === 'canTeach'` implies completeness, so every downstream mentor and readiness
+check inherits the safety by construction rather than re-checking.
 
 ### Domain scores stay diagnostic — and critical gaps stay loud
 

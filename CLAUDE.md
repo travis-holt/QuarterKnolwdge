@@ -41,7 +41,18 @@
 > new four-band capability mapper, producing `NaN` distribution counts and dropping sub-40
 > competencies from the Overview — competencies now keep their ORIGINAL thresholds via
 > `competencyScoreToLevel`/`COMPETENCY_THRESHOLDS`.
-> Unit suite 1417 → **1552** across 73 files; build + 12/12 safe Playwright E2E green.
+> **Final cleanup pass (same day):** repaired the remaining Latin-1 round-trip damage (corrupted
+> arrows and box-drawing rules in two test files, plus a pre-existing instance in
+> `tests/firestore-rules/call-qa-interviews.rules.mjs`) and **widened `scripts/check-encoding.mjs`**
+> from a single hard-coded lead pair to the full continuation class, so the guard now catches every
+> double-encoded 3-byte sequence (arrows, box drawing, math, punctuation) rather than curly quotes
+> alone; fixed the guard's own Windows blind spot (`.pathname` gave `/C:/...` as a cwd, so
+> `git ls-files` failed with ENOENT and the repo scan silently never ran on Windows); and made
+> `departmentMatrix()` keep **Incomplete distinct from Unassessed** — a cell is null only at 0 of 6
+> domains, while 1–5 of 6 returns a real cell labelled `Incomplete` with `assessedDomains`, so an
+> in-progress assessment is no longer indistinguishable from an untaken one.
+> Unit suite 1417 → **1572** across 73 files (all green, including the encoding guard for the first
+> time); build clean; 12/12 safe Playwright E2E; Firestore Rules **76/76** (51 + 25).
 > See docs/HISTORY.md 2026-07-20) ·
 > **Prior same-day update:** 2026-07-20 (**department-controlled training modules** — PR #38 merged onto the
 > latest `main` after PR #37, the answer-length balance, and PR #39 (OB/GYN Spot-the-Error bank v5),
@@ -401,6 +412,15 @@ training assignments.
   **diagnostic score distribution**, reports each domain's average score and sub-40 count, and
   carries its own `unassessed` bucket so an unscored domain is never bucketed into a band (which
   previously produced `NaN`).
+- **Cross-department table (fixed 2026-07-20 cleanup):** `departmentMatrix()` returns null for a
+  department cell **only when it is fully unassessed** (0 of 6 domains). An **incomplete**
+  department (1–5 of 6) returns a real cell — `overall: null`, `level: null`, `complete: false`,
+  `label: 'Incomplete'`, plus `assessedDomains`/`totalDomains` — so the table shows "—/Incomplete"
+  with an "X of 6 domains scored" tooltip instead of collapsing an in-progress assessment into
+  "Not assessed". Both `Overview`'s "Strength by department" table and `NavigatorDetail`'s
+  department strip pass that metadata to `OverallBadge`; omitting it would make the badge mistake
+  an incomplete department for an unassessed one. `partialAverage` is never rendered there as an
+  official percentage.
 - **Status:** Complete.
 
 ### F6 — Navigators List + Per-Navigator Dashboard
@@ -1804,10 +1824,15 @@ stateDiagram-v2
   seventh summary level* (rejected — this is the ambiguity being removed); *a migration writing
   `overallScore` onto every result document* (rejected — the value is derivable, so a migration
   would add write risk and a permanent consistency burden for nothing).
-- **Missing-domain safety:** an incomplete profile cannot be promoted. `{intake: 100}` is labelled
-  **"Incomplete"** and capped at `learning`, so a thin profile never reads as 100% Can-Teach.
-  Because of the cap, `overallLevel === 'canTeach'` already implies completeness, which makes every
-  downstream mentor/readiness check safe by construction.
+- **Missing-domain safety:** an incomplete profile has **no official status at all**. `{intake: 100}`
+  is labelled **"Incomplete"** with `overallScore === null` and `overallLevel === null` — it is not
+  Can-Teach, and it is not Learning either. Because an incomplete profile carries no level,
+  `overallLevel === 'canTeach'` already implies completeness, which makes every downstream
+  mentor/readiness check safe by construction.
+  *(The first implementation of this decision instead **capped** an incomplete profile at
+  `learning`. That was superseded the same day — see the 2026-07-20 "Absent evidence is a distinct
+  state, not a zero" entry below — because a cap still assigns an official level the navigator has
+  not earned, and it let incomplete rows be double-counted in the status distribution.)*
 - **Mentor safety:** a navigator may mentor a domain only when they are **Can-Teach overall AND
   ≥ 90% in that specific domain** — closing both the "strong in one thing only" and "strong overall
   but weak here" failure modes.
@@ -2312,7 +2337,7 @@ of this file on 2026-07-07 to cut per-session context cost (it was ~55% of the f
   Pediatrics; their modules will follow once their SOPs land.
 - **Experimental / mockup:**
   - **Adult Medicine and Behavioural Health** are not assessed; **Pediatrics and OB/GYN** are live.
-- **Test coverage:** **1,552 unit tests across 73 files** and **76 Firestore Rules emulator
+- **Test coverage:** **1,572 unit tests across 73 files** and **76 Firestore Rules emulator
   assertions** (51 result authorization + 25 Call QA) after the 2026-07-18 merge-readiness pass
   (calibration-private-bank adaptation, callerCaseFile, randomized selection, contextual audit
   guard + 14-workflow generation smoke, encoding guard, provisioning tool) atop the 2026-07-17
@@ -2440,7 +2465,7 @@ of this file on 2026-07-07 to cut per-session context cost (it was ~55% of the f
   OB/GYN = **37** seed questions (offline fallback) + the **48-item MCQ v2 operating-model bank**
   (24 Pediatrics + 24 OB/GYN) that replaces the weak active bank via a marker-gated
   archive-and-replace migration (bank grows in Firestore per dept) · 4 departments (**Pediatrics
-  + OB/GYN live**, 2 mockup) · **1,552 unit tests across 73 files** + **76 assertions**
+  + OB/GYN live**, 2 mockup) · **1,572 unit tests across 73 files** + **76 assertions**
   across two committed Firestore Rules emulator suites (`npm run test:rules`; require Java, run in
   CI, not part of the unit-test count) ·
   **14** Firestore collections
@@ -2533,8 +2558,13 @@ of this file on 2026-07-07 to cut per-session context cost (it was ~55% of the f
   // competency axis uses COMPETENCY_THRESHOLDS, not the capability bands:
   competencyScores: {competencyId: pct},
   competencyLevels: {competencyId: 'learning'|'solid'|'canTeach'} }
-// department-matrix row (cross-department)
-{ name, isLive, depts: { [deptId]: { overall, level, complete, label } | null } } // null = not assessed
+// department-matrix row (cross-department).
+// A cell is null ONLY when that department is fully unassessed (0 of 6 domains).
+// An INCOMPLETE department (1-5 of 6) still returns a real cell with
+// overall/level null and label 'Incomplete', so the cross-department table can
+// tell "partial evidence" apart from "no evidence".
+{ name, isLive, depts: { [deptId]:
+    { overall, level, complete, label, assessedDomains, totalDomains } | null } }
 // question (Firestore `questions` doc + seed)
 { domainId, competencies:[id], scenario, options:[{id,text,points,rationale}],
   correctOptionId, status:'draft'|'active'|'archived', source, createdAt }
@@ -2769,7 +2799,7 @@ npm run test:e2e     # run the Playwright browser tests (auto-builds + starts th
 - Heatmap intensity toggle (show % inside matrix cells).
 
 ### Technical Debt
-- **1,552 unit tests across 73 files** as of 2026-07-20 (plus **76 assertions** across two
+- **1,572 unit tests across 73 files** as of 2026-07-20 (plus **76 assertions** across two
   committed Firestore Rules emulator suites, `npm run test:rules`, run separately from the unit-test
   gate). **Role-app
   coverage** (`App`, `Start`,

@@ -458,18 +458,23 @@ export function departmentMatrix(samples, liveResult) {
   const cellsFor = (getScores) =>
     Object.fromEntries(
       DEPARTMENTS.map((dep) => {
-        const deptScores = getScores(dep.id);
-        const status = overallStatus(deptScores);
+        const status = overallStatus(getScores(dep.id));
+        // ONLY a genuinely unassessed department (0 of 6 domains) is null.
+        // An INCOMPLETE department (1-5 of 6) must still return a real cell:
+        // both have `score === null`, so keying on the score alone would
+        // collapse "we have partial evidence" into "we have none" and hide an
+        // in-progress assessment from the cross-department view.
+        if (status.unassessed) return [dep.id, null];
         return [
           dep.id,
-          status.score == null
-            ? null
-            : {
-                overall: status.score,
-                level: status.level,
-                complete: status.complete,
-                label: status.label,
-              },
+          {
+            overall: status.score, // null unless complete
+            level: status.level, // null unless complete
+            complete: status.complete,
+            label: status.label, // 'Incomplete' or the official level label
+            assessedDomains: status.assessedDomains,
+            totalDomains: status.totalDomains,
+          },
         ];
       })
     );

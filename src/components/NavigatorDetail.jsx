@@ -294,7 +294,9 @@ export default function NavigatorDetail({ rows, name, deptName, dept, deptMatrix
                   </Tag>
                 );
               }
-              const level = LEVELS[cell.level];
+              // An INCOMPLETE department cell has overall/level null, so it goes
+              // through OverallBadge (which renders "Incomplete" + a tooltip)
+              // rather than indexing LEVELS with a null id.
               return (
                 <Tag
                   key={d.id}
@@ -302,9 +304,15 @@ export default function NavigatorDetail({ rows, name, deptName, dept, deptMatrix
                   {...switchProps}
                 >
                   <span className="deptstrip__name">{d.name}</span>
-                  <span className="deptcell" style={{ background: level.color, color: level.text }}>
-                    {cell.overall}% <span className="deptcell__lvl">{level.label}</span>
-                  </span>
+                  <OverallBadge
+                    score={cell.overall}
+                    level={cell.level}
+                    label={cell.label}
+                    complete={cell.complete}
+                    assessedDomains={cell.assessedDomains}
+                    totalDomains={cell.totalDomains}
+                    size="sm"
+                  />
                 </Tag>
               );
             })}

@@ -69,9 +69,18 @@ export default function Overview({ rows, deptName, deptMatrix, onOpenNavigator, 
                   </th>
                   {DEPARTMENTS.map((d) => {
                     const cell = row.depts[d.id];
+                    // A null cell means the department was never assessed at all.
                     if (!cell) {
-                      return <td key={d.id} className="matrix__cell"><span className="deptcell deptcell--na">—</span></td>;
+                      return (
+                        <td key={d.id} className="matrix__cell">
+                          <span className="deptcell deptcell--na" title="Not assessed">—</span>
+                        </td>
+                      );
                     }
+                    // An INCOMPLETE department cell is not null: pass the
+                    // assessed-domain metadata so OverallBadge shows "Incomplete"
+                    // (with an "X of 6 domains scored" tooltip) rather than
+                    // mistaking it for an unassessed department.
                     return (
                       <td key={d.id} className="matrix__cell">
                         <OverallBadge
@@ -79,6 +88,8 @@ export default function Overview({ rows, deptName, deptMatrix, onOpenNavigator, 
                           level={cell.level}
                           label={cell.label}
                           complete={cell.complete}
+                          assessedDomains={cell.assessedDomains}
+                          totalDomains={cell.totalDomains}
                           size="sm"
                         />
                       </td>

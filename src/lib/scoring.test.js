@@ -1972,13 +1972,13 @@ describe('teamTrend', () => {
   });
 });
 
-// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ─────────────────────────────────────────────────────────────────────────────
 // MERGE-BLOCKER REGRESSIONS (2026-07-20 review of PR #40)
 //
 // 1. Missing domain evidence must never become a score of 0.
 // 2. Incomplete/unassessed profiles are mutually exclusive from official bands.
 // 3. Competencies keep their own axis and never produce NaN counts.
-// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ─────────────────────────────────────────────────────────────────────────────
 
 describe('BLOCKER 1 — missing domain evidence is never a zero', () => {
   const oneDomain = { [D0]: 100 };
@@ -2087,10 +2087,10 @@ describe('BLOCKER 1 — missing domain evidence is never a zero', () => {
 
 describe('BLOCKER 2 — distribution categories are mutually exclusive', () => {
   const mixedRows = () => buildMatrixRows([
-    { name: 'Teach', scores: makeScores({}, 95) },   // complete â†’ canTeach
-    { name: 'Sol', scores: makeScores({}, 70) },     // complete â†’ solid
-    { name: 'Learn', scores: makeScores({}, 50) },   // complete â†’ learning
-    { name: 'Crit', scores: makeScores({}, 20) },    // complete â†’ critical
+    { name: 'Teach', scores: makeScores({}, 95) },   // complete → canTeach
+    { name: 'Sol', scores: makeScores({}, 70) },     // complete → solid
+    { name: 'Learn', scores: makeScores({}, 50) },   // complete → learning
+    { name: 'Crit', scores: makeScores({}, 20) },    // complete → critical
     { name: 'Partial', scores: { [D0]: 100 } },      // incomplete
     { name: 'Partial2', scores: { [D0]: 10 } },      // incomplete (low)
     { name: 'None', scores: {} },                    // unassessed
@@ -2141,7 +2141,7 @@ describe('BLOCKER 2 — distribution categories are mutually exclusive', () => {
     expect(stats.criticalCount).toBe(1);
     // Solid+ is 2 of the 4 eligible navigators, not 2 of 7.
     expect(stats.solidPlusRate).toBe(50);
-    // (95 + 70 + 50 + 20) / 4 = 58.75 â†’ 59
+    // (95 + 70 + 50 + 20) / 4 = 58.75 → 59
     expect(stats.avgOverallScore).toBe(59);
   });
 
@@ -2270,10 +2270,88 @@ describe('complete profiles retain all prior behaviour', () => {
   });
 
   it('still produces a critical gap alongside a healthy overall status', () => {
-    // 34 + 80*5 = 434 â†’ 72 overall (Solid) with one critical domain.
+    // 34 + 80*5 = 434 → 72 overall (Solid) with one critical domain.
     const rows = buildMatrixRows([{ name: 'X', scores: makeScores({ [D0]: 34 }, 80) }], null);
     expect(rows[0].overallLevel).toBe('solid');
     expect(buildActionCenter(rows).criticalDomainGaps).toHaveLength(1);
   });
 });
 
+
+// ── Cross-department view keeps Incomplete distinct from Unassessed ─────────
+// Both states have `score === null`, so keying a cell on the score alone would
+// collapse "partial evidence" into "no evidence" and hide an in-progress
+// assessment from the cross-department table.
+
+describe('departmentMatrix — Incomplete is not Unassessed', () => {
+  const sixDomains = (fill) => Object.fromEntries(DOMAIN_IDS.map((id) => [id, fill]));
+  const nDomains = (n, fill) => Object.fromEntries(DOMAIN_IDS.slice(0, n).map((id) => [id, fill]));
+
+  const cellsFor = (departments) =>
+    departmentMatrix([{ name: 'X', departments }], null)[0].depts;
+
+  it('0 of 6 domains stays null (Not assessed)', () => {
+    const cells = cellsFor({ pediatrics: {} });
+    expect(cells.pediatrics).toBeNull();
+  });
+
+  it('a department absent from the record stays null', () => {
+    const cells = cellsFor({});
+    expect(cells.pediatrics).toBeNull();
+  });
+
+  it('1 of 6 domains returns a real Incomplete cell, not null', () => {
+    const cell = cellsFor({ pediatrics: nDomains(1, 100) }).pediatrics;
+    expect(cell).not.toBeNull();
+    expect(cell).toMatchObject({
+      overall: null,
+      level: null,
+      complete: false,
+      label: 'Incomplete',
+      assessedDomains: 1,
+      totalDomains: 6,
+    });
+  });
+
+  it('5 of 6 domains returns a real Incomplete cell, not null', () => {
+    const cell = cellsFor({ pediatrics: nDomains(5, 80) }).pediatrics;
+    expect(cell).not.toBeNull();
+    expect(cell).toMatchObject({
+      overall: null, level: null, complete: false, label: 'Incomplete', assessedDomains: 5,
+    });
+  });
+
+  it('6 of 6 domains returns the official percentage and level', () => {
+    const cell = cellsFor({ pediatrics: sixDomains(95) }).pediatrics;
+    expect(cell).toMatchObject({
+      overall: 95, level: 'canTeach', complete: true, label: 'Can-Teach', assessedDomains: 6,
+    });
+  });
+
+  it('a 1/6 profile containing 100% never reports 100% overall or Can-Teach', () => {
+    const cell = cellsFor({ pediatrics: nDomains(1, 100) }).pediatrics;
+    expect(cell.overall).not.toBe(100);
+    expect(cell.overall).toBeNull();
+    expect(cell.level).not.toBe('canTeach');
+    expect(cell.level).toBeNull();
+    expect(cell.label).toBe('Incomplete');
+  });
+
+  it('distinguishes all three states side by side in one row', () => {
+    const cells = cellsFor({
+      pediatrics: sixDomains(95),   // complete
+      obgyn: nDomains(1, 100),      // incomplete
+      adult: {},                    // unassessed
+    });
+    expect(cells.pediatrics.complete).toBe(true);
+    expect(cells.obgyn).not.toBeNull();
+    expect(cells.obgyn.complete).toBe(false);
+    expect(cells.adult).toBeNull();
+  });
+
+  it('carries assessedDomains so a badge cannot mistake Incomplete for unassessed', () => {
+    const cell = cellsFor({ pediatrics: nDomains(3, 70) }).pediatrics;
+    expect(cell.assessedDomains).toBe(3);
+    expect(cell.totalDomains).toBe(6);
+  });
+});
