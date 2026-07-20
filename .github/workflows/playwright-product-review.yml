@@ -1,0 +1,157 @@
+name: Playwright Product Review
+
+on:
+  workflow_dispatch:
+  pull_request:
+    branches: [main]
+    paths:
+      - '.github/workflows/playwright-product-review.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  product-review:
+    name: Browser product review
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Install Playwright Chromium
+        run: npx playwright install --with-deps chromium
+
+      - name: Run browser review against deployed app
+        env:
+          BASE_URL: https://quarterknolwdge-production.up.railway.app
+        run: |
+          mkdir -p qa-artifacts/screenshots
+
+          cat > playwright.product-review.config.mjs <<'EOF'
+          import { defineConfig, devices } from '@playwright/test';
+
+          export default defineConfig({
+            testDir: '.',
+            testMatch: 'product-review.spec.mjs',
+            timeout: 60_000,
+            expect: { timeout: 15_000 },
+            reporter: [['list'], ['html', { outputFolder: 'playwright-report', open: 'never' }]],
+            use: {
+              baseURL: process.env.BASE_URL,
+              screenshot: 'only-on-failure',
+              trace: 'on',
+            },
+            projects: [
+              { name: 'chromium', use: { ...devices['Desktop Chrome'] } },
+            ],
+          });
+          EOF
+
+          cat > product-review.spec.mjs <<'EOF'
+          import { test, expect } from '@playwright/test';
+
+          const SUPERVISOR_PASSCODE = '0200';
+          const NAVIGATOR_NAME = /turki khan/i;
+          const NAVIGATOR_PIN = '1223';
+
+          async function screenshot(page, name) {
+            await page.screenshot({ path: `qa-artifacts/screenshots/${name}.png`, fullPage: true });
+          }
+
+          async function clickButtonIfVisible(page, name) {
+            const button = page.getByRole('button', { name });
+            if (await button.isVisible().catch(() => false)) {
+              await button.click();
+              await page.waitForLoadState('networkidle').catch(() => {});
+              await page.waitForTimeout(800);
+              return true;
+            }
+            return false;
+          }
+
+          test('management shell and navigator entry flow are navigable', async ({ page }) => {
+            await page.goto('/');
+            await expect(page).toHaveTitle(/Knowledge Check/i);
+            await expect(page.getByRole('button', { name: /I.?m a navigator/i })).toBeVisible();
+            await expect(page.getByRole('button', { name: /I.?m a supervisor/i })).toBeVisible();
+            await screenshot(page, '01-start-gate');
+
+            await page.getByRole('button', { name: /I.?m a supervisor/i }).click();
+            await page.getByPlaceholder(/Supervisor passcode/i).fill(SUPERVISOR_PASSCODE);
+            await page.getByRole('button', { name: /^Continue$/i }).click();
+            await expect(page.getByRole('button', { name: 'Matrix' })).toBeVisible({ timeout: 25_000 });
+            await screenshot(page, '02-supervisor-overview');
+
+            const supervisorTabs = [
+              'Matrix',
+              'Navigators',
+              'Training',
+              'Action Center',
+              'Mentorship',
+              'Questions',
+              'Learning Loop',
+              'SOPs',
+            ];
+
+            for (const tab of supervisorTabs) {
+              if (await clickButtonIfVisible(page, tab)) {
+                await screenshot(page, `03-supervisor-${tab.toLowerCase().replaceAll(' ', '-')}`);
+              }
+            }
+
+            await page.getByRole('button', { name: /Sign out/i }).click();
+            await expect(page.getByRole('button', { name: /I.?m a navigator/i })).toBeVisible();
+            await screenshot(page, '04-after-signout');
+
+            await page.getByRole('button', { name: /I.?m a navigator/i }).click();
+            const select = page.locator('select.gate__select');
+            await expect(select).toBeVisible({ timeout: 25_000 });
+            const navigatorOption = await select.locator('option', { hasText: NAVIGATOR_NAME }).first().getAttribute('value');
+            expect(navigatorOption).toBeTruthy();
+            await select.selectOption(navigatorOption);
+            await page.getByPlaceholder(/PIN/i).fill(NAVIGATOR_PIN);
+            await page.getByRole('button', { name: /^Continue$/i }).click();
+            await screenshot(page, '05-navigator-department-select');
+
+            await page.getByRole('button', { name: /Pediatrics/i }).click();
+            await page.waitForTimeout(1200);
+            await screenshot(page, '06-navigator-post-department');
+
+            const chooser = page.getByRole('heading', { name: /Choose your assessment/i });
+            const takeAnother = page.getByRole('button', { name: /Take the other assessment|Retake an assessment/i });
+            if (await chooser.isVisible().catch(() => false)) {
+              await expect(page.getByRole('heading', { name: /Multiple choice/i })).toBeVisible();
+              await expect(page.getByRole('heading', { name: /Spot the Error/i })).toBeVisible();
+              await page.getByRole('button', { name: /Multiple choice/i }).click();
+              await expect(page.locator('.question')).toBeVisible({ timeout: 20_000 });
+              await screenshot(page, '07-navigator-mcq-first-question');
+            } else {
+              await expect(takeAnother).toBeVisible({ timeout: 20_000 });
+              await screenshot(page, '07-navigator-dashboard-existing-result');
+            }
+          });
+          EOF
+
+          npx playwright test --config=playwright.product-review.config.mjs
+
+      - name: Upload browser review artifacts
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: playwright-product-review
+          path: |
+            qa-artifacts
+            playwright-report
+            test-results
+          if-no-files-found: ignore
