@@ -5,7 +5,15 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { describe, it, expect } from 'vitest';
-import { TRAINING_MODULES, moduleForDomain } from './training.js';
+import {
+  TRAINING_MODULES,
+  moduleForDomain,
+  scopeForDept,
+  belongsToDept,
+  itemDepartments,
+  itemText,
+  TRAINING_DEPARTMENTS,
+} from './training.js';
 import { DOMAINS } from './questions.js';
 
 const nonEmpty = (s) => typeof s === 'string' && s.trim().length > 0;
@@ -29,7 +37,7 @@ describe('TRAINING_MODULES catalog', () => {
       expect(m.lessons.length).toBeGreaterThan(0);
       expect(Array.isArray(m.keyTakeaways)).toBe(true);
       expect(m.keyTakeaways.length).toBeGreaterThan(0);
-      m.keyTakeaways.forEach((t) => expect(nonEmpty(t)).toBe(true));
+      m.keyTakeaways.forEach((t) => expect(nonEmpty(itemText(t))).toBe(true));
     }
   });
 
@@ -38,7 +46,7 @@ describe('TRAINING_MODULES catalog', () => {
       for (const lesson of m.lessons) {
         expect(nonEmpty(lesson.title)).toBe(true);
         expect(lesson.points.length).toBeGreaterThan(0);
-        lesson.points.forEach((p) => expect(nonEmpty(p)).toBe(true));
+        lesson.points.forEach((p) => expect(nonEmpty(itemText(p))).toBe(true));
         if (lesson.script) {
           lesson.script.forEach((s) => {
             expect(nonEmpty(s.say)).toBe(true);
@@ -359,5 +367,195 @@ describe('moduleForDomain', () => {
   it('returns the module for a known domain and null otherwise', () => {
     expect(moduleForDomain('routing')?.domainId).toBe('routing');
     expect(moduleForDomain('nope')).toBeNull();
+  });
+});
+
+// ── Department scoping ───────────────────────────────────────────────────────
+// The Training page renders "shared + the selected department" and nothing else.
+// These guards lock the scoping helper's contract and the catalog metadata it
+// reads, so a future content edit can't leak one department's content into the
+// other (the PR #34 regression: Pediatrics strep/amoxicillin content rendering
+// while OB/GYN was selected).
+
+describe('department scoping helper', () => {
+  const shared = { text: 'shared item' };
+  const sharedString = 'a plain shared string';
+  const peds = { text: 'peds item', departments: ['pediatrics'] };
+  const ob = { text: 'ob item', departments: ['obgyn'] };
+  const both = { text: 'both item', departments: ['pediatrics', 'obgyn'] };
+
+  it('itemDepartments reports declared scope, and null for shared items', () => {
+    expect(itemDepartments(peds)).toEqual(['pediatrics']);
+    expect(itemDepartments(shared)).toBeNull();
+    expect(itemDepartments(sharedString)).toBeNull();
+    expect(itemDepartments(undefined)).toBeNull();
+  });
+
+  it('belongsToDept includes shared + selected, excludes the other department', () => {
+    expect(belongsToDept(shared, 'pediatrics')).toBe(true);
+    expect(belongsToDept(shared, 'obgyn')).toBe(true);
+    expect(belongsToDept(sharedString, 'obgyn')).toBe(true);
+    expect(belongsToDept(peds, 'pediatrics')).toBe(true);
+    expect(belongsToDept(peds, 'obgyn')).toBe(false);
+    expect(belongsToDept(ob, 'obgyn')).toBe(true);
+    expect(belongsToDept(ob, 'pediatrics')).toBe(false);
+    expect(belongsToDept(both, 'pediatrics')).toBe(true);
+    expect(belongsToDept(both, 'obgyn')).toBe(true);
+  });
+
+  it('scopeForDept keeps shared + selected-department items only', () => {
+    const items = [sharedString, shared, peds, ob, both];
+    expect(scopeForDept(items, 'pediatrics')).toEqual([sharedString, shared, peds, both]);
+    expect(scopeForDept(items, 'obgyn')).toEqual([sharedString, shared, ob, both]);
+  });
+
+  it('scopeForDept handles missing/blank arrays safely', () => {
+    expect(scopeForDept(undefined, 'pediatrics')).toEqual([]);
+    expect(scopeForDept(null, 'obgyn')).toEqual([]);
+    expect(scopeForDept([], 'pediatrics')).toEqual([]);
+    expect(scopeForDept('not an array', 'pediatrics')).toEqual([]);
+  });
+
+  it('itemText reads plain strings and scoped { text } objects alike', () => {
+    expect(itemText(sharedString)).toBe('a plain shared string');
+    expect(itemText(peds)).toBe('peds item');
+    expect(itemText(undefined)).toBe('');
+  });
+});
+
+// Every scoped item in the catalog, with a readable path for failure messages.
+const scopedItems = () => {
+  const out = [];
+  const push = (item, path) => out.push({ item, path });
+  for (const m of TRAINING_MODULES) {
+    m.lessons.forEach((lesson, li) => {
+      const base = `${m.domainId}.lessons[${li}]`;
+      push(lesson, base);
+      (lesson.points ?? []).forEach((p, i) => push(p, `${base}.points[${i}]`));
+      (lesson.script ?? []).forEach((s, i) => push(s, `${base}.script[${i}]`));
+      if (lesson.example) push(lesson.example, `${base}.example`);
+      if (lesson.doc) push(lesson.doc, `${base}.doc`);
+    });
+    (m.mistakes ?? []).forEach((x, i) => push(x, `${m.domainId}.mistakes[${i}]`));
+    (m.quickRef?.rows ?? []).forEach((x, i) => push(x, `${m.domainId}.quickRef.rows[${i}]`));
+    (m.drill ?? []).forEach((x, i) => push(x, `${m.domainId}.drill[${i}]`));
+    (m.simulations ?? []).forEach((x, i) => push(x, `${m.domainId}.simulations[${i}]`));
+    (m.keyTakeaways ?? []).forEach((x, i) => push(x, `${m.domainId}.keyTakeaways[${i}]`));
+  }
+  return out;
+};
+
+describe('training catalog department metadata', () => {
+  it('exposes exactly the two stable department IDs', () => {
+    expect(TRAINING_DEPARTMENTS).toEqual(['pediatrics', 'obgyn']);
+  });
+
+  it('every scoped item uses only valid, non-empty department IDs', () => {
+    for (const { item, path } of scopedItems()) {
+      const depts = itemDepartments(item);
+      if (depts === null) continue; // shared
+      expect(depts.length, `${path} declares an empty departments array`).toBeGreaterThan(0);
+      for (const id of depts) {
+        expect(TRAINING_DEPARTMENTS, `${path} declares unknown department "${id}"`).toContain(id);
+      }
+    }
+  });
+
+  it('never uses a display string (e.g. "OB-GYN") as a department ID', () => {
+    for (const { item, path } of scopedItems()) {
+      const depts = itemDepartments(item) ?? [];
+      for (const id of depts) {
+        expect(id, `${path} uses a display label instead of a stable ID`).toBe(id.toLowerCase());
+        expect(['OB-GYN', 'OB/GYN', 'Pediatrics', 'Peds']).not.toContain(id);
+      }
+    }
+  });
+
+  it('every simulation declares exactly one department matching its label', () => {
+    const LABEL_TO_ID = { Pediatrics: 'pediatrics', 'OB-GYN': 'obgyn' };
+    for (const { m, sim } of allSims()) {
+      expect(Array.isArray(sim.departments), `${m.domainId}/${sim.label} has no departments`).toBe(true);
+      expect(sim.departments).toHaveLength(1);
+      expect(sim.departments[0], `${m.domainId}/${sim.label} scope must match its label`)
+        .toBe(LABEL_TO_ID[sim.label]);
+    }
+  });
+});
+
+describe('per-department usable content', () => {
+  // The renderer drops a lesson whose every point belongs to the other
+  // department, so "usable" means: a lesson with at least one visible point.
+  const visibleLessons = (m, dept) =>
+    scopeForDept(m.lessons, dept).filter((l) => scopeForDept(l.points, dept).length > 0);
+
+  for (const dept of ['pediatrics', 'obgyn']) {
+    it(`every domain has usable ${dept} content`, () => {
+      for (const m of TRAINING_MODULES) {
+        expect(visibleLessons(m, dept).length, `${m.domainId} has no ${dept} lesson`).toBeGreaterThan(0);
+        expect(scopeForDept(m.simulations, dept).length, `${m.domainId} has no ${dept} simulation`).toBe(1);
+        expect(scopeForDept(m.drill, dept).length, `${m.domainId} has no ${dept} drill`).toBeGreaterThan(0);
+        expect(scopeForDept(m.mistakes, dept).length, `${m.domainId} has no ${dept} mistake`).toBeGreaterThan(0);
+        expect(scopeForDept(m.quickRef?.rows, dept).length, `${m.domainId} has no ${dept} quick-ref row`).toBeGreaterThan(0);
+        expect(scopeForDept(m.keyTakeaways, dept).length, `${m.domainId} has no ${dept} takeaway`).toBeGreaterThan(0);
+      }
+    });
+  }
+});
+
+describe('department-specific content is explicitly scoped', () => {
+  // Text visible for a department after filtering the whole module.
+  const visibleText = (m, dept) => {
+    const lessons = scopeForDept(m.lessons, dept).map((l) => ({
+      points: scopeForDept(l.points, dept).map(itemText),
+      script: scopeForDept(l.script, dept),
+      example: l.example && belongsToDept(l.example, dept) ? l.example : null,
+      doc: l.doc && belongsToDept(l.doc, dept) ? l.doc : null,
+    }));
+    return JSON.stringify({
+      lessons,
+      mistakes: scopeForDept(m.mistakes, dept),
+      rows: scopeForDept(m.quickRef?.rows, dept),
+      drill: scopeForDept(m.drill, dept),
+      simulations: scopeForDept(m.simulations, dept),
+      takeaways: scopeForDept(m.keyTakeaways, dept).map(itemText),
+    });
+  };
+
+  const allVisible = (dept) => TRAINING_MODULES.map((m) => visibleText(m, dept)).join('\n');
+
+  // Named routes, providers and workflows that belong to exactly one department.
+  const PEDS_ONLY = [
+    'Anisa Azeez', 'Marisa Kraft', 'Sally Carilli', 'PEDS Encounters',
+    'Concerta', 'amoxicillin', 'strep', 'Fidelis', 'camp',
+  ];
+  const OBGYN_ONLY = [
+    'OB Portal', 'Rebecca Wood', 'Dr. Bank', 'Waiting List Portal',
+    'OB Urgent Calls', 'MFM', 'New OB', 'Confirmation of Pregnancy',
+    'OB Verified', 'Labor & Delivery', 'fetal movement', 'miscarriage',
+    'Annual GYN', 'anatomy scan', 'BPP',
+  ];
+
+  it('no Pediatrics-only route, provider or workflow appears in OB/GYN mode', () => {
+    const obText = allVisible('obgyn');
+    for (const term of PEDS_ONLY) {
+      expect(obText.toLowerCase(), `"${term}" leaked into OB/GYN content`).not.toContain(term.toLowerCase());
+    }
+  });
+
+  it('no OB/GYN-only route, provider or workflow appears in Pediatrics mode', () => {
+    const pedsText = allVisible('pediatrics');
+    for (const term of OBGYN_ONLY) {
+      expect(pedsText.toLowerCase(), `"${term}" leaked into Pediatrics content`).not.toContain(term.toLowerCase());
+    }
+  });
+
+  it('the confirmed regression content is scoped to its own department', () => {
+    const classification = moduleForDomain('classification');
+    // The Pediatrics strep/amoxicillin drill never renders for OB/GYN...
+    expect(visibleText(classification, 'obgyn')).not.toMatch(/strep test came back/i);
+    expect(visibleText(classification, 'pediatrics')).toMatch(/strep test came back/i);
+    // ...and the OB/GYN decreased-fetal-movement drill never renders for Peds.
+    expect(visibleText(classification, 'pediatrics')).not.toMatch(/moving much less/i);
+    expect(visibleText(classification, 'obgyn')).toMatch(/moving much less/i);
   });
 });

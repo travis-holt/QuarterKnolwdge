@@ -6088,44 +6088,9 @@ textarea:focus-visible {
   color: var(--ink-soft);
 }
 
-.tsim__depts {
-  display: inline-flex;
-  gap: 4px;
-  margin: 10px 0 2px;
-  padding: 3px;
-  border-radius: 999px;
-  background: var(--surface-3);
-  border: 1px solid var(--line-soft);
-}
-
-.tsim__dept {
-  border: none;
-  background: none;
-  font: inherit;
-  font-size: 12px;
-  font-weight: 650;
-  letter-spacing: 0.02em;
-  color: var(--ink-soft);
-  padding: 5px 14px;
-  border-radius: 999px;
-  cursor: pointer;
-  transition: background var(--dur-1) var(--ease-out), color var(--dur-1) var(--ease-out);
-}
-
-.tsim__dept:hover {
-  color: var(--ink);
-}
-
-.tsim__dept.is-active {
-  background: var(--surface);
-  color: var(--accent-deep);
-  box-shadow: var(--shadow-xs);
-}
-
-.tsim__dept:focus-visible {
-  outline: none;
-  box-shadow: var(--ring);
-}
+/* NOTE: the training module has no department selector of its own — the
+   department is controlled by the parent app (navigator's active department /
+   supervisor's global department bar), so content and cohort cannot diverge. */
 
 .tsim__thread {
   padding: 18px 22px 6px;

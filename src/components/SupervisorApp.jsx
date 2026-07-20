@@ -453,6 +453,7 @@ export default function SupervisorApp({ onSignOut }) {
               <TrainingModule
                 rows={deptRows}
                 domainId={moduleDomain}
+                department={selectedDept}
                 onBack={() => setView(moduleReturn)}
                 onOpenNavigator={openNavigator}
               />

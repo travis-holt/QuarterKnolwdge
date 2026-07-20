@@ -1,5 +1,97 @@
 # Development History - Knowledge Check
 
+## 2026-07-20 — Department-controlled training modules (PR #38 integration + integrity fixes)
+
+**PR #38 was merged onto the latest `main` three times** — after PR #37, after the answer-length
+balance, and finally after **PR #39 (OB/GYN Spot-the-Error individually authored bank v5)** — so the
+branch is zero commits behind `origin/main`. Every one of those changes is preserved intact: the v3
+MCQ bank, the v5 individually authored audit bank (30 ten-turn transcripts, shared builder removed,
+errors distributed 8/8/7/7 across Agent indices 2/4/6/8, varied chart-opening placement, natural
+post-error patient continuation, human-review metadata, the audit-only v5 migration marker), the
+expanded deterministic contradiction guards in `contentGuards.js`, their tests, the `SupervisorApp`
+migration wiring, and every PR #37 / answer-balance / PR #39 `CLAUDE.md` and `docs/HISTORY.md`
+entry. Documentation conflicts were resolved by keeping **both** sides — no entry was dropped and no
+file was resolved by taking one side wholesale. The PR diff touches no PR #39 audit file, migration,
+guard, stable ID, or marker.
+
+### What the first PR #38 implementation got wrong
+
+The original fix moved the department out of `CallSimulator` but gave `TrainingModule` its own
+**private `selectedDept` state** (plus a `deptPropRef` re-seeding path and a module-local selector).
+That closed the content leak but opened three integrity risks caught in pre-merge review:
+
+- **Completion integrity.** A navigator could switch the module-local selector, review one
+  department's content, and have the completion saved under the app's *outer* department —
+  `completeLearningStep` only ever read `dept`. Credit for content never reviewed.
+- **Supervisor divergence.** The module could render Pediatrics content while showing the OB/GYN
+  `deptRows` cohort (or the reverse), because content came from local state and the cohort from a prop.
+- **Silent Pediatrics fallback.** `trainingDeptFor()` mapped every unsupported department (Adult
+  Medicine, Behavioural Health, a missing value) to `pediatrics`, presenting Pediatrics rules as
+  though they belonged to that department.
+
+### The correction — `department` is a controlled prop
+
+- `TrainingModule` keeps **no department state**. `selectedDept`, `deptPropRef`, the re-seeding
+  logic, `trainingDeptFor()` and the module-level selector are removed, along with the orphaned
+  `.module__depts` / `.module__dept` CSS. The rendered department derives directly from the
+  controlled `department` prop, which has **no default** — a caller that omits it gets the
+  unavailable state, never a silent Pediatrics render.
+- `NavigatorApp` controls the navigator's active department; `SupervisorApp` controls the globally
+  selected one. Content, `rows`/cohort, navigator links and the completion department all derive
+  from that single value, so no local interaction can make them disagree. `CallSimulator` receives
+  the already-filtered simulation; lessons, points, scripts, examples, model docs, mistakes,
+  quick-reference rows, drills, simulations, feedback/endings and takeaways use the same department.
+- The supervisor department bar is not rendered in the module view (`DEPT_SCOPED_VIEWS` excludes
+  `module`), so department cannot change while a module is open — divergence is structurally
+  impossible rather than merely avoided.
+
+### Completion integrity
+
+`onComplete(completionKind, department)` carries the department the module actually **rendered**.
+`NavigatorApp.completeLearningStep(kind, completionDepartment)` rejects a mismatch with
+*"Training department changed. Reopen the module and try again."* — nothing is written, the error
+surfaces inline through the existing completion-error path, and the action stays retryable.
+Navigators cannot switch department inside a completion-bearing module, so a Pediatrics module can
+only produce a Pediatrics completion and an OB/GYN module only an OB/GYN completion.
+
+### Unsupported departments
+
+Only `pediatrics` and `obgyn` have authored training content. Anything else renders **"Training
+content is not available for this department yet."** — no Pediatrics or OB/GYN content, no
+simulation, drills, quick-reference, takeaways, cohort or completion control, with the Back action
+preserved and no console errors.
+
+### Preserved
+
+The explicit catalog metadata (`departments: ['pediatrics'] | ['obgyn']`, absent = shared) and the
+pure helpers (`scopeForDept`, `belongsToDept`, `itemDepartments`, `itemText`,
+`TRAINING_DEPARTMENTS`) are unchanged — no keyword filtering. The confirmed regression holds both
+ways (OB/GYN Classification shows no "My daughter's strep test came back"; Pediatrics Classification
+shows no decreased-fetal-movement content). All six modules were re-audited after each merge: every
+module × department view is clean and usable (≥1 lesson, exactly 1 simulation, ≥1 drill / mistake /
+quick-ref row / takeaway). Every current-floor SOP rule is unchanged.
+
+### Verification
+
+Unit suite **1374 → 1417** across **71 files**; Firestore Rules emulator **76/76**; build clean
+including the private-runtime bundle scan; `qa:pilot-smoke` `PILOT_SMOKE_VERIFIED` (15 cases);
+`qa:calibrate` and `qa:coverage` both **`INSUFFICIENT_DATA`** (0 human-pilot fixtures — the intended
+state, not a readiness signal). `trainingModule.test.jsx` (38) was rewritten for the controlled
+contract; new `src/components/trainingDepartmentIntegrity.test.jsx` (11) drives the real callers for
+completion integrity, supervisor content/cohort agreement, and unsupported-department behavior.
+Browser-verified in real Chromium at 1280×900 and 390×844 (**582/582 checks, 0 console errors**), including a completion-department mismatch that surfaces the error and writes nothing.
+
+The safe Playwright suite passes **12/12**, identically on unmodified `main` (an earlier run in a
+partially-configured tree — client Firebase vars present, server credentials absent — failed at the
+sign-in gate; with no configuration at all the app degrades gracefully and the whole suite passes).
+The real signed-in app route was deliberately **not** driven, because mounting `SupervisorApp` runs
+the marker-gated Firestore migrations against the live project and completing a module would write a
+real completion — owner-local testing should cover it.
+
+### Not changed
+
+No scoring, API, Firestore rules, Call QA, assessment-bank content, dependency, deployment, or
+production-data behavior.
 ## 2026-07-19 — OB/GYN Spot-the-Error individually authored bank v5
 
 - Replaced the rejected v4 shared call constructor with 30 complete, individually authored ten-turn transcripts stored directly in the six OB/GYN domain files. Stable IDs, five items per domain, all 14 workflow types, and current SOP/rule/source provenance are unchanged.
