@@ -1,5 +1,107 @@
 ﻿# Development History - Knowledge Check
 
+## 2026-07-21 — PR #40: synthetic trend data is never "measured"; safe rejection logging
+
+A narrow final pass over PR #40 closing one correctness defect and one logging-safety item. Head
+before this pass: `fcf5e76`. Every previously completed PR #40 correction is preserved. No
+thresholds, grading, scoring, bank-coverage or seed-fallback behaviour, training rules, mentor
+qualification, persistence, Firestore schemas or rules, migrations, `MINICHECK_PASS`, OB/GYN or
+Pediatrics content, or production configuration changed.
+
+### 1. Synthetic trend points could be captioned as "last measured"
+
+`buildTrend()` prepends illustrative synthetic points (correctly flagged `simulated: true`) when a
+navigator has fewer than `TREND_SYNTH_POINTS` real snapshots, so the chart is never empty. The
+"last measured X%" caption added in the previous pass derived its value from
+`latestMeasured(trend.overallSeries)` — and that helper sees only a flattened numeric array. It
+cannot tell a genuine measurement from chart scaffolding.
+
+Reproduced directly: a navigator whose single real snapshot recorded nothing produced
+
+```
+points:        [ { label: 'Q−1 (illustrative)', simulated: true, overall: 30 },
+                 { label: 'Jan 1970',           simulated: false, overall: null } ]
+overallSeries: [ 30, null ]
+latestMeasured(series) => 30      // captioned "last measured 30%"
+```
+
+The navigator had never scored 30. That is exactly the governing invariant being violated —
+missing evidence represented as a measured result.
+
+**Fix.** Provenance is now exposed explicitly from `buildTrend()` rather than inferred from numbers:
+
+```js
+{ points, domainSeries, overallSeries,
+  latestRealOverall,        // number|null — real, non-simulated snapshots only
+  latestRealDomainValues,   // Record<domainId, number|null>
+  hasRealMeasurements }     // boolean
+```
+
+These scan **real** points only (`simulated !== true`) backwards for finite evidence, and are `null`
+when no real snapshot ever measured that value. `NavigatorDetail` reads them for both the overall and
+the per-domain captions; when they are `null` the caption is **omitted entirely** and the current
+value simply reads `N/A`. A genuine historical `0` is real evidence and still captions
+"last measured 0%".
+
+Synthesis itself is untouched: synthetic points are still generated, still drawn, still labelled
+`(illustrative)`, and still carry `simulated: true`. They are scaffolding for an otherwise-empty
+chart — they are simply never *described* as measurements.
+
+`latestMeasured()` stays in `formatScore.js` as a generic array helper but now carries an explicit
+**provenance-unaware** warning telling callers not to use it for "last measured" captions over any
+series that may contain simulated points. It has no remaining call sites in application code; the
+dead import was removed from `NavigatorDetail`.
+
+### 2. Non-Error rejections could log an arbitrary object
+
+`NavigatorApp`'s bank-read failure logged `err?.message ?? err`. When a rejection is not an Error and
+has no `message`, that falls through to the **raw value** — and a plain object could carry question
+text, answer options, answer keys, a Firestore snapshot or a request payload straight into
+`console.error`, where it would be serialized.
+
+**Fix.** New `src/lib/safeError.js` exports `safeErrorMessage(err, fallback)`:
+
+- `Error` with a string message → that message, truncated to 200 chars;
+- string rejection → the string, truncated;
+- anything else → a generic label (here, `"Unknown question-bank read error"`).
+
+Arbitrary objects are never serialized and stack traces are never logged. The check is deliberately
+`err instanceof Error` rather than duck-typing on `.message`, because a non-Error object's `message`
+property is untrusted and could itself be assembled from payload data. The department id is still
+logged — it is not assessment content.
+
+It lives in its own module rather than in `formatScore.js`: an error-normalization helper has no
+cohesion with score formatting.
+
+### Files changed
+
+`src/lib/scoring.js` (buildTrend provenance) · `src/lib/formatScore.js` (provenance warning on
+`latestMeasured`) · **new** `src/lib/safeError.js` · `src/components/NavigatorDetail.jsx` ·
+`src/components/NavigatorApp.jsx` · `src/lib/scoring.test.js` ·
+`src/components/sparklineTrend.test.jsx` · **new** `src/lib/safeError.test.js` · `CLAUDE.md` ·
+`docs/HISTORY.md`.
+
+### Tests added
+
+- `scoring.test.js` (294 → 304): an empty real snapshot with synthesis reports no real measurement;
+  synthetic values never become `latestRealOverall`; an older real score followed by an empty
+  snapshot reports the older real score; an older synthetic value does not count; a history snapshot
+  explicitly flagged `simulated` is excluded; a genuine historical `0` counts; domain provenance
+  follows the same rule; the `simulated` marker and `(illustrative)` labels survive.
+- `sparklineTrend.test.jsx` (11 → 19): a single empty real snapshot shows `N/A` with no caption;
+  no synthetic value is ever quoted; illustrative points still render when synthesis supplies enough
+  of them; an older real score is captioned; a genuine historical `0` captions "last measured 0%";
+  domain captions follow the same rule and are omitted when only synthetic data exists.
+- **New** `safeError.test.js` (16): Error message only, no stack; string handling and truncation;
+  object rejections never exposing their fields; a `message` field on a non-Error object not trusted;
+  generic label for every other type; caller-supplied fallback; empty-message fallback; an object
+  with a readable `toString` still not serialized.
+
+### Verification
+
+Every command was run; exact results are recorded in the PR description. No deployment, migration,
+Firestore data change, merge, or production write occurred.
+
 ## 2026-07-21 — PR #40 final correction: read failures, competency scoreability, trend labels
 
 A narrow third correction pass over PR #40, closing three residual paths where absent evidence could

@@ -31,8 +31,17 @@ export function formatPercent(value, { empty = NO_EVIDENCE_LABEL } = {}) {
 }
 
 /**
- * The last MEASURED value in a series, ignoring trailing gaps.
- * Returns null when the series holds no measured value at all.
+ * The last FINITE value in a series, ignoring trailing gaps.
+ *
+ * ⚠ PROVENANCE-UNAWARE. This helper sees numbers, not their origin: it cannot
+ * tell a genuine measurement from illustrative synthetic chart scaffolding.
+ * NEVER use it to build a "last measured" style caption over a series that may
+ * contain simulated points (e.g. `buildTrend().overallSeries`, which prepends
+ * `simulated: true` points) — read `buildTrend().latestRealOverall` /
+ * `.latestRealDomainValues` instead, which are computed from real snapshots only.
+ *
+ * Safe uses: series you know are entirely real, or "is there any number here"
+ * style checks.
  *
  * @param {(number|null|undefined)[]} series
  * @returns {number|null}

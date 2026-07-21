@@ -2812,3 +2812,100 @@ describe('buildTrend — empty snapshots are gaps, not zeroes', () => {
     }
   });
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// SYNTHETIC TREND POINTS ARE SCAFFOLDING, NOT EVIDENCE (2026-07-21)
+//
+// buildTrend prepends illustrative `simulated: true` points when real history is
+// thin. The flattened numeric series cannot distinguish them from genuine
+// measurements, so provenance is exposed explicitly instead.
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('buildTrend — real-measurement provenance', () => {
+  const snap = (ts, scores, extra = {}) => ({ takenAt: { seconds: ts }, scores, ...extra });
+  const full = (v) => makeScores({}, v);
+
+  it('one EMPTY real snapshot with synthesis enabled reports no real measurement', () => {
+    const trend = buildTrend([snap(300, {})]); // synthesize defaults to true
+    // Synthetic scaffolding IS drawn…
+    expect(trend.points.some((p) => p.simulated === true)).toBe(true);
+    expect(trend.overallSeries.some(Number.isFinite)).toBe(true);
+    // …but it is NOT a measurement.
+    expect(trend.latestRealOverall).toBeNull();
+    expect(trend.hasRealMeasurements).toBe(false);
+    for (const id of DOMAIN_IDS) expect(trend.latestRealDomainValues[id]).toBeNull();
+  });
+
+  it('a synthetic value never becomes latestRealOverall', () => {
+    const trend = buildTrend([snap(300, {})]);
+    const syntheticValues = trend.points.filter((p) => p.simulated).map((p) => p.overall);
+    expect(syntheticValues.length).toBeGreaterThan(0);
+    expect(syntheticValues).not.toContain(trend.latestRealOverall);
+    expect(trend.latestRealOverall).toBeNull();
+  });
+
+  it('an older REAL score followed by an empty real snapshot reports the older real score', () => {
+    const trend = buildTrend([snap(100, full(80)), snap(200, {})], { synthesize: false });
+    expect(trend.overallSeries).toEqual([80, null]);
+    expect(trend.latestRealOverall).toBe(80);
+  });
+
+  it('an older SYNTHETIC value followed by an empty real snapshot does not count', () => {
+    // Synthesis fills in ahead of the single real (empty) snapshot.
+    const trend = buildTrend([snap(200, {})], { synthesize: true });
+    expect(trend.points[0].simulated).toBe(true);
+    expect(Number.isFinite(trend.points[0].overall)).toBe(true);
+    expect(trend.latestRealOverall).toBeNull();
+  });
+
+  it('a history snapshot explicitly flagged simulated is excluded from provenance', () => {
+    const trend = buildTrend(
+      [snap(100, full(70), { simulated: true }), snap(200, {})],
+      { synthesize: false }
+    );
+    expect(trend.overallSeries).toEqual([70, null]); // still drawn
+    expect(trend.latestRealOverall).toBeNull(); // but not "measured"
+  });
+
+  it('a genuine historical 0 IS a real measurement', () => {
+    const trend = buildTrend([snap(100, full(0)), snap(200, {})], { synthesize: false });
+    expect(trend.latestRealOverall).toBe(0);
+    expect(trend.hasRealMeasurements).toBe(true);
+  });
+
+  it('domain provenance follows the same rule as overall', () => {
+    const trend = buildTrend(
+      [snap(100, full(75)), snap(200, {})],
+      { synthesize: false }
+    );
+    expect(trend.latestRealDomainValues[DOMAIN_IDS[0]]).toBe(75);
+
+    const synthetic = buildTrend([snap(300, {})]); // synthesized only
+    expect(synthetic.latestRealDomainValues[DOMAIN_IDS[0]]).toBeNull();
+  });
+
+  it('a genuine domain 0 is real provenance, a missing domain is not', () => {
+    const trend = buildTrend(
+      [snap(100, { ...full(70), [DOMAIN_IDS[0]]: 0 }), snap(200, {})],
+      { synthesize: false }
+    );
+    expect(trend.latestRealDomainValues[DOMAIN_IDS[0]]).toBe(0);
+  });
+
+  it('keeps the simulated marker on synthetic points', () => {
+    const trend = buildTrend([snap(300, full(60))]);
+    const synthetic = trend.points.filter((p) => p.simulated === true);
+    expect(synthetic.length).toBeGreaterThan(0);
+    // …and they remain labelled illustrative for the UI note.
+    for (const p of synthetic) expect(p.label).toMatch(/illustrative/i);
+  });
+
+  it('a fully real history reports its newest measurement', () => {
+    const trend = buildTrend(
+      [snap(100, full(60)), snap(200, full(90))],
+      { synthesize: false }
+    );
+    expect(trend.latestRealOverall).toBe(90);
+    expect(trend.hasRealMeasurements).toBe(true);
+  });
+});

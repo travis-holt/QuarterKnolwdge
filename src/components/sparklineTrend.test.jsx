@@ -154,3 +154,105 @@ describe('NavigatorDetail trend labels never fabricate 0%', () => {
     expect(overall.querySelector('.trend__stale-note')).toBeNull();
   });
 });
+
+// ── "last measured" must never quote synthetic scaffolding (2026-07-21) ─────
+
+describe('NavigatorDetail — "last measured" uses real history only', () => {
+  const renderWithHistory = async (history, scores = fullScores(80)) => {
+    dbMocks.getResultHistory.mockResolvedValue(history);
+    const view = render(
+      <NavigatorDetail
+        rows={buildMatrixRows([{ navigatorId: 'n1', name: 'Pat Rowan', scores }], null)}
+        name="Pat Rowan"
+        navigatorId="n1"
+        deptName="Pediatrics"
+        dept="pediatrics"
+        completions={[]}
+        onPreviewModule={vi.fn()}
+        onOpenNavigator={vi.fn()}
+      />
+    );
+    await screen.findByText(/Progress over time/i);
+    return view;
+  };
+
+  const snap = (ts, scores) => ({ takenAt: { seconds: ts }, scores });
+
+  it('a single EMPTY real snapshot shows N/A and NO "last measured" caption', async () => {
+    // Synthesis kicks in here, so the chart has illustrative points — but none
+    // of them may be described as a measurement.
+    const { container } = await renderWithHistory([snap(300, {})]);
+    const overall = container.querySelector('.trend__overall');
+    expect(overall.querySelector('.trend__pct').textContent).toBe('N/A');
+    expect(overall.textContent).not.toContain('last measured');
+    expect(overall.querySelector('.trend__stale-note')).toBeNull();
+  });
+
+  it('never quotes a synthetic value in a caption', async () => {
+    const { container } = await renderWithHistory([snap(300, {})]);
+    // The synthetic points exist and are flagged to the reader as illustrative…
+    expect(container.textContent).toMatch(/[Ii]llustrative/);
+    // …but nothing on the page calls them a measurement.
+    expect(container.textContent).not.toContain('last measured');
+  });
+
+  it('still renders illustrative sparkline points when synthesis has enough of them', async () => {
+    // Two synthetic points + a measured real snapshot gives the chart enough
+    // measured values to draw, proving synthesis is not disabled by this fix.
+    const { container } = await renderWithHistory([snap(300, fullScores(60))]);
+    expect(container.querySelector('.trend__overall svg')).toBeTruthy();
+    expect(container.textContent).toMatch(/[Ii]llustrative/);
+  });
+
+  it('an older REAL score followed by an empty snapshot captions the older real score', async () => {
+    const { container } = await renderWithHistory([
+      snap(100, fullScores(70)),
+      snap(200, fullScores(90)),
+      snap(300, {}),
+    ]);
+    const overall = container.querySelector('.trend__overall');
+    expect(overall.querySelector('.trend__pct').textContent).toBe('N/A');
+    expect(overall.textContent).toContain('last measured 90%');
+  });
+
+  it('a genuine historical 0 captions "last measured 0%"', async () => {
+    const { container } = await renderWithHistory([
+      snap(100, fullScores(50)),
+      snap(200, fullScores(0)),
+      snap(300, {}),
+    ]);
+    const overall = container.querySelector('.trend__overall');
+    expect(overall.textContent).toContain('last measured 0%');
+  });
+
+  it('domain captions follow the same real-history rule', async () => {
+    const withGap = { ...fullScores(80) };
+    delete withGap[DOMAIN_IDS[0]];
+    const { container } = await renderWithHistory([
+      snap(100, fullScores(65)),
+      snap(200, fullScores(85)),
+      snap(300, withGap),
+    ]);
+    const row = [...container.querySelectorAll('.trend__domain-row')]
+      .find((r) => r.textContent.includes(domainName(DOMAIN_IDS[0])));
+    expect(row.querySelector('.trend__domain-pct').textContent).toBe('N/A');
+    expect(row.textContent).toContain('last measured 85%');
+  });
+
+  it('domain captions are omitted when only synthetic data exists for that domain', async () => {
+    const { container } = await renderWithHistory([snap(300, {})]);
+    for (const row of container.querySelectorAll('.trend__domain-row')) {
+      expect(row.textContent).not.toContain('last measured');
+    }
+  });
+
+  it('a measured latest snapshot shows its percentage with no caption', async () => {
+    const { container } = await renderWithHistory([
+      snap(100, fullScores(70)),
+      snap(200, fullScores(90)),
+    ]);
+    const overall = container.querySelector('.trend__overall');
+    expect(overall.querySelector('.trend__pct').textContent).toBe('90%');
+    expect(overall.querySelector('.trend__stale-note')).toBeNull();
+  });
+});

@@ -21,6 +21,7 @@ import {
   findRow,
 } from '../lib/scoring.js';
 import { mergeNavigatorFloorAndOwnResult } from '../lib/navigatorResultMerge.js';
+import { safeErrorMessage } from '../lib/safeError.js';
 import { getResult, saveResult, getActiveQuestions, getCompletions, saveCompletion } from '../lib/db.js';
 import { apiFetch } from '../lib/apiFetch.js';
 import { MINICHECK_SIZE, MINICHECK_PASS } from '../data/config.js';
@@ -151,9 +152,15 @@ export default function NavigatorApp({ navigatorId, name, onSignOut }) {
     try {
       live = await getActiveQuestions(dept);
     } catch (err) {
-      // Log the failure (message only — never the payload, which could carry
-      // question content) so it is diagnosable without leaking assessment data.
-      console.error('getActiveQuestions failed for department', dept, err?.message ?? err);
+      // Log a SAFE, BOUNDED string. `err?.message ?? err` would fall through to
+      // the raw rejection value when it is not an Error, and a plain object
+      // could carry question content, options, answer keys or a Firestore
+      // snapshot. The department id is kept — it is not assessment content.
+      console.error(
+        'getActiveQuestions failed for department',
+        dept,
+        safeErrorMessage(err, 'Unknown question-bank read error')
+      );
       setBankLoadFailed(true);
       setBankCoverage(null);
       setView('bankUnavailable');

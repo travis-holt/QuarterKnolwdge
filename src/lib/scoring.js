@@ -1506,12 +1506,24 @@ function formatTrendLabel(ts) {
  * If fewer than TREND_SYNTH_POINTS real snapshots exist, prepend illustrative
  * synthetic points (clearly flagged simulated:true) so the chart is never empty.
  *
+ * SYNTHETIC POINTS ARE CHART SCAFFOLDING, NOT EVIDENCE. They may be drawn (they
+ * are labelled "(illustrative)"), but they must never be described as measured,
+ * as historical evidence, as a prior result, or as the navigator's last score.
+ * The flattened `overallSeries`/`domainSeries` arrays deliberately CANNOT convey
+ * that distinction, so any "last measured" style caption must read
+ * `latestRealOverall` / `latestRealDomainValues`, which are derived from real
+ * (non-simulated) snapshots only and are `null` when no real measurement exists.
+ *
  * @param {object[]} history  getResultHistory() output, sorted oldest→newest
  * @param {{ synthesize?: boolean }} [opts]
  * @returns {{
- *   points: { label:string, scores:object, competencyScores:object, overall:number, simulated:boolean }[],
- *   domainSeries: Record<string, number[]>,
- *   overallSeries: number[],
+ *   points: { label:string, scores:object, competencyScores:object,
+ *             overall:number|null, simulated:boolean }[],
+ *   domainSeries: Record<string, (number|null)[]>,
+ *   overallSeries: (number|null)[],
+ *   latestRealOverall: number|null,
+ *   latestRealDomainValues: Record<string, number|null>,
+ *   hasRealMeasurements: boolean,
  * }}
  */
 export function buildTrend(history, { synthesize = true } = {}) {
@@ -1552,12 +1564,38 @@ export function buildTrend(history, { synthesize = true } = {}) {
   for (const d of DOMAINS) {
     domainSeries[d.id] = points.map((p) => (Number.isFinite(p.scores[d.id]) ? p.scores[d.id] : null));
   }
-  // `overallSeries` is (number|null)[] for the same reason: an empty or
-  // unmeasurable snapshot is a gap, not a zero.
+
+  // ── REAL-MEASUREMENT PROVENANCE ────────────────────────────────────────
+  // The flattened numeric series cannot tell an illustrative synthetic point
+  // apart from a genuine measurement, so any caption derived from it can call
+  // scaffolding "measured". These fields are computed from REAL, non-simulated
+  // snapshots only, so a consumer never has to infer provenance from numbers.
+  //
+  // `null` means "no real snapshot ever measured this" — a caption must then be
+  // omitted entirely rather than borrowing a synthetic value.
+  const realOnly = realPoints.filter((p) => p.simulated !== true);
+  const lastRealFinite = (pick) => {
+    for (let i = realOnly.length - 1; i >= 0; i--) {
+      const value = pick(realOnly[i]);
+      if (Number.isFinite(value)) return value;
+    }
+    return null;
+  };
+  const latestRealOverall = lastRealFinite((p) => p.overall);
+  const latestRealDomainValues = Object.fromEntries(
+    DOMAINS.map((d) => [d.id, lastRealFinite((p) => p.scores[d.id])])
+  );
+
+  // `overallSeries` is (number|null)[] for the same reason as domainSeries: an
+  // empty or unmeasurable snapshot is a gap, not a zero.
   return {
     points,
     domainSeries,
     overallSeries: points.map((p) => (Number.isFinite(p.overall) ? p.overall : null)),
+    // Real-history provenance — never includes synthetic scaffolding.
+    latestRealOverall,
+    latestRealDomainValues,
+    hasRealMeasurements: realOnly.some((p) => Number.isFinite(p.overall)),
   };
 }
 

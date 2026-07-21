@@ -11,7 +11,7 @@
 > [§8 Current System State](#8-current-system-state) and [§15 Current Priorities](#15-current-priorities)
 > accurate at all times.
 >
-> **Last updated:** 2026-07-20 (**one official capability status per navigator per department** —
+> **Last updated:** 2026-07-21 (**one official capability status per navigator per department** —
 > this REVERSES the original 2026-06-23 "never a single overall grade" principle. Each department
 > assessment now resolves to exactly one official status from the **arithmetic mean of all six
 > domain scores**, in four non-overlapping bands: `0–39` **Critical** · `40–64` **Learning** ·
@@ -359,7 +359,13 @@ training assignments.
     successful read confirms the live bank is empty** — never on an error, because a stale seed
     assessment could otherwise be graded and stored as if it were current. The read error is logged
     (message only, never the payload) rather than swallowed, and the navigator can retry without
-    signing out.
+    signing out. The read error is normalized through `safeErrorMessage()`
+    ([src/lib/safeError.js](src/lib/safeError.js)) before logging: `err?.message ?? err` would fall
+    through to the raw rejection value, and a non-Error object could carry question content, options,
+    answer keys, a Firestore snapshot or a request payload straight into `console.error`. Only an
+    `Error`'s own message or a string rejection is logged (truncated); anything else becomes a
+    generic label. Arbitrary objects are never serialized and stack traces are never logged. The
+    department id is kept — it is not assessment content.
   - **Unscoreable questions provide no evidence at all.** `isScoreableQuestion()` (known domain +
     at least one option) now gates **both** `scorePerDomain` and `scorePerCompetency`. A malformed
     question contributes neither a domain score nor a competency score; a competency exercised only
@@ -380,6 +386,17 @@ training assignments.
     `buildTrend()` puts **null** (a gap in the sparkline) where a historical domain score is
     missing. Counts stay genuine zeroes — "zero navigators are Critical" is a real fact. A complete
     floor whose real average is 0 still displays `0%`.
+  - **Synthetic trend points are scaffolding, never evidence (2026-07-21).** `buildTrend()` prepends
+    illustrative `simulated: true` points when real history is thin, and they may still be *drawn*
+    (they are labelled "(illustrative)"). They must never be described as measured, as historical
+    evidence, as a prior result, or as the navigator's last score. The flattened
+    `overallSeries`/`domainSeries` arrays deliberately cannot convey provenance, so any
+    "last measured" style caption reads **`latestRealOverall`** / **`latestRealDomainValues`**
+    (plus `hasRealMeasurements`), which are computed from real, non-simulated snapshots only and are
+    `null` when no real measurement exists — in which case the caption is omitted entirely.
+    `latestMeasured()` in `formatScore.js` remains a generic, **provenance-unaware** array helper and
+    must not be used for such captions. A genuine historical `0` is a real measurement and still
+    captions "last measured 0%".
   - **Only finite numeric evidence may appear as a percentage (2026-07-21).** `Math.round(null)` is
     `0`, so any label rounding a possibly-null value silently fabricates a measured zero. All
     score/percentage labels go through one shared formatter,

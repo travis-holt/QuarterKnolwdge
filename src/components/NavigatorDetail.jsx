@@ -5,7 +5,7 @@ import { DEPARTMENTS, isAssessed } from '../data/departments.js';
 import { LEVELS, THRESHOLDS, interviewScoreColor } from '../data/config.js';
 import { findRow, mentorSuggestions, trainingForRow, trainingEmptyStateReason, buildTrend, trainingImpact, buildDossier } from '../lib/scoring.js';
 import { OverallBadge, DomainScore } from './OverallStatus.jsx';
-import { formatPercent, formatSeriesCurrent, latestMeasured, isMeasured } from '../lib/formatScore.js';
+import { formatPercent, formatSeriesCurrent, isMeasured } from '../lib/formatScore.js';
 import { getInterviews, getResultHistory, updateInterviewGradeOverride, updateQaFinalReview } from '../lib/db.js';
 import { qaFinalReviewLabel, qaFinalVerdict, qaHistoryBadgeLabel, qaBadgeTone } from '../lib/qaFinalReview.js';
 import { compareTimestampValues, timestampMillis } from '../lib/time.js';
@@ -382,16 +382,19 @@ export default function NavigatorDetail({ rows, name, deptName, dept, deptMatrix
 
           {/* Overall sparkline. The label reports the LATEST SNAPSHOT: if the
               most recent check measured nothing it reads N/A, because showing an
-              older number would imply that stale result is current. The prior
-              measured value is captioned separately when one exists. */}
+              older number would imply that stale result is current.
+              The "last measured" caption reads `latestRealOverall` — derived from
+              REAL, non-simulated snapshots only. Reading it off the flattened
+              series would let an illustrative synthetic point be captioned as a
+              measurement the navigator never earned. */}
           <div className="trend__overall">
             <span className="trend__label">Overall</span>
             <Sparkline values={trend.overallSeries} color="var(--accent)" height={36} />
             <span className="trend__pct">{formatSeriesCurrent(trend.overallSeries)}</span>
             {!isMeasured(trend.overallSeries[trend.overallSeries.length - 1])
-              && latestMeasured(trend.overallSeries) !== null && (
+              && isMeasured(trend.latestRealOverall) && (
               <span className="trend__stale-note">
-                last measured {formatPercent(latestMeasured(trend.overallSeries))}
+                last measured {formatPercent(trend.latestRealOverall)}
               </span>
             )}
           </div>
@@ -411,6 +414,14 @@ export default function NavigatorDetail({ rows, name, deptName, dept, deptMatrix
                   {/* N/A when the latest snapshot did not measure this domain —
                       never Math.round(null), which silently becomes 0%. */}
                   <span className="trend__domain-pct">{formatSeriesCurrent(series)}</span>
+                  {/* Same provenance rule as the overall caption: real,
+                      non-simulated history only. */}
+                  {!isMeasured(series[series.length - 1])
+                    && isMeasured(trend.latestRealDomainValues?.[d.id]) && (
+                    <span className="trend__stale-note">
+                      last measured {formatPercent(trend.latestRealDomainValues[d.id])}
+                    </span>
+                  )}
                   {impact?.delta != null && (
                     <span className={`trend__delta ${impact.delta >= 0 ? 'trend__delta--up' : 'trend__delta--down'}`}>
                       {impact.delta >= 0 ? '+' : ''}{Math.round(impact.delta)}
