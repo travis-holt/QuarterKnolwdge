@@ -1,11 +1,11 @@
 {
   "formatVersion": 1,
-  "caseId": "cal-peds-refill-example-pass",
+  "caseId": "cal-obgyn-annual-example-pass",
   "source": "synthetic-example",
   "sanitized": true,
-  "department": "pediatrics",
-  "scenarioId": "synthetic-peds-refill-01",
-  "workflowType": "prescription_refill",
+  "department": "obgyn",
+  "scenarioId": "synthetic-obgyn-new-gyn-01",
+  "workflowType": "annual_vs_gyn_ov",
   "difficulty": "medium",
   "capture": {
     "captureStatus": "captured",
@@ -14,29 +14,29 @@
     "liveModel": "gemini-live-example",
     "gradingStatus": "graded",
     "warnings": [],
-    "navigatorTurnCount": 3,
-    "callerTurnCount": 2
+    "navigatorTurnCount": 4,
+    "callerTurnCount": 1
   },
   "transcript": [
     {
-      "role": "patient",
-      "text": "I need help with a refill."
-    },
-    {
       "role": "navigator",
-      "text": "I can help. What medication and pharmacy should the team use?"
+      "text": "Good morning, thank you for calling Aizer Women's Health, this is Dana. How can I help you today?"
     },
     {
       "role": "patient",
-      "text": "The allergy medicine and the usual pharmacy."
+      "text": "Hi, this is Maria Alvarez, date of birth March 2nd 1991. I would like to book my annual GYN visit."
     },
     {
       "role": "navigator",
-      "text": "I will route the request to the Pediatrics refill team and cannot promise approval."
+      "text": "Thank you Maria. Sure, I can help you schedule that annual visit."
     },
     {
       "role": "navigator",
-      "text": "Is there anything else I can help with today?"
+      "text": "I can book you with Dr. Reyes on Tuesday the 14th at 2:15 at the Main Street office."
+    },
+    {
+      "role": "navigator",
+      "text": "Is there anything else I can help you with today?"
     }
   ],
   "humanReview": {
@@ -51,21 +51,20 @@
           "open-org": "MET",
           "verify-three": "MET",
           "verify-before-access": "MET",
-          "control-narrate": "MET",
+          "control-narrate": "NA",
           "control-guide": "MET",
-          "doc-reason": "MET",
-          "doc-te": "MET",
+          "doc-reason": "NA",
+          "doc-te": "NA",
           "comm-plain": "MET",
           "comm-professional": "MET",
-          "comm-empathy": "MET",
+          "comm-empathy": "NA",
           "listen-ack": "MET",
           "listen-gather": "MET",
           "know-rule": "MET",
           "know-details": "MET",
           "sched-flow": "MET",
-          "sched-recap": "MET",
-          "close-survey": "MET",
-          "close-anything-thanks": "MET"
+          "sched-recap": "NA",
+          "close-offer-help": "MET"
         },
         "autoFails": [],
         "recommendation": "pass"
@@ -78,21 +77,20 @@
           "open-org": "MET",
           "verify-three": "MET",
           "verify-before-access": "MET",
-          "control-narrate": "MET",
+          "control-narrate": "NA",
           "control-guide": "MET",
-          "doc-reason": "MET",
-          "doc-te": "MET",
+          "doc-reason": "NA",
+          "doc-te": "NA",
           "comm-plain": "MET",
           "comm-professional": "MET",
-          "comm-empathy": "MET",
+          "comm-empathy": "NA",
           "listen-ack": "MET",
           "listen-gather": "MET",
           "know-rule": "MET",
           "know-details": "MET",
           "sched-flow": "MET",
-          "sched-recap": "MET",
-          "close-survey": "MET",
-          "close-anything-thanks": "MET"
+          "sched-recap": "NA",
+          "close-offer-help": "MET"
         },
         "autoFails": [],
         "recommendation": "pass"
@@ -105,21 +103,20 @@
         "open-org": "MET",
         "verify-three": "MET",
         "verify-before-access": "MET",
-        "control-narrate": "MET",
+        "control-narrate": "NA",
         "control-guide": "MET",
-        "doc-reason": "MET",
-        "doc-te": "MET",
+        "doc-reason": "NA",
+        "doc-te": "NA",
         "comm-plain": "MET",
         "comm-professional": "MET",
-        "comm-empathy": "MET",
+        "comm-empathy": "NA",
         "listen-ack": "MET",
         "listen-gather": "MET",
         "know-rule": "MET",
         "know-details": "MET",
         "sched-flow": "MET",
-        "sched-recap": "MET",
-        "close-survey": "MET",
-        "close-anything-thanks": "MET"
+        "sched-recap": "NA",
+        "close-offer-help": "MET"
       },
       "autoFails": [],
       "recommendation": "pass",
@@ -129,12 +126,12 @@
   },
   "modelRun": {
     "model": "gemini-2.5-flash",
-    "rubricVersion": "qa-rubric-v2",
+    "rubricVersion": "qa-rubric-obgyn-v1",
     "promptVersion": "call-qa-grader-v4",
     "scenarioVersion": "synthetic-rehearsal-v1",
     "recommendation": "pass",
     "pass": true,
-    "score": 92,
+    "score": 95,
     "criteria": [
       {
         "id": "open-greet",
@@ -158,7 +155,7 @@
       },
       {
         "id": "control-narrate",
-        "verdict": "MET"
+        "verdict": "NA"
       },
       {
         "id": "control-guide",
@@ -166,11 +163,11 @@
       },
       {
         "id": "doc-reason",
-        "verdict": "MET"
+        "verdict": "NA"
       },
       {
         "id": "doc-te",
-        "verdict": "MET"
+        "verdict": "NA"
       },
       {
         "id": "comm-plain",
@@ -182,7 +179,7 @@
       },
       {
         "id": "comm-empathy",
-        "verdict": "MET"
+        "verdict": "NA"
       },
       {
         "id": "listen-ack",
@@ -206,14 +203,10 @@
       },
       {
         "id": "sched-recap",
-        "verdict": "MET"
+        "verdict": "NA"
       },
       {
-        "id": "close-survey",
-        "verdict": "MET"
-      },
-      {
-        "id": "close-anything-thanks",
+        "id": "close-offer-help",
         "verdict": "MET"
       }
     ],

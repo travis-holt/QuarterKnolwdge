@@ -156,7 +156,7 @@ const OBGYN_RUBRIC = [
       { id: 'comm-professional', points: 5, core: true, domainIds: ['intake'], competencyIds: ['communication', 'customerHandling'],
         text: 'Was courteous and professional in every turn.' },
       { id: 'comm-empathy', points: 5, core: false, domainIds: ['intake'], competencyIds: ['communication', 'customerHandling'],
-        text: 'CONDITIONAL - applies ONLY when the caller expressed an emotional or sensitive cue (worry, fear, pain or significant discomfort, frustration, confusion, urgency, distress, disappointment or anger, or sensitive pregnancy / Women\'s Health information). In that case the navigator acknowledged it in their own natural words ("I\'m sorry you\'re dealing with that", "I understand why that would be concerning"). Exact phrases are NOT required. If the caller expressed no such cue - a routine scheduling or administrative request - this is NA; never deduct for the absence of forced or robotic empathy.' },
+        text: 'CONDITIONAL - applies ONLY when the CALLER EXPRESSED emotion or distress (worry, fear, pain or significant discomfort, frustration, confusion, urgency, disappointment or anger), OR described a clearly adverse or emotionally sensitive event in a way that reasonably calls for acknowledgment. In that case the navigator acknowledged it in their own natural words ("I\'m sorry you\'re dealing with that", "I understand why that would be concerning"). Exact phrases are NOT required. The SUBJECT MATTER of a Women\'s Health call is never by itself an emotional cue: pregnancy, a New OB appointment, contraception, an annual GYN visit, or routine test scheduling are routine requests. If the caller expressed no emotion or distress, this is NA; never deduct for the absence of forced or robotic empathy.' },
     ],
   },
   {
@@ -215,7 +215,7 @@ const OBGYN_GRADER_INSTRUCTIONS = [
   `- VERIFICATION: the three required identifiers are exactly ${OBGYN_VERIFICATION_IDENTIFIERS.join(', ')}. ${OBGYN_NON_SUBSTITUTE_SENTENCE} ${OBGYN_VOLUNTEERED_SENTENCE} If the caller volunteered her full name and DOB in one sentence, verification is complete and the navigator loses nothing for not re-asking. The [af-hipaa] auto-fail uses this SAME definition - never apply one standard to [verify-three] and another to [af-hipaa].`,
   '- CLOSING: [close-offer-help] requires an EXPLICIT offer of further assistance before the call ends ("is there anything else I can help you with?" and natural equivalents). Judge the MEANING, not a fixed phrase list - any wording that clearly offers more help counts. "Thank you", "have a good day", "goodbye", a mutual exchange of thanks, or any other polite sign-off WITHOUT an offer of further help is NOT_MET. A polite sign-off alone is never sufficient.',
   '- SURVEY: OB/GYN runs NO patient survey. Never require survey wording and never deduct for it. If the navigator mentions a survey it is score-neutral: it does not satisfy [close-offer-help] on its own, and combined with a valid offer of help it still earns only the normal closing points.',
-  '- EMPATHY: [comm-empathy] is CONDITIONAL. Mark it NA when the caller expressed no emotional or sensitive cue (a routine scheduling or administrative request). Mark it MET when the caller expressed worry, fear, pain, frustration, confusion, urgency, distress, disappointment, anger, or sensitive pregnancy/Women\'s Health information AND the navigator acknowledged it in any natural, contextually appropriate words. Mark it NOT_MET only when such a cue was expressed and the navigator gave no meaningful acknowledgment. Do NOT treat every clinical topic as automatically emotional - judge what the caller actually expressed. Never require the exact phrases "I understand" or "I hear you".',
+  '- EMPATHY: [comm-empathy] is CONDITIONAL and is triggered by what the CALLER EXPRESSED, never by the call\'s subject matter. Mark it MET when the caller expressed worry, fear, pain or significant discomfort, frustration, confusion, urgency, disappointment or anger — or described a clearly adverse or emotionally sensitive event in a way that reasonably calls for acknowledgment — AND the navigator acknowledged it in any natural, contextually appropriate words. Mark it NOT_MET only when such a cue was expressed and the navigator gave no meaningful acknowledgment. Mark it NA when no such cue was expressed. A Women\'s Health TOPIC is NOT a cue: "I need to schedule my New OB appointment", a contraception question, an annual GYN visit, or routine test scheduling are routine requests and leave this NA. The caller need not use the exact words "scared" or "worried" — but the cue must be grounded in something the caller actually said in this transcript, not assumed from the clinical subject. Never require the exact phrases "I understand" or "I hear you".',
   '- ACTIVE LISTENING: [listen-ack] is satisfied by natural recognition of the request ("sure, I can help you schedule that", "okay, let me check your chart", a concise recap, or a clarifying question). Do not require emotional scripting on a routine call. [listen-gather] stays strict: insufficient information gathering is still NOT_MET.',
   '- HOLDS AND NARRATION: [control-narrate] is CONDITIONAL. Mark it NA when no hold or meaningful wait occurred. Mark it MET when the navigator explained a hold or a longer pause before it. Mark it NOT_MET only when the transcript shows an EXPLICIT hold or meaningful wait that was not explained. Never require narration for a quick chart lookup, a quick schedule check, or an ordinary short pause. You CANNOT observe dead air, hold duration, or delay in a text transcript - never infer them; judge only what the transcript explicitly states.',
   '- DOCUMENTATION: judge [doc-reason] against OB/GYN documentation conventions. Pediatric examples (physical-exam/PE status, newborn abbreviations) are NOT OB/GYN standards and must never be required here.',
@@ -237,6 +237,59 @@ const SHARED_SAFETY_CRITICAL = ['verify-three', 'verify-before-access', 'know-ru
 // the direction NOT_MET -> MET.
 const SHARED_REPAIRABLE = ['know-rule', 'doc-te'];
 
+// ── Profile signature ────────────────────────────────────────────────────────
+//
+// A deterministic fingerprint over EVERYTHING that affects grading, so a
+// validated response can be bound to the exact profile that produced it. Two
+// profiles with identical criterion IDs but different points, `core`
+// applicability, categories, evidence policies, or auto-fail definitions produce
+// DIFFERENT signatures — criterion IDs alone are not profile identity.
+//
+// Pure JS (FNV-1a over a canonical string) rather than node:crypto, because this
+// module is also imported by the browser bundle.
+function canonicalProfileString({
+  department, rubricVersion, rubric, autoFails, passThreshold,
+  safetyCriticalCriteria, repairableCriteria,
+}) {
+  const criteria = rubricCriteria(rubric).map((c) => [
+    c.categoryId, c.categoryName, c.id, c.points, c.core === true ? 1 : 0,
+    (c.domainIds ?? []).join('+'),
+    (c.competencyIds ?? []).join('+'),
+    c.evidencePolicy ?? '-',
+    c.evidenceOrder ?? '-',
+  ].join(':'));
+  const fails = autoFails.map((a) => [
+    a.id, (a.domainIds ?? []).join('+'), (a.competencyIds ?? []).join('+'), a.evidencePolicy ?? '-',
+  ].join(':'));
+  return [
+    `dept=${department}`,
+    `ver=${rubricVersion}`,
+    `pass=${passThreshold}`,
+    `cats=${rubric.map((cat) => `${cat.id}/${cat.criteria.length}`).join(',')}`,
+    `crit=${criteria.join('|')}`,
+    `af=${fails.join('|')}`,
+    `safety=${[...safetyCriticalCriteria].slice().sort().join(',')}`,
+    `repair=${[...repairableCriteria].slice().sort().join(',')}`,
+  ].join(';');
+}
+
+function fnv1a(text) {
+  let hash = 0x811c9dc5;
+  for (let index = 0; index < text.length; index++) {
+    hash ^= text.charCodeAt(index);
+    hash = Math.imul(hash, 0x01000193) >>> 0;
+  }
+  return hash.toString(16).padStart(8, '0');
+}
+
+export function profileSignature(spec) {
+  const canonical = canonicalProfileString(spec);
+  // Two independent hashes over the canonical string plus its length make an
+  // accidental collision between two real profiles vanishingly unlikely, while
+  // staying dependency-free and deterministic across environments.
+  return `${fnv1a(canonical)}-${fnv1a(`${canonical.length}#${canonical.split('').reverse().join('')}`)}`;
+}
+
 function buildProfile({
   department, rubricVersion, rubric, autoFails, graderInstructions,
   safetyCriticalCriteria = SHARED_SAFETY_CRITICAL,
@@ -244,7 +297,12 @@ function buildProfile({
   passThreshold = QA_PASS_THRESHOLD,
 }) {
   const criteria = rubricCriteria(rubric);
+  const signature = profileSignature({
+    department, rubricVersion, rubric, autoFails, passThreshold,
+    safetyCriticalCriteria, repairableCriteria,
+  });
   return Object.freeze({
+    signature,
     department,
     rubricVersion,
     rubric,
@@ -261,6 +319,12 @@ function buildProfile({
     evidencePolicyFor: (criterionId) =>
       criteria.find((criterion) => criterion.id === criterionId)?.evidencePolicy
         ?? QA_EVIDENCE_POLICIES.NAVIGATOR_ONLY,
+    // The criteria (if any) that may cite caller evidence, so the PROMPT can
+    // render its evidence rules from the profile instead of hard-coding a
+    // global "never a caller line" sentence that contradicts this policy.
+    identityVerificationCriteria: criteria
+      .filter((criterion) => criterion.evidencePolicy === QA_EVIDENCE_POLICIES.IDENTITY_VERIFICATION)
+      .map((criterion) => criterion.id),
   });
 }
 
@@ -334,12 +398,33 @@ export function requireQaRubricProfile(department) {
  */
 export function profileForGradedAttempt(gradingMetadata, fallbackDepartment) {
   const version = String(gradingMetadata?.rubricVersion ?? '').trim();
+
+  // A RECORDED version is authoritative. If we do not recognise it, the correct
+  // answer is "unavailable" — never a guess, and never a silent fall-through to
+  // Pediatrics. Reinterpreting an old result under a current rubric would show a
+  // supervisor scores the attempt never actually received.
   if (version) {
     const match = Object.values(QA_RUBRIC_PROFILES)
       .find((profile) => profile.rubricVersion === version);
-    if (match) return match;
-    // A version we do not recognise (an older or newer rubric): do NOT guess.
-    return null;
+    if (!match) return null;
+    // Cross-check the recorded department when one is present: a version/
+    // department pair that disagrees is corrupt metadata, not a usable profile.
+    const recordedDepartment = String(gradingMetadata?.rubricDepartment ?? '').trim();
+    if (recordedDepartment && recordedDepartment !== match.department) return null;
+    return match;
   }
+
+  // No version recorded at all: a genuinely pre-versioning legacy result. Only
+  // here may the stored department decide, because that is the behavior those
+  // records were written under.
   return getQaRubricProfile(gradingMetadata?.rubricDepartment ?? fallbackDepartment);
+}
+
+/**
+ * True when grading metadata EXISTS and records a rubric version. Used to tell
+ * "genuinely pre-versioning legacy record" apart from "records a version we no
+ * longer recognise" — the two must not be handled the same way.
+ */
+export function recordsRubricVersion(gradingMetadata) {
+  return String(gradingMetadata?.rubricVersion ?? '').trim().length > 0;
 }

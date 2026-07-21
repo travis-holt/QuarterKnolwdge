@@ -14,22 +14,56 @@ import {
   QA_RUBRIC_PROFILES, QA_PROFILE_DEPARTMENTS, QA_EVIDENCE_POLICIES,
   QA_RUBRIC_VERSION_OBGYN, OBGYN_VERIFICATION_IDENTIFIERS,
   getQaRubricProfile, requireQaRubricProfile, profileForGradedAttempt,
-  UnsupportedQaDepartmentError,
+  UnsupportedQaDepartmentError, profileSignature,
 } from '../src/data/qaRubricProfiles.js';
 import { QA_RUBRIC_VERSION, QA_PASS_THRESHOLD } from '../src/data/qaRubric.js';
 import {
-  validateQaResponse, scoreQa, assessQa,
-  verifyIdentityEvidence, verifyNavigatorEvidence, verifyCriterionEvidence,
-  findProtectedDisclosureIndex,
+  validateQaResponse, scoreQa, assessQa, repairQaVerdictsForScenario,
+  verifyNavigatorEvidence, verifyCriterionEvidence,
+  findProtectedDisclosureIndex, classifyProtectedDisclosure,
+  evaluateVerificationBeforeAccess, extractDateOfBirth,
 } from './_qa-rubric.js';
 import { buildMessages, gradeCallQaTranscript, buildScenarioContextFromAttempt } from './grade-call-qa.js';
 import { qaDomainScoreSummary, resolveScoringProfile } from '../src/lib/qaDomainScoring.js';
 import { DOMAINS } from '../src/data/questions.js';
 import { COMPETENCY_IDS } from '../src/data/competencies.js';
 import { OBGYN_REVIEW_FIXTURES, simulateObgynGrader } from './_qa-obgyn-review-fixtures.js';
+import { evaluateCleanPassCandidate } from './_qa-automation-policy.js';
+import { validateCalibrationFixture } from './_qa-calibration.js';
+import { readFileSync } from 'node:fs';
 
 const OBGYN = QA_RUBRIC_PROFILES.obgyn;
 const PEDS = QA_RUBRIC_PROFILES.pediatrics;
+
+/**
+ * Build a synthetic profile with the SAME criterion ids as `base` but one
+ * criterion altered. Used to prove that criterion ids alone are not profile
+ * identity: a swap that changes points or `core` applicability must be caught.
+ */
+function makeVariantProfile(base, transform) {
+  const rubric = base.rubric.map((category) => ({
+    ...category,
+    criteria: category.criteria.map(transform),
+  }));
+  const criteria = rubric.flatMap((category) =>
+    category.criteria.map((c) => ({ ...c, categoryId: category.id, categoryName: category.name })));
+  return {
+    ...base,
+    rubric,
+    criteria,
+    criteriaById: new Map(criteria.map((c) => [c.id, c])),
+    criterionIds: new Set(criteria.map((c) => c.id)),
+    signature: profileSignature({
+      department: base.department,
+      rubricVersion: base.rubricVersion,
+      rubric,
+      autoFails: base.autoFails,
+      passThreshold: base.passThreshold,
+      safetyCriticalCriteria: base.safetyCriticalCriteria,
+      repairableCriteria: base.repairableCriteria,
+    }),
+  };
+}
 
 // ── Profile architecture ─────────────────────────────────────────────────────
 
@@ -168,6 +202,83 @@ describe('OB/GYN profile integrity', () => {
 
 // ── Historical attempts ──────────────────────────────────────────────────────
 
+describe('historical unknown rubric versions — adversarial', () => {
+  const withVersion = (rubricVersion, extra = {}) => ({
+    gradingMetadata: { rubricVersion, ...extra },
+    criteria: [{ id: 'close-survey', verdict: 'MET' }, { id: 'open-greet', verdict: 'MET' }],
+    autoFails: [],
+  });
+
+  it('a MISSING-metadata legacy result still uses the historical shared rubric', () => {
+    const legacy = { criteria: [{ id: 'open-greet', verdict: 'MET' }], autoFails: [] };
+    expect(resolveScoringProfile(legacy)).toBe(PEDS);
+    const { domainScores, scoringUnavailable } = qaDomainScoreSummary(legacy);
+    expect(scoringUnavailable).toBeUndefined();
+    expect(domainScores.intake.score).toBe(100);
+  });
+
+  it('a known Pediatrics version resolves to Pediatrics', () => {
+    expect(resolveScoringProfile(withVersion(QA_RUBRIC_VERSION))).toBe(PEDS);
+  });
+
+  it('a known OB/GYN version resolves to OB/GYN', () => {
+    expect(resolveScoringProfile(withVersion(QA_RUBRIC_VERSION_OBGYN))).toBe(OBGYN);
+  });
+
+  it('an UNKNOWN recorded version never becomes Pediatrics', () => {
+    const unknown = withVersion('qa-rubric-v1');
+    expect(profileForGradedAttempt(unknown.gradingMetadata)).toBeNull();
+    expect(resolveScoringProfile(unknown)).toBeNull();
+  });
+
+  it('an unknown version with department obgyn still resolves to null', () => {
+    const unknown = withVersion('qa-rubric-obgyn-v99', { rubricDepartment: 'obgyn' });
+    expect(resolveScoringProfile(unknown)).toBeNull();
+  });
+
+  it('an unknown version carrying OLD closing ids produces no fabricated scores', () => {
+    const unknown = withVersion('qa-rubric-v0');
+    const summary = qaDomainScoreSummary(unknown);
+    expect(summary.scoringUnavailable).toBe(true);
+    expect(summary.scoringUnavailableReason).toBe('unknown-rubric-version');
+    expect(summary.domainScores).toBeNull();
+    expect(summary.competencyScores).toBeNull();
+    expect(summary.recordedRubricVersion).toBe('qa-rubric-v0');
+  });
+
+  it('a version/department pair that disagrees is treated as corrupt, not usable', () => {
+    // Recorded as the OB/GYN rubric but stamped Pediatrics: do not pick either.
+    expect(profileForGradedAttempt({
+      rubricVersion: QA_RUBRIC_VERSION_OBGYN, rubricDepartment: 'pediatrics',
+    })).toBeNull();
+  });
+
+  it('summarizing an unknown-version result does not throw', () => {
+    expect(() => qaDomainScoreSummary(withVersion('nope'))).not.toThrow();
+  });
+
+  it('shadow automation stays ineligible for an unknown recorded version', () => {
+    const attempt = {
+      department: 'obgyn',
+      qa: { ...withVersion('qa-rubric-v1'), criteria: OBGYN.criteria.map((c) => ({ id: c.id, verdict: 'MET' })) },
+    };
+    attempt.qa.gradingMetadata = { rubricVersion: 'qa-rubric-v1' };
+    const result = evaluateCleanPassCandidate(attempt, {});
+    expect(result.eligible).toBe(false);
+    expect(result.reasons).toContain('incomplete-rubric-result');
+  });
+
+  it('calibration rejects an unsupported rubric version', () => {
+    const fixture = JSON.parse(readFileSync(
+      new URL('./fixtures/call-qa-calibration/obgyn-example-pass.json', import.meta.url), 'utf8',
+    ));
+    fixture.modelRun.rubricVersion = 'qa-rubric-v1';
+    const result = validateCalibrationFixture(fixture);
+    expect(result.valid).toBe(false);
+    expect(result.errors.join(' ')).toMatch(/unsupported rubric version/);
+  });
+});
+
 describe('historical attempts keep their own rubric', () => {
   it('resolves a stored attempt by its recorded rubric version', () => {
     expect(profileForGradedAttempt({ rubricVersion: QA_RUBRIC_VERSION })).toBe(PEDS);
@@ -235,14 +346,72 @@ describe('validation and scoring cannot use different rubrics', () => {
     expect(result.error).toMatch(/close-survey|close-anything-thanks/);
   });
 
-  it('stamps the validating profile version onto the validated data', () => {
+  it('stamps the full profile binding onto the validated data', () => {
     const result = validateQaResponse({ criteria: obgynAllMet(), autoFails: [] }, OBGYN);
-    expect(result.data.rubricVersion).toBe(QA_RUBRIC_VERSION_OBGYN);
+    expect(result.data.profileBinding).toEqual({
+      department: 'obgyn',
+      rubricVersion: QA_RUBRIC_VERSION_OBGYN,
+      signature: OBGYN.signature,
+    });
   });
 
   it('throws rather than mis-scoring when scoreQa gets a mismatched criterion set', () => {
     expect(() => scoreQa(obgynAllMet(), [], [], PEDS))
-      .toThrow(/not part of rubric profile "pediatrics"/);
+      .toThrow(/unknown criterion|missing criteria/);
+  });
+
+  it('rejects a carried binding that does not match the scoring profile', () => {
+    const validated = validateQaResponse({ criteria: obgynAllMet(), autoFails: [] }, OBGYN).data;
+    expect(() => scoreQa(validated.criteria, [], [], OBGYN, {
+      ...validated.profileBinding, signature: 'tampered',
+    })).toThrow(/profile-binding-signature-mismatch/);
+  });
+
+  it('rejects a MISSING binding when one was expected', () => {
+    const validated = validateQaResponse({ criteria: obgynAllMet(), autoFails: [] }, OBGYN).data;
+    expect(() => scoreQa(validated.criteria, [], [], OBGYN, null))
+      .toThrow(/missing-profile-binding/);
+  });
+
+  it('detects duplicate and missing criterion ids, not just unknown ones', () => {
+    const base = obgynAllMet();
+    expect(() => scoreQa([...base, base[0]], [], [], OBGYN)).toThrow(/duplicate criterion/);
+    expect(() => scoreQa(base.slice(1), [], [], OBGYN)).toThrow(/missing criteria/);
+  });
+
+  it('rejects a same-ID profile whose WEIGHTS differ (IDs are not identity)', () => {
+    // Two synthetic profiles with the SAME criterion ids but different points
+    // and different `core` applicability. Criterion-id checks alone would let
+    // these swap silently; the signature must not.
+    const reweighted = makeVariantProfile(OBGYN, (criterion) => (
+      criterion.id === 'close-offer-help' ? { ...criterion, points: 9 } : criterion
+    ));
+    expect(reweighted.signature).not.toBe(OBGYN.signature);
+    const validated = validateQaResponse({ criteria: obgynAllMet(), autoFails: [] }, OBGYN).data;
+    expect(() => scoreQa(validated.criteria, [], [], reweighted, validated.profileBinding))
+      .toThrow(/profile-binding-signature-mismatch/);
+  });
+
+  it('rejects a same-ID profile whose CORE applicability differs', () => {
+    const recored = makeVariantProfile(OBGYN, (criterion) => (
+      criterion.id === 'comm-empathy' ? { ...criterion, core: true } : criterion
+    ));
+    expect(recored.signature).not.toBe(OBGYN.signature);
+    const validated = validateQaResponse({ criteria: obgynAllMet(), autoFails: [] }, OBGYN).data;
+    expect(() => scoreQa(validated.criteria, [], [], recored, validated.profileBinding))
+      .toThrow(/profile-binding-signature-mismatch/);
+  });
+
+  it('the repair layer refuses to run under a profile that did not validate the verdicts', () => {
+    const validated = validateQaResponse({ criteria: obgynAllMet(), autoFails: [] }, OBGYN).data;
+    expect(() => repairQaVerdictsForScenario(validated, [], { department: 'pediatrics', profile: PEDS }))
+      .toThrow(/profile-binding-(department|version|signature)-mismatch/);
+  });
+
+  it('carries the binding through the repair layer unchanged', () => {
+    const validated = validateQaResponse({ criteria: obgynAllMet(), autoFails: [] }, OBGYN).data;
+    const repaired = repairQaVerdictsForScenario(validated, [], { department: 'obgyn', profile: OBGYN });
+    expect(repaired.profileBinding).toEqual(validated.profileBinding);
   });
 
   it('rejects an auto-fail id the active profile does not define', () => {
@@ -254,30 +423,201 @@ describe('validation and scoring cannot use different rubrics', () => {
   });
 });
 
-// ── Identity-verification evidence policy ────────────────────────────────────
+// ── Identity verification: ADVERSARIAL ───────────────────────────────────────
+//
+// These tests try to make the implementation award verification it has not
+// earned. The previous quote-only check passed almost all of them, which is why
+// the structured contract exists.
 
-describe('identity-verification evidence policy', () => {
-  const transcript = [
-    { role: 'navigator', text: 'Thank you for calling Aizer Health, this is Dana.' },
+describe('structured identity verification — adversarial', () => {
+  // Caller states first name, last name and DOB in ONE sentence.
+  const ONE_SENTENCE = [
+    { role: 'navigator', text: 'Thank you for calling Aizer Health, this is Dana. How can I help you today?' },
     { role: 'patient', text: 'Hi, this is Maria Alvarez, date of birth March 2nd 1991.' },
     { role: 'navigator', text: 'Thank you Maria, I have your record open.' },
   ];
 
-  it('verifies a caller-volunteered identifier quote for verification criteria', () => {
-    expect(verifyIdentityEvidence(transcript, 'this is Maria Alvarez, date of birth March 2nd 1991')).toBe(true);
-    // The SAME quote is not navigator evidence.
-    expect(verifyNavigatorEvidence(transcript, 'this is Maria Alvarez, date of birth March 2nd 1991')).toBe(false);
+  // Each identifier arrives in a DIFFERENT turn.
+  const SPREAD = [
+    { role: 'navigator', text: 'Thank you for calling Aizer Health, this is Dana. How can I help you today?' },
+    { role: 'patient', text: 'Hi, my first name is Maria.' },
+    { role: 'navigator', text: 'Thank you. And your last name?' },
+    { role: 'patient', text: 'It is Alvarez.' },
+    { role: 'navigator', text: 'And your date of birth?' },
+    { role: 'patient', text: 'March 2nd 1991.' },
+    { role: 'navigator', text: 'Thank you Maria, that all matches.' },
+  ];
+
+  const claim = (field, value, role, turnIndex, quote) => ({ field, value, role, turnIndex, quote });
+
+  const scoreVerification = (transcript, identityEvidence, criterionId = 'verify-three') => {
+    const criteria = OBGYN.criteria.map((c) => ({
+      id: c.id,
+      verdict: c.id === criterionId ? 'MET' : 'NA',
+      basis: c.id === criterionId ? 'EVIDENCE' : 'ABSENCE',
+      evidence: c.id === criterionId ? 'placeholder quote' : '',
+      note: '',
+      identityEvidence: c.id === criterionId ? identityEvidence : [],
+    }));
+    const scored = scoreQa(criteria, [], transcript, OBGYN);
+    return scored.criteria.find((c) => c.id === criterionId);
+  };
+
+  // ── 1. An unanswered question proves nothing ──────────────────────────────
+  it('a quoted DOB QUESTION the caller never answered does not verify', () => {
+    const transcript = [
+      { role: 'navigator', text: 'Thank you for calling Aizer Health, this is Dana.' },
+      { role: 'navigator', text: 'What is your date of birth?' },
+    ];
+    const result = scoreVerification(transcript, [
+      claim('dob', 'date of birth', 'navigator', 1, 'What is your date of birth?'),
+    ]);
+    expect(result.verdict).toBe('NOT_MET');
+    expect(result.unverified).toBe(true);
   });
 
-  it('applies only to criteria that opt in', () => {
-    const quote = 'this is Maria Alvarez, date of birth March 2nd 1991';
-    expect(verifyCriterionEvidence(transcript, quote, OBGYN.criteriaById.get('verify-three'))).toBe(true);
-    // An unrelated navigator-performance criterion cannot be earned by caller wording.
-    expect(verifyCriterionEvidence(transcript, quote, OBGYN.criteriaById.get('comm-empathy'))).toBe(false);
-    expect(verifyCriterionEvidence(transcript, quote, OBGYN.criteriaById.get('close-offer-help'))).toBe(false);
+  // ── 2. Wrong identifier types never substitute ────────────────────────────
+  it('a phone number can never satisfy the date of birth', () => {
+    const transcript = [
+      { role: 'navigator', text: 'Thank you for calling Aizer Health, this is Dana.' },
+      { role: 'patient', text: 'Maria Alvarez, and my number is 555-013-0199.' },
+    ];
+    const result = scoreVerification(transcript, [
+      claim('firstName', 'Maria', 'caller', 1, 'Maria Alvarez, and my number is 555-013-0199'),
+      claim('lastName', 'Alvarez', 'caller', 1, 'Maria Alvarez, and my number is 555-013-0199'),
+      claim('dob', '555-013-0199', 'caller', 1, 'Maria Alvarez, and my number is 555-013-0199'),
+    ]);
+    expect(result.verdict).toBe('NOT_MET');
+    expect(result.identityVerification.rejectedClaims)
+      .toContainEqual({ field: 'dob', reason: 'value-is-not-a-date-of-birth' });
   });
 
-  it('declares the policy on exactly the two verification criteria', () => {
+  it('a home address can never satisfy the date of birth', () => {
+    const transcript = [
+      { role: 'navigator', text: 'Thank you for calling Aizer Health, this is Dana.' },
+      { role: 'patient', text: 'Maria Alvarez, I live at 48 Baker Town Road.' },
+    ];
+    const result = scoreVerification(transcript, [
+      claim('firstName', 'Maria', 'caller', 1, 'Maria Alvarez, I live at 48 Baker Town Road'),
+      claim('lastName', 'Alvarez', 'caller', 1, 'Maria Alvarez, I live at 48 Baker Town Road'),
+      claim('dob', '48 Baker Town Road', 'caller', 1, 'Maria Alvarez, I live at 48 Baker Town Road'),
+    ]);
+    expect(result.verdict).toBe('NOT_MET');
+  });
+
+  it('a first name alone does not satisfy full-name verification', () => {
+    const transcript = [
+      { role: 'navigator', text: 'Thank you for calling Aizer Health, this is Dana.' },
+      { role: 'patient', text: 'This is Maria, my date of birth is March 2nd 1991.' },
+    ];
+    const result = scoreVerification(transcript, [
+      claim('firstName', 'Maria', 'caller', 1, 'This is Maria, my date of birth is March 2nd 1991'),
+      claim('dob', 'March 2nd 1991', 'caller', 1, 'This is Maria, my date of birth is March 2nd 1991'),
+    ]);
+    expect(result.verdict).toBe('NOT_MET');
+  });
+
+  it('a last name alone does not satisfy full-name verification', () => {
+    const transcript = [
+      { role: 'navigator', text: 'Thank you for calling Aizer Health, this is Dana.' },
+      { role: 'patient', text: 'Alvarez, born March 2nd 1991.' },
+    ];
+    const result = scoreVerification(transcript, [
+      claim('lastName', 'Alvarez', 'caller', 1, 'Alvarez, born March 2nd 1991'),
+      claim('dob', 'March 2nd 1991', 'caller', 1, 'Alvarez, born March 2nd 1991'),
+    ]);
+    expect(result.verdict).toBe('NOT_MET');
+  });
+
+  it('the same single name cannot be claimed as BOTH first and last name', () => {
+    const transcript = [
+      { role: 'navigator', text: 'Thank you for calling Aizer Health, this is Dana.' },
+      { role: 'patient', text: 'This is Maria, date of birth March 2nd 1991.' },
+    ];
+    const result = scoreVerification(transcript, [
+      claim('firstName', 'Maria', 'caller', 1, 'This is Maria, date of birth March 2nd 1991'),
+      claim('lastName', 'Maria', 'caller', 1, 'This is Maria, date of birth March 2nd 1991'),
+      claim('dob', 'March 2nd 1991', 'caller', 1, 'This is Maria, date of birth March 2nd 1991'),
+    ]);
+    expect(result.verdict).toBe('NOT_MET');
+    expect(result.identityVerification.rejectedClaims)
+      .toContainEqual({ field: 'lastName', reason: 'last-name-duplicates-first-name' });
+  });
+
+  // ── 3 & 4. Genuine collection passes ──────────────────────────────────────
+  it('identifiers collected across three separate chronological turns verify', () => {
+    const result = scoreVerification(SPREAD, [
+      claim('firstName', 'Maria', 'caller', 1, 'my first name is Maria'),
+      claim('lastName', 'Alvarez', 'caller', 3, 'It is Alvarez'),
+      claim('dob', 'March 2nd 1991', 'caller', 5, 'March 2nd 1991'),
+    ]);
+    expect(result.verdict).toBe('MET');
+    expect(result.identityVerification.complete).toBe(true);
+    expect(result.identityVerification.completedAtIndex).toBe(5);
+  });
+
+  it('a single caller sentence with full name and DOB satisfies all three', () => {
+    const result = scoreVerification(ONE_SENTENCE, [
+      claim('firstName', 'Maria', 'caller', 1, 'this is Maria Alvarez, date of birth March 2nd 1991'),
+      claim('lastName', 'Alvarez', 'caller', 1, 'this is Maria Alvarez, date of birth March 2nd 1991'),
+      claim('dob', 'March 2nd 1991', 'caller', 1, 'this is Maria Alvarez, date of birth March 2nd 1991'),
+    ]);
+    expect(result.verdict).toBe('MET');
+    expect(result.identityVerification.completedAtIndex).toBe(1);
+  });
+
+  // ── Fabrication guards ────────────────────────────────────────────────────
+  it('rejects a claim whose quote is not in the declared turn', () => {
+    const result = scoreVerification(ONE_SENTENCE, [
+      claim('firstName', 'Maria', 'caller', 1, 'this is Maria Alvarez, date of birth March 2nd 1991'),
+      claim('lastName', 'Alvarez', 'caller', 1, 'this is Maria Alvarez, date of birth March 2nd 1991'),
+      // The caller's quote attributed to the NAVIGATOR turn it does not appear in.
+      claim('dob', 'March 2nd 1991', 'navigator', 2, 'date of birth March 2nd 1991'),
+    ]);
+    expect(result.verdict).toBe('NOT_MET');
+    expect(result.identityVerification.rejectedClaims)
+      .toContainEqual({ field: 'dob', reason: 'quote-not-in-declared-turn' });
+  });
+
+  it('rejects a claim whose declared role does not match the turn', () => {
+    const result = scoreVerification(ONE_SENTENCE, [
+      claim('firstName', 'Maria', 'navigator', 1, 'this is Maria Alvarez, date of birth March 2nd 1991'),
+      claim('lastName', 'Alvarez', 'caller', 1, 'this is Maria Alvarez, date of birth March 2nd 1991'),
+      claim('dob', 'March 2nd 1991', 'caller', 1, 'this is Maria Alvarez, date of birth March 2nd 1991'),
+    ]);
+    expect(result.verdict).toBe('NOT_MET');
+    expect(result.identityVerification.rejectedClaims)
+      .toContainEqual({ field: 'firstName', reason: 'role-mismatch' });
+  });
+
+  it('rejects a value that does not appear inside its own quote', () => {
+    const result = scoreVerification(ONE_SENTENCE, [
+      claim('firstName', 'Jennifer', 'caller', 1, 'this is Maria Alvarez, date of birth March 2nd 1991'),
+      claim('lastName', 'Alvarez', 'caller', 1, 'this is Maria Alvarez, date of birth March 2nd 1991'),
+      claim('dob', 'March 2nd 1991', 'caller', 1, 'this is Maria Alvarez, date of birth March 2nd 1991'),
+    ]);
+    expect(result.verdict).toBe('NOT_MET');
+    expect(result.identityVerification.rejectedClaims)
+      .toContainEqual({ field: 'firstName', reason: 'value-not-in-quote' });
+  });
+
+  it('a MET claim with NO structured evidence at all loses credit', () => {
+    const result = scoreVerification(ONE_SENTENCE, []);
+    expect(result.verdict).toBe('NOT_MET');
+    expect(result.unverified).toBe(true);
+  });
+
+  it('an out-of-range turn index is rejected rather than throwing', () => {
+    const result = scoreVerification(ONE_SENTENCE, [
+      claim('firstName', 'Maria', 'caller', 99, 'this is Maria Alvarez'),
+    ]);
+    expect(result.verdict).toBe('NOT_MET');
+    expect(result.identityVerification.rejectedClaims)
+      .toContainEqual({ field: 'firstName', reason: 'turn-index-out-of-range' });
+  });
+
+  // ── Scope limits (unchanged guarantees) ───────────────────────────────────
+  it('the identity policy is declared on exactly the two verification criteria', () => {
     const withPolicy = OBGYN.criteria
       .filter((c) => c.evidencePolicy === QA_EVIDENCE_POLICIES.IDENTITY_VERIFICATION)
       .map((c) => c.id);
@@ -286,15 +626,22 @@ describe('identity-verification evidence policy', () => {
     expect(PEDS.criteria.some((c) => c.evidencePolicy)).toBe(false);
   });
 
+  it('caller wording cannot earn an unrelated navigator-performance criterion', () => {
+    const quote = 'this is Maria Alvarez, date of birth March 2nd 1991';
+    expect(verifyCriterionEvidence(ONE_SENTENCE, quote, OBGYN.criteriaById.get('comm-empathy'), []))
+      .toBe(false);
+    expect(verifyCriterionEvidence(ONE_SENTENCE, quote, OBGYN.criteriaById.get('close-offer-help'), []))
+      .toBe(false);
+  });
+
   it('never lets caller wording verify a navigator auto-fail', () => {
     const criteria = OBGYN.criteria.map((c) => ({
-      id: c.id, verdict: 'NA', basis: 'ABSENCE', evidence: '', note: '',
+      id: c.id, verdict: 'NA', basis: 'ABSENCE', evidence: '', note: '', identityEvidence: [],
     }));
     const scored = scoreQa(
       criteria,
       [{ id: 'af-scope', evidence: 'this is Maria Alvarez, date of birth March 2nd 1991', note: '' }],
-      transcript,
-      OBGYN,
+      ONE_SENTENCE, OBGYN,
     );
     expect(scored.autoFails).toEqual([]);
     expect(scored.unverifiedAutoFails).toHaveLength(1);
@@ -311,32 +658,152 @@ describe('identity-verification evidence policy', () => {
       basis: c.id === 'know-rule' ? 'EVIDENCE' : 'ABSENCE',
       evidence: c.id === 'know-rule' ? 'You told me to just take twice the dose' : '',
       note: '',
+      identityEvidence: [],
     }));
     const scored = scoreQa(criteria, [], callerClaim, OBGYN);
     const knowRule = scored.criteria.find((c) => c.id === 'know-rule');
     expect(knowRule.unresolved).toBe(true);
     expect(knowRule.unresolvedReason).toBe('negative-evidence-not-verified');
-    const review = assessQa(scored, callerClaim, { profile: OBGYN });
-    expect(review.recommendation).toBe('needs_review');
+    expect(assessQa(scored, callerClaim, { profile: OBGYN }).recommendation).toBe('needs_review');
   });
 
-  it('preserves transcript order for verification-before-access', () => {
-    const late = [
-      { role: 'navigator', text: 'Thank you for calling Aizer Health, this is Dana.' },
-      { role: 'navigator', text: 'Your appointment is Tuesday the 14th at 2:15.' },
-      { role: 'patient', text: 'Thanks. My date of birth is March 2nd 1991 by the way.' },
-    ];
-    expect(findProtectedDisclosureIndex(late)).toBe(1);
-    // Collected — but after the disclosure, so it cannot satisfy before-access.
-    expect(verifyIdentityEvidence(late, 'My date of birth is March 2nd 1991')).toBe(true);
-    expect(verifyIdentityEvidence(late, 'My date of birth is March 2nd 1991', { requireBeforeDisclosure: true })).toBe(false);
+  // ── Date recognition ──────────────────────────────────────────────────────
+  it.each([
+    'March 2nd 1991', 'March 2, 1991', 'Mar 2 1991', '2 March 1991',
+    '2nd of March 1991', '3/2/1991', '03-02-1991', 'June 4th 2019',
+  ])('recognizes %s as a date of birth', (value) => {
+    expect(extractDateOfBirth(value)).toBeTruthy();
   });
 
-  it('reports no disclosure for a call that never shares a protected specific', () => {
-    expect(findProtectedDisclosureIndex(transcript)).toBe(-1);
+  it.each([
+    '555-013-0199', 'five five five zero one nine nine', '48 Baker Town Road',
+    '1991', 'March', 'March 2nd', 'my phone number', 'Apartment 4B',
+  ])('does NOT recognize %s as a date of birth', (value) => {
+    expect(extractDateOfBirth(value)).toBeNull();
   });
 });
 
+// ── Protected disclosure + ordering: ADVERSARIAL ─────────────────────────────
+
+describe('protected-disclosure ordering — adversarial', () => {
+  const nav = (text) => ({ role: 'navigator', text });
+  const pat = (text) => ({ role: 'patient', text });
+
+  it.each([
+    ['appointment', 'Your appointment is Tuesday the 14th at 2:15 with Dr. Reyes.'],
+    ['appointment', 'You are all set for Tuesday at 9.'],
+    ['priorVisit', 'Your annual was completed last month.'],
+    ['priorVisit', 'You had an ultrasound back in March.'],
+    ['chart', 'The chart shows two prior visits.'],
+    ['chart', 'I can see in your record that you were here in May.'],
+    ['order', 'I can see Dr. Smith ordered an ultrasound.'],
+    ['order', 'There is an order for lab work.'],
+    ['providerNote', 'The note from your provider says to return in two weeks.'],
+    ['providerNote', 'Your doctor documented that you should come back.'],
+    ['results', 'Your results came back normal.'],
+    ['results', 'Your labs look elevated.'],
+    ['medication', 'Your prescription was sent last week.'],
+    ['account', 'Your balance is forty dollars.'],
+    ['clinicalDetail', 'You are 31 weeks along.'],
+  ])('recognizes a %s disclosure: %s', (category, text) => {
+    expect(classifyProtectedDisclosure(text)).toBe(category);
+  });
+
+  it.each([
+    'Let me open your chart.',
+    'Let me check that.',
+    'Let me pull up the schedule.',
+    'I can help you with that.',
+    'Can I have your first name, last name, and date of birth?',
+    'What is your date of birth?',
+    'And your last name?',
+    'Our office is on Main Street and we open at eight.',
+    'One moment please.',
+    'Sure.',
+  ])('does NOT treat generic wording as disclosure: %s', (text) => {
+    expect(classifyProtectedDisclosure(text)).toBeNull();
+  });
+
+  it('only NAVIGATOR turns can be a disclosure', () => {
+    expect(findProtectedDisclosureIndex([
+      pat('Your appointment is Tuesday at 2:15, right?'),
+      nav('Let me check that.'),
+    ])).toBe(-1);
+  });
+
+  it('identifiers completed AFTER a disclosure fail verification-before-access', () => {
+    const transcript = [
+      nav('Thank you for calling Aizer Health, this is Dana.'),
+      pat('Hi, it is Maria Alvarez. When is my next visit?'),
+      nav('Your appointment is Tuesday the 14th at 2:15 with Dr. Reyes.'),
+      nav('Let me confirm your date of birth as well please.'),
+      pat('March 2nd 1991.'),
+    ];
+    const evidence = [
+      { field: 'firstName', value: 'Maria', role: 'caller', turnIndex: 1, quote: 'it is Maria Alvarez' },
+      { field: 'lastName', value: 'Alvarez', role: 'caller', turnIndex: 1, quote: 'it is Maria Alvarez' },
+      { field: 'dob', value: 'March 2nd 1991', role: 'caller', turnIndex: 4, quote: 'March 2nd 1991' },
+    ];
+    const order = evaluateVerificationBeforeAccess(transcript, evidence);
+    // Identity WAS eventually collected …
+    expect(order.identity.complete).toBe(true);
+    expect(order.completedAtIndex).toBe(4);
+    // … but not before the disclosure at turn 2.
+    expect(order.disclosureIndex).toBe(2);
+    expect(order.satisfied).toBe(false);
+    expect(order.reason).toBe('identifiers-collected-after-disclosure');
+  });
+
+  it('identifiers completed BEFORE a disclosure satisfy verification-before-access', () => {
+    const transcript = [
+      nav('Thank you for calling Aizer Health, this is Dana.'),
+      pat('Hi, this is Maria Alvarez, date of birth March 2nd 1991.'),
+      nav('Your appointment is Tuesday the 14th at 2:15 with Dr. Reyes.'),
+    ];
+    const order = evaluateVerificationBeforeAccess(transcript, [
+      { field: 'firstName', value: 'Maria', role: 'caller', turnIndex: 1, quote: 'this is Maria Alvarez, date of birth March 2nd 1991' },
+      { field: 'lastName', value: 'Alvarez', role: 'caller', turnIndex: 1, quote: 'this is Maria Alvarez, date of birth March 2nd 1991' },
+      { field: 'dob', value: 'March 2nd 1991', role: 'caller', turnIndex: 1, quote: 'this is Maria Alvarez, date of birth March 2nd 1991' },
+    ]);
+    expect(order.satisfied).toBe(true);
+    expect(order.reason).toBe('verified-before-disclosure');
+  });
+
+  it('a call with no disclosure at all still requires complete identity', () => {
+    const transcript = [
+      nav('Thank you for calling Aizer Health, this is Dana.'),
+      pat('Hi, this is Maria.'),
+    ];
+    const order = evaluateVerificationBeforeAccess(transcript, [
+      { field: 'firstName', value: 'Maria', role: 'caller', turnIndex: 1, quote: 'this is Maria' },
+    ]);
+    expect(order.satisfied).toBe(false);
+    expect(order.reason).toBe('identity-not-verified');
+  });
+
+  it('FAILS CLOSED to review when ordering cannot be established', () => {
+    // Identity unverifiable → the order is unknowable → unresolved, which the
+    // review layer escalates rather than silently awarding the criterion.
+    const transcript = [
+      nav('Thank you for calling Aizer Health, this is Dana.'),
+      nav('Your appointment is Tuesday the 14th at 2:15.'),
+    ];
+    const criteria = OBGYN.criteria.map((c) => ({
+      id: c.id,
+      verdict: c.id === 'verify-before-access' ? 'MET' : 'NA',
+      basis: c.id === 'verify-before-access' ? 'EVIDENCE' : 'ABSENCE',
+      evidence: c.id === 'verify-before-access' ? 'Your appointment is Tuesday' : '',
+      note: '',
+      identityEvidence: [],
+    }));
+    const scored = scoreQa(criteria, [], transcript, OBGYN);
+    const item = scored.criteria.find((c) => c.id === 'verify-before-access');
+    expect(item.verdict).toBe('NOT_MET');
+    expect(item.unresolved).toBe(true);
+    expect(item.unresolvedReason).toBe('verification-order-unverified');
+    expect(assessQa(scored, transcript, { profile: OBGYN }).recommendation).toBe('needs_review');
+  });
+});
 // ── Prompt contract ──────────────────────────────────────────────────────────
 
 describe('OB/GYN grader prompt contract', () => {
@@ -628,5 +1095,219 @@ describe('OB/GYN closing rule', () => {
     const withSurvey = scoreClosing('Please stay on the line for a survey. Is there anything else I can help you with today?');
     const withoutSurvey = scoreClosing('Is there anything else I can help you with today?');
     expect(withSurvey.score).toBe(withoutSurvey.score);
+  });
+});
+
+// ── Whole-prompt contract: ADVERSARIAL ───────────────────────────────────────
+//
+// The review found the generic instructions contradicted the OB/GYN identity
+// policy. These tests inspect the COMPLETE generated prompt, not just the
+// department-specific appended block.
+
+describe('complete OB/GYN prompt has no evidence-role contradiction', () => {
+  const fullPrompt = (profile, department) => buildMessages(
+    'synthetic scenario', [{ role: 'navigator', text: 'hello there' }], department, 'SOP CONTEXT', profile,
+  ).systemInstruction;
+
+  it('never states globally that a caller line is invalid for every MET', () => {
+    const prompt = fullPrompt(OBGYN, 'obgyn');
+    // The old contradictory sentence required EVERY met quote to come from a
+    // navigator turn and "never a caller line".
+    expect(prompt).not.toMatch(/never a caller\s+line/i);
+    expect(prompt).not.toMatch(/MUST put ONE contiguous verbatim quote from a SINGLE NAVIGATOR turn/i);
+  });
+
+  it('states the navigator-only default AND the identity exception together', () => {
+    const prompt = fullPrompt(OBGYN, 'obgyn');
+    expect(prompt).toMatch(/EVIDENCE ROLE RULES/);
+    expect(prompt).toMatch(/DEFAULT — NAVIGATOR ONLY/);
+    expect(prompt).toMatch(/IDENTITY EXCEPTION/);
+    expect(prompt).toMatch(/\[verify-three\]/);
+    expect(prompt).toMatch(/\[verify-before-access\]/);
+  });
+
+  it('keeps negatives and auto-fails navigator-only in the prompt itself', () => {
+    const prompt = fullPrompt(OBGYN, 'obgyn');
+    expect(prompt).toMatch(/Every NOT_MET with basis EVIDENCE must quote a NAVIGATOR line/);
+    expect(prompt).toMatch(/Every auto-fail must quote a NAVIGATOR line/);
+  });
+
+  it('documents the structured identity evidence contract', () => {
+    const prompt = fullPrompt(OBGYN, 'obgyn');
+    expect(prompt).toMatch(/STRUCTURED IDENTITY EVIDENCE/);
+    expect(prompt).toMatch(/"firstName" \| "lastName" \| "dob"/);
+    expect(prompt).toMatch(/turnIndex/);
+    expect(prompt).toMatch(/A phone number or a home address is NEVER a date of birth/);
+    expect(prompt).toMatch(/proves NOTHING/);
+  });
+
+  it('removes the survey from generic always-required examples', () => {
+    expect(fullPrompt(OBGYN, 'obgyn')).not.toMatch(/never offered the survey/i);
+  });
+
+  it('does not claim closing criteria apply identically to every department', () => {
+    const prompt = fullPrompt(OBGYN, 'obgyn');
+    expect(prompt).not.toMatch(/closing criteria apply to EVERY call/i);
+    expect(prompt).toMatch(/CONDITIONAL and are MEANT to be/);
+  });
+
+  it('numbers the transcript turns so identity evidence can reference them', () => {
+    const { userMessage } = buildMessages(
+      'scenario',
+      [{ role: 'navigator', text: 'first line' }, { role: 'patient', text: 'second line' }],
+      'obgyn', 'SOP', OBGYN,
+    );
+    expect(userMessage).toContain('[0] Navigator: first line');
+    expect(userMessage).toContain('[1] Caller: second line');
+  });
+
+  it('Pediatrics keeps navigator-only evidence with NO identity exception', () => {
+    const prompt = fullPrompt(PEDS, 'pediatrics');
+    expect(prompt).toMatch(/DEFAULT — NAVIGATOR ONLY/);
+    expect(prompt).toMatch(/There is NO identity exception in this rubric/);
+    expect(prompt).not.toMatch(/STRUCTURED IDENTITY EVIDENCE/);
+    // …and its survey + natural-closing behavior is untouched.
+    expect(prompt).toContain('[close-survey]');
+    expect(prompt).toMatch(/Natural closings count/);
+  });
+});
+
+// ── Empathy applicability: ADVERSARIAL ───────────────────────────────────────
+
+describe('empathy applies to expressed affect, not subject matter', () => {
+  const criterionText = OBGYN.criteriaById.get('comm-empathy').text;
+  const instructions = OBGYN.graderInstructions;
+
+  it('no longer treats Women’s Health information as an automatic cue', () => {
+    expect(criterionText).not.toMatch(/sensitive pregnancy \/ Women/);
+    expect(criterionText).toMatch(/CALLER EXPRESSED/);
+  });
+
+  it('names the routine subjects that are explicitly NOT cues', () => {
+    for (const subject of ['pregnancy', 'New OB appointment', 'contraception', 'annual GYN visit', 'routine test scheduling']) {
+      expect(criterionText.includes(subject) || instructions.includes(subject), subject).toBe(true);
+    }
+    expect(instructions).toMatch(/TOPIC is NOT a cue/);
+    expect(instructions).toMatch(/I need to schedule my New OB appointment/);
+  });
+
+  it('still allows an adverse event to trigger empathy without the literal words', () => {
+    expect(criterionText).toMatch(/clearly adverse or emotionally sensitive event/);
+    expect(instructions).toMatch(/need not use the exact words/);
+    expect(instructions).toMatch(/grounded in something the caller actually said/);
+  });
+
+  it('routine pregnancy scheduling leaves empathy NA end to end', () => {
+    const transcript = [
+      { role: 'navigator', text: 'Thank you for calling Aizer Health, this is Dana. How can I help you today?' },
+      { role: 'patient', text: 'I need to schedule my New OB appointment.' },
+      { role: 'navigator', text: 'Is there anything else I can help you with today?' },
+    ];
+    const criteria = OBGYN.criteria.map((c) => ({
+      id: c.id, verdict: 'NA', basis: 'ABSENCE', evidence: '', note: '', identityEvidence: [],
+    }));
+    const scored = scoreQa(criteria, [], transcript, OBGYN);
+    // Non-core → the NA stands and empathy's 5 points leave the denominator.
+    // The two CORE communication criteria are still coerced NA → NOT_MET, so
+    // 10 of the category's 15 points remain applicable.
+    expect(scored.criteria.find((c) => c.id === 'comm-empathy').verdict).toBe('NA');
+    expect(scored.categories.find((c) => c.id === 'communication').applicablePoints).toBe(10);
+    expect(scored.criteria.find((c) => c.id === 'comm-plain').verdict).toBe('NOT_MET');
+  });
+
+  it('expressed frustration makes empathy applicable and scorable', () => {
+    const transcript = [
+      { role: 'navigator', text: 'Thank you for calling Aizer Health, this is Dana. How can I help you today?' },
+      { role: 'patient', text: 'I am frustrated because nobody called me back.' },
+      { role: 'navigator', text: 'I am sorry you are dealing with that, I understand why that would be frustrating.' },
+    ];
+    const criteria = OBGYN.criteria.map((c) => ({
+      id: c.id,
+      verdict: c.id === 'comm-empathy' ? 'MET' : 'NA',
+      basis: c.id === 'comm-empathy' ? 'EVIDENCE' : 'ABSENCE',
+      evidence: c.id === 'comm-empathy' ? 'I am sorry you are dealing with that' : '',
+      note: '', identityEvidence: [],
+    }));
+    const scored = scoreQa(criteria, [], transcript, OBGYN);
+    expect(scored.criteria.find((c) => c.id === 'comm-empathy').verdict).toBe('MET');
+  });
+});
+
+// ── Repair set follows the ACTIVE profile ────────────────────────────────────
+
+describe('repair layer obeys the active profile repairable set', () => {
+  it('honors a profile whose repairable set differs from the global default', () => {
+    // Same criterion ids, but only `doc-te` is repairable in this profile.
+    const narrowed = { ...OBGYN, repairableCriteria: new Set(['doc-te']) };
+    const transcript = [
+      { role: 'navigator', text: 'I will send this directly to our MFM coordinator.' },
+    ];
+    const verdicts = OBGYN.criteria.map((c) => ({
+      id: c.id,
+      verdict: ['know-rule', 'doc-te'].includes(c.id) ? 'NOT_MET' : 'NA',
+      basis: 'ABSENCE',
+      evidence: '',
+      note: ['know-rule', 'doc-te'].includes(c.id) ? 'The navigator did not name Rebecca Wood.' : '',
+      identityEvidence: [],
+    }));
+    const context = {
+      department: 'obgyn',
+      metadata: { workflowType: 'mfm_owner', ruleIds: ['mfm_routing'] },
+      profile: narrowed,
+    };
+    const repaired = repairQaVerdictsForScenario({ criteria: verdicts, autoFails: [] }, transcript, context);
+    const repairedIds = repaired.repairs.map((r) => r.criterionId);
+    // `know-rule` IS repairable in the default (Pediatrics) set but not here.
+    expect(repairedIds).not.toContain('know-rule');
+    for (const id of repairedIds) expect(narrowed.repairableCriteria.has(id)).toBe(true);
+  });
+});
+
+// ── Pediatrics invariance ────────────────────────────────────────────────────
+
+describe('Pediatrics behavior is unchanged by the OB/GYN work', () => {
+  it('keeps its rubric version, totals, closing shape, and survey criterion', () => {
+    expect(PEDS.rubricVersion).toBe(QA_RUBRIC_VERSION);
+    expect(PEDS.totalPoints).toBe(100);
+    expect(PEDS.passThreshold).toBe(85);
+    const closing = PEDS.rubric.find((c) => c.id === 'closing');
+    expect(closing.criteria.map((c) => c.id)).toEqual(['close-survey', 'close-anything-thanks']);
+    expect(closing.criteria.reduce((s, c) => s + c.points, 0)).toBe(5);
+  });
+
+  it('keeps empathy and narration always-required for Pediatrics', () => {
+    expect(PEDS.criteriaById.get('comm-empathy').core).toBe(true);
+    expect(PEDS.criteriaById.get('control-narrate').core).toBe(true);
+  });
+
+  it('has no criterion opting into the identity evidence policy', () => {
+    expect(PEDS.identityVerificationCriteria).toEqual([]);
+  });
+
+  it('scores a Pediatrics response with no structured identity evidence at all', () => {
+    const transcript = [
+      { role: 'navigator', text: 'Good morning, thank you for calling Aizer Health, this is Dana.' },
+    ];
+    const criteria = PEDS.criteria.map((c) => ({
+      id: c.id, verdict: 'NA', basis: 'ABSENCE', evidence: '', note: '',
+    }));
+    expect(() => scoreQa(criteria, [], transcript, PEDS)).not.toThrow();
+  });
+});
+
+// ── Point totals are locked ──────────────────────────────────────────────────
+
+describe('point totals are locked', () => {
+  it('OB/GYN totals exactly 100 and closing exactly 5', () => {
+    expect(OBGYN.totalPoints).toBe(100);
+    expect(OBGYN.rubric.find((c) => c.id === 'closing').criteria
+      .reduce((s, c) => s + c.points, 0)).toBe(5);
+  });
+
+  it('every configured profile totals exactly 100 at the same 85 pass mark', () => {
+    for (const profile of Object.values(QA_RUBRIC_PROFILES)) {
+      expect(profile.totalPoints, profile.department).toBe(100);
+      expect(profile.passThreshold, profile.department).toBe(85);
+    }
   });
 });

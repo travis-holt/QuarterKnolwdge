@@ -137,6 +137,24 @@ const RESPONSE_SCHEMA = {
           basis:    { type: 'STRING', enum: ['EVIDENCE', 'ABSENCE'] },
           evidence: { type: 'STRING' },
           note:     { type: 'STRING' },
+          // Structured, transcript-grounded identifier evidence. Required in
+          // practice only for criteria whose profile declares the identity
+          // policy; every other criterion sends an empty array. Optional in the
+          // schema so departments without an identity policy are unaffected.
+          identityEvidence: {
+            type: 'ARRAY',
+            items: {
+              type: 'OBJECT',
+              properties: {
+                field:     { type: 'STRING', enum: ['firstName', 'lastName', 'dob'] },
+                value:     { type: 'STRING' },
+                role:      { type: 'STRING', enum: ['navigator', 'caller'] },
+                turnIndex: { type: 'INTEGER' },
+                quote:     { type: 'STRING' },
+              },
+              required: ['field', 'value', 'role', 'turnIndex', 'quote'],
+            },
+          },
         },
         required: ['id', 'verdict', 'basis', 'evidence', 'note'],
       },
@@ -159,11 +177,71 @@ const RESPONSE_SCHEMA = {
 };
 
 /**
+ * Render the EVIDENCE ROLE RULES block from the resolved profile.
+ *
+ * This exists because a single global "never quote a caller line" sentence
+ * directly contradicts a department policy that lets a caller volunteer her own
+ * identifiers. The rules are therefore derived from the profile: navigator-only
+ * is the default for every criterion, and the narrow identity exception is
+ * spelled out ONLY when the active profile actually declares it.
+ */
+export function evidenceRoleRules(profile) {
+  const identityIds = profile.identityVerificationCriteria ?? [];
+  const lines = [
+    'EVIDENCE ROLE RULES (which speaker may be quoted):',
+    '- DEFAULT — NAVIGATOR ONLY: for every criterion except those listed below, a MET quote must'
+      + ' come from a SINGLE NAVIGATOR turn. A caller line never earns a navigator-performance'
+      + ' criterion.',
+    '- Every NOT_MET with basis EVIDENCE must quote a NAVIGATOR line. A caller line can never'
+      + ' substantiate an accusation that the navigator did something wrong or unsafe.',
+    '- Every auto-fail must quote a NAVIGATOR line. Auto-fails accuse the navigator of an explicit'
+      + ' unsafe statement, so caller wording is never sufficient.',
+  ];
+
+  if (identityIds.length === 0) {
+    lines.push('- There is NO identity exception in this rubric: identity criteria also follow the'
+      + ' navigator-only default above.');
+    return lines.join('\n');
+  }
+
+  lines.push(
+    `- IDENTITY EXCEPTION — ${identityIds.map((id) => `[${id}]`).join(' and ')} ONLY: identity is`
+      + ' frequently established BY THE CALLER ("Hi, this is Maria Alvarez, date of birth March 2nd'
+      + ' 1991"). For these criteria you MAY cite caller turns as well as navigator turns, and the'
+      + ' navigator loses nothing for not re-asking for something the caller already volunteered.'
+      + ' Identifiers may be collected across several turns.',
+    '- The identity exception is limited to establishing WHICH identifiers were collected and'
+      + ' WHETHER they were collected before protected information was shared. It never allows'
+      + ' caller wording to earn any other criterion.',
+    '',
+    'STRUCTURED IDENTITY EVIDENCE (required for the identity criteria above):',
+    `For ${identityIds.map((id) => `[${id}]`).join(' and ')} you MUST also fill the`
+      + ' "identityEvidence" array with ONE entry per identifier you claim was collected:',
+    '  { "field": "firstName" | "lastName" | "dob", "value": "<the identifier itself>",',
+    '    "role": "caller" | "navigator", "turnIndex": <the [n] index of the turn>,',
+    '    "quote": "<verbatim contiguous quote from THAT turn containing the value>" }',
+    'Rules for this array (the server re-checks every one of them, so a guess will be rejected):',
+    '  * "value" must be the identifier ALONE — the actual first name, the actual last name, or the'
+      + ' actual date of birth. Not a label, not a question, not a sentence.',
+    '  * "quote" must appear verbatim in the turn you name in "turnIndex", and must CONTAIN "value".',
+    '  * "turnIndex" is the number shown in square brackets at the start of each transcript line.',
+    '  * A question the caller never answered ("What is your date of birth?") proves NOTHING. Only'
+      + ' quote a turn where the identifier was actually STATED.',
+    '  * A phone number or a home address is NEVER a date of birth. Do not submit one as "dob".',
+    '  * The first name and the last name must be DIFFERENT values.',
+    '  * If an identifier was never collected, OMIT it from the array — do not invent it.',
+    'If the array does not independently prove all three identifiers, the identity criteria lose'
+      + ' credit regardless of the verdict you return. Do not claim MET and leave this array empty.',
+  );
+  return lines.join('\n');
+}
+
+/**
  * Build the grader prompt for ONE resolved department rubric profile. The
- * criteria enumerated in the prompt, the auto-fail list, the department grading
- * rules, and the criterion-count assertion all come from that same profile, so
- * the model can never be asked about a rubric different from the one that will
- * score its verdicts.
+ * criteria enumerated in the prompt, the auto-fail list, the evidence role
+ * rules, the department grading rules, and the criterion-count assertion all
+ * come from that same profile, so the model can never be asked about a rubric
+ * different from the one that will score its verdicts.
  */
 export function buildMessages(
   scenario, transcript, department, sopContext = sopContextFor(department),
@@ -171,9 +249,13 @@ export function buildMessages(
 ) {
   // Both 'patient' and 'caller' are caller-side roles; only 'navigator' is the
   // navigator. Never serialize a caller-side turn as "Navigator".
+  // Turn indices are part of the prompt contract: structured identity evidence
+  // references them, and the server re-checks the referenced turn. The index is
+  // the position in the BOUNDED transcript the server will grade, so a model
+  // index always maps to the same turn the server verifies against.
   const callText = transcript
     .slice(0, MAX_TURNS)
-    .map((t) => `${t.role === 'navigator' ? 'Navigator' : 'Caller'}: ${String(t.text ?? '').slice(0, MAX_TURN_CHARS)}`)
+    .map((t, index) => `[${index}] ${t.role === 'navigator' ? 'Navigator' : 'Caller'}: ${String(t.text ?? '').slice(0, MAX_TURN_CHARS)}`)
     .join('\n');
 
   const rubricText = profile.rubric
@@ -186,26 +268,29 @@ export function buildMessages(
 against a fixed quality rubric. You do NOT assign scores. For EACH rubric criterion you return \
 exactly one verdict AND one basis:
 
-  MET      (basis "EVIDENCE")  — the transcript clearly shows the NAVIGATOR doing the behavior. \
-You MUST put ONE contiguous verbatim quote from a SINGLE NAVIGATOR turn in "evidence" — copied \
-character-for-character, no role label, no ellipses, no stitching lines together, never a caller \
-line. For behaviors shown across the whole call, quote the single best navigator example line.
+  MET      (basis "EVIDENCE")  — the transcript clearly shows the behavior. You MUST put ONE \
+contiguous verbatim quote in "evidence" — copied character-for-character, no role label, no \
+ellipses, no stitching lines together. For behaviors shown across the whole call, quote the \
+single best example line. WHOSE line may be quoted is governed by the EVIDENCE ROLE RULES below.
   NOT_MET  (basis "EVIDENCE") — the navigator did the WRONG or UNSAFE thing and it is OBSERVABLE. \
 Use this whenever the miss is an observed action: wrong routing destination, clinical/medication \
 advice, an unsafe promise, sarcasm/profanity, an incorrect scheduling instruction, reading or \
 interpreting a result, or sharing information before verification. You MUST quote the offending \
 NAVIGATOR line verbatim in "evidence" and name the rule broken in "note".
   NOT_MET  (basis "ABSENCE")  — the navigator simply NEVER did the expected behavior (e.g. never \
-stated their name, never offered the survey, never confirmed callback info, never gathered a \
-required detail). Put the reason in "note" and leave "evidence" EMPTY — there is nothing to quote.
-  NA       (basis "ABSENCE")  — the criterion genuinely cannot apply to this scenario (e.g., no \
-appointment was needed, so no recap was possible). Leave "evidence" EMPTY. Use sparingly; \
-greeting, verification, tone, listening, and closing criteria apply to EVERY call.
+stated their own name, never confirmed callback info, never gathered a required detail). Put the \
+reason in "note" and leave "evidence" EMPTY — there is nothing to quote.
+  NA       (basis "ABSENCE")  — the criterion genuinely cannot apply to this call. Leave \
+"evidence" EMPTY. Several criteria in this rubric are explicitly CONDITIONAL and are MEANT to be \
+NA when their trigger did not occur — read each criterion's own text and follow it. Do not assume \
+a criterion applies to every call unless its text says so.
 
-BASIS RULES (strict — a mismatch is rejected): MET always uses EVIDENCE with a real navigator \
-quote. An OBSERVED wrong/unsafe behavior is NOT_MET with basis EVIDENCE and a quoted navigator \
-line — never call an observed violation an absence. A behavior that never happened is NOT_MET (or \
-NA) with basis ABSENCE and empty evidence. Never put substantive evidence on an ABSENCE.
+BASIS RULES (strict — a mismatch is rejected): MET always uses EVIDENCE with a real quote. An \
+OBSERVED wrong/unsafe behavior is NOT_MET with basis EVIDENCE and a quoted NAVIGATOR line — never \
+call an observed violation an absence. A behavior that never happened is NOT_MET (or NA) with \
+basis ABSENCE and empty evidence. Never put substantive evidence on an ABSENCE.
+
+${evidenceRoleRules(profile)}
 
 Grading rules — this is a hard test, apply them strictly:
 - Judge only CALLER-OBSERVABLE communication in the transcript. Do not infer that a silent internal action happened, and do not penalize or review solely because an internal click, label, queue, channel, or staff assignment was not spoken.
@@ -546,8 +631,16 @@ export async function gradeCallQaTranscript({ transcript: rawTranscript, scenari
   const repairContext = { ...scenarioContext.repairContext, profile };
   const repaired = scenarioContext.verified
     ? repairQaVerdictsForScenario(validated, boundedTranscript, repairContext)
-    : { criteria: validated.criteria, autoFails: validated.autoFails, repairs: [], reviewReasons: [] };
-  const scored = scoreQa(repaired.criteria, repaired.autoFails, boundedTranscript, profile);
+    : {
+      criteria: validated.criteria, autoFails: validated.autoFails, repairs: [], reviewReasons: [],
+      // Even when repairs are disabled the binding must reach scoring intact.
+      profileBinding: validated.profileBinding,
+    };
+  // The binding is re-checked here: validation, repair and scoring must provably
+  // be the same rubric profile, not merely the same criterion ids.
+  const scored = scoreQa(
+    repaired.criteria, repaired.autoFails, boundedTranscript, profile, repaired.profileBinding,
+  );
   const deterministicFindings = evaluateQaDeterministicFindings(
     scored.criteria, boundedTranscript, repairContext,
   );

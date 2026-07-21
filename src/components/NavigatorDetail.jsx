@@ -978,7 +978,21 @@ export default function NavigatorDetail({ rows, name, deptName, dept, deptMatrix
                                 )}
                               </div>
                             )}
-                            {session.qa?.domainScores && (
+                            {/* An attempt graded under a rubric version this build no
+                                longer recognises cannot be projected. Say so plainly
+                                rather than reinterpreting it under a current rubric —
+                                that would show scores the navigator never received. */}
+                            {session.qa?.scoringUnavailable ? (
+                              <div className="interview-log__grade-section">
+                                <p className="interview-log__grade-heading">QA-only domain signal</p>
+                                <p className="interview-log__provenance-warn">
+                                  Unavailable — this attempt was graded with rubric version{' '}
+                                  <strong>{session.qa.recordedRubricVersion ?? 'unknown'}</strong>, which this
+                                  version of the app cannot interpret. The recorded score and criteria above are
+                                  unchanged; only the per-domain projection is withheld.
+                                </p>
+                              </div>
+                            ) : session.qa?.domainScores && (
                               <div className="interview-log__grade-section">
                                 <p className="interview-log__grade-heading">QA-only domain signal</p>
                                 <ul>

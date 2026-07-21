@@ -138,13 +138,91 @@ Both verification criteria are safety-critical, so the review layer refuses to c
 confident pass and routes it to a supervisor. Numeric pass + non-final `needs_review` is the
 designed behavior, not a gap — but it is now written down and asserted.
 
+### Correction pass, same day (independent review of PR #41)
+
+An independent review found that several of the guarantees above were asserted but not
+enforced. Ten blockers, all fixed on the same branch:
+
+1. **The grader prompt contradicted its own identity policy.** The generic instructions
+   still told the model every MET must quote a navigator turn and "never a caller line" —
+   directly opposite to letting a caller volunteer her identifiers. Evidence ROLE rules are
+   now RENDERED FROM THE PROFILE (`evidenceRoleRules`): navigator-only default,
+   navigator-only for negatives and auto-fails, and the identity exception named explicitly
+   only for the criteria the active profile declares. A profile with no identity policy is
+   told so. The generic "never offered the survey" example and the claim that closing
+   criteria apply identically to every call are gone; conditional criteria are described as
+   legitimately NA. Pediatrics keeps its survey and natural-closing guidance verbatim.
+2. **The prompt version had not moved.** `CALL_QA_PROMPT_VERSION` is now
+   **`call-qa-grader-v4`**, with `SUPPORTED_CALL_QA_PROMPT_VERSIONS` listing v3 and v4 so
+   stored v3 records stay interpretable as a separate population. Fixtures, calibration
+   expectations, pilot-smoke, automation provenance, tests and docs updated. No stored
+   record was rewritten.
+3. **Identity verification did not verify identity.** The old check confirmed only that a
+   two-word quote appeared in some turn — it could not tell a first name from a phone
+   number and could not aggregate across turns. Replaced with a structured contract in the
+   new `api/_qa-identity-verification.js`: the grader submits
+   `{ field, value, role, turnIndex, quote }` per identifier against `[n]`-indexed
+   transcript turns, and the SERVER re-derives every claim (turn exists, role matches,
+   quote verbatim in that turn, value inside the quote, value shaped like its identifier).
+   `extractDateOfBirth` requires a real date with a 4-digit year and explicitly rejects
+   phone- and address-shaped values. All three identifiers are required and must be
+   distinct, so a lone first or last name can never satisfy full-name verification. A model
+   Boolean is never trusted.
+4. **Ordering was not actually chronological.** One centralized detector
+   (`classifyProtectedDisclosure`) now covers appointments, prior visits, chart contents,
+   orders, provider notes, lab/imaging results, prescriptions, balances and patient-specific
+   clinical details, while explicitly excluding generic wording and verification questions.
+   `verify-before-access` is satisfied only when identity completes STRICTLY BEFORE the
+   first disclosure. When identity cannot be verified the order is unknowable, so the
+   criterion is withheld and marked `verification-order-unverified` — fail closed to
+   supervisor review rather than a silent award.
+5. **The validate/score binding was cosmetic.** The old version stamp was dropped before
+   scoring and `scoreQa` only rejected unknown ids. Profiles now carry a deterministic
+   `signature` over department, version, threshold, category shape, and every criterion's
+   points, `core`, tags and evidence policy plus every auto-fail — so **criterion IDs are
+   explicitly not identity**. `validateQaResponse` emits `profileBinding`, the repair layer
+   throws on a mismatch and passes it through untouched, and `scoreQa` re-checks it and
+   enforces exact criterion-set integrity (no unknown, missing, duplicate or extra ids).
+6. **Unknown historical versions could become Pediatrics.** Three cases are now separate:
+   no metadata at all → historical shared rubric (the only legacy fallback); a known
+   version → that profile (a disagreeing recorded department is corrupt → null); a recorded
+   version we do not know → `null`, never a current profile. An unknown version yields an
+   explicit `scoringUnavailable` summary, a "rubric version unavailable" panel in the
+   supervisor UI (no throw, recorded score still shown), shadow ineligibility, and
+   calibration rejection.
+7. **A global repair set was still consulted.** The OB/GYN branch read the module-level
+   `REPAIRABLE_CRITERIA`; it now uses the resolved profile's set. The remaining global
+   exports are labelled legacy-compatibility only and are absent from the scored path; two
+   dead `rubricCriteria` imports were removed.
+8. **Pilot smoke could hide the closing change.** It mapped an old
+   `close-anything-thanks` / `close-survey` verdict straight onto `close-offer-help` —
+   non-equivalent criteria, since a polite goodbye passed the old rule and must fail the
+   new one. Cross-department retargeting now THROWS, and there are real per-department
+   fixtures (`obgyn-example-{pass,fail,review}.json`, `peds-example-fail.json`) whose
+   transcripts genuinely contain or genuinely lack an offer of further help.
+9. **Empathy applicability was too broad.** "Sensitive pregnancy / Women's Health
+   information" as a standalone trigger is removed. Empathy now keys on what the CALLER
+   EXPRESSED, or a clearly adverse/emotionally sensitive event; pregnancy, a New OB
+   appointment, contraception, an annual GYN visit and routine test scheduling are named as
+   routine subjects that leave it NA.
+10. **Tests were self-confirming.** Added adversarial coverage that tries to break the
+    implementation — and two of these caught real bugs during development (a DOB pattern
+    that rejected "March 2, 1991", and a mis-targeted turn assertion).
+
+**Point weights were deliberately NOT changed.** Missing verification can still produce a
+numeric score above 85; safety-critical misses still prevent a confident pass and route to
+`needs_review`; a verified HIPAA auto-fail still zeroes the score. Re-weighting is a product
+decision and is explicitly out of scope for this correction.
+
 ### Verification
 
-`npm test` 1735 → **1822** across 77 → 78 files (all green). Build clean including the
-private-runtime bundle scan; 12/12 safe Playwright E2E; Firestore Rules 76/76; encoding guard
-clean; `qa:pilot-smoke` `PILOT_SMOKE_VERIFIED`. `qa:calibrate` and `qa:coverage` still report
+`npm test` 1735 → **1923** across 77 → 78 files (all green). Build clean including the
+private-runtime bundle scan; 12/12 safe Playwright E2E; encoding guard clean;
+`qa:pilot-smoke` `PILOT_SMOKE_VERIFIED`. `qa:calibrate` and `qa:coverage` still report
 `INSUFFICIENT_DATA` with 0 human-pilot fixtures — **that is the correct, expected state, not a
-passing calibration result.**
+passing calibration result.** Firestore Rules could not be run locally (no JDK in this
+environment); the branch does not modify `firestore.rules` or either rules suite, and CI runs
+them.
 
 ## 2026-07-21 — PR #40 MERGED to `main` (`01a7f27`) and auto-deployed
 

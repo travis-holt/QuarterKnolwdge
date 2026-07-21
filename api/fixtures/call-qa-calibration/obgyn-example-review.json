@@ -1,12 +1,12 @@
 {
   "formatVersion": 1,
-  "caseId": "cal-peds-refill-example-pass",
+  "caseId": "cal-obgyn-urgent-example-review",
   "source": "synthetic-example",
   "sanitized": true,
-  "department": "pediatrics",
-  "scenarioId": "synthetic-peds-refill-01",
-  "workflowType": "prescription_refill",
-  "difficulty": "medium",
+  "department": "obgyn",
+  "scenarioId": "synthetic-obgyn-mfm-01",
+  "workflowType": "mfm_routing",
+  "difficulty": "hard",
   "capture": {
     "captureStatus": "captured",
     "captureComplete": true,
@@ -14,29 +14,29 @@
     "liveModel": "gemini-live-example",
     "gradingStatus": "graded",
     "warnings": [],
-    "navigatorTurnCount": 3,
-    "callerTurnCount": 2
+    "navigatorTurnCount": 4,
+    "callerTurnCount": 1
   },
   "transcript": [
     {
-      "role": "patient",
-      "text": "I need help with a refill."
-    },
-    {
       "role": "navigator",
-      "text": "I can help. What medication and pharmacy should the team use?"
+      "text": "Good morning, thank you for calling Aizer Women's Health, this is Dana. How can I help you today?"
     },
     {
       "role": "patient",
-      "text": "The allergy medicine and the usual pharmacy."
+      "text": "Hi, this is Alina Novak, date of birth July 9th 1994. I am worried about some cramping."
     },
     {
       "role": "navigator",
-      "text": "I will route the request to the Pediatrics refill team and cannot promise approval."
+      "text": "I am sorry you are dealing with that. Let me get the details for our clinical team."
     },
     {
       "role": "navigator",
-      "text": "Is there anything else I can help with today?"
+      "text": "I am sending this to our OB clinical team so they can call you back."
+    },
+    {
+      "role": "navigator",
+      "text": "Is there anything else I can help you with today?"
     }
   ],
   "humanReview": {
@@ -51,9 +51,9 @@
           "open-org": "MET",
           "verify-three": "MET",
           "verify-before-access": "MET",
-          "control-narrate": "MET",
+          "control-narrate": "NA",
           "control-guide": "MET",
-          "doc-reason": "MET",
+          "doc-reason": "NA",
           "doc-te": "MET",
           "comm-plain": "MET",
           "comm-professional": "MET",
@@ -61,14 +61,13 @@
           "listen-ack": "MET",
           "listen-gather": "MET",
           "know-rule": "MET",
-          "know-details": "MET",
-          "sched-flow": "MET",
-          "sched-recap": "MET",
-          "close-survey": "MET",
-          "close-anything-thanks": "MET"
+          "know-details": "NA",
+          "sched-flow": "NA",
+          "sched-recap": "NA",
+          "close-offer-help": "MET"
         },
         "autoFails": [],
-        "recommendation": "pass"
+        "recommendation": "needs_review"
       },
       {
         "reviewerId": "reviewer-b",
@@ -78,9 +77,9 @@
           "open-org": "MET",
           "verify-three": "MET",
           "verify-before-access": "MET",
-          "control-narrate": "MET",
+          "control-narrate": "NA",
           "control-guide": "MET",
-          "doc-reason": "MET",
+          "doc-reason": "NA",
           "doc-te": "MET",
           "comm-plain": "MET",
           "comm-professional": "MET",
@@ -88,14 +87,13 @@
           "listen-ack": "MET",
           "listen-gather": "MET",
           "know-rule": "MET",
-          "know-details": "MET",
-          "sched-flow": "MET",
-          "sched-recap": "MET",
-          "close-survey": "MET",
-          "close-anything-thanks": "MET"
+          "know-details": "NA",
+          "sched-flow": "NA",
+          "sched-recap": "NA",
+          "close-offer-help": "MET"
         },
         "autoFails": [],
-        "recommendation": "pass"
+        "recommendation": "needs_review"
       }
     ],
     "adjudicated": {
@@ -105,9 +103,9 @@
         "open-org": "MET",
         "verify-three": "MET",
         "verify-before-access": "MET",
-        "control-narrate": "MET",
+        "control-narrate": "NA",
         "control-guide": "MET",
-        "doc-reason": "MET",
+        "doc-reason": "NA",
         "doc-te": "MET",
         "comm-plain": "MET",
         "comm-professional": "MET",
@@ -115,26 +113,25 @@
         "listen-ack": "MET",
         "listen-gather": "MET",
         "know-rule": "MET",
-        "know-details": "MET",
-        "sched-flow": "MET",
-        "sched-recap": "MET",
-        "close-survey": "MET",
-        "close-anything-thanks": "MET"
+        "know-details": "NA",
+        "sched-flow": "NA",
+        "sched-recap": "NA",
+        "close-offer-help": "MET"
       },
       "autoFails": [],
-      "recommendation": "pass",
-      "finalPass": true,
-      "reviewRequired": false
+      "recommendation": "needs_review",
+      "finalPass": null,
+      "reviewRequired": true
     }
   },
   "modelRun": {
     "model": "gemini-2.5-flash",
-    "rubricVersion": "qa-rubric-v2",
+    "rubricVersion": "qa-rubric-obgyn-v1",
     "promptVersion": "call-qa-grader-v4",
     "scenarioVersion": "synthetic-rehearsal-v1",
-    "recommendation": "pass",
+    "recommendation": "needs_review",
     "pass": true,
-    "score": 92,
+    "score": 88,
     "criteria": [
       {
         "id": "open-greet",
@@ -158,7 +155,7 @@
       },
       {
         "id": "control-narrate",
-        "verdict": "MET"
+        "verdict": "NA"
       },
       {
         "id": "control-guide",
@@ -166,7 +163,7 @@
       },
       {
         "id": "doc-reason",
-        "verdict": "MET"
+        "verdict": "NA"
       },
       {
         "id": "doc-te",
@@ -198,22 +195,18 @@
       },
       {
         "id": "know-details",
-        "verdict": "MET"
+        "verdict": "NA"
       },
       {
         "id": "sched-flow",
-        "verdict": "MET"
+        "verdict": "NA"
       },
       {
         "id": "sched-recap",
-        "verdict": "MET"
+        "verdict": "NA"
       },
       {
-        "id": "close-survey",
-        "verdict": "MET"
-      },
-      {
-        "id": "close-anything-thanks",
+        "id": "close-offer-help",
         "verdict": "MET"
       }
     ],

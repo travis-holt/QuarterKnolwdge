@@ -9,7 +9,10 @@
 > those tests fails after your change, re-read this document before "fixing" the test.
 >
 > Last updated: 2026-07-21 (department-based Call QA rubric profiles; OB/GYN is the first
-> dedicated department profile).
+> dedicated department profile. Corrected the same day after independent review: real
+> structured identity verification, a centralized protected-disclosure detector, an
+> enforced validate→repair→score profile binding, and fail-closed handling of unknown
+> historical rubric versions. Grader prompt version `call-qa-grader-v4`.)
 
 ## 0g. Department Call QA rubric profiles (2026-07-21)
 
@@ -32,11 +35,20 @@ the SCORED Call QA test.
    `UnsupportedQaDepartmentError`; the scored endpoint returns 422 and never calls the
    grader. A future department must never silently inherit another department's rubric,
    and there is no `?? 'pediatrics'` default anywhere in the scored path.
-4. **Validation and scoring can never use different rubrics.** `validateQaResponse`
-   stamps the validating profile's `rubricVersion` onto its output, and `scoreQa` THROWS
-   if it is handed a verdict for a criterion its profile does not define. A
-   Pediatrics-shaped model response is rejected as malformed under the OB/GYN profile
-   (triggering the existing retry) rather than being partially scored.
+4. **Validation, repair and scoring are BOUND to one profile.** `validateQaResponse`
+   emits an immutable `profileBinding` = `{ department, rubricVersion, signature }`.
+   The signature is a deterministic fingerprint over department, version, pass
+   threshold, category shape, and every criterion's points, `core` applicability,
+   category, domain/competency tags, and evidence policy, plus every auto-fail's
+   identity and tags, plus the safety-critical and repairable sets. **Criterion IDs
+   alone are explicitly NOT profile identity** — two profiles with identical IDs but
+   different weights or applicability have different signatures.
+   The binding must survive the repair stage unchanged (`repairQaVerdictsForScenario`
+   throws on a mismatch and returns it untouched), and `scoreQa` re-checks it before
+   scoring anything. `scoreQa` additionally enforces EXACT criterion-set integrity —
+   no unknown IDs, no missing IDs, no duplicates, no extras. A Pediatrics-shaped model
+   response is rejected as malformed under the OB/GYN profile (triggering the existing
+   retry) rather than being partially scored.
 5. **Every profile totals exactly 100 points and passes at 85.** Adding or re-shaping a
    department may redistribute criteria WITHIN the 100 points but may not change the total
    or the pass threshold. Enforced across every configured profile by
@@ -47,48 +59,98 @@ the SCORED Call QA test.
    exception is `identity-verification` (see §0h). Auto-fails may NEVER carry an evidence
    policy — an auto-fail accuses the navigator of an explicit unsafe statement and always
    requires a navigator quote.
-8. **Stored results are read under the rubric that graded them.** Every newly graded
-   attempt records `qa.gradingMetadata.rubricDepartment` + `rubricVersion`.
-   `profileForGradedAttempt()` resolves a stored result by its recorded version first, and
-   returns `null` (never a guess) for an unrecognised version. QA domain/competency
-   summaries, the shadow-automation completeness check, and the supervisor UI all use it,
-   so a historical attempt is never reinterpreted under a newer profile. **No Firestore
-   migration is performed and no historical grade is rewritten.**
+8. **Stored results are read under the rubric that graded them, and an UNKNOWN
+   version is never silently reinterpreted.** Every newly graded attempt records
+   `qa.gradingMetadata.rubricDepartment` + `rubricVersion`. Three cases are strictly
+   distinguished:
+   - **No rubric metadata at all** (genuinely pre-versioning legacy) → the historical
+     shared rubric, because that is what those records were written under. This is the
+     ONLY legacy fallback.
+   - **A recorded version we know** → that profile. A recorded department that
+     disagrees with the version's own department is corrupt metadata → `null`.
+   - **A recorded version we do NOT know** → `profileForGradedAttempt()` returns
+     `null` and `resolveScoringProfile()` returns `null`. It must never become
+     Pediatrics or any other current profile.
+
+   For an unknown recorded version: `qaDomainScoreSummary()` returns an explicit
+   `{ domainScores: null, competencyScores: null, scoringUnavailable: true,
+   scoringUnavailableReason: 'unknown-rubric-version', recordedRubricVersion }`; the
+   supervisor UI renders "Unavailable — graded with rubric version X" instead of a
+   fabricated projection and does not throw; shadow automation stays ineligible
+   (`incomplete-rubric-result`); and calibration rejects it as an unsupported rubric
+   version. The recorded score and criteria remain visible and unchanged — only the
+   derived per-domain projection is withheld. **No Firestore migration is performed and
+   no historical grade is rewritten.**
 9. **Calibration is department-aware.** A calibration fixture is validated against its own
    department's profile; unknown-for-this-department criterion/auto-fail ids fail
    validation. Rubric drift is measured WITHIN a department
    (`mixedRubricVersionWithinADepartment`) — two departments legitimately reporting
    different rubric versions is department identity, not a mixed population.
 
-## 0h. The `identity-verification` evidence policy (2026-07-21)
+## 0h. Structured identity verification (2026-07-21, corrected)
 
-A narrow, explicitly named exception to the navigator-only evidence rule of §0.1–0.3.
+A narrow, explicitly named exception to the navigator-only evidence rule of §0.1–0.3,
+implemented in [`api/_qa-identity-verification.js`](../api/_qa-identity-verification.js).
 
-1. **Why it exists.** A caller frequently volunteers her own full name and date of birth in
-   one sentence, or identity is established across several chronological turns. The proof
-   of *which identifiers were collected* then legitimately lives in a CALLER turn, and a
-   navigator-only gate would fail a navigator who did nothing wrong.
-2. **It may establish only two things:** which identifiers were collected, and whether they
-   were collected before protected disclosure.
-3. **It is opt-in per criterion.** Only criteria declaring
+> **Correction note.** The first implementation checked only that a two-word quote
+> appeared somewhere in one turn. That proved nothing: it could not distinguish a first
+> name from a last name from a phone number, and it could not aggregate identifiers across
+> turns. A grader could mark `verify-three` MET quoting "What is your date of birth?" — a
+> question the caller never answered — and the server agreed. The rules below replace it.
+
+1. **Why the exception exists.** A caller frequently volunteers her own full name and date
+   of birth in one sentence, or identity is established across several chronological turns.
+   The proof of *which identifiers were collected* then legitimately lives in a CALLER turn,
+   and a navigator-only gate would fail a navigator who did nothing wrong.
+2. **The grader must submit STRUCTURED evidence, not prose.** For each identity criterion
+   the response carries an `identityEvidence` array of
+   `{ field: 'firstName'|'lastName'|'dob', value, role, turnIndex, quote }`. The prompt
+   numbers every transcript turn `[n]` so the index is unambiguous.
+3. **The server re-derives every claim; a model Boolean is never trusted.** For each claim:
+   the field is known; the declared turn exists and its role matches; the quote appears
+   verbatim (under the shared normalization) in THAT turn; the claimed value appears inside
+   the quote; and the value is shaped like the identifier it claims to be. Any failure
+   rejects that claim with a recorded reason.
+4. **A date of birth must parse as a real date.** `extractDateOfBirth` accepts month-name
+   and full-numeric forms with an explicit 4-digit year, and explicitly rejects phone-shaped
+   and address-shaped values, bare years, and bare month/day. **A phone number or a home
+   address can therefore never satisfy DOB.**
+5. **All three identifiers are required, and they must be distinct.** A first name alone or
+   a last name alone never satisfies full-name verification, and the same single value
+   cannot be claimed as both first and last name.
+6. **Identifiers may be spread across turns.** Each field keeps its EARLIEST verified turn;
+   `completedAtIndex` is the last turn needed to complete the set. A single caller sentence
+   may satisfy all three.
+7. **It is opt-in per criterion.** Only criteria declaring
    `evidencePolicy: 'identity-verification'` may use it — currently OB/GYN `verify-three`
    and `verify-before-access`. Caller wording can therefore never earn an unrelated
    navigator-performance criterion.
-4. **MET credit only.** An evidence-based NEGATIVE remains navigator-only, so a caller's
+8. **MET credit only.** An evidence-based NEGATIVE remains navigator-only, so a caller's
    words can never substantiate an accusation against the navigator; an unverifiable
    negative stays `unresolved` and forces `needs_review` exactly as before.
-5. **Auto-fails are never covered**, including `af-hipaa` — the disclosing line is a
+9. **Auto-fails are never covered**, including `af-hipaa` — the disclosing line is a
    navigator line and must be quoted as one.
-6. **Transcript order is preserved.** A criterion declaring
-   `evidenceOrder: 'before-protected-disclosure'` only accepts evidence from a turn
-   STRICTLY BEFORE the first deterministically detected protected disclosure. Identifiers
-   collected afterwards can never retroactively satisfy "verified before access".
-   The disclosure detector is deliberately narrow and can only REJECT a MET (never create
-   one), so it behaves like the existing trust gates.
-7. **The verification definition has one source.** `OBGYN_VERIFICATION_IDENTIFIERS` renders
-   into `verify-three`, `verify-before-access`, the `af-hipaa` auto-fail text, and the
-   department grader instructions, so the regular criterion and the privacy auto-fail can
-   never accept different definitions.
+10. **`verify-before-access` is decided by transcript ORDER, and FAILS CLOSED.** There is
+    exactly ONE protected-disclosure detector
+    (`classifyProtectedDisclosure` / `findProtectedDisclosureIndex`), covering appointment
+    details, prior visits, chart contents, orders, provider notes, lab/imaging results,
+    prescriptions/medication records, account balances, and patient-specific clinical
+    details. Generic wording ("let me open your chart", "let me check that", "I can help
+    you", public office information, and verification QUESTIONS) is explicitly not a
+    disclosure. The criterion is satisfied only when identity is fully verified AND
+    `completedAtIndex < disclosureIndex`. When identity cannot be verified the ORDER is
+    unknowable, so the criterion is not awarded and is marked `unresolved` with
+    `verification-order-unverified`, which forces supervisor review. The detector can only
+    REJECT a claimed MET, never create one.
+11. **The verification definition has one source.** `OBGYN_VERIFICATION_IDENTIFIERS` renders
+    into `verify-three`, `verify-before-access`, the `af-hipaa` auto-fail text, and the
+    department grader instructions, so the regular criterion and the privacy auto-fail can
+    never accept different definitions.
+12. **The prompt's evidence rules are rendered from the profile.** There is no global
+    "never quote a caller line" sentence — that contradicted this policy. `evidenceRoleRules`
+    emits the navigator-only default, the navigator-only rules for negatives and auto-fails,
+    and the identity exception ONLY for the criteria the active profile declares. A profile
+    with no identity policy is told so explicitly.
 
 Prior last-updated: 2026-07-18 (private Call QA runtime merged with PR #33 calibration
 invariants; randomized server-side selection + the private callerCaseFile caller contract).

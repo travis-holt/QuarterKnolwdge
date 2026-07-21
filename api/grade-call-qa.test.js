@@ -82,7 +82,19 @@ function allMetVerdicts(profile = QA_RUBRIC_PROFILES.pediatrics) {
     // OB/GYN profile
     'close-offer-help': 'anything else I can help with',
   };
-  return profile.criteria.map((c) => ({ id: c.id, verdict: 'MET', basis: 'EVIDENCE', evidence: quotes[c.id], note: '' }));
+  // TRANSCRIPT turn 3 is the caller stating a full name and date of birth, so a
+  // profile with an identity policy gets the structured claims the server
+  // re-verifies. Profiles without one send an empty array.
+  const identityIds = new Set(profile.identityVerificationCriteria ?? []);
+  const identityEvidence = identityIds.size ? [
+    { field: 'firstName', value: 'Liam', role: 'caller', turnIndex: 3, quote: 'Sure, Liam Carter, March 2nd 2021.' },
+    { field: 'lastName', value: 'Carter', role: 'caller', turnIndex: 3, quote: 'Sure, Liam Carter, March 2nd 2021.' },
+    { field: 'dob', value: 'March 2nd 2021', role: 'caller', turnIndex: 3, quote: 'Sure, Liam Carter, March 2nd 2021.' },
+  ] : [];
+  return profile.criteria.map((c) => ({
+    id: c.id, verdict: 'MET', basis: 'EVIDENCE', evidence: quotes[c.id], note: '',
+    identityEvidence: identityIds.has(c.id) ? identityEvidence : [],
+  }));
 }
 
 // ── Rubric integrity ─────────────────────────────────────────────────────────

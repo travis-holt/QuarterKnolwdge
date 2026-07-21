@@ -27,8 +27,8 @@
 // The leading `_` keeps Express from ever treating this module as a route.
 // ─────────────────────────────────────────────────────────────────────────────
 
-import { rubricCriteria } from '../src/data/qaRubric.js';
 import { QA_RUBRIC_PROFILES, requireQaRubricProfile } from '../src/data/qaRubricProfiles.js';
+import { extractDateOfBirth } from './_qa-identity-verification.js';
 
 export const nav = (text) => ({ role: 'navigator', text });
 export const pat = (text) => ({ role: 'patient', text });
@@ -82,14 +82,48 @@ const REFILL_METADATA = { qaScenarioId: 'qa-peds-refill-001', workflowType: 'pre
  *           metEvidence?: Record<string,string>,
  *           autoFails?: {id:string, evidence:string, note?:string}[] }} profile
  */
+/**
+ * Derive the structured identity evidence a COMPETENT grader would report for a
+ * synthetic corpus transcript: the first caller turn that states a full name and
+ * a recognizable date of birth.
+ *
+ * This is test-harness convenience for authored fixtures — the SERVER still
+ * re-verifies every claim independently, so a derivation that guessed wrong
+ * would fail the pipeline rather than sneak a pass through.
+ */
+export function deriveIdentityEvidence(transcript) {
+  const turns = Array.isArray(transcript) ? transcript : [];
+  for (let turnIndex = 0; turnIndex < turns.length; turnIndex++) {
+    const turn = turns[turnIndex];
+    if (turn?.role === 'navigator') continue;
+    const text = String(turn?.text ?? '');
+    const dob = extractDateOfBirth(text);
+    if (!dob) continue;
+    const name = /\b([A-Z][a-z]+)\s+([A-Z][a-z]+)\b/.exec(text.replace(dob, ''));
+    if (!name) continue;
+    const quote = text.replace(/^[^A-Za-z]*/, '').replace(/\s+$/, '');
+    return [
+      { field: 'firstName', value: name[1], role: 'caller', turnIndex, quote },
+      { field: 'lastName', value: name[2], role: 'caller', turnIndex, quote },
+      { field: 'dob', value: dob, role: 'caller', turnIndex, quote },
+    ];
+  }
+  return [];
+}
+
 export function simulateGrader(transcript, profile = {}, rubricProfile = QA_RUBRIC_PROFILES.pediatrics) {
   const { notMet = {}, na = [], metEvidence = {}, autoFails = [] } = profile;
   const navLines = transcript.filter((t) => t.role === 'navigator').map((t) => t.text);
   const defaultQuote = navLines.reduce((a, b) => (b.length > a.length ? b : a), navLines[0] ?? '');
+  // Identity criteria (if this profile has any) carry structured claims; every
+  // other criterion sends an empty array, matching the prompt contract.
+  const identityIds = new Set(rubricProfile.identityVerificationCriteria ?? []);
+  const identityEvidence = profile.identityEvidence ?? (identityIds.size ? deriveIdentityEvidence(transcript) : []);
   // Simulate against the DEPARTMENT rubric the case belongs to, so a corpus run
   // exercises exactly the criterion set the real pipeline would validate.
   const criteria = rubricProfile.criteria.map((c) => {
-    if (na.includes(c.id)) return { id: c.id, verdict: 'NA', basis: 'ABSENCE', evidence: '', note: 'Not applicable to this scenario.' };
+    const identity = identityIds.has(c.id) ? identityEvidence : [];
+    if (na.includes(c.id)) return { id: c.id, verdict: 'NA', basis: 'ABSENCE', evidence: '', note: 'Not applicable to this scenario.', identityEvidence: [] };
     if (c.id in notMet) {
       const entry = notMet[c.id];
       const note = typeof entry === 'string' ? entry : entry.note;
@@ -97,9 +131,9 @@ export function simulateGrader(transcript, profile = {}, rubricProfile = QA_RUBR
       // A quoted offending line is an OBSERVED (EVIDENCE) miss; a note-only miss
       // is an ABSENCE. This mirrors how a real grader must report each shape.
       const basis = evidence ? 'EVIDENCE' : 'ABSENCE';
-      return { id: c.id, verdict: 'NOT_MET', basis, evidence, note };
+      return { id: c.id, verdict: 'NOT_MET', basis, evidence, note, identityEvidence: identity };
     }
-    return { id: c.id, verdict: 'MET', basis: 'EVIDENCE', evidence: metEvidence[c.id] ?? defaultQuote, note: '' };
+    return { id: c.id, verdict: 'MET', basis: 'EVIDENCE', evidence: metEvidence[c.id] ?? defaultQuote, note: '', identityEvidence: identity };
   });
   return { criteria, autoFails: autoFails.map((a) => ({ triggered: true, note: '', ...a })) };
 }

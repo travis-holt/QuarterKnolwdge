@@ -128,6 +128,13 @@ capture version, and live voice model. Multiple grader/rubric/prompt
 populations display `MIXED CALIBRATION POPULATION`. Readiness is blocked unless
 one version population independently satisfies every gate.
 
+**Prompt version.** The grader prompt contract changed with the department-profile work
+(profile-rendered evidence role rules, indexed transcript turns, the structured
+`identityEvidence` array, conditional-criteria wording), so `CALL_QA_PROMPT_VERSION` moved
+from `call-qa-grader-v3` to **`call-qa-grader-v4`**. `SUPPORTED_CALL_QA_PROMPT_VERSIONS`
+lists both, so a stored v3 population remains interpretable; a fixture must still declare a
+supported version, and v3 and v4 remain SEPARATE populations for readiness purposes.
+
 **Rubric version is department-scoped (2026-07-21).** Each department carries its
 own rubric profile and version, so a multi-department population legitimately
 reports more than one rubric version. That is department identity, not

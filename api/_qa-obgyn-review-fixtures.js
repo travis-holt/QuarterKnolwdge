@@ -52,6 +52,11 @@ export const OBGYN_REVIEW_FIXTURES = [
       nav('You are very welcome. Take care.'),
     ],
     graderIntent: {
+      identityEvidence: [
+        { field: 'firstName', value: "Maria", role: 'caller', turnIndex: 1, quote: "this is Maria Alvarez, date of birth March 2nd 1991" },
+        { field: 'lastName', value: "Alvarez", role: 'caller', turnIndex: 1, quote: "this is Maria Alvarez, date of birth March 2nd 1991" },
+        { field: 'dob', value: "March 2nd 1991", role: 'caller', turnIndex: 1, quote: "this is Maria Alvarez, date of birth March 2nd 1991" },
+      ],
       na: ['comm-empathy', 'control-narrate', 'doc-te'],
       evidence: {
         'open-greet': 'thank you for calling Aizer Health, this is Dana. How can I help you today?',
@@ -100,6 +105,11 @@ export const OBGYN_REVIEW_FIXTURES = [
       CLOSE_THANKS_ONLY,
     ],
     graderIntent: {
+      identityEvidence: [
+        { field: 'firstName', value: "Maria", role: 'caller', turnIndex: 1, quote: "this is Maria Alvarez, date of birth March 2nd 1991" },
+        { field: 'lastName', value: "Alvarez", role: 'caller', turnIndex: 1, quote: "this is Maria Alvarez, date of birth March 2nd 1991" },
+        { field: 'dob', value: "March 2nd 1991", role: 'caller', turnIndex: 1, quote: "this is Maria Alvarez, date of birth March 2nd 1991" },
+      ],
       na: ['comm-empathy', 'control-narrate', 'doc-te'],
       notMet: {
         'close-offer-help': 'The navigator ended with thanks and a goodbye but never offered further assistance.',
@@ -150,6 +160,11 @@ export const OBGYN_REVIEW_FIXTURES = [
       pat('No, just that. Thank you.'),
     ],
     graderIntent: {
+      identityEvidence: [
+        { field: 'firstName', value: "Alina", role: 'caller', turnIndex: 1, quote: "my name is Alina Novak, my date of birth is July 9th 1994" },
+        { field: 'lastName', value: "Novak", role: 'caller', turnIndex: 1, quote: "my name is Alina Novak, my date of birth is July 9th 1994" },
+        { field: 'dob', value: "July 9th 1994", role: 'caller', turnIndex: 1, quote: "my name is Alina Novak, my date of birth is July 9th 1994" },
+      ],
       na: ['control-narrate', 'sched-flow', 'sched-recap'],
       evidence: {
         'open-greet': "thank you for calling Aizer Women's Health, this is Priya. How can I help you today?",
@@ -198,6 +213,11 @@ export const OBGYN_REVIEW_FIXTURES = [
       CLOSE_OFFER,
     ],
     graderIntent: {
+      identityEvidence: [
+        { field: 'firstName', value: "Alina", role: 'caller', turnIndex: 1, quote: "my name is Alina Novak, my date of birth is July 9th 1994" },
+        { field: 'lastName', value: "Novak", role: 'caller', turnIndex: 1, quote: "my name is Alina Novak, my date of birth is July 9th 1994" },
+        { field: 'dob', value: "July 9th 1994", role: 'caller', turnIndex: 1, quote: "my name is Alina Novak, my date of birth is July 9th 1994" },
+      ],
       na: ['control-narrate', 'sched-flow', 'sched-recap'],
       notMet: {
         'comm-empathy': 'The caller said she was scared about reduced fetal movement and the navigator gave no acknowledgment of that concern at any point.',
@@ -251,6 +271,11 @@ export const OBGYN_REVIEW_FIXTURES = [
       CLOSE_OFFER,
     ],
     graderIntent: {
+      identityEvidence: [
+        { field: 'firstName', value: "Maria", role: 'caller', turnIndex: 3, quote: "Maria Alvarez" },
+        { field: 'lastName', value: "Alvarez", role: 'caller', turnIndex: 3, quote: "Maria Alvarez" },
+        { field: 'dob', value: "five five five, zero one nine nine", role: 'caller', turnIndex: 5, quote: "It is five five five, zero one nine nine" },
+      ],
       na: ['comm-empathy', 'control-narrate', 'doc-te'],
       notMet: {
         'verify-three': 'The navigator collected first name, last name, and a phone number. A phone number does not substitute for date of birth, so the three required identifiers were never completed.',
@@ -300,6 +325,11 @@ export const OBGYN_REVIEW_FIXTURES = [
       CLOSE_OFFER,
     ],
     graderIntent: {
+      identityEvidence: [
+        { field: 'firstName', value: "Maria", role: 'caller', turnIndex: 1, quote: "it is Maria Alvarez" },
+        { field: 'lastName', value: "Alvarez", role: 'caller', turnIndex: 1, quote: "it is Maria Alvarez" },
+        { field: 'dob', value: "March 2nd 1991", role: 'caller', turnIndex: 5, quote: "March 2nd 1991" },
+      ],
       na: ['comm-empathy', 'control-narrate', 'doc-te', 'sched-flow'],
       notMet: {
         'verify-before-access': 'The navigator confirmed the appointment date, time, provider, and location before collecting the date of birth.',
@@ -355,6 +385,11 @@ export const OBGYN_REVIEW_FIXTURES = [
       CLOSE_OFFER,
     ],
     graderIntent: {
+      identityEvidence: [
+        { field: 'firstName', value: "Maria", role: 'caller', turnIndex: 1, quote: "this is Maria Alvarez, date of birth March 2nd 1991" },
+        { field: 'lastName', value: "Alvarez", role: 'caller', turnIndex: 1, quote: "this is Maria Alvarez, date of birth March 2nd 1991" },
+        { field: 'dob', value: "March 2nd 1991", role: 'caller', turnIndex: 1, quote: "this is Maria Alvarez, date of birth March 2nd 1991" },
+      ],
       na: ['comm-empathy', 'control-narrate', 'doc-te'],
       evidence: {
         'open-greet': 'thank you for calling Aizer Health, this is Dana. How can I help you today?',
@@ -401,6 +436,11 @@ export const OBGYN_REVIEW_FIXTURES = [
       CLOSE_OFFER,
     ],
     graderIntent: {
+      identityEvidence: [
+        { field: 'firstName', value: "Maria", role: 'caller', turnIndex: 1, quote: "this is Maria Alvarez, date of birth March 2nd 1991" },
+        { field: 'lastName', value: "Alvarez", role: 'caller', turnIndex: 1, quote: "this is Maria Alvarez, date of birth March 2nd 1991" },
+        { field: 'dob', value: "March 2nd 1991", role: 'caller', turnIndex: 1, quote: "this is Maria Alvarez, date of birth March 2nd 1991" },
+      ],
       na: ['comm-empathy', 'doc-te'],
       notMet: {
         'control-narrate': 'The navigator placed the caller on hold with "Hold on." and gave no explanation of the reason or expected wait before doing so.',
@@ -436,17 +476,22 @@ export const OBGYN_REVIEW_FIXTURES = [
  * as NA or NOT_MET.
  */
 export function simulateObgynGrader(fixture, profile) {
-  const { na = [], notMet = {}, evidence = {}, autoFails = [] } = fixture.graderIntent;
+  const { na = [], notMet = {}, evidence = {}, autoFails = [], identityEvidence = [] } = fixture.graderIntent;
+  const identityIds = new Set(profile.identityVerificationCriteria ?? []);
   const criteria = profile.criteria.map((definition) => {
+    // Identity criteria carry the STRUCTURED identifier claims; every other
+    // criterion sends an empty array, exactly as the prompt contract requires.
+    const identity = identityIds.has(definition.id) ? identityEvidence : [];
     if (na.includes(definition.id)) {
-      return { id: definition.id, verdict: 'NA', basis: 'ABSENCE', evidence: '', note: 'Not applicable to this call.' };
+      return { id: definition.id, verdict: 'NA', basis: 'ABSENCE', evidence: '', note: 'Not applicable to this call.', identityEvidence: [] };
     }
     if (definition.id in notMet) {
-      return { id: definition.id, verdict: 'NOT_MET', basis: 'ABSENCE', evidence: '', note: notMet[definition.id] };
+      return { id: definition.id, verdict: 'NOT_MET', basis: 'ABSENCE', evidence: '', note: notMet[definition.id], identityEvidence: identity };
     }
     return {
       id: definition.id, verdict: 'MET', basis: 'EVIDENCE',
       evidence: evidence[definition.id] ?? '', note: '',
+      identityEvidence: identity,
     };
   });
   return { criteria, autoFails: autoFails.map((item) => ({ triggered: true, note: '', ...item })) };

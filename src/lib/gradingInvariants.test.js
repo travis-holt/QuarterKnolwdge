@@ -356,6 +356,14 @@ describe('invariant: department rubric profiles', () => {
     const verdicts = obgyn.criteria.map((c) => ({
       id: c.id, verdict: 'NA', basis: 'ABSENCE', evidence: '', note: '',
     }));
-    expect(() => scoreQa(verdicts, [], [], QA_RUBRIC_PROFILES.pediatrics)).toThrow(/not part of rubric profile/);
+    expect(() => scoreQa(verdicts, [], [], QA_RUBRIC_PROFILES.pediatrics))
+      .toThrow(/unknown criterion|missing criteria/);
+  });
+
+  it('every profile carries a signature that changes with its grading shape', () => {
+    // The binding must be defeated by a weight change, not only an id change.
+    const signatures = profiles.map((profile) => profile.signature);
+    expect(new Set(signatures).size).toBe(signatures.length);
+    for (const signature of signatures) expect(signature).toMatch(/^[0-9a-f]{8}-[0-9a-f]{8}$/);
   });
 });

@@ -1,12 +1,12 @@
 {
   "formatVersion": 1,
-  "caseId": "cal-obgyn-results-example-fail",
+  "caseId": "cal-peds-refill-example-fail",
   "source": "synthetic-example",
   "sanitized": true,
-  "department": "obgyn",
-  "scenarioId": "synthetic-obgyn-results-boundary-01",
-  "workflowType": "results_boundary",
-  "difficulty": "hard",
+  "department": "pediatrics",
+  "scenarioId": "synthetic-peds-refill-01",
+  "workflowType": "prescription_refill",
+  "difficulty": "medium",
   "capture": {
     "captureStatus": "captured",
     "captureComplete": true,
@@ -20,23 +20,23 @@
   "transcript": [
     {
       "role": "patient",
-      "text": "Can you explain my result?"
+      "text": "I need help with a refill."
     },
     {
       "role": "navigator",
-      "text": "That result is normal, so there is nothing to worry about."
+      "text": "Okay."
     },
     {
       "role": "patient",
-      "text": "Are you sure?"
+      "text": "The allergy medicine and the usual pharmacy."
     },
     {
       "role": "navigator",
-      "text": "Yes, you do not need a clinical callback."
+      "text": "Her results look completely normal, nothing to worry about."
     },
     {
       "role": "navigator",
-      "text": "Goodbye."
+      "text": "Alright, goodbye."
     }
   ],
   "humanReview": {
@@ -46,84 +46,99 @@
       {
         "reviewerId": "reviewer-a",
         "criteria": {
-          "open-greet": "NOT_MET",
-          "open-name": "NOT_MET",
-          "open-org": "NOT_MET",
-          "verify-three": "NOT_MET",
-          "verify-before-access": "NOT_MET",
-          "control-narrate": "NOT_MET",
+          "open-greet": "MET",
+          "open-name": "MET",
+          "open-org": "MET",
+          "verify-three": "MET",
+          "verify-before-access": "MET",
+          "control-narrate": "MET",
           "control-guide": "NOT_MET",
-          "doc-reason": "NOT_MET",
+          "doc-reason": "MET",
           "doc-te": "NOT_MET",
-          "comm-plain": "NOT_MET",
-          "comm-professional": "NOT_MET",
-          "comm-empathy": "NOT_MET",
+          "comm-plain": "MET",
+          "comm-professional": "MET",
+          "comm-empathy": "MET",
           "listen-ack": "NOT_MET",
           "listen-gather": "NOT_MET",
           "know-rule": "NOT_MET",
-          "know-details": "NOT_MET",
+          "know-details": "MET",
           "sched-flow": "NOT_MET",
-          "sched-recap": "NOT_MET",
-          "close-offer-help": "NOT_MET"
+          "sched-recap": "MET",
+          "close-survey": "NOT_MET",
+          "close-anything-thanks": "NOT_MET"
         },
         "autoFails": [
-          "af-scope"
+          {
+            "id": "af-scope",
+            "evidence": "Her results look completely normal, nothing to worry about.",
+            "note": "Read and interpreted a result to the caller."
+          }
         ],
         "recommendation": "fail"
       },
       {
         "reviewerId": "reviewer-b",
         "criteria": {
-          "open-greet": "NOT_MET",
-          "open-name": "NOT_MET",
-          "open-org": "NOT_MET",
-          "verify-three": "NOT_MET",
-          "verify-before-access": "NOT_MET",
-          "control-narrate": "NOT_MET",
+          "open-greet": "MET",
+          "open-name": "MET",
+          "open-org": "MET",
+          "verify-three": "MET",
+          "verify-before-access": "MET",
+          "control-narrate": "MET",
           "control-guide": "NOT_MET",
-          "doc-reason": "NOT_MET",
+          "doc-reason": "MET",
           "doc-te": "NOT_MET",
-          "comm-plain": "NOT_MET",
-          "comm-professional": "NOT_MET",
-          "comm-empathy": "NOT_MET",
+          "comm-plain": "MET",
+          "comm-professional": "MET",
+          "comm-empathy": "MET",
           "listen-ack": "NOT_MET",
           "listen-gather": "NOT_MET",
           "know-rule": "NOT_MET",
-          "know-details": "NOT_MET",
+          "know-details": "MET",
           "sched-flow": "NOT_MET",
-          "sched-recap": "NOT_MET",
-          "close-offer-help": "NOT_MET"
+          "sched-recap": "MET",
+          "close-survey": "NOT_MET",
+          "close-anything-thanks": "NOT_MET"
         },
         "autoFails": [
-          "af-scope"
+          {
+            "id": "af-scope",
+            "evidence": "Her results look completely normal, nothing to worry about.",
+            "note": "Read and interpreted a result to the caller."
+          }
         ],
         "recommendation": "fail"
       }
     ],
     "adjudicated": {
       "criteria": {
-        "open-greet": "NOT_MET",
-        "open-name": "NOT_MET",
-        "open-org": "NOT_MET",
-        "verify-three": "NOT_MET",
-        "verify-before-access": "NOT_MET",
-        "control-narrate": "NOT_MET",
+        "open-greet": "MET",
+        "open-name": "MET",
+        "open-org": "MET",
+        "verify-three": "MET",
+        "verify-before-access": "MET",
+        "control-narrate": "MET",
         "control-guide": "NOT_MET",
-        "doc-reason": "NOT_MET",
+        "doc-reason": "MET",
         "doc-te": "NOT_MET",
-        "comm-plain": "NOT_MET",
-        "comm-professional": "NOT_MET",
-        "comm-empathy": "NOT_MET",
+        "comm-plain": "MET",
+        "comm-professional": "MET",
+        "comm-empathy": "MET",
         "listen-ack": "NOT_MET",
         "listen-gather": "NOT_MET",
         "know-rule": "NOT_MET",
-        "know-details": "NOT_MET",
+        "know-details": "MET",
         "sched-flow": "NOT_MET",
-        "sched-recap": "NOT_MET",
-        "close-offer-help": "NOT_MET"
+        "sched-recap": "MET",
+        "close-survey": "NOT_MET",
+        "close-anything-thanks": "NOT_MET"
       },
       "autoFails": [
-        "af-scope"
+        {
+          "id": "af-scope",
+          "evidence": "Her results look completely normal, nothing to worry about.",
+          "note": "Read and interpreted a result to the caller."
+        }
       ],
       "recommendation": "fail",
       "finalPass": false,
@@ -132,7 +147,7 @@
   },
   "modelRun": {
     "model": "gemini-2.5-flash",
-    "rubricVersion": "qa-rubric-obgyn-v1",
+    "rubricVersion": "qa-rubric-v2",
     "promptVersion": "call-qa-grader-v4",
     "scenarioVersion": "synthetic-rehearsal-v1",
     "recommendation": "fail",
@@ -141,27 +156,27 @@
     "criteria": [
       {
         "id": "open-greet",
-        "verdict": "NOT_MET"
+        "verdict": "MET"
       },
       {
         "id": "open-name",
-        "verdict": "NOT_MET"
+        "verdict": "MET"
       },
       {
         "id": "open-org",
-        "verdict": "NOT_MET"
+        "verdict": "MET"
       },
       {
         "id": "verify-three",
-        "verdict": "NOT_MET"
+        "verdict": "MET"
       },
       {
         "id": "verify-before-access",
-        "verdict": "NOT_MET"
+        "verdict": "MET"
       },
       {
         "id": "control-narrate",
-        "verdict": "NOT_MET"
+        "verdict": "MET"
       },
       {
         "id": "control-guide",
@@ -169,7 +184,7 @@
       },
       {
         "id": "doc-reason",
-        "verdict": "NOT_MET"
+        "verdict": "MET"
       },
       {
         "id": "doc-te",
@@ -177,15 +192,15 @@
       },
       {
         "id": "comm-plain",
-        "verdict": "NOT_MET"
+        "verdict": "MET"
       },
       {
         "id": "comm-professional",
-        "verdict": "NOT_MET"
+        "verdict": "MET"
       },
       {
         "id": "comm-empathy",
-        "verdict": "NOT_MET"
+        "verdict": "MET"
       },
       {
         "id": "listen-ack",
@@ -201,7 +216,7 @@
       },
       {
         "id": "know-details",
-        "verdict": "NOT_MET"
+        "verdict": "MET"
       },
       {
         "id": "sched-flow",
@@ -209,15 +224,23 @@
       },
       {
         "id": "sched-recap",
+        "verdict": "MET"
+      },
+      {
+        "id": "close-survey",
         "verdict": "NOT_MET"
       },
       {
-        "id": "close-offer-help",
+        "id": "close-anything-thanks",
         "verdict": "NOT_MET"
       }
     ],
     "autoFails": [
-      "af-scope"
+      {
+        "id": "af-scope",
+        "evidence": "Her results look completely normal, nothing to worry about.",
+        "note": "Read and interpreted a result to the caller."
+      }
     ],
     "reviewFlags": [],
     "correctedTurns": 0
