@@ -35,6 +35,7 @@ import {
   UnsupportedQaDepartmentError,
 } from '../src/data/qaRubricProfiles.js';
 import {
+  IDENTITY_FIELDS,
   evaluateIdentityEvidence,
   evaluateVerificationBeforeAccess,
 } from './_qa-identity-verification.js';
@@ -229,6 +230,81 @@ export function validateCriterionBasis(verdict, basis, evidence) {
   return null;
 }
 
+const IDENTITY_CLAIM_ROLES = new Set(['navigator', 'caller', 'patient']);
+
+/**
+ * Validate the SHAPE of a criterion's structured identity evidence.
+ *
+ * Two directions matter. A criterion whose profile declares no identity policy
+ * must not carry identity claims at all — accepting them would leave a channel
+ * open for caller wording to influence an unrelated navigator-performance
+ * criterion. And a criterion that DOES declare the policy must send claims the
+ * server can actually re-derive; a half-filled claim is a contract violation,
+ * not something to quietly drop.
+ *
+ * @returns {string|null} an error message, or null when the shape is legal
+ */
+function validateIdentityEvidenceShape(criterion, profile) {
+  const raw = criterion.identityEvidence;
+  const def = profile.criteriaById.get(criterion.id);
+  const allowed = def?.evidencePolicy === QA_EVIDENCE_POLICIES.IDENTITY_VERIFICATION;
+
+  if (raw === undefined || raw === null) return null;
+  if (!Array.isArray(raw)) return 'identityEvidence must be an array when present.';
+  if (raw.length === 0) return null;
+  if (!allowed) {
+    return 'identityEvidence is not permitted on a criterion without the identity-verification policy.';
+  }
+
+  for (const [index, claim] of raw.entries()) {
+    const at = `identityEvidence[${index}]`;
+    if (!claim || typeof claim !== 'object' || Array.isArray(claim)) {
+      return `${at} is not an object.`;
+    }
+    if (!IDENTITY_FIELDS.includes(claim.field)) return `${at}.field is not a known identifier.`;
+    if (typeof claim.value !== 'string' || !claim.value.trim()) return `${at}.value must be a non-empty string.`;
+    if (typeof claim.quote !== 'string' || !claim.quote.trim()) return `${at}.quote must be a non-empty string.`;
+    if (!IDENTITY_CLAIM_ROLES.has(String(claim.role ?? '').toLowerCase())) return `${at}.role is invalid.`;
+    if (!Number.isInteger(claim.turnIndex) || claim.turnIndex < 0) return `${at}.turnIndex must be a non-negative integer.`;
+  }
+  return null;
+}
+
+/**
+ * Validate the raw auto-fail array against the profile.
+ *
+ * The prompt contract asks for EVERY auto-fail id, so a missing one is a
+ * contract violation rather than an implicit "not triggered". Unknown and
+ * duplicate ids were previously filtered away silently, which hid exactly the
+ * malformed output the retry exists to catch.
+ *
+ * @returns {string|null} an error message, or null when the array is legal
+ */
+function validateAutoFailShapes(autoFails, profile) {
+  if (!Array.isArray(autoFails)) return 'Missing auto-fail array.';
+  const seen = new Set();
+  for (const [index, a] of autoFails.entries()) {
+    if (!a || typeof a !== 'object' || Array.isArray(a)) return `Auto-fail at index ${index} is not an object.`;
+    if (typeof a.id !== 'string' || !profile.autoFailIds.has(a.id)) {
+      return `Unknown auto-fail "${a.id}" for rubric profile "${profile.department}".`;
+    }
+    if (seen.has(a.id)) return `Duplicate auto-fail "${a.id}".`;
+    seen.add(a.id);
+    if (typeof a.triggered !== 'boolean') return `Auto-fail ${a.id}: "triggered" must be a boolean.`;
+    if (a.evidence !== undefined && typeof a.evidence !== 'string') return `Auto-fail ${a.id}: evidence must be a string.`;
+    if (a.note !== undefined && typeof a.note !== 'string') return `Auto-fail ${a.id}: note must be a string.`;
+    // A triggered auto-fail accuses the navigator of an explicit unsafe
+    // statement, so it must carry the quote the server will verify. An empty
+    // one is definitionally unverifiable.
+    if (a.triggered === true && !String(a.evidence ?? '').trim()) {
+      return `Auto-fail ${a.id}: a triggered auto-fail requires a verbatim evidence quote.`;
+    }
+  }
+  const missing = [...profile.autoFailIds].filter((id) => !seen.has(id));
+  if (missing.length > 0) return `Missing auto-fail verdicts for: ${missing.join(', ')}`;
+  return null;
+}
+
 /**
  * Validate the model's raw JSON against the RESOLVED department rubric profile.
  * Pure; no I/O. The same `profile` object must later be handed to `scoreQa`, so
@@ -244,11 +320,29 @@ export function validateQaResponse(parsed, profile) {
   const critList = Array.isArray(parsed.criteria) ? parsed.criteria : null;
   if (!critList) return { error: 'Missing criteria array.' };
 
+  // ── Strict RAW validation, before any normalization ────────────────────────
+  //
+  // The previous implementation `continue`d past every malformed entry and then
+  // rebuilt the array from the profile, so a duplicate id silently overwrote the
+  // earlier verdict, and unknown/extra ids and unknown auto-fail ids vanished.
+  // The exact-set check downstream then only ever saw the CLEANED array, so a
+  // model that broke its contract looked compliant and the malformed-response
+  // retry never ran. Every rejection below trips that retry instead.
   const byId = new Map();
-  for (const c of critList) {
-    if (!c || typeof c !== 'object' || typeof c.id !== 'string') continue;
+  for (const [index, c] of critList.entries()) {
+    if (!c || typeof c !== 'object' || Array.isArray(c)) {
+      return { error: `Criterion at index ${index} is not an object.` };
+    }
+    if (typeof c.id !== 'string' || !c.id.trim()) {
+      return { error: `Criterion at index ${index} has a missing or non-string id.` };
+    }
+    if (!active.criterionIds.has(c.id)) {
+      return { error: `Unknown criterion "${c.id}" for rubric profile "${active.department}".` };
+    }
+    if (byId.has(c.id)) return { error: `Duplicate criterion "${c.id}".` };
+
     const verdict = String(c.verdict ?? '').toUpperCase();
-    if (!VERDICTS.has(verdict)) continue;
+    if (!VERDICTS.has(verdict)) return { error: `Criterion ${c.id}: unknown or missing verdict "${c.verdict}".` };
     const basis = String(c.basis ?? '').toUpperCase();
     const evidence = typeof c.evidence === 'string' ? c.evidence : '';
     const note = typeof c.note === 'string' ? c.note : '';
@@ -256,20 +350,28 @@ export function validateQaResponse(parsed, profile) {
     // coercing them — this trips the endpoint's malformed-response retry.
     const basisError = validateCriterionBasis(verdict, basis, evidence);
     if (basisError) return { error: `Criterion ${c.id}: ${basisError}` };
+
     // Structured identifier claims travel with the criterion so scoring can
-    // re-derive them from the transcript. Shape only here; the SERVER decides
-    // whether the claims are true.
-    const identityEvidence = Array.isArray(c.identityEvidence)
-      ? c.identityEvidence.filter((item) => item && typeof item === 'object')
-      : [];
+    // re-derive them from the transcript. SHAPE is validated here; whether the
+    // claims are TRUE is decided by the server against the transcript.
+    const identityError = validateIdentityEvidenceShape(c, active);
+    if (identityError) return { error: `Criterion ${c.id}: ${identityError}` };
+    const identityEvidence = Array.isArray(c.identityEvidence) ? c.identityEvidence : [];
+
     byId.set(c.id, { id: c.id, verdict, basis, evidence, note, identityEvidence });
   }
 
   const missing = active.criteria.filter((c) => !byId.has(c.id)).map((c) => c.id);
   if (missing.length > 0) return { error: `Missing verdicts for: ${missing.join(', ')}` };
 
-  const autoFails = (Array.isArray(parsed.autoFails) ? parsed.autoFails : [])
-    .filter((a) => a && typeof a === 'object' && active.autoFailIds.has(a.id) && a.triggered === true)
+  const autoFailsError = validateAutoFailShapes(parsed.autoFails, active);
+  if (autoFailsError) return { error: autoFailsError };
+
+  // Only TRIGGERED auto-fails flow into scoring; the untriggered ones exist so
+  // the model must positively answer every auto-fail id rather than omit the
+  // ones it wants to ignore.
+  const autoFails = parsed.autoFails
+    .filter((a) => a.triggered === true)
     .map((a) => ({
       id: a.id,
       evidence: typeof a.evidence === 'string' ? a.evidence : '',
@@ -955,10 +1057,52 @@ function summarizeIdentityDetail(evidenceCheck) {
       ? {
         disclosureIndex: detail.disclosureIndex,
         disclosureCategory: detail.disclosureCategory ?? null,
+        disclosureClauseIndex: detail.disclosureClauseIndex ?? null,
         orderReason: detail.reason ?? null,
       }
       : {}),
   };
+}
+
+// Human labels for the identifier ids, used only in the server-derived summary.
+const IDENTITY_FIELD_LABELS = {
+  firstName: 'first name', lastName: 'last name', dob: 'date of birth',
+};
+
+/**
+ * Build the ONLY evidence string an identity criterion is allowed to carry.
+ *
+ * The model's free-text `evidence` is NEVER trusted for an identity criterion:
+ * scoring uses the structured `identityEvidence` array, so a grader could submit
+ * valid structured claims alongside an invented quote ("The patient was fully
+ * verified.") and that fabricated sentence would previously be persisted and
+ * rendered to a supervisor as observed evidence.
+ *
+ * This summary is derived entirely from what the SERVER re-verified, and it is
+ * deliberately PRIVACY-SAFE: it names which identifiers verified and in which
+ * turn, never the identifier values themselves. A navigator-facing strength
+ * should not repeat a patient's name or date of birth back at them, and the
+ * per-field audit record (`identityVerification`) already carries the turn-level
+ * detail a supervisor needs.
+ *
+ * Returns '' when nothing verified — there is genuinely nothing to show.
+ */
+function buildIdentityEvidenceSummary(evidenceCheck) {
+  const detail = evidenceCheck?.detail ?? {};
+  const identity = detail.identity ?? detail;
+  const fields = IDENTITY_FIELDS.filter((field) => identity.verified?.[field]);
+  if (fields.length === 0) return '';
+
+  const labels = fields.map((field) => IDENTITY_FIELD_LABELS[field] ?? field);
+  const turn = identity.completedAtIndex;
+  const parts = [
+    `Server-verified from the transcript: ${labels.join(', ')}`
+    + (Number.isInteger(turn) ? ` (complete by turn ${turn})` : ''),
+  ];
+  if (detail.disclosureIndex !== undefined && detail.reason === 'verified-before-disclosure') {
+    parts.push('identity completed before the first protected disclosure');
+  }
+  return `${parts.join('; ')}.`;
 }
 
 export function scoreQa(verdicts, autoFails, transcript, profile, profileBinding) {
@@ -1036,10 +1180,21 @@ export function scoreQa(verdicts, autoFails, transcript, profile, profileBinding
     }
     if (verdict === 'NA' && def.core) { verdict = 'NOT_MET'; basis = 'ABSENCE'; }
 
+    // An identity criterion's displayed evidence is SERVER-DERIVED, never the
+    // model's free text. Scoring already ignores that free text (it uses the
+    // structured claims), so persisting it would let a fabricated quote reach
+    // the supervisor panel, the grade projection and coaching prose as if it
+    // had been observed. See docs/GRADING_INVARIANTS.md §0.5.
+    const isIdentityCriterion = def.evidencePolicy === QA_EVIDENCE_POLICIES.IDENTITY_VERIFICATION;
+    const evidence = isIdentityCriterion
+      ? buildIdentityEvidenceSummary(evidenceCheck)
+      : v.evidence;
+
     return {
       id: def.id, text: def.text, points: def.points,
       categoryId: def.categoryId, categoryName: def.categoryName,
-      verdict, basis, evidence: v.evidence, note: v.note,
+      verdict, basis, evidence, note: v.note,
+      ...(isIdentityCriterion ? { evidenceSource: 'server-derived' } : {}),
       unverified, unresolved, unresolvedReason,
       modelJudgment,
       // Auditable record of WHY an identity criterion was (or was not) credited:
@@ -1279,9 +1434,17 @@ export function buildGradeProjection(qa) {
     summary += ` FLAGGED FOR SUPERVISOR REVIEW (${qa.review.reviewFlags.map((f) => f.label).join('; ')}).`;
   }
 
-  // Only quote evidence that actually verified: never present an unverified MET
+  // Only show evidence that actually verified: never present an unverified MET
   // or an unresolved (unverifiable) negative quote as if it were observed.
-  const quote = (c) => (c.evidence && !c.unverified && !c.unresolved ? ` — "${c.evidence}"` : '');
+  //
+  // A `server-derived` string is NOT a transcript quote — it is the server's own
+  // summary of what it re-verified for an identity criterion — so it is rendered
+  // as a plain statement. Wrapping it in quotation marks would present the
+  // server's words as something the navigator said.
+  const quote = (c) => {
+    if (!c.evidence || c.unverified || c.unresolved) return '';
+    return c.evidenceSource === 'server-derived' ? ` — ${c.evidence}` : ` — "${c.evidence}"`;
+  };
   const strengths = qa.criteria
     .filter((c) => c.verdict === 'MET')
     .sort((a, b) => b.points - a.points)

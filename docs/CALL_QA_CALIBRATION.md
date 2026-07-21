@@ -130,10 +130,36 @@ one version population independently satisfies every gate.
 
 **Prompt version.** The grader prompt contract changed with the department-profile work
 (profile-rendered evidence role rules, indexed transcript turns, the structured
-`identityEvidence` array, conditional-criteria wording), so `CALL_QA_PROMPT_VERSION` moved
-from `call-qa-grader-v3` to **`call-qa-grader-v4`**. `SUPPORTED_CALL_QA_PROMPT_VERSIONS`
-lists both, so a stored v3 population remains interpretable; a fixture must still declare a
-supported version, and v3 and v4 remain SEPARATE populations for readiness purposes.
+`identityEvidence` array, conditional-criteria wording), moving `CALL_QA_PROMPT_VERSION`
+from `call-qa-grader-v3` to `call-qa-grader-v4`; the verification-integrity correction pass
+then changed the model-visible contract again (patient-identity ownership rules for name
+claims, explicit spoken-DOB guidance, and a requirement to answer every auto-fail id with a
+quote when triggered), moving it to **`call-qa-grader-v5`**.
+
+**Interpretable is not the same as producible (corrected 2026-07-21).**
+`SUPPORTED_CALL_QA_PROMPT_VERSIONS` lists every version this build can still INTERPRET in a
+stored record (v3, v4, v5). It previously read as though a fixture could simply declare any
+of them, while `validateModelRun` in fact required an exact match with the current version —
+a contradiction the second review flagged. The policy is now explicit and enforced:
+
+| Fixture kind | Accepted prompt versions |
+|---|---|
+| `human-pilot`, `operational-pilot` (genuine stored evidence) | any **supported stored** version |
+| `synthetic-example` (authored now) | the **current** version only |
+| anything else | rejected — fails closed |
+
+A synthetic example may not claim to be output from a retired prompt, because that would
+manufacture a historical population that never existed. Genuine stored evidence records what
+actually happened and keeps its own version. Populations still never blend: the report
+breaks down prompt version, a multi-version population displays
+`MIXED CALIBRATION POPULATION`, and readiness requires one version population to satisfy
+every gate on its own (`requireSinglePromptVersion`). Two helpers express the split —
+`isSupportedStoredPromptVersion()` and `isCurrentPromptVersion()`.
+
+**Re-baselining.** `call-qa-grader-v5` (like the v4 move before it, and like
+`qa-rubric-obgyn-v1`) re-baselines OB/GYN calibration: evidence gathered under an earlier
+prompt is a separate population and cannot be pooled with v5 evidence. This has no effect
+on current readiness, because there are still zero human-pilot fixtures.
 
 **Rubric version is department-scoped (2026-07-21).** Each department carries its
 own rubric profile and version, so a multi-department population legitimately

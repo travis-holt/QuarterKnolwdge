@@ -289,9 +289,17 @@ describe('historical attempts keep their own rubric', () => {
     expect(profileForGradedAttempt({ rubricVersion: 'qa-rubric-v1' }, 'obgyn')).toBeNull();
   });
 
-  it('falls back to the stored department only when no version was recorded', () => {
-    expect(profileForGradedAttempt({}, 'obgyn')).toBe(OBGYN);
+  // CORRECTED 2026-07-21. This test previously asserted that a metadata-less
+  // OB/GYN record resolves to the NEW OB/GYN profile. That was wrong: before
+  // department profiles existed, every department — OB/GYN included — was graded
+  // under the shared rubric, so a record with no rubric metadata can only have
+  // been produced by `qa-rubric-v2`. Resolving it to `qa-rubric-obgyn-v1` would
+  // summarize it against `close-offer-help`, a criterion it was never scored on,
+  // and silently drop its real `close-survey` / `close-anything-thanks` verdicts.
+  it('resolves a metadata-less record to the historical shared rubric, whatever its department', () => {
+    expect(profileForGradedAttempt({}, 'obgyn')).toBe(PEDS);
     expect(profileForGradedAttempt(undefined, 'pediatrics')).toBe(PEDS);
+    expect(profileForGradedAttempt({ rubricDepartment: 'obgyn' })).toBe(PEDS);
   });
 
   it('summarizes a stored OB/GYN result under the rubric that graded it', () => {
@@ -333,21 +341,32 @@ describe('validation and scoring cannot use different rubrics', () => {
   const obgynAllMet = () => OBGYN.criteria.map((c) => ({
     id: c.id, verdict: 'MET', basis: 'EVIDENCE', evidence: 'ok quote', note: '',
   }));
+  // The prompt contract asks for a verdict on EVERY auto-fail id, and validation
+  // now enforces that, so a raw response must answer all of them.
+  const noAutoFails = (profile = OBGYN) => profile.autoFails.map((a) => ({
+    id: a.id, triggered: false, evidence: '', note: '',
+  }));
 
   it('rejects a Pediatrics-shaped response when the OB/GYN profile is active', () => {
-    const pedsResponse = { criteria: PEDS.criteria.map((c) => ({ id: c.id, verdict: 'NA', basis: 'ABSENCE', evidence: '', note: '' })), autoFails: [] };
+    const pedsResponse = {
+      criteria: PEDS.criteria.map((c) => ({ id: c.id, verdict: 'NA', basis: 'ABSENCE', evidence: '', note: '' })),
+      autoFails: noAutoFails(),
+    };
     const result = validateQaResponse(pedsResponse, OBGYN);
-    expect(result.error).toMatch(/close-offer-help/);
+    // Raw validation now rejects the FIRST contract violation it sees — an id the
+    // active profile does not define — rather than normalizing the response and
+    // only noticing the missing OB/GYN criterion afterwards.
+    expect(result.error).toMatch(/unknown criterion "close-survey"/i);
   });
 
   it('rejects an OB/GYN-shaped response when the Pediatrics profile is active', () => {
-    const obgynResponse = { criteria: obgynAllMet(), autoFails: [] };
+    const obgynResponse = { criteria: obgynAllMet(), autoFails: noAutoFails(PEDS) };
     const result = validateQaResponse(obgynResponse, PEDS);
-    expect(result.error).toMatch(/close-survey|close-anything-thanks/);
+    expect(result.error).toMatch(/unknown criterion "close-offer-help"/i);
   });
 
   it('stamps the full profile binding onto the validated data', () => {
-    const result = validateQaResponse({ criteria: obgynAllMet(), autoFails: [] }, OBGYN);
+    const result = validateQaResponse({ criteria: obgynAllMet(), autoFails: noAutoFails() }, OBGYN);
     expect(result.data.profileBinding).toEqual({
       department: 'obgyn',
       rubricVersion: QA_RUBRIC_VERSION_OBGYN,
@@ -361,14 +380,14 @@ describe('validation and scoring cannot use different rubrics', () => {
   });
 
   it('rejects a carried binding that does not match the scoring profile', () => {
-    const validated = validateQaResponse({ criteria: obgynAllMet(), autoFails: [] }, OBGYN).data;
+    const validated = validateQaResponse({ criteria: obgynAllMet(), autoFails: noAutoFails() }, OBGYN).data;
     expect(() => scoreQa(validated.criteria, [], [], OBGYN, {
       ...validated.profileBinding, signature: 'tampered',
     })).toThrow(/profile-binding-signature-mismatch/);
   });
 
   it('rejects a MISSING binding when one was expected', () => {
-    const validated = validateQaResponse({ criteria: obgynAllMet(), autoFails: [] }, OBGYN).data;
+    const validated = validateQaResponse({ criteria: obgynAllMet(), autoFails: noAutoFails() }, OBGYN).data;
     expect(() => scoreQa(validated.criteria, [], [], OBGYN, null))
       .toThrow(/missing-profile-binding/);
   });
@@ -387,7 +406,7 @@ describe('validation and scoring cannot use different rubrics', () => {
       criterion.id === 'close-offer-help' ? { ...criterion, points: 9 } : criterion
     ));
     expect(reweighted.signature).not.toBe(OBGYN.signature);
-    const validated = validateQaResponse({ criteria: obgynAllMet(), autoFails: [] }, OBGYN).data;
+    const validated = validateQaResponse({ criteria: obgynAllMet(), autoFails: noAutoFails() }, OBGYN).data;
     expect(() => scoreQa(validated.criteria, [], [], reweighted, validated.profileBinding))
       .toThrow(/profile-binding-signature-mismatch/);
   });
@@ -397,29 +416,36 @@ describe('validation and scoring cannot use different rubrics', () => {
       criterion.id === 'comm-empathy' ? { ...criterion, core: true } : criterion
     ));
     expect(recored.signature).not.toBe(OBGYN.signature);
-    const validated = validateQaResponse({ criteria: obgynAllMet(), autoFails: [] }, OBGYN).data;
+    const validated = validateQaResponse({ criteria: obgynAllMet(), autoFails: noAutoFails() }, OBGYN).data;
     expect(() => scoreQa(validated.criteria, [], [], recored, validated.profileBinding))
       .toThrow(/profile-binding-signature-mismatch/);
   });
 
   it('the repair layer refuses to run under a profile that did not validate the verdicts', () => {
-    const validated = validateQaResponse({ criteria: obgynAllMet(), autoFails: [] }, OBGYN).data;
+    const validated = validateQaResponse({ criteria: obgynAllMet(), autoFails: noAutoFails() }, OBGYN).data;
     expect(() => repairQaVerdictsForScenario(validated, [], { department: 'pediatrics', profile: PEDS }))
       .toThrow(/profile-binding-(department|version|signature)-mismatch/);
   });
 
   it('carries the binding through the repair layer unchanged', () => {
-    const validated = validateQaResponse({ criteria: obgynAllMet(), autoFails: [] }, OBGYN).data;
+    const validated = validateQaResponse({ criteria: obgynAllMet(), autoFails: noAutoFails() }, OBGYN).data;
     const repaired = repairQaVerdictsForScenario(validated, [], { department: 'obgyn', profile: OBGYN });
     expect(repaired.profileBinding).toEqual(validated.profileBinding);
   });
 
+  // CORRECTED 2026-07-21: an unknown auto-fail id used to be silently FILTERED
+  // out, so a model that invented one looked compliant and the malformed-response
+  // retry never ran. It is now a rejection.
   it('rejects an auto-fail id the active profile does not define', () => {
     const result = validateQaResponse(
-      { criteria: obgynAllMet(), autoFails: [{ id: 'af-not-real', triggered: true, evidence: 'x', note: '' }] },
+      {
+        criteria: obgynAllMet(),
+        autoFails: [...noAutoFails(), { id: 'af-not-real', triggered: true, evidence: 'x y', note: '' }],
+      },
       OBGYN,
     );
-    expect(result.data.autoFails).toEqual([]);
+    expect(result.data).toBeUndefined();
+    expect(result.error).toMatch(/unknown auto-fail "af-not-real"/i);
   });
 });
 

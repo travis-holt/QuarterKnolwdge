@@ -230,8 +230,34 @@ export function evidenceRoleRules(profile) {
     '  * A phone number or a home address is NEVER a date of birth. Do not submit one as "dob".',
     '  * The first name and the last name must be DIFFERENT values.',
     '  * If an identifier was never collected, OMIT it from the array — do not invent it.',
+    '',
+    'WHOSE NAME COUNTS (the server enforces this — a name that is not the PATIENT\'S is rejected):',
+    '  * Every identifier must come from a CALLER turn. The navigator saying a name proves nothing'
+      + ' about what the caller supplied, so never cite a navigator turn here.',
+    '  * The NAVIGATOR\'S OWN NAME is never the patient\'s name. "Thank you for calling, this is'
+      + ' Dana" identifies the navigator — Dana is not a firstName.',
+    '  * A PROVIDER or STAFF name is never the patient\'s name. "I need Dr. Reyes", "your'
+      + ' appointment is with Dr. Reyes", a nurse or a pharmacist — none of these is a lastName.',
+    '  * A name merely MENTIONED in passing is not identity. "I spoke with Maria yesterday" does'
+      + ' not establish that the patient is Maria.',
+    '  * The name must be stated as the patient\'s: the caller identifying herself ("this is Maria'
+      + ' Alvarez", "my name is Maria Alvarez"), naming the patient explicitly ("the patient is'
+      + ' Maria Alvarez", "I\'m calling for my daughter, Maria Alvarez", "the appointment is for'
+      + ' Maria Alvarez"), or ANSWERING the navigator\'s question for the patient\'s name.',
+    '  * An authorized third party may supply the patient\'s identifiers — a parent calling about a'
+      + ' child is normal and correct. But when the caller names BOTH herself and a different'
+      + ' patient ("My name is Sarah, but the appointment is for Maria Alvarez"), the PATIENT is'
+      + ' Maria Alvarez; do not submit Sarah.',
+    '',
+    'DATES OF BIRTH: a spoken date is perfectly acceptable and is NOT a transcription problem —'
+      + ' "March second nineteen ninety-one", "the second of March nineteen ninety-one",'
+      + ' "March 2, 1991" and "03/02/1991" are all valid. Submit whatever the caller actually said.'
+      + ' The date must be a REAL calendar date; a two-digit year, a digit-by-digit reading, or a'
+      + ' month and day with no year cannot be verified.',
     'If the array does not independently prove all three identifiers, the identity criteria lose'
       + ' credit regardless of the verdict you return. Do not claim MET and leave this array empty.',
+    'Do NOT put a free-text quote in "evidence" for these criteria as a substitute — the server'
+      + ' derives their evidence from this array and discards anything else.',
   );
   return lines.join('\n');
 }
@@ -335,9 +361,12 @@ Fairness rules never weaken verification, privacy/scope, routing, scheduling, or
 
 ${profile.graderInstructions}
 
-Separately, check the auto-fail conditions. Set "triggered": true ONLY if the transcript \
-contains an explicit violation, and quote the offending navigator line verbatim in "evidence". \
-When in doubt, triggered is false.
+Separately, check the auto-fail conditions. Return an entry for EVERY auto-fail id listed below, \
+triggered or not — omitting one, repeating one, or inventing an id is a malformed response. Set \
+"triggered": true ONLY if the transcript contains an explicit violation, and then you MUST quote \
+the offending navigator line verbatim in "evidence"; a triggered auto-fail with no quote is \
+rejected. For an auto-fail that did not occur, set "triggered": false. When in doubt, triggered \
+is false.
 
 RUBRIC CRITERIA:
 ${rubricText}

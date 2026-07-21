@@ -388,21 +388,48 @@ export function requireQaRubricProfile(department) {
 }
 
 /**
+ * The rubric EVERY pre-versioning record was graded under.
+ *
+ * Before department profiles existed there was exactly one Call QA rubric, and
+ * every department — OB/GYN included — was graded with it. So a stored result
+ * carrying no rubric metadata was necessarily produced by `qa-rubric-v2`,
+ * whatever department it belongs to.
+ */
+export const HISTORICAL_SHARED_QA_PROFILE = QA_RUBRIC_PROFILES.pediatrics;
+
+/**
  * Resolve the profile that ACTUALLY graded a stored attempt, for rendering and
- * calibration of historical results. Prefers the recorded rubric version so an
- * attempt graded under an older profile is never reinterpreted under a newer
- * one. Returns `null` when the stored version matches no known profile.
+ * calibration of historical results. Returns `null` when the stored version
+ * matches no known profile.
+ *
+ * Resolution order (corrected 2026-07-21 — the second review found the
+ * metadata-less branch wrong):
+ *
+ *   1. a RECORDED version we know   -> exactly that profile, department
+ *                                      cross-checked where recorded;
+ *   2. a RECORDED version we do NOT know -> null (unavailable);
+ *   3. NO rubric version at all     -> the HISTORICAL SHARED rubric, regardless
+ *                                      of the stored department.
+ *
+ * Case 3 is the correction. The previous implementation let the stored
+ * department pick a CURRENT profile, so a metadata-less OB/GYN attempt resolved
+ * to `qa-rubric-obgyn-v1` — a rubric that did not exist when that attempt was
+ * graded. It would have been summarized against `close-offer-help`, a criterion
+ * the attempt was never scored on, while its real `close-survey` /
+ * `close-anything-thanks` verdicts were dropped. The live scored path is
+ * unaffected: every newly graded attempt records its rubric metadata.
  *
  * @param {{rubricDepartment?:string, rubricVersion?:string}} gradingMetadata
  * @param {string} [fallbackDepartment] the attempt's stored department
+ *   (retained for call-site compatibility; it can no longer select a profile)
  */
 export function profileForGradedAttempt(gradingMetadata, fallbackDepartment) {
   const version = String(gradingMetadata?.rubricVersion ?? '').trim();
 
   // A RECORDED version is authoritative. If we do not recognise it, the correct
   // answer is "unavailable" — never a guess, and never a silent fall-through to
-  // Pediatrics. Reinterpreting an old result under a current rubric would show a
-  // supervisor scores the attempt never actually received.
+  // a current profile. Reinterpreting an old result under a current rubric would
+  // show a supervisor scores the attempt never actually received.
   if (version) {
     const match = Object.values(QA_RUBRIC_PROFILES)
       .find((profile) => profile.rubricVersion === version);
@@ -414,10 +441,11 @@ export function profileForGradedAttempt(gradingMetadata, fallbackDepartment) {
     return match;
   }
 
-  // No version recorded at all: a genuinely pre-versioning legacy result. Only
-  // here may the stored department decide, because that is the behavior those
-  // records were written under.
-  return getQaRubricProfile(gradingMetadata?.rubricDepartment ?? fallbackDepartment);
+  // No version recorded at all: a genuinely pre-versioning legacy result, which
+  // can only have been graded under the shared rubric. The stored department is
+  // deliberately NOT consulted — it describes the CALL, not the rubric.
+  void fallbackDepartment;
+  return HISTORICAL_SHARED_QA_PROFILE;
 }
 
 /**

@@ -55,6 +55,12 @@ describe('Call QA Gemini configuration', () => {
 });
 
 // A verdict list where everything is MET with real quotes from TRANSCRIPT.
+// Every auto-fail id must be answered, triggered or not - the prompt contract
+// asks for all of them and raw validation enforces it.
+function noAutoFailsFor(profile = QA_RUBRIC_PROFILES.pediatrics) {
+  return profile.autoFails.map((a) => ({ id: a.id, triggered: false, evidence: '', note: '' }));
+}
+
 // Build an all-MET model response for ONE rubric profile. Defaults to the
 // historical shared (Pediatrics) rubric so every pre-existing test is unchanged.
 function allMetVerdicts(profile = QA_RUBRIC_PROFILES.pediatrics) {
@@ -253,17 +259,23 @@ describe('verifyEvidence', () => {
 // ── validateQaResponse ───────────────────────────────────────────────────────
 
 describe('validateQaResponse', () => {
+  // The prompt contract asks for a verdict on EVERY auto-fail id, and raw
+  // validation now enforces that, so a legal response answers all of them.
+  const noAutoFails = () => QA_AUTO_FAILS.map((a) => ({
+    id: a.id, triggered: false, evidence: '', note: '',
+  }));
+
   // Helper: a full, legal MET response for every criterion.
   const allMet = (overrides = {}) => ({
     criteria: rubricCriteria().map((c) =>
       overrides[c.id] ?? { id: c.id, verdict: 'MET', basis: 'EVIDENCE', evidence: 'the navigator said this', note: '' }),
-    autoFails: [],
+    autoFails: noAutoFails(),
   });
 
   it('accepts a complete response and normalizes verdict/basis case', () => {
     const parsed = {
       criteria: rubricCriteria().map((c) => ({ id: c.id, verdict: 'met', basis: 'evidence', evidence: 'x', note: '' })),
-      autoFails: [],
+      autoFails: noAutoFails(),
     };
     const out = validateQaResponse(parsed);
     expect(out.data).toBeTruthy();
@@ -271,7 +283,7 @@ describe('validateQaResponse', () => {
   });
 
   it('rejects a response missing criterion ids', () => {
-    const parsed = { criteria: [{ id: 'open-greet', verdict: 'MET', basis: 'EVIDENCE', evidence: 'x', note: '' }], autoFails: [] };
+    const parsed = { criteria: [{ id: 'open-greet', verdict: 'MET', basis: 'EVIDENCE', evidence: 'x', note: '' }], autoFails: noAutoFails() };
     expect(validateQaResponse(parsed).error).toMatch(/Missing verdicts/);
   });
 
@@ -280,18 +292,26 @@ describe('validateQaResponse', () => {
     expect(validateQaResponse({}).error).toBeTruthy();
   });
 
-  it('keeps only known, triggered auto-fails', () => {
-    const parsed = {
-      criteria: rubricCriteria().map((c) => ({ id: c.id, verdict: 'NOT_MET', basis: 'ABSENCE', evidence: '', note: 'absent' })),
-      autoFails: [
-        { id: 'af-scope', triggered: true, evidence: 'q', note: '' },
-        { id: 'af-hipaa', triggered: false, evidence: '', note: '' },
-        { id: 'af-invented', triggered: true, evidence: '', note: '' },
-      ],
-    };
-    const out = validateQaResponse(parsed);
+  // CORRECTED 2026-07-21: an unknown auto-fail id used to be silently dropped.
+  // Only TRIGGERED auto-fails still flow into scoring, but an INVENTED id is now
+  // a contract violation that trips the malformed-response retry.
+  it('passes through only triggered auto-fails, and rejects an invented id', () => {
+    const criteria = rubricCriteria().map((c) => ({ id: c.id, verdict: 'NOT_MET', basis: 'ABSENCE', evidence: '', note: 'absent' }));
+    const out = validateQaResponse({
+      criteria,
+      autoFails: QA_AUTO_FAILS.map((a) => (a.id === 'af-scope'
+        ? { id: a.id, triggered: true, evidence: 'q q', note: '' }
+        : { id: a.id, triggered: false, evidence: '', note: '' })),
+    });
     expect(out.data.autoFails).toHaveLength(1);
     expect(out.data.autoFails[0].id).toBe('af-scope');
+
+    const invented = validateQaResponse({
+      criteria,
+      autoFails: [...noAutoFails(), { id: 'af-invented', triggered: true, evidence: 'q q', note: '' }],
+    });
+    expect(invented.data).toBeUndefined();
+    expect(invented.error).toMatch(/unknown auto-fail/i);
   });
 
   // ── Negative-basis validation ────────────────────────────────────────────
@@ -1402,7 +1422,7 @@ describe('OB/GYN caller-observable fairness repair', () => {
     const transcript = [...TRANSCRIPT, { role: 'navigator', text: 'I will send this directly to our MFM coordinator.' }];
     const modelResponse = {
       criteria: withInternalAbsence('know-rule', 'The navigator did not name Rebecca Wood.'),
-      autoFails: [],
+      autoFails: noAutoFailsFor(QA_RUBRIC_PROFILES.obgyn),
     };
     const scenarioContext = {
       verified: true,
@@ -1448,7 +1468,7 @@ describe('gradeCallQaTranscript upstream budget', () => {
   // This scenarioContext is OB/GYN, so the grader must be asked (and answer)
   // with the OB/GYN profile's criterion set — a Pediatrics-shaped response is
   // correctly rejected as malformed.
-  const validResponse = () => ({ criteria: allMetVerdicts(QA_RUBRIC_PROFILES.obgyn), autoFails: [] });
+  const validResponse = () => ({ criteria: allMetVerdicts(QA_RUBRIC_PROFILES.obgyn), autoFails: noAutoFailsFor(QA_RUBRIC_PROFILES.obgyn) });
   const input = {
     transcript: TRANSCRIPT,
     scenarioContext,

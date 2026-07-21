@@ -95,7 +95,7 @@ function calibrationFixture({
     modelRun: modelRun === null ? null : {
       model: modelName,
       rubricVersion: getQaRubricProfile(scenario.department).rubricVersion,
-      promptVersion: 'call-qa-grader-v4',
+      promptVersion: 'call-qa-grader-v5',
       scenarioVersion: SYNTHETIC_SCENARIO_VERSION,
       recommendation: model,
       pass: model !== 'fail',

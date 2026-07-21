@@ -8,6 +8,7 @@ import { OverallBadge, DomainScore } from './OverallStatus.jsx';
 import { formatPercent, formatSeriesCurrent, isMeasured } from '../lib/formatScore.js';
 import { getInterviews, getResultHistory, updateInterviewGradeOverride, updateQaFinalReview } from '../lib/db.js';
 import { qaFinalReviewLabel, qaFinalVerdict, qaHistoryBadgeLabel, qaBadgeTone } from '../lib/qaFinalReview.js';
+import { resolveQaScoringState } from '../lib/qaDomainScoring.js';
 import { compareTimestampValues, timestampMillis } from '../lib/time.js';
 import Sparkline from './Sparkline.jsx';
 import FeedbackControls from './FeedbackControls.jsx';
@@ -674,6 +675,12 @@ export default function NavigatorDetail({ rows, name, deptName, dept, deptMatrix
                 const isEditing = overrideId === session.id;
                 const isQaReviewEditing = qaReviewEditId === session.id;
                 const qaReviewed = Boolean(session.qaFinalReview);
+                // Resolve rubric interpretability at RENDER time from the attempt's
+                // own grading metadata. Never trust a stored `scoringUnavailable`
+                // boolean: it reflects whatever build graded the attempt, so a
+                // record written by a future/unknown rubric would carry stale
+                // domain scores and no flag, and the projection would render.
+                const qaScoringState = resolveQaScoringState(session.qa);
                 const versionStatus = session.assessmentType === 'call-qa' && contentVersionContext
                   ? contentVersionStatus(session, contentVersionContext)
                   : null;
@@ -981,13 +988,19 @@ export default function NavigatorDetail({ rows, name, deptName, dept, deptMatrix
                             {/* An attempt graded under a rubric version this build no
                                 longer recognises cannot be projected. Say so plainly
                                 rather than reinterpreting it under a current rubric —
-                                that would show scores the navigator never received. */}
-                            {session.qa?.scoringUnavailable ? (
+                                that would show scores the navigator never received.
+
+                                Interpretability is RESOLVED HERE, from the attempt's own
+                                grading metadata. The stored `scoringUnavailable` flag is
+                                deliberately not consulted: it was written by whichever
+                                build graded the attempt, so a record produced by a future
+                                rubric carries stale `domainScores` and no flag at all. */}
+                            {qaScoringState.scoringUnavailable ? (
                               <div className="interview-log__grade-section">
                                 <p className="interview-log__grade-heading">QA-only domain signal</p>
                                 <p className="interview-log__provenance-warn">
                                   Unavailable — this attempt was graded with rubric version{' '}
-                                  <strong>{session.qa.recordedRubricVersion ?? 'unknown'}</strong>, which this
+                                  <strong>{qaScoringState.recordedRubricVersion ?? 'unknown'}</strong>, which this
                                   version of the app cannot interpret. The recorded score and criteria above are
                                   unchanged; only the per-domain projection is withheld.
                                 </p>

@@ -366,4 +366,43 @@ describe('invariant: department rubric profiles', () => {
     expect(new Set(signatures).size).toBe(signatures.length);
     for (const signature of signatures) expect(signature).toMatch(/^[0-9a-f]{8}-[0-9a-f]{8}$/);
   });
+
+  // ── Correction pass #2 invariants (2026-07-21) ────────────────────────────
+
+  it('an identity criterion never persists model-authored evidence', () => {
+    // Scoring an identity criterion ignores the model's free text, so that text
+    // must never survive onto the scored criterion where the UI would render it.
+    const obgyn = QA_RUBRIC_PROFILES.obgyn;
+    const identityIds = new Set(obgyn.identityVerificationCriteria);
+    expect(identityIds.size).toBeGreaterThan(0);
+    const verdicts = obgyn.criteria.map((c) => ({
+      id: c.id, verdict: 'MET', basis: 'EVIDENCE',
+      evidence: 'FABRICATED MODEL SENTENCE', note: '', identityEvidence: [],
+    }));
+    const scored = scoreQa(verdicts, [], [], obgyn);
+    for (const criterion of scored.criteria) {
+      if (!identityIds.has(criterion.id)) continue;
+      expect(criterion.evidence, criterion.id).not.toContain('FABRICATED MODEL SENTENCE');
+      expect(criterion.evidenceSource, criterion.id).toBe('server-derived');
+    }
+  });
+
+  it('every profile that declares an identity policy declares it safety-critical', () => {
+    // A criterion that may cite caller wording must be one a supervisor reviews
+    // when it fails, otherwise the narrow exception could quietly cost points.
+    for (const profile of profiles) {
+      for (const id of profile.identityVerificationCriteria ?? []) {
+        expect(profile.safetyCriticalCriteria.has(id), `${profile.department}/${id}`).toBe(true);
+      }
+    }
+  });
+
+  it('no profile permits an identity policy on a criterion outside verification', () => {
+    for (const profile of profiles) {
+      for (const criterion of profile.criteria) {
+        if (criterion.evidencePolicy !== QA_EVIDENCE_POLICIES.IDENTITY_VERIFICATION) continue;
+        expect(criterion.categoryId, `${profile.department}/${criterion.id}`).toBe('verification');
+      }
+    }
+  });
 });

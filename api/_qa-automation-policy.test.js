@@ -9,7 +9,7 @@ import { rubricCriteria } from '../src/data/qaRubric.js';
 const POPULATION = [
   'gemini-2.5-flash',
   'qa-rubric-v2',
-  'call-qa-grader-v4',
+  'call-qa-grader-v5',
   'synthetic-rehearsal-v1',
   'call-qa-live-transcript-v1',
   'gemini-live-v1',
@@ -62,7 +62,7 @@ function cleanAttempt() {
       gradingMetadata: {
         model: 'gemini-2.5-flash',
         rubricVersion: 'qa-rubric-v2',
-        promptVersion: 'call-qa-grader-v4',
+        promptVersion: 'call-qa-grader-v5',
         scenarioVersion: 'synthetic-rehearsal-v1',
       },
     },

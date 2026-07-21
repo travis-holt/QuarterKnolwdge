@@ -11,7 +11,65 @@
 > [§8 Current System State](#8-current-system-state) and [§15 Current Priorities](#15-current-priorities)
 > accurate at all times.
 >
-> **Last updated:** 2026-07-21 (**department-based Call QA rubric profiles; OB/GYN is the first
+> **Last updated:** 2026-07-21 (**CORRECTION PASS #2 — Call QA verification integrity.** Still a
+> **DRAFT PR against `main`, NOT merged and NOT deployed.** A second independent review probed
+> the trust boundaries rather than the authored fixtures and found seven ways the pipeline could
+> be fooled or could mislead a supervisor. Each was reproduced with a failing test first
+> (`api/qaVerificationIntegrity.test.js`, 86 tests, 52 of which failed against the previous head)
+> and then fixed, with `api/qaVerificationPipeline.test.js` (20 tests) running the same
+> adversarial cases end to end through the real grading pipeline. (1) **Protected disclosures are
+> now detected per CLAUSE, not per turn** — a turn that merely began safely ("Let me open your
+> chart. I can see Dr. Smith ordered an ultrasound.") was classified safe, so identifiers
+> collected afterwards could satisfy `verify-before-access` despite a real earlier disclosure;
+> splitting is conservative and abbreviations/initials/decimals do not end a clause, the whole
+> turn is re-checked as a safety net, and `findProtectedDisclosure()` reports turn index, clause
+> index, clause text and category in transcript order. (2) **Name claims must be proven to be the
+> PATIENT'S** — a navigator self-introduction ("this is Dana"), a provider surname ("Dr. Reyes")
+> and an unrelated mention previously satisfied all three identifiers together; identifiers must
+> now come from a caller-side turn AND sit inside a patient-identity span (self-identification,
+> explicit third-party designation, or an answer to the navigator's patient-name question), with
+> the third-party designation taking precedence over a self-identification in the same turn.
+> Authorized third parties are fully supported, including "Can I have **his** first name, last
+> name, and date of birth?" → "Sure, Liam Carter, March 2nd 2021." (3) **An identity criterion
+> never persists or displays model-authored evidence** — scoring already ignored the free-text
+> quote, but it was still stored and rendered, so a valid structured claim plus an invented
+> sentence ("The patient was fully verified.") reached the supervisor panel as a quotation;
+> identity criteria now carry a **privacy-safe server-derived summary** (which identifiers
+> verified, in which turn — never the values), tagged `evidenceSource: 'server-derived'` and
+> rendered as a statement, with the raw model claim kept on `modelJudgment` for audit only.
+> (4) **`parseDateOfBirth` is a real date parser** — spoken forms ("March second nineteen
+> ninety-one", "the second of March nineteen ninety-one") are accepted rather than costing a
+> navigator verification credit, and the calendar is validated (February 29 only in a real leap
+> year; no February 30/31, April 31, month 13 or day 0). Unsupported forms (two-digit years,
+> digit-by-digit dictation, relative wording) are documented and fail closed to review; the
+> birth-year range is unchanged (1800–2099) and no new age policy was invented. (5) **Malformed
+> model output is rejected BEFORE normalization** — duplicate ids silently overwrote verdicts and
+> unknown/extra criteria and auto-fail ids vanished, so the exact-set check saw only cleaned
+> output and the retry never ran; validation is now strict on the raw response and every
+> auto-fail id must be answered exactly once, with a quote when triggered. (6) **Prompt-version
+> support is truthful** — v3 was declared supported while calibration rejected it; interpretable
+> and producible are now separate (`isSupportedStoredPromptVersion` / `isCurrentPromptVersion`),
+> genuine stored evidence may carry any supported version, an authored synthetic example must
+> carry the current one, and populations never blend. (7) **A metadata-less historical result uses
+> the HISTORICAL SHARED rubric** — `profileForGradedAttempt({}, 'obgyn')` returned the NEW OB/GYN
+> profile, which would summarize a pre-versioning attempt against `close-offer-help`, a criterion
+> it was never scored on; the stored department describes the CALL, not the rubric, and can no
+> longer select a profile. (8) **Rubric interpretability is resolved at RENDER time** — the UI
+> trusted a stored `scoringUnavailable` boolean that a future-rubric record would never carry, so
+> stale `domainScores` rendered; one reusable selector `resolveQaScoringState()` now derives it
+> from the attempt's own metadata and the stored flag is not consulted in either direction.
+> **VERSIONING:** the rubric stays **`qa-rubric-obgyn-v1`** (no criterion, point, weight,
+> applicability or auto-fail changed; still 100 points, still passes at 85), but the prompt moves
+> to **`call-qa-grader-v5`** because the MODEL-VISIBLE contract changed again — the prompt now
+> states the patient-identity ownership rules, accepts spoken DOBs, and requires every auto-fail
+> id. Strict validation of the existing v4 schema alone would not have required a bump. No
+> `identitySubject` field was added to the model schema: the server must establish ownership
+> independently regardless of what the model declares, so it would add contract surface without
+> adding trust. Unit suite 1923 → **2036 across 80 files**. **No Firestore migration, no
+> production write, no private-bank change, no historical grade rewritten, no rules change.**
+> See docs/HISTORY.md 2026-07-21 "Call QA verification integrity" and
+> docs/GRADING_INVARIANTS.md §0i) ·
+> **Prior update:** 2026-07-21 (**department-based Call QA rubric profiles; OB/GYN is the first
 > dedicated department profile** — **DRAFT PR against `main`, NOT merged and NOT deployed.**
 > The Call QA rubric is no longer one shared rubric assumed correct for every department.
 > `getQaRubricProfile(department)` in `src/data/qaRubricProfiles.js` is **the single
@@ -1171,11 +1229,21 @@ training assignments.
     422, grader never called). There is no `?? 'pediatrics'` default left in the scored path;
     `buildScenarioContextFromAttempt` returns `department: null` rather than guessing.
   - **Historical attempts keep their own rubric.** Every newly graded attempt records
-    `qa.gradingMetadata.rubricDepartment` + `rubricVersion`; `profileForGradedAttempt()` resolves
-    a stored result by its **recorded version first** and returns `null` (never a guess) for an
-    unrecognised version. QA domain/competency summaries, the shadow-automation completeness
+    `qa.gradingMetadata.rubricDepartment` + `rubricVersion`. `profileForGradedAttempt()` resolves
+    a stored result in exactly three cases: a **recorded version we know** → that profile (with
+    the recorded department cross-checked); a **recorded version we do not know** → `null`, never
+    a guess; and **no version at all** → the **HISTORICAL SHARED rubric** (`qa-rubric-v2`),
+    regardless of the stored department. That last case was corrected in pass #2: it previously
+    let the stored department pick a CURRENT profile, so a metadata-less OB/GYN attempt resolved
+    to `qa-rubric-obgyn-v1` — a rubric that did not exist when it was graded — and would have been
+    summarized against `close-offer-help`, a criterion it was never scored on, dropping its real
+    `close-survey` / `close-anything-thanks` evidence. The stored department describes the CALL,
+    not the rubric. QA domain/competency summaries, the shadow-automation completeness
     check, and the supervisor panel ("Graded with: *<department>* rubric (*version*)") all use
-    it. **No Firestore migration; no historical grade rewritten.**
+    it, and **interpretability is resolved at RENDER time** through the single selector
+    `resolveQaScoringState()` rather than a persisted `scoringUnavailable` boolean (a record
+    written by a future rubric would carry stale `domainScores` and no such flag).
+    **No Firestore migration; no historical grade rewritten.**
 - **The OB/GYN rubric (`qa-rubric-obgyn-v1`, 2026-07-21).** Still **exactly 100 points**, still
   **passes at 85**, and every category weight is unchanged. What differs from the shared rubric:
   - **Opening (10, unchanged points).** Still requires a professional greeting, the navigator's
@@ -1229,23 +1297,51 @@ training assignments.
     turn — it could not tell a first name from a phone number and could not aggregate across
     turns. A grader could claim MET quoting "What is your date of birth?" and be believed.)*
   - **The server re-derives every claim.** Turn exists · role matches · quote appears verbatim in
-    THAT turn · value appears inside the quote · value is shaped like its identifier. A model
-    Boolean is never trusted. `extractDateOfBirth` requires a real date with a 4-digit year and
-    explicitly rejects phone- and address-shaped values, so **phone/address can never satisfy
-    DOB**. All three identifiers are required and must be **distinct**, so a lone first or last
-    name can never satisfy full-name verification. Identifiers may be spread across turns; a
-    single caller sentence may satisfy all three.
+    THAT turn · value appears inside the quote · value is shaped like its identifier · **for a
+    NAME, the value is established as the PATIENT'S** (correction pass #2). A model Boolean is
+    never trusted. `parseDateOfBirth` requires a REAL calendar date, accepts written, numeric and
+    **spoken** forms, and explicitly rejects phone- and address-shaped values, so **phone/address
+    can never satisfy DOB** and **February 31 can never satisfy it either**. All three identifiers
+    are required and must be **distinct**, so a lone first or last name can never satisfy
+    full-name verification. Identifiers may be spread across turns; a single caller sentence may
+    satisfy all three.
+  - **Name ownership (correction pass #2).** A name-shaped token proves only that a name was
+    said. Identifiers must come from a **caller-side turn**, and the value must sit inside a span
+    that designates the patient — a self-identification, an explicit third-party designation
+    (`I'm calling for my daughter, Maria Alvarez`), or a direct answer to the navigator's
+    patient-name question (including third-person phrasing: "Can I have **his** first name, last
+    name, and date of birth?"). A navigator self-introduction, a provider/staff name, and a name
+    merely mentioned in passing are rejected. When a turn holds both a self-identification and an
+    explicit third-party designation, **the designation wins**. Ambiguous ownership withholds the
+    criterion and routes to supervisor review — it never receives automatic credit.
+  - **Displayed identity evidence is SERVER-DERIVED (correction pass #2).** Scoring ignores the
+    model's free-text quote for an identity criterion, so that text is no longer persisted or
+    rendered — otherwise a valid structured claim plus an invented sentence would reach the
+    supervisor panel as observed evidence. The stored evidence is a privacy-safe summary of what
+    the server re-verified (which identifiers, which turn — never the values), marked
+    `evidenceSource: 'server-derived'`; the raw model claim survives only on `modelJudgment`.
   - **Scope limits (all tested):** **MET credit only** (an evidence-based negative stays
     navigator-only, so caller words can never substantiate an accusation against the navigator);
     **opt-in per criterion** (caller wording can never earn an unrelated navigator-performance
     criterion); **auto-fails are never covered**, including `af-hipaa`.
   - **`verify-before-access` is decided by real transcript ORDER and FAILS CLOSED.** ONE
-    centralized detector (`classifyProtectedDisclosure` / `findProtectedDisclosureIndex`) covers
+    centralized detector (`findProtectedDisclosure` / `classifyProtectedDisclosure` /
+    `findProtectedDisclosureIndex`) covers
     appointments, prior visits, chart contents, orders, provider notes, lab/imaging results,
     prescriptions, balances and patient-specific clinical details, and explicitly excludes generic
     wording ("let me open your chart", "let me check that", public office info, verification
-    questions). The criterion is satisfied only when identity completes **strictly before** the
-    first disclosure. When identity cannot be verified the order is unknowable, so the criterion is
+    questions). **It classifies CLAUSE BY CLAUSE (correction pass #2).** Previously a turn that
+    merely *began* with safe wording was treated as safe in full, so
+    "Let me open your chart. I can see Dr. Smith ordered an ultrasound." passed and later
+    identifiers could satisfy the criterion despite a real earlier disclosure. A safe clause now
+    vetoes only itself; splitting is conservative (sentence punctuation, semicolons, commas, and a
+    conjunction only when a new clause follows) and abbreviations, initials and decimals do not
+    end a clause; the whole turn is re-checked afterwards as a safety net for a disclosure the
+    split fragmented, but only when some clause was not itself safe, so punctuation alone cannot
+    manufacture a finding. The criterion is satisfied only when identity completes **strictly
+    before** the first disclosure TURN — identity is located to a turn and a disclosure to a
+    clause, so a same-turn comparison would be a guess and instead fails closed. When identity
+    cannot be verified the order is unknowable, so the criterion is
     withheld and marked `verification-order-unverified`, forcing supervisor review. The detector
     can only *reject* a claimed MET, never create one.
   - **Auditability:** each identity criterion stores `identityVerification` — which identifiers
@@ -2578,7 +2674,7 @@ of this file on 2026-07-07 to cut per-session context cost (it was ~55% of the f
   (init → chat/voice turns → `/api/live` relay) for caller consistency. Scored Call QA deliberately
   does not: its caller receives no grading context, expected actions, critical misses, scoring notes,
   rule/workflow metadata, or hidden chart state. Final verification: `npm test` =
-  **1,923/1,923 across 78 files**; Firestore Rules emulator assertions = **76/76**
+  **2,036/2,036 across 80 files**; Firestore Rules emulator assertions = **76/76**
   (51 result authorization + 25 Call QA); production build
   includes the private-runtime bundle scan. GitHub Actions mirrors the
   normal local gate on `main` pushes and PRs: `npm ci` → `npm test` → `npm run build` (no deploy step).
@@ -2624,7 +2720,7 @@ of this file on 2026-07-07 to cut per-session context cost (it was ~55% of the f
   Pediatrics; their modules will follow once their SOPs land.
 - **Experimental / mockup:**
   - **Adult Medicine and Behavioural Health** are not assessed; **Pediatrics and OB/GYN** are live.
-- **Test coverage:** **1,923 unit tests across 78 files** and **76 Firestore Rules emulator
+- **Test coverage:** **2,036 unit tests across 80 files** and **76 Firestore Rules emulator
   assertions** (51 result authorization + 25 Call QA). The 2026-07-21 department-rubric-profile
   work added `api/obgynRubricProfile.test.js` (75 tests: profile architecture/fail-closed
   resolution, OB/GYN opening/verification/closing/empathy/listening/narration/documentation
@@ -2762,7 +2858,7 @@ of this file on 2026-07-07 to cut per-session context cost (it was ~55% of the f
   OB/GYN = **37** seed questions (offline fallback) + the **48-item MCQ v2 operating-model bank**
   (24 Pediatrics + 24 OB/GYN) that replaces the weak active bank via a marker-gated
   archive-and-replace migration (bank grows in Firestore per dept) · 4 departments (**Pediatrics
-  + OB/GYN live**, 2 mockup) · **1,923 unit tests across 78 files** + **76 assertions**
+  + OB/GYN live**, 2 mockup) · **2,036 unit tests across 80 files** + **76 assertions**
   across two committed Firestore Rules emulator suites (`npm run test:rules`; require Java, run in
   CI, not part of the unit-test count) ·
   **14** Firestore collections
@@ -3104,7 +3200,7 @@ npm run test:e2e     # run the Playwright browser tests (auto-builds + starts th
 - Heatmap intensity toggle (show % inside matrix cells).
 
 ### Technical Debt
-- **1,923 unit tests across 78 files** as of 2026-07-21 (plus **76 assertions** across two
+- **2,036 unit tests across 80 files** as of 2026-07-21 (plus **76 assertions** across two
   committed Firestore Rules emulator suites, `npm run test:rules`, run separately from the unit-test
   gate). **Role-app
   coverage** (`App`, `Start`,
@@ -3305,7 +3401,16 @@ npm run test:e2e     # run the Playwright browser tests (auto-builds + starts th
     object through the pipeline. Never add a `department === '…'` branch to the grading path —
     express the difference as profile data. Never import `QA_RUBRIC`/`QA_AUTO_FAILS` as a
     fallback after a profile has been resolved, and never default an unsupported department to
-    another department's rubric (the scored runtime must fail closed). When rendering or
+    another department's rubric (the scored runtime must fail closed).
+  - **Never trust the model for identity, and never render what the server did not verify.**
+    Name identifiers must come from a caller turn AND be established as the PATIENT'S name;
+    a date of birth must parse as a real calendar date. Identity criteria store a
+    **server-derived** evidence summary — do not persist or display the model's free-text quote
+    for them, and do not put a patient's name or date of birth into navigator-facing prose.
+  - **Never resolve rubric interpretability from a stored flag.** Use the single selector
+    `resolveQaScoringState()` in [src/lib/qaDomainScoring.js](src/lib/qaDomainScoring.js) at
+    render/projection time. A persisted `scoringUnavailable` boolean reflects whichever build
+    graded the attempt and is not the authority. When rendering or
     calibrating a STORED result, resolve its rubric with `profileForGradedAttempt()` so a
     historical attempt is never reinterpreted under a newer profile. See
     [docs/GRADING_INVARIANTS.md](docs/GRADING_INVARIANTS.md) §0g/§0h.
@@ -3379,17 +3484,33 @@ npm run test:e2e     # run the Playwright browser tests (auto-builds + starts th
    - **Known limitation to watch:** the protected-disclosure detector behind
      `verify-before-access` is a deterministic pattern set (nine categories: appointments,
      prior visits, chart contents, orders, provider notes, results, medication, account,
-     clinical detail). It can only *reject* a MET (never create one), so its failure mode is a
+     clinical detail), now applied CLAUSE BY CLAUSE. It can only *reject* a MET (never create
+     one), so its failure mode is a
      lost criterion the supervisor still reviews — but it will not catch every possible
      phrasing. It is a trust gate, not a comprehensive PHI detector.
+   - **Second known limitation:** name-ownership detection is likewise a deterministic pattern
+     set. A verification exchange phrased in a way it does not recognise withholds the criterion
+     and routes to supervisor review rather than guessing — a lost criterion, never a false pass.
+     Requiring identifiers to come from a CALLER turn also means a navigator reading a name back
+     for confirmation ("your last name is Alvarez, correct?" / "Yes.") does not by itself
+     establish identity. That is intentional fail-closed behavior, and it is the most likely
+     source of avoidable false negatives to watch for in the live smoke.
    - **Numeric weighting is unchanged and is a standing product decision.** Missing
      verification can still yield a numeric score above 85 (verification is 10 of 100 points);
      safety-critical misses prevent a confident pass and force `needs_review`; a verified HIPAA
-     auto-fail still zeroes the score. Re-weighting was explicitly out of scope for the
-     correction pass and needs owner sign-off.
-   - **Prompt version `call-qa-grader-v4`** is a real contract change (profile-rendered evidence
-     role rules, `[n]`-indexed transcript turns, the structured `identityEvidence` array). Any
-     future OB/GYN calibration evidence gathered under v3 is a separate population.
+     auto-fail still zeroes the score. Re-weighting was explicitly out of scope for both
+     correction passes and needs owner sign-off.
+   - **Prompt version `call-qa-grader-v5`** (v3 → v4 → v5). v4 added profile-rendered evidence
+     role rules, `[n]`-indexed transcript turns and the structured `identityEvidence` array; v5
+     added the patient-identity ownership rules for name claims, explicit spoken-DOB guidance,
+     and the requirement to answer every auto-fail id (with a quote when triggered). Each is a
+     real model-visible contract change, so **evidence gathered under v3 or v4 is a separate
+     calibration population from v5** and the two can never be pooled. The rubric itself stays
+     `qa-rubric-obgyn-v1` — no criterion, point, weight, applicability or auto-fail changed.
+   - **The live smoke must now also confirm the model populates identity claims correctly.**
+     Prompt-contract tests assert prompt TEXT; they cannot prove how Gemini fills the structured
+     `identityEvidence` array under v5. A grader that omits it, or that submits a navigator or
+     provider name, will correctly but unhelpfully lose verification credit.
 1b. **POST-DEPLOY WATCH — the capability redesign is LIVE (merged `01a7f27`, 2026-07-21).**
    PR #40 is merged and Railway has auto-deployed it, so the following are now live-system items,
    not pre-merge questions:

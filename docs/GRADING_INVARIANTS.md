@@ -9,10 +9,108 @@
 > those tests fails after your change, re-read this document before "fixing" the test.
 >
 > Last updated: 2026-07-21 (department-based Call QA rubric profiles; OB/GYN is the first
-> dedicated department profile. Corrected the same day after independent review: real
-> structured identity verification, a centralized protected-disclosure detector, an
-> enforced validate→repair→score profile binding, and fail-closed handling of unknown
-> historical rubric versions. Grader prompt version `call-qa-grader-v4`.)
+> dedicated department profile. Corrected twice the same day after two independent
+> reviews. Correction pass #1: real structured identity verification, a centralized
+> protected-disclosure detector, an enforced validate→repair→score profile binding, and
+> fail-closed handling of unknown historical rubric versions. Correction pass #2 (§0i):
+> clause-level disclosure detection, patient-identity ownership for name claims,
+> server-derived identity evidence, real spoken/calendar DOB parsing, strict raw-response
+> validation, a truthful prompt-version policy, and metadata-less history resolving to the
+> historical shared rubric. Grader prompt version `call-qa-grader-v5`.)
+
+## 0i. Verification integrity (2026-07-21, correction pass #2)
+
+The second independent review probed the trust boundaries rather than the authored
+happy-path fixtures and found seven ways the pipeline could be fooled or could mislead.
+These invariants are binding and each has a reproduction test in
+[`api/qaVerificationIntegrity.test.js`](../api/qaVerificationIntegrity.test.js) plus an
+end-to-end fixture in
+[`api/qaVerificationPipeline.test.js`](../api/qaVerificationPipeline.test.js).
+
+1. **A protected disclosure is detected per CLAUSE, never per turn.**
+   A navigator turn is split conservatively (sentence punctuation, semicolons, commas, and
+   a coordinating conjunction only when a new clause actually follows) and each clause is
+   classified independently. **A safe clause vetoes only itself.**
+   `Let me open your chart. I can see Dr. Smith ordered an ultrasound.` is a disclosure.
+   The whole turn is re-checked afterwards as a safety net for a disclosure the split
+   fragmented, but only when at least one clause was not itself safe, so punctuation alone
+   can never manufacture a finding. Abbreviations (`Dr.`), initials and decimals do not end
+   a clause. `findProtectedDisclosure()` returns the turn index, the clause index, the
+   clause text and the category, and transcript order is preserved: the first disclosure is
+   the earliest matching clause in the earliest navigator turn.
+2. **A name is evidence only when it is proven to be THE PATIENT'S name.**
+   A name-shaped token proves only that a name was said. Every name identifier must
+   (a) come from a **caller-side turn** — the navigator saying a name proves nothing about
+   what the caller supplied — and (b) sit inside a span that designates the patient: a
+   caller self-identification, an explicit third-party designation
+   (`I'm calling for my daughter, Maria Alvarez`), or a direct answer to the navigator's
+   patient-name question. A navigator self-introduction, a provider or staff name (a title
+   immediately before the value disqualifies it outright), and a name merely mentioned in
+   passing are all rejected with `not-a-patient-identity-context`. When a turn contains both
+   a self-identification and an explicit third-party designation, **the designation wins** —
+   the caller is not the patient. An authorized third party may supply the patient's
+   identifiers. Ambiguous ownership never receives automatic credit; it withholds the
+   criterion and the supervisor reviews it.
+   *Granularity note:* identity is located to a TURN, a disclosure to a CLAUSE. When both
+   fall in the same turn the two are not comparable, so `verify-before-access` requires
+   identity to complete **strictly before** the disclosure turn and otherwise fails closed.
+3. **An identity criterion never persists or displays model-authored evidence.**
+   Scoring an identity criterion uses the structured `identityEvidence` array and ignores
+   the model's free-text `evidence`, so that free text must not survive onto the scored
+   criterion — otherwise a grader could submit valid claims alongside an invented quote
+   ("The patient was fully verified.") and that fabricated sentence would reach the
+   supervisor panel, the grade projection and coaching prose as if it had been observed.
+   `scoreQa` replaces it with a **server-derived summary** built only from what the server
+   re-verified, marked `evidenceSource: 'server-derived'` and rendered as a statement rather
+   than a quotation. The summary is **privacy-safe**: it names which identifiers verified
+   and in which turn, never the identifier values, so a patient's name and date of birth are
+   not repeated back into navigator-facing feedback. The raw model claim is retained on
+   `modelJudgment` for audit only.
+4. **A date of birth must parse as a REAL calendar date.**
+   `parseDateOfBirth` supports written and spoken forms (`March 2, 1991`, `2 March 1991`,
+   `03/02/1991`, `March second nineteen ninety-one`, `the second of March nineteen
+   ninety-one`) and validates the result: February 29 only in a real leap year, no
+   February 30/31, no April 31, no month 13, no day 0. A phone number, an address, a bare
+   year and a bare month/day are rejected. Deliberately unsupported and documented in the
+   module: two-digit years, digit-by-digit dictation, and relative wording — these fall
+   through to "not a date of birth", which withholds credit and routes to review rather than
+   guessing. The birth-year range is **unchanged** (1800–2099); no new age policy was
+   invented.
+5. **Malformed model output is rejected BEFORE normalization.**
+   `validateQaResponse` validates the RAW response: non-object entries, missing/non-string
+   ids, unknown ids, duplicate ids, invalid verdicts, illegal basis/evidence combinations,
+   malformed `identityEvidence`, and `identityEvidence` on a criterion whose profile does
+   not declare the identity policy. Auto-fails must answer **every configured id exactly
+   once**; unknown, duplicate, missing and malformed entries are rejected, and a triggered
+   auto-fail must carry its verbatim quote. Nothing is silently filtered or overwritten, so
+   a contract violation trips the existing same-model malformed-response retry instead of
+   being normalized into a seemingly valid result.
+6. **Being interpretable is not the same as being producible.**
+   `SUPPORTED_CALL_QA_PROMPT_VERSIONS` lists the versions this build can interpret in a
+   STORED record; `isCurrentPromptVersion` is what a NEW run must use. Genuine stored
+   evidence (`human-pilot` / `operational-pilot`) may carry any supported version; an
+   authored `synthetic-example` must carry the current one, so a fixture cannot manufacture
+   a historical population that never existed. Unknown versions fail closed, and the
+   readiness gates keep prompt populations from blending.
+7. **A metadata-less historical result uses the HISTORICAL SHARED rubric.**
+   Before department profiles existed there was one rubric and every department was graded
+   with it, so a stored result carrying no rubric metadata was necessarily produced by
+   `qa-rubric-v2` — whatever department it belongs to. `profileForGradedAttempt` therefore
+   resolves: a recorded known version → that profile (department cross-checked); a recorded
+   unknown version → `null`; **no version at all → the historical shared rubric**. The
+   stored department describes the CALL, not the rubric, and may no longer select a profile.
+   The live scored path is unaffected because every newly graded attempt records its
+   metadata.
+8. **Rubric interpretability is resolved at RENDER time, never read from a stored flag.**
+   `resolveQaScoringState(qa, profile?)` in
+   [`src/lib/qaDomainScoring.js`](../src/lib/qaDomainScoring.js) is the single selector,
+   returning `{ profile, scoringUnavailable, reason, recordedRubricVersion }`. A persisted
+   `scoringUnavailable` boolean is **not** the authority — it was written by whichever build
+   graded the attempt, so a record produced by a future rubric carries stale `domainScores`
+   and no flag at all. An unknown recorded version always withholds the domain/competency
+   projection (a stored `scoringUnavailable: false` cannot override that, and a stored
+   `true` cannot suppress a resolvable version); the recorded score and raw criteria still
+   render with a provenance warning, and the page never crashes on absent metadata.
 
 ## 0g. Department Call QA rubric profiles (2026-07-21)
 
@@ -97,6 +195,15 @@ implemented in [`api/_qa-identity-verification.js`](../api/_qa-identity-verifica
 > name from a last name from a phone number, and it could not aggregate identifiers across
 > turns. A grader could mark `verify-three` MET quoting "What is your date of birth?" — a
 > question the caller never answered — and the server agreed. The rules below replace it.
+>
+> **Second correction note (superseding parts of this section — see §0i).** The structured
+> contract below still proved only that a name-SHAPED token appeared in the declared turn.
+> It did not prove the token was the PATIENT'S name, so a navigator self-introduction, a
+> provider surname and an unrelated mention could together satisfy all three identifiers.
+> §0i.2 adds patient-identity ownership. §0i.3 additionally forbids persisting the model's
+> free-text `evidence` on an identity criterion, and §0i.4 replaces the date parser
+> described in point 4 below with one that accepts spoken dates and validates a real
+> calendar date.
 
 1. **Why the exception exists.** A caller frequently volunteers her own full name and date
    of birth in one sentence, or identity is established across several chronological turns.
@@ -111,10 +218,11 @@ implemented in [`api/_qa-identity-verification.js`](../api/_qa-identity-verifica
    verbatim (under the shared normalization) in THAT turn; the claimed value appears inside
    the quote; and the value is shaped like the identifier it claims to be. Any failure
    rejects that claim with a recorded reason.
-4. **A date of birth must parse as a real date.** `extractDateOfBirth` accepts month-name
-   and full-numeric forms with an explicit 4-digit year, and explicitly rejects phone-shaped
-   and address-shaped values, bare years, and bare month/day. **A phone number or a home
-   address can therefore never satisfy DOB.**
+4. **A date of birth must parse as a real date.** *(Superseded by §0i.4 — the parser now
+   also accepts spoken forms and validates the calendar.)* `parseDateOfBirth` accepts
+   month-name, full-numeric and spoken-word forms, requires a REAL calendar date, and
+   explicitly rejects phone-shaped and address-shaped values, bare years, and bare
+   month/day. **A phone number or a home address can therefore never satisfy DOB.**
 5. **All three identifiers are required, and they must be distinct.** A first name alone or
    a last name alone never satisfies full-name verification, and the same single value
    cannot be claimed as both first and last name.

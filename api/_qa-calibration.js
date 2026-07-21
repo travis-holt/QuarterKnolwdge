@@ -13,7 +13,7 @@ import {
   QA_RUBRIC_PROFILES, getQaRubricProfile,
 } from '../src/data/qaRubricProfiles.js';
 import { CALL_QA_CAPTURE_VERSION } from './_call-qa-attempts.js';
-import { CALL_QA_PROMPT_VERSION } from './_qa-grading-versions.js';
+import { isSupportedStoredPromptVersion, isCurrentPromptVersion } from './_qa-grading-versions.js';
 import {
   CALL_QA_CALIBRATION_GATES,
   CALL_QA_CALIBRATION_POLICY_VERSION,
@@ -236,8 +236,22 @@ function validateModelRun(fixture, errors, expectedScenarioVersion = null, profi
   } else if (run.rubricVersion && profile && run.rubricVersion !== profile.rubricVersion) {
     addError(errors, 'modelRun.rubricVersion', 'does not match this department\'s rubric profile');
   }
-  if (run.promptVersion && run.promptVersion !== CALL_QA_PROMPT_VERSION) {
+  // Prompt-version policy (corrected 2026-07-21). `SUPPORTED_CALL_QA_PROMPT_VERSIONS`
+  // declares which versions this repo can still INTERPRET; that is not the same
+  // as which a fixture may be produced under. Genuine stored evidence
+  // (human-pilot / operational-pilot) may carry any supported version, because
+  // it records what actually happened. An authored `synthetic-example` is
+  // written NOW, so it must not claim to be output from a retired prompt — that
+  // would manufacture a historical population that never existed. An unknown
+  // version fails closed either way, and the readiness gates keep populations
+  // from blending (see `requireSinglePromptVersion`).
+  if (run.promptVersion && !isSupportedStoredPromptVersion(run.promptVersion)) {
     addError(errors, 'modelRun.promptVersion', 'unsupported prompt version');
+  } else if (run.promptVersion
+    && fixture.source === 'synthetic-example'
+    && !isCurrentPromptVersion(run.promptVersion)) {
+    addError(errors, 'modelRun.promptVersion',
+      'a synthetic example must use the current prompt version; only genuine stored evidence may carry a historical one');
   }
   if (run.scenarioVersion && expectedScenarioVersion && run.scenarioVersion !== expectedScenarioVersion) {
     addError(errors, 'modelRun.scenarioVersion', 'does not match the referenced scenario version');

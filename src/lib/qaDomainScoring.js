@@ -1,8 +1,6 @@
 import { COMPETENCIES } from '../data/competencies.js';
 import { DOMAINS } from '../data/questions.js';
-import {
-  QA_RUBRIC_PROFILES, getQaRubricProfile, profileForGradedAttempt, recordsRubricVersion,
-} from '../data/qaRubricProfiles.js';
+import { profileForGradedAttempt, recordsRubricVersion } from '../data/qaRubricProfiles.js';
 
 // QA-only domain/competency projections. These MUST be computed against the
 // rubric profile that ACTUALLY graded the attempt: an OB/GYN result summarized
@@ -13,38 +11,60 @@ import {
 // fallback used when rendering a STORED result: it prefers the recorded rubric
 // version so a historical attempt is summarized under the rubric it was graded
 // with, never reinterpreted under a newer one.
-const DEFAULT_PROFILE = QA_RUBRIC_PROFILES.pediatrics;
+/**
+ * THE render-time resolver for a stored QA result.
+ *
+ * Interpretability is DERIVED here, every time, from the result's own
+ * `gradingMetadata` plus the profiles this build actually configures. A stored
+ * `scoringUnavailable` boolean is never the authority — it was written by
+ * whichever build graded the attempt, so a record produced by a future or
+ * unknown rubric would carry its own `domainScores` and NO such flag, and a
+ * consumer trusting the flag would render projections it cannot interpret.
+ *
+ * Returning a null profile is deliberate and load-bearing: reinterpreting an
+ * attempt graded under an unknown rubric would show a supervisor domain scores
+ * the navigator never received. "Unavailable" is the honest answer.
+ *
+ * @param {object} qa                a stored `qa` result object (may be absent)
+ * @param {object} [profile]         an explicitly supplied profile always wins
+ * @returns {{ profile: object|null, scoringUnavailable: boolean,
+ *             reason: string|null, recordedRubricVersion: string|null }}
+ */
+export function resolveQaScoringState(qa, profile) {
+  const recordedRubricVersion = String(qa?.gradingMetadata?.rubricVersion ?? '').trim() || null;
+  if (profile) {
+    return { profile, scoringUnavailable: false, reason: null, recordedRubricVersion };
+  }
+  // `profileForGradedAttempt` owns the whole policy: a known recorded version
+  // resolves to that exact profile, an unknown one to null, and a genuinely
+  // metadata-less record to the historical shared rubric.
+  const resolved = profileForGradedAttempt(qa?.gradingMetadata, qa?.rubricDepartment);
+  if (resolved) {
+    return { profile: resolved, scoringUnavailable: false, reason: null, recordedRubricVersion };
+  }
+  return {
+    profile: null,
+    scoringUnavailable: true,
+    reason: recordsRubricVersion(qa?.gradingMetadata)
+      ? 'unknown-rubric-version'
+      : 'unresolvable-rubric',
+    recordedRubricVersion,
+  };
+}
 
 /**
- * Resolve the profile to summarize a QA result with.
- *  - an explicitly supplied profile always wins;
- *  - a result that RECORDS a rubric version is resolved by that version, and
- *    resolves to `null` when the version is not one we still understand;
- *  - only a result with NO recorded version at all falls back to the historical
- *    shared rubric, because that is the rubric those records were written under.
- *
- * Returning `null` is deliberate and load-bearing: reinterpreting an attempt
- * graded under an unknown rubric would show a supervisor domain scores the
- * navigator never received. "Unavailable" is the honest answer.
+ * Resolve the profile to summarize a QA result with, or null when the recorded
+ * rubric version is one this build cannot interpret.
  */
 export function resolveScoringProfile(qa, profile) {
-  if (profile) return profile;
-  if (recordsRubricVersion(qa?.gradingMetadata)) {
-    // Explicit version present: never fall back to a current department profile.
-    return profileForGradedAttempt(qa.gradingMetadata, qa?.rubricDepartment);
-  }
-  // Genuinely pre-versioning legacy record.
-  return getQaRubricProfile(qa?.gradingMetadata?.rubricDepartment ?? qa?.rubricDepartment)
-    ?? DEFAULT_PROFILE;
+  return resolveQaScoringState(qa, profile).profile;
 }
 
 /**
  * Why a QA result cannot be projected, or null when it can.
  */
 export function scoringUnavailableReason(qa, profile) {
-  if (profile) return null;
-  if (!recordsRubricVersion(qa?.gradingMetadata)) return null;
-  return resolveScoringProfile(qa) ? null : 'unknown-rubric-version';
+  return resolveQaScoringState(qa, profile).reason;
 }
 
 function initBuckets(items) {
@@ -141,20 +161,20 @@ export function scoreQaByCompetency(qa, profile) {
 }
 
 export function qaDomainScoreSummary(qa, profile) {
-  const unavailableReason = scoringUnavailableReason(qa, profile);
-  if (unavailableReason) {
+  const state = resolveQaScoringState(qa, profile);
+  if (state.scoringUnavailable) {
     // Explicit unavailable state. Consumers render "rubric unavailable" rather
     // than a fabricated set of zeroes, and shadow automation stays ineligible.
     return {
       domainScores: null,
       competencyScores: null,
       scoringUnavailable: true,
-      scoringUnavailableReason: unavailableReason,
-      recordedRubricVersion: qa?.gradingMetadata?.rubricVersion ?? null,
+      scoringUnavailableReason: state.reason,
+      recordedRubricVersion: state.recordedRubricVersion,
     };
   }
   return {
-    domainScores: scoreQaByDomain(qa, profile),
-    competencyScores: scoreQaByCompetency(qa, profile),
+    domainScores: scoreQaByDomain(qa, state.profile),
+    competencyScores: scoreQaByCompetency(qa, state.profile),
   };
 }

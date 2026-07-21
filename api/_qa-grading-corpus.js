@@ -135,7 +135,24 @@ export function simulateGrader(transcript, profile = {}, rubricProfile = QA_RUBR
     }
     return { id: c.id, verdict: 'MET', basis: 'EVIDENCE', evidence: metEvidence[c.id] ?? defaultQuote, note: '', identityEvidence: identity };
   });
-  return { criteria, autoFails: autoFails.map((a) => ({ triggered: true, note: '', ...a })) };
+  return { criteria, autoFails: simulateAutoFails(autoFails, rubricProfile) };
+}
+
+/**
+ * Emit EVERY auto-fail id, triggered or not.
+ *
+ * The prompt asks the model for a verdict on all auto-fail ids, and validation
+ * now enforces that, so a simulator that emitted only the triggered ones was
+ * modelling a contract the real grader is not held to.
+ */
+export function simulateAutoFails(triggered, rubricProfile) {
+  const byId = new Map(triggered.map((a) => [a.id, a]));
+  return rubricProfile.autoFails.map((def) => {
+    const hit = byId.get(def.id);
+    return hit
+      ? { triggered: true, note: '', ...hit }
+      : { id: def.id, triggered: false, evidence: '', note: '' };
+  });
 }
 
 // Literalist grader notes — the exact style of false negative seen in pilots.

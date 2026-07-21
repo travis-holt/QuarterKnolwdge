@@ -17,6 +17,8 @@
 //   demonstrates   — the reviewer-facing point of the fixture
 // ─────────────────────────────────────────────────────────────────────────────
 
+import { simulateAutoFails } from './_qa-grading-corpus.js';
+
 export const OBGYN_REVIEW_FIXTURE_SOURCE = 'synthetic-rehearsal-only';
 export const OBGYN_REVIEW_FIXTURE_AUTHORITY = 'none';
 
@@ -494,5 +496,7 @@ export function simulateObgynGrader(fixture, profile) {
       identityEvidence: identity,
     };
   });
-  return { criteria, autoFails: autoFails.map((item) => ({ triggered: true, note: '', ...item })) };
+  // Every auto-fail id must be answered, triggered or not — the same contract
+  // the real grader is validated against.
+  return { criteria, autoFails: simulateAutoFails(autoFails, profile) };
 }
