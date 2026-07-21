@@ -550,3 +550,117 @@ describe('NavigatorApp — incomplete assessment bank blocks the MCQ check', () 
     );
   });
 });
+
+// ── Live-bank READ FAILURE is not an empty bank (2026-07-21) ────────────────
+// A rejected getActiveQuestions() means the bank status is UNKNOWN. Falling back
+// to the seed bank would silently grade a potentially stale assessment, so the
+// check is blocked behind a retryable connection-error state instead.
+
+describe('NavigatorApp — failed question-bank read', () => {
+  const scoreableQuestion = (id, domainId) => ({
+    id,
+    domainId,
+    status: 'active',
+    department: 'pediatrics',
+    competencies: [],
+    scenario: `Scenario ${id}`,
+    correctOptionId: 'a',
+    options: [
+      { id: 'a', text: 'Right', points: 100, rationale: 'r' },
+      { id: 'b', text: 'Wrong', points: 0, rationale: 'r' },
+    ],
+  });
+
+  const signIn = async () => {
+    render(<NavigatorApp session={{ role: 'navigator', name: 'Pat Rowan', navigatorId: 'nav-1' }} onSignOut={vi.fn()} />);
+    await screen.findByText(/Which department are you taking the check for/i);
+    fireEvent.click(screen.getByRole('button', { name: /Pediatrics/i }));
+  };
+
+  it('shows the connection-error state when the read rejects', async () => {
+    dbMocks.getActiveQuestions.mockImplementation(() => Promise.reject(new Error('network down')));
+    await signIn();
+    expect(await screen.findByText(/Couldn't load the question bank/i)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Try again/i })).toBeInTheDocument();
+  });
+
+  it('does NOT fall back to seed questions on a failed read', async () => {
+    dbMocks.getActiveQuestions.mockImplementation(() => Promise.reject(new Error('network down')));
+    await signIn();
+    await screen.findByText(/Couldn't load the question bank/i);
+    // The seed bank covers all six domains, so a seed fallback would have
+    // produced a startable check rather than this error state.
+    expect(screen.queryByText(/This assessment isn't ready yet/i)).not.toBeInTheDocument();
+  });
+
+  it('does NOT open the MCQ after a failed read', async () => {
+    dbMocks.getActiveQuestions.mockImplementation(() => Promise.reject(new Error('network down')));
+    await signIn();
+    await screen.findByText(/Couldn't load the question bank/i);
+    // Return to the hub and try to start: still blocked.
+    fireEvent.click(screen.getByRole('button', { name: /Back to my assessment/i }));
+    const start = await screen.findByRole('button', { name: /Start|Retake/i });
+    fireEvent.click(start);
+    expect(await screen.findByText(/Couldn't load the question bank/i)).toBeInTheDocument();
+  });
+
+  it('does NOT call saveResult after a failed read', async () => {
+    dbMocks.getActiveQuestions.mockImplementation(() => Promise.reject(new Error('network down')));
+    await signIn();
+    await screen.findByText(/Couldn't load the question bank/i);
+    expect(dbMocks.saveResult).not.toHaveBeenCalled();
+  });
+
+  it('retrying loads the correct bank once the read succeeds', async () => {
+    const full = DOMAIN_IDS.map((d, i) => scoreableQuestion(`q${i}`, d));
+    dbMocks.getActiveQuestions.mockImplementationOnce(() => Promise.reject(new Error('network down')));
+    dbMocks.getActiveQuestions.mockImplementation(() => Promise.resolve(full));
+
+    await signIn();
+    await screen.findByText(/Couldn't load the question bank/i);
+
+    fireEvent.click(screen.getByRole('button', { name: /Try again/i }));
+
+    // Back on the phase hub, and the MCQ now opens.
+    const start = await screen.findByRole('button', { name: /Start|Retake/i });
+    fireEvent.click(start);
+    await waitFor(() => {
+      expect(screen.queryByText(/Couldn't load the question bank/i)).not.toBeInTheDocument();
+      expect(screen.queryByText(/This assessment isn't ready yet/i)).not.toBeInTheDocument();
+    });
+  });
+
+  it('a successfully returned EMPTY bank still uses the department seed bank', async () => {
+    dbMocks.getActiveQuestions.mockImplementation(() => Promise.resolve([]));
+    await signIn();
+    const start = await screen.findByRole('button', { name: /Start|Retake/i });
+    fireEvent.click(start);
+    await waitFor(() => {
+      expect(screen.queryByText(/Couldn't load the question bank/i)).not.toBeInTheDocument();
+      expect(screen.queryByText(/This assessment isn't ready yet/i)).not.toBeInTheDocument();
+    });
+  });
+
+  it('a successfully returned PARTIAL live bank remains blocked as incomplete', async () => {
+    const partial = ['intake', 'classification'].map((d, i) => scoreableQuestion(`q${i}`, d));
+    dbMocks.getActiveQuestions.mockImplementation(() => Promise.resolve(partial));
+    await signIn();
+    const start = await screen.findByRole('button', { name: /Start|Retake/i });
+    fireEvent.click(start);
+    // The INCOMPLETE state, distinct from the connection-error state.
+    expect(await screen.findByText(/This assessment isn't ready yet/i)).toBeInTheDocument();
+    expect(screen.queryByText(/Couldn't load the question bank/i)).not.toBeInTheDocument();
+  });
+
+  it('a successfully returned COMPLETE live bank remains allowed', async () => {
+    const full = DOMAIN_IDS.map((d, i) => scoreableQuestion(`q${i}`, d));
+    dbMocks.getActiveQuestions.mockImplementation(() => Promise.resolve(full));
+    await signIn();
+    const start = await screen.findByRole('button', { name: /Start|Retake/i });
+    fireEvent.click(start);
+    await waitFor(() => {
+      expect(screen.queryByText(/Couldn't load the question bank/i)).not.toBeInTheDocument();
+      expect(screen.queryByText(/This assessment isn't ready yet/i)).not.toBeInTheDocument();
+    });
+  });
+});

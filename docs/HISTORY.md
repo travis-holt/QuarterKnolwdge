@@ -1,5 +1,139 @@
 ﻿# Development History - Knowledge Check
 
+## 2026-07-21 — PR #40 final correction: read failures, competency scoreability, trend labels
+
+A narrow third correction pass over PR #40, closing three residual paths where absent evidence could
+still surface as a measured result. Head before this pass: `7c63736`. All previously completed PR #40
+fixes are preserved; capability and competency thresholds, mentor qualification, training thresholds,
+MCQ point maths for valid questions, Spot the Error and Call QA grading, OB/GYN and Pediatrics
+content, Firestore schemas/rules, persistence, result selection, migrations and `MINICHECK_PASS` are
+all unchanged.
+
+### 1. A failed live-bank read was treated as an empty bank
+
+`NavigatorApp` loaded the bank with:
+
+```js
+const live = await getActiveQuestions(dept).catch(() => []);
+const bank = live.length > 0 ? live : (SEED_BY_DEPT[dept] ?? SEED_QUESTIONS);
+```
+
+That `.catch(() => [])` made two very different situations identical:
+
+- Firestore **succeeded** and the live bank is genuinely empty, and
+- Firestore or the network **failed**, so the live bank's contents are unknown.
+
+The second case silently launched the committed **seed** assessment. A navigator could then sit a
+potentially stale assessment, have it graded, and have the result stored as their official profile —
+purely because a network read blipped.
+
+**Fix.** New `loadBankForDept(dept)` handles three distinct outcomes:
+
+| Read | Bank used | MCQ |
+|---|---|---|
+| succeeded, non-empty | live bank | allowed after coverage validation |
+| succeeded, empty | department seed bank | allowed after coverage validation |
+| **rejected** | *none* | **blocked** — status unknown |
+
+A rejected read sets `bankLoadFailed`, clears coverage, and routes to a dedicated
+`view === 'bankUnavailable'` state: *"Couldn't load the question bank"*, explaining it is a
+connection problem, that nothing was recorded, and offering **Try again** (which re-reads the active
+department's bank without signing out) alongside a back link. Both gates enforce it — the phase-hub
+start handler and `handleSubmit`, so no result can be saved from an unknown bank. The error is
+logged with its message only (never the payload, which could carry question content) rather than
+swallowed.
+
+This is deliberately kept separate from the existing *incomplete bank* state: "we couldn't read it"
+is not "we read it and it's missing domains", and the two produce different screens.
+
+`docs/PLAN-3-phase-assessment.md` still contains the old `.catch(() => [])` snippet. It is a
+historical execution plan written against commit `6ebb82e`, so the snippet is preserved unedited and
+the document now carries a superseded banner pointing at the current behaviour.
+
+### 2. Unscoreable questions still contributed zeroes to competencies
+
+`scorePerDomain` had already been taught to ignore questions failing `isScoreableQuestion()`, but
+`scorePerCompetency` still processed them. A question with no options measured nothing yet
+contributed **0 points** to every competency it was tagged with, dragging that competency's average
+down for evidence that never existed. A test explicitly asserted this incorrect behaviour.
+
+**Fix.** The same scoreability rule now gates competency scoring. A competency exercised only by
+unscoreable questions returns `null`; a competency with no tagged scoreable questions returns `null`;
+and a competency measured by a valid question still returns a genuine `0` when the navigator left it
+unanswered or chose a zero-point or nonexistent option. Unknown competency ids are still ignored
+safely, and the three-band thresholds (`<60` Learning · `60–84` Solid · `85+` Can-Teach) are
+untouched.
+
+The test asserting `0` for an optionless question was **replaced** by one asserting `null`.
+
+### 3. Trend labels could still round null to 0%
+
+`buildTrend` stored `null` for missing historical domain scores and `Sparkline` drew gaps correctly,
+but the text labels beside the charts did:
+
+```js
+Math.round(series[series.length - 1]) + '%'
+```
+
+`Math.round(null)` is `0`, so a domain the latest check never measured was labelled **0%** — a
+fabricated Critical-looking reading. `trendOverall()` compounded it by falling back to `0` when a
+snapshot had no measurable evidence at all, injecting an artificial overall trend point.
+
+**Fix.** `trendOverall()` now returns `null` when neither `overallScore` nor `partialAverage` exists,
+and `buildTrend().overallSeries` is `(number|null)[]`. A new shared formatter,
+`src/lib/formatScore.js`, is the single place that decides measured-versus-gap:
+
+- `formatPercent(v)` — genuine `0` → `"0%"`; finite → rounded; null/undefined/NaN/non-numeric →
+  `"N/A"`.
+- `formatSeriesCurrent(series)` — labels the **latest snapshot**, deliberately *not* the latest
+  measured value, so a stale reading is never presented as current.
+- `latestMeasured(series)` — the last finite value, ignoring trailing gaps.
+- `isMeasured(v)` — finite-number predicate.
+
+`NavigatorDetail` uses `formatSeriesCurrent` for both the overall and per-domain labels, and when the
+latest snapshot measured nothing it adds a separate *"last measured X%"* caption so the historical
+segment stays visible without implying it is current. `Overview`'s local `fmtPct` now delegates to the
+shared `formatPercent`. `Sparkline` continues to split its line around gaps and dot isolated
+readings. `teamTrend`'s existing behaviour — omitting timepoints with zero complete profiles — is
+unchanged.
+
+Every consumer of `overallSeries`, `domainSeries`, `Sparkline` and `trendOverall` was audited; no
+`Math.round(series[…])` remains anywhere in the tracked tree.
+
+### Files changed
+
+`src/components/NavigatorApp.jsx` · `src/components/NavigatorDetail.jsx` ·
+`src/components/Overview.jsx` · `src/lib/scoring.js` · **new** `src/lib/formatScore.js` ·
+`src/styles.css` · `src/lib/scoring.test.js` · **new** `src/lib/formatScore.test.js` ·
+**new** `src/components/sparklineTrend.test.jsx` · `src/components/roleApps.behavior.test.jsx` ·
+`docs/PLAN-3-phase-assessment.md` (superseded banner only) · `CLAUDE.md` · `docs/HISTORY.md`.
+
+### Tests added or updated
+
+- `roleApps.behavior.test.jsx` (22 → 30): rejected read shows the connection-error state; no seed
+  fallback on failure; MCQ stays closed; `saveResult` never called; retry loads the correct bank once
+  the read succeeds; a successful empty read still uses the seed bank; a partial live bank stays
+  blocked as *incomplete* (a distinct screen); a complete live bank stays allowed.
+- `scoring.test.js` (278 → 294): competency null for no-options / empty-options / unknown-domain
+  questions; genuine `0` for zero-point, nonexistent-option and unanswered valid questions; mixed
+  banks averaging only scoreable questions; unknown competency ids still safe; real Pediatrics and
+  OB/GYN banks still valid; distribution finite with no Critical bucket; thresholds unchanged.
+  Trend: empty snapshot → null overall, partial snapshot → `partialAverage`, measured-then-missing
+  does not collapse to zero, genuine zero still `0`, series entries never NaN.
+  **Replaced** the test expecting an optionless question to score `0`.
+- **New** `formatScore.test.js` (26): `isMeasured`, `formatPercent`, `latestMeasured` and
+  `formatSeriesCurrent`, including an explicit assertion that `Math.round(null) === 0` while the
+  formatter does not inherit that.
+- **New** `sparklineTrend.test.jsx` (11): Sparkline gap splitting, lone-reading dots, refusal to
+  render fewer than two measured points, genuine zero plotted; NavigatorDetail latest-null → N/A,
+  latest-undefined → N/A, genuine latest `0` → `0%`, empty latest snapshot → N/A plus the
+  "last measured" caption, fully-measured snapshot → percentage with no caption.
+
+### Verification
+
+Every command below was run; exact results are in the PR description. No production deployment,
+migration, Firestore data change, merge, or production write was performed.
+
 ## 2026-07-21 — PR #40 full-codebase review: six correctness fixes
 
 A final full-codebase pass over PR #40 found six issues that all shared one root cause: **absent

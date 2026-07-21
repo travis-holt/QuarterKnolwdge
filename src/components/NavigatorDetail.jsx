@@ -5,6 +5,7 @@ import { DEPARTMENTS, isAssessed } from '../data/departments.js';
 import { LEVELS, THRESHOLDS, interviewScoreColor } from '../data/config.js';
 import { findRow, mentorSuggestions, trainingForRow, trainingEmptyStateReason, buildTrend, trainingImpact, buildDossier } from '../lib/scoring.js';
 import { OverallBadge, DomainScore } from './OverallStatus.jsx';
+import { formatPercent, formatSeriesCurrent, latestMeasured, isMeasured } from '../lib/formatScore.js';
 import { getInterviews, getResultHistory, updateInterviewGradeOverride, updateQaFinalReview } from '../lib/db.js';
 import { qaFinalReviewLabel, qaFinalVerdict, qaHistoryBadgeLabel, qaBadgeTone } from '../lib/qaFinalReview.js';
 import { compareTimestampValues, timestampMillis } from '../lib/time.js';
@@ -379,11 +380,20 @@ export default function NavigatorDetail({ rows, name, deptName, dept, deptMatrix
             )}
           </p>
 
-          {/* Overall sparkline */}
+          {/* Overall sparkline. The label reports the LATEST SNAPSHOT: if the
+              most recent check measured nothing it reads N/A, because showing an
+              older number would imply that stale result is current. The prior
+              measured value is captioned separately when one exists. */}
           <div className="trend__overall">
             <span className="trend__label">Overall</span>
             <Sparkline values={trend.overallSeries} color="var(--accent)" height={36} />
-            <span className="trend__pct">{Math.round(trend.overallSeries[trend.overallSeries.length - 1])}%</span>
+            <span className="trend__pct">{formatSeriesCurrent(trend.overallSeries)}</span>
+            {!isMeasured(trend.overallSeries[trend.overallSeries.length - 1])
+              && latestMeasured(trend.overallSeries) !== null && (
+              <span className="trend__stale-note">
+                last measured {formatPercent(latestMeasured(trend.overallSeries))}
+              </span>
+            )}
           </div>
 
           {/* Per-domain sparklines */}
@@ -398,7 +408,9 @@ export default function NavigatorDetail({ rows, name, deptName, dept, deptMatrix
                 <div key={d.id} className="trend__domain-row">
                   <span className="trend__domain-name">{domainName(d.id)}</span>
                   <Sparkline values={series} color={LEVELS[row.domainDevelopmentBands[d.id]]?.color ?? 'var(--accent)'} />
-                  <span className="trend__domain-pct">{Math.round(series[series.length - 1])}%</span>
+                  {/* N/A when the latest snapshot did not measure this domain —
+                      never Math.round(null), which silently becomes 0%. */}
+                  <span className="trend__domain-pct">{formatSeriesCurrent(series)}</span>
                   {impact?.delta != null && (
                     <span className={`trend__delta ${impact.delta >= 0 ? 'trend__delta--up' : 'trend__delta--down'}`}>
                       {impact.delta >= 0 ? '+' : ''}{Math.round(impact.delta)}

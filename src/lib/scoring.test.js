@@ -1272,11 +1272,14 @@ describe('scorePerDomain — malformed inputs', () => {
 });
 
 describe('scorePerCompetency — malformed inputs', () => {
-  it('returns 0 (not null) for a competency when the matching question has no options', () => {
+  // REPLACES the former "returns 0 (not null) … has no options" test.
+  // An optionless question measured NOTHING, so it must not drag the competency
+  // average down with a zero it never earned.
+  it('returns null for a competency exercised only by an optionless question', () => {
     const qs = [{ id: 'bad', domainId: FAKE_D0, competencies: [C0], correctOptionId: 'a' }];
     const scores = scorePerCompetency({ bad: 'a' }, qs);
-    // C0 is tagged but has no options → earns 0 → tally exists → returns 0, not null
-    expect(scores[C0]).toBe(0);
+    expect(scores[C0]).toBeNull();
+    expect(scores[C0]).not.toBe(0);
   });
 
   it('ignores competency tags that reference an unknown competency id', () => {
@@ -2658,5 +2661,154 @@ describe('readinessTally distinguishes Incomplete from Not assessed', () => {
     expect(byName.Partial).toMatchObject({ overallScore: null, overallLabel: 'Incomplete', assessedDomains: 1, complete: false });
     expect(byName.None).toMatchObject({ overallScore: null, overallLabel: 'Not assessed', assessedDomains: 0, complete: false });
     expect(byName.Full).toMatchObject({ overallScore: 95, overallLabel: 'Can-Teach', assessedDomains: 6, complete: true });
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// FINAL CORRECTION PASS (2026-07-21) — competency scoreability + trend nulls.
+// Invariant: missing evidence is never failure, mastery, or a real 0%.
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('scorePerCompetency — unscoreable evidence is null, measured zero is 0', () => {
+  const valid = (id, domainId, competencies, points) => ({
+    id,
+    domainId,
+    competencies,
+    correctOptionId: 'a',
+    options: [{ id: 'a', text: 'right', points: 100 }, { id: 'b', text: 'wrong', points }],
+  });
+
+  it('a no-options question tagged to a competency produces null', () => {
+    const qs = [{ id: 'x', domainId: D0, competencies: [C0], correctOptionId: 'a' }];
+    expect(scorePerCompetency({ x: 'a' }, qs)[C0]).toBeNull();
+  });
+
+  it('an empty options ARRAY also produces null', () => {
+    const qs = [{ id: 'x', domainId: D0, competencies: [C0], correctOptionId: 'a', options: [] }];
+    expect(scorePerCompetency({ x: 'a' }, qs)[C0]).toBeNull();
+  });
+
+  it('an unknown-domain question provides no competency evidence', () => {
+    const qs = [{
+      id: 'x', domainId: 'not-a-real-domain', competencies: [C0],
+      correctOptionId: 'a', options: [{ id: 'a', text: 'r', points: 100 }],
+    }];
+    expect(scorePerCompetency({ x: 'a' }, qs)[C0]).toBeNull();
+  });
+
+  it('a valid question answered with a zero-point option produces a genuine 0', () => {
+    const qs = [valid('x', D0, [C0], 0)];
+    expect(scorePerCompetency({ x: 'b' }, qs)[C0]).toBe(0);
+  });
+
+  it('a valid UNANSWERED question produces 0 — measurable, but nothing earned', () => {
+    const qs = [valid('x', D0, [C0], 0)];
+    expect(scorePerCompetency({}, qs)[C0]).toBe(0);
+  });
+
+  it('a valid question answered with an option that does not exist produces 0', () => {
+    const qs = [valid('x', D0, [C0], 0)];
+    expect(scorePerCompetency({ x: 'nope' }, qs)[C0]).toBe(0);
+  });
+
+  it('averages ONLY the scoreable questions in a mixed bank', () => {
+    const qs = [
+      valid('good1', D0, [C0], 0),                                      // answered right -> 100
+      valid('good2', D0, [C0], 0),                                      // answered wrong -> 0
+      { id: 'bad', domainId: D0, competencies: [C0], correctOptionId: 'a' }, // unscoreable
+    ];
+    // Mean of the two scoreable questions only: (100 + 0) / 2 = 50.
+    // Including the unscoreable one would have given (100 + 0 + 0) / 3 = 33.
+    expect(scorePerCompetency({ good1: 'a', good2: 'b', bad: 'a' }, qs)[C0]).toBe(50);
+  });
+
+  it('still ignores unknown competency ids safely', () => {
+    const qs = [valid('x', D0, ['ghost-competency'], 0)];
+    expect(() => scorePerCompetency({ x: 'a' }, qs)).not.toThrow();
+    expect(scorePerCompetency({ x: 'a' }, qs)[C0]).toBeNull();
+  });
+
+  it('the real Pediatrics and OB/GYN banks still produce valid competency results', () => {
+    for (const bank of [QUESTIONS, SEED_QUESTIONS_OBGYN]) {
+      const scores = scorePerCompetency({}, bank);
+      const measured = Object.values(scores).filter((v) => v !== null);
+      expect(measured.length).toBeGreaterThan(0);
+      for (const v of measured) {
+        expect(Number.isFinite(v)).toBe(true);
+        expect(v).toBeGreaterThanOrEqual(0);
+        expect(v).toBeLessThanOrEqual(100);
+      }
+    }
+  });
+
+  it('competency distribution stays finite with no Critical bucket', () => {
+    const rows = buildMatrixRows([
+      { name: 'A', scores: {}, competencyScores: scorePerCompetency({}, QUESTIONS) },
+    ], null);
+    for (const c of competencyDistribution(rows)) {
+      expect(c.critical).toBeUndefined();
+      for (const key of ['learning', 'solid', 'canTeach', 'total']) {
+        expect(Number.isFinite(c[key])).toBe(true);
+      }
+      expect(c.learning + c.solid + c.canTeach).toBe(c.total);
+    }
+  });
+
+  it('competency thresholds are unchanged', () => {
+    expect(COMPETENCY_THRESHOLDS).toEqual({ learning: 60, canTeach: 85 });
+    expect(competencyScoreToLevel(59)).toBe('learning');
+    expect(competencyScoreToLevel(60)).toBe('solid');
+    expect(competencyScoreToLevel(84)).toBe('solid');
+    expect(competencyScoreToLevel(85)).toBe('canTeach');
+  });
+});
+
+describe('buildTrend — empty snapshots are gaps, not zeroes', () => {
+  const snap = (ts, scores) => ({ takenAt: { seconds: ts }, scores });
+
+  it('a snapshot with no numeric domains produces null overall evidence', () => {
+    const trend = buildTrend([
+      snap(100, makeScores({}, 80)),
+      snap(200, {}),
+    ], { synthesize: false });
+    expect(trend.overallSeries[0]).toBe(80);
+    expect(trend.overallSeries[1]).toBeNull();
+    expect(trend.overallSeries[1]).not.toBe(0);
+  });
+
+  it('an incomplete snapshot with numeric partial evidence uses partialAverage', () => {
+    const trend = buildTrend([
+      snap(100, makeScores({}, 80)),
+      snap(200, { [D0]: 60, [D1]: 40 }), // partial -> diagnostic mean 50
+    ], { synthesize: false });
+    expect(trend.overallSeries[1]).toBe(50);
+  });
+
+  it('a measured point followed by a missing point does not collapse to zero', () => {
+    const trend = buildTrend([
+      snap(100, makeScores({}, 90)),
+      snap(200, {}),
+    ], { synthesize: false });
+    expect(trend.overallSeries).toEqual([90, null]);
+    // The domain series behaves the same way.
+    expect(trend.domainSeries[D0]).toEqual([90, null]);
+  });
+
+  it('a genuine zero snapshot still reports 0, not null', () => {
+    const trend = buildTrend([snap(100, makeScores({}, 0))], { synthesize: false });
+    expect(trend.overallSeries[0]).toBe(0);
+    expect(trend.domainSeries[D0][0]).toBe(0);
+  });
+
+  it('overallSeries entries are number|null only (never NaN)', () => {
+    const trend = buildTrend([
+      snap(100, makeScores({}, 80)),
+      snap(200, {}),
+      snap(300, { [D0]: 'bogus' }),
+    ], { synthesize: false });
+    for (const v of trend.overallSeries) {
+      expect(v === null || Number.isFinite(v)).toBe(true);
+      expect(Number.isNaN(v)).toBe(false);
+    }
   });
 });

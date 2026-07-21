@@ -14,15 +14,12 @@ import {
 import { OverallBadge } from './OverallStatus.jsx';
 import CountUp from './CountUp.jsx';
 import Sparkline from './Sparkline.jsx';
+import { formatPercent } from '../lib/formatScore.js';
 
-/**
- * Render a percentage aggregate. `null` means "no eligible evidence" and shows
- * N/A — never 0%, which would read as a real floor-wide result. A genuine
- * measured 0 still renders as "0%".
- */
-function fmtPct(value) {
-  return Number.isFinite(value) ? `${Math.round(value)}%` : 'N/A';
-}
+// Percentage aggregates go through the SHARED formatter: null means "no
+// eligible evidence" and shows N/A — never 0%, which would read as a real
+// floor-wide result. A genuine measured 0 still renders as "0%".
+const fmtPct = formatPercent;
 
 // teamHistory: flat array of resultHistory docs (all navigators, all times).
 export default function Overview({ rows, deptName, deptMatrix, onOpenNavigator, onViewMatrix, teamHistory = [] }) {

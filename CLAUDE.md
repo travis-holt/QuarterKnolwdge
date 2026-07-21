@@ -350,6 +350,21 @@ training assignments.
     A partially-populated live bank is **never topped up from the seed bank**, because mixing
     outdated seed content with current managed content inside one graded assessment is worse than
     blocking. The seed bank is used only when the live bank is entirely empty.
+  - **A failed bank READ is not an empty bank (2026-07-21).** `loadBankForDept()` in `NavigatorApp`
+    distinguishes three outcomes: a successful non-empty read uses the live bank; a successful
+    **empty** read legitimately falls back to the department's committed seed bank; and a **rejected**
+    read means the bank status is *unknown*, so it renders its own retryable
+    "couldn't load the question bank" connection-error state (`view === 'bankUnavailable'`) and
+    permits neither starting the MCQ nor saving a result. Seed fallback is allowed **only after a
+    successful read confirms the live bank is empty** — never on an error, because a stale seed
+    assessment could otherwise be graded and stored as if it were current. The read error is logged
+    (message only, never the payload) rather than swallowed, and the navigator can retry without
+    signing out.
+  - **Unscoreable questions provide no evidence at all.** `isScoreableQuestion()` (known domain +
+    at least one option) now gates **both** `scorePerDomain` and `scorePerCompetency`. A malformed
+    question contributes neither a domain score nor a competency score; a competency exercised only
+    by unscoreable questions returns `null`. A *measurable* question still yields a genuine `0` when
+    the navigator leaves it unanswered or picks a zero-point/nonexistent option.
   - **Per-domain scoring.** `scorePerDomain()` returns **null** for a domain with no scoreable
     questions ("nothing to answer") and a genuine **0** for a domain that was measured and earned
     nothing. `scorePerDomain(answers, bank, { strict: true })` throws
@@ -365,6 +380,17 @@ training assignments.
     `buildTrend()` puts **null** (a gap in the sparkline) where a historical domain score is
     missing. Counts stay genuine zeroes — "zero navigators are Critical" is a real fact. A complete
     floor whose real average is 0 still displays `0%`.
+  - **Only finite numeric evidence may appear as a percentage (2026-07-21).** `Math.round(null)` is
+    `0`, so any label rounding a possibly-null value silently fabricates a measured zero. All
+    score/percentage labels go through one shared formatter,
+    [src/lib/formatScore.js](src/lib/formatScore.js) — `formatPercent()` (genuine `0` → `"0%"`;
+    finite → rounded; null/undefined/NaN/non-numeric → `"N/A"`), `formatSeriesCurrent()`,
+    `latestMeasured()` and `isMeasured()`. `trendOverall()` returns **null** (not 0) when a snapshot
+    has no measurable evidence, and `buildTrend().overallSeries` is `(number|null)[]` for the same
+    reason. `Sparkline` splits its line around gaps and dots isolated readings rather than plotting
+    them at zero. `NavigatorDetail` labels the **latest snapshot** — showing `N/A` when the most
+    recent check measured nothing, with a separate "last measured X%" caption, so an older reading
+    is never presented as current.
 - **Missing evidence is never a zero (hardened 2026-07-20 review):** `domainBand(pct)` returns
   **null** for a missing or non-numeric domain — never `'critical'`. Only a genuinely recorded
   number in 0–39 is a Critical gap. An absent domain therefore produces **no** critical-gap alert,
@@ -2318,7 +2344,7 @@ of this file on 2026-07-07 to cut per-session context cost (it was ~55% of the f
   (init → chat/voice turns → `/api/live` relay) for caller consistency. Scored Call QA deliberately
   does not: its caller receives no grading context, expected actions, critical misses, scoring notes,
   rule/workflow metadata, or hidden chart state. Final verification: `npm test` =
-  **1,417/1,417 across 71 files**; Firestore Rules emulator assertions = **76/76**
+  **1,701/1,701 across 76 files**; Firestore Rules emulator assertions = **76/76**
   (51 result authorization + 25 Call QA); production build
   includes the private-runtime bundle scan. GitHub Actions mirrors the
   normal local gate on `main` pushes and PRs: `npm ci` → `npm test` → `npm run build` (no deploy step).
@@ -2364,7 +2390,7 @@ of this file on 2026-07-07 to cut per-session context cost (it was ~55% of the f
   Pediatrics; their modules will follow once their SOPs land.
 - **Experimental / mockup:**
   - **Adult Medicine and Behavioural Health** are not assessed; **Pediatrics and OB/GYN** are live.
-- **Test coverage:** **1,572 unit tests across 73 files** and **76 Firestore Rules emulator
+- **Test coverage:** **1,701 unit tests across 76 files** and **76 Firestore Rules emulator
   assertions** (51 result authorization + 25 Call QA) after the 2026-07-18 merge-readiness pass
   (calibration-private-bank adaptation, callerCaseFile, randomized selection, contextual audit
   guard + 14-workflow generation smoke, encoding guard, provisioning tool) atop the 2026-07-17
@@ -2492,7 +2518,7 @@ of this file on 2026-07-07 to cut per-session context cost (it was ~55% of the f
   OB/GYN = **37** seed questions (offline fallback) + the **48-item MCQ v2 operating-model bank**
   (24 Pediatrics + 24 OB/GYN) that replaces the weak active bank via a marker-gated
   archive-and-replace migration (bank grows in Firestore per dept) · 4 departments (**Pediatrics
-  + OB/GYN live**, 2 mockup) · **1,572 unit tests across 73 files** + **76 assertions**
+  + OB/GYN live**, 2 mockup) · **1,701 unit tests across 76 files** + **76 assertions**
   across two committed Firestore Rules emulator suites (`npm run test:rules`; require Java, run in
   CI, not part of the unit-test count) ·
   **14** Firestore collections
@@ -2834,7 +2860,7 @@ npm run test:e2e     # run the Playwright browser tests (auto-builds + starts th
 - Heatmap intensity toggle (show % inside matrix cells).
 
 ### Technical Debt
-- **1,572 unit tests across 73 files** as of 2026-07-20 (plus **76 assertions** across two
+- **1,701 unit tests across 76 files** as of 2026-07-21 (plus **76 assertions** across two
   committed Firestore Rules emulator suites, `npm run test:rules`, run separately from the unit-test
   gate). **Role-app
   coverage** (`App`, `Start`,

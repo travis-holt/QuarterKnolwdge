@@ -7,6 +7,17 @@
 > run the validation gates in Step 9 and the doc updates in Step 10.
 >
 > Written 2026-07-07 against commit `6ebb82e` (branch `main`).
+>
+> **⚠ HISTORICAL — parts of this plan are superseded. Do not copy code from it verbatim.**
+> The question-bank loading snippets below use
+> `await getActiveQuestions(dept).catch(() => [])`, which treats a FAILED read as an empty
+> bank and then silently falls back to the seed bank. That was corrected on 2026-07-21: a
+> rejected read leaves the bank status *unknown*, so it must block the assessment behind a
+> retryable connection-error state rather than substitute possibly-stale seed questions.
+> Seed fallback is legitimate only after a **successful** read confirms the live bank is empty.
+> See the 2026-07-21 entry in `docs/HISTORY.md` and `loadBankForDept()` in
+> `src/components/NavigatorApp.jsx` for the current behaviour. The snippets are preserved
+> unedited as a record of what was planned at the time.
 
 ## 0. Pre-verified facts (checked against the working tree — do not re-derive)
 

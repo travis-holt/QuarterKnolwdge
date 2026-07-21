@@ -166,8 +166,14 @@ export function scorePerDomain(answers = {}, questions = SEED_QUESTIONS, { stric
 
 /**
  * Score a set of answers into a per-competency map (0–100), averaging earned
- * points across each competency's tagged questions. Competencies with no tagged
- * questions in the active bank are returned as `null` (consumers skip them).
+ * points across each competency's tagged SCOREABLE questions.
+ *
+ * `null` means "no measurable evidence": the competency had no tagged questions
+ * in the active bank, or every question tagged to it was unscoreable (no
+ * options / unknown domain). A genuine `0` means the competency WAS measured
+ * and the navigator earned nothing — including when they left a valid question
+ * unanswered or picked an option worth zero points.
+ *
  * @param {Record<string,string>} answers
  * @param {object[]} [questions] - the active question bank (defaults to the seed)
  * @returns {Record<string,number|null>} competencyId -> score (0–100) or null
@@ -179,6 +185,11 @@ export function scorePerCompetency(answers = {}, questions = SEED_QUESTIONS) {
   }
 
   for (const q of questions) {
+    // Same scoreability rule as scorePerDomain: a question with no options (or
+    // an unknown domain) measured NOTHING, so it must not contribute a zero to
+    // its tagged competencies. Counting it would drag a competency's average
+    // down for evidence that never existed.
+    if (!isScoreableQuestion(q)) continue;
     const earned = earnedPoints(answers[q.id], q);
     for (const cid of q.competencies ?? []) {
       const bucket = tally[cid];
@@ -1469,13 +1480,19 @@ function computeOverall(scores) {
 }
 
 /**
- * DISPLAY-ONLY overall for sparklines, which need a number per point. Falls back
- * to the diagnostic partial average so an incomplete historical snapshot renders
- * at roughly the right height instead of collapsing the line to zero. This value
- * is never a status, never labelled with a level, and never fed to a KPI.
+ * DISPLAY-ONLY overall for sparklines. Prefers the official score, then the
+ * diagnostic partial average so an incomplete historical snapshot still renders
+ * at roughly the right height instead of collapsing the line.
+ *
+ * Returns **null** when a snapshot carries no measurable domain evidence at all
+ * — that is a GAP in the chart, not a zero. Coercing it to 0 would draw (and
+ * label) an artificial collapse for a check that simply recorded nothing.
+ * This value is never a status, never labelled with a level, never fed to a KPI.
+ *
+ * @returns {number|null}
  */
 function trendOverall(scores) {
-  return overallScore(scores) ?? partialAverage(scores) ?? 0;
+  return overallScore(scores) ?? partialAverage(scores);
 }
 
 function formatTrendLabel(ts) {
@@ -1535,7 +1552,13 @@ export function buildTrend(history, { synthesize = true } = {}) {
   for (const d of DOMAINS) {
     domainSeries[d.id] = points.map((p) => (Number.isFinite(p.scores[d.id]) ? p.scores[d.id] : null));
   }
-  return { points, domainSeries, overallSeries: points.map((p) => p.overall) };
+  // `overallSeries` is (number|null)[] for the same reason: an empty or
+  // unmeasurable snapshot is a gap, not a zero.
+  return {
+    points,
+    domainSeries,
+    overallSeries: points.map((p) => (Number.isFinite(p.overall) ? p.overall : null)),
+  };
 }
 
 /**

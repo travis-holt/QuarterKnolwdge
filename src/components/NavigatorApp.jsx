@@ -64,6 +64,10 @@ export default function NavigatorApp({ navigatorId, name, onSignOut }) {
   // unless every configured domain has at least one scoreable question, so an
   // unmeasured domain is never persisted as a score of 0.
   const [bankCoverage, setBankCoverage] = useState(null);
+  // True when the live-bank READ itself failed. Distinct from incomplete
+  // coverage: the bank status is unknown, not known-bad.
+  const [bankLoadFailed, setBankLoadFailed] = useState(false);
+  const [bankRetrying, setBankRetrying] = useState(false);
   const [results, setResults] = useState([]); // whole floor (for mentor data)
   const [moduleDomain, setModuleDomain] = useState(null);
   const [moduleCompletionKind, setModuleCompletionKind] = useState(null);
@@ -132,6 +136,50 @@ export default function NavigatorApp({ navigatorId, name, onSignOut }) {
     });
   }, [navigatorId]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  /**
+   * Load the active question bank for one department.
+   *
+   * Returns true when a bank was established (live or seed) and false when the
+   * read FAILED — in which case the caller must stop, because the bank status is
+   * unknown and no assessment may start or save from an unknown bank.
+   *
+   * Seed fallback happens ONLY after a successful read confirms the live bank is
+   * genuinely empty. A rejected read never yields the seed bank.
+   */
+  const loadBankForDept = async (dept) => {
+    let live;
+    try {
+      live = await getActiveQuestions(dept);
+    } catch (err) {
+      // Log the failure (message only — never the payload, which could carry
+      // question content) so it is diagnosable without leaking assessment data.
+      console.error('getActiveQuestions failed for department', dept, err?.message ?? err);
+      setBankLoadFailed(true);
+      setBankCoverage(null);
+      setView('bankUnavailable');
+      return false;
+    }
+    setBankLoadFailed(false);
+    // Read succeeded. Empty means the supervisor has no live bank yet, which the
+    // committed seed bank legitimately covers.
+    const bank = live.length > 0 ? live : (SEED_BY_DEPT[dept] ?? SEED_QUESTIONS);
+    setQuestions(bank);
+    setBankCoverage(assessmentBankCoverage(bank));
+    return true;
+  };
+
+  /** Retry a failed bank read without making the navigator sign out. */
+  const retryBankLoad = async () => {
+    const dept = activeDept;
+    if (!dept || bankRetrying) return;
+    setBankRetrying(true);
+    try {
+      if (await loadBankForDept(dept)) setView('phases');
+    } finally {
+      setBankRetrying(false);
+    }
+  };
+
   // When a department is selected, load BOTH result types for it.
   const handleDeptSelect = async (dept) => {
     setActiveDept(dept);
@@ -150,15 +198,20 @@ export default function NavigatorApp({ navigatorId, name, onSignOut }) {
       setActiveType(type);
       // Fetch the active question bank for this department (needed by MCQ + coaching).
       //
-      // Bank selection is deliberate: fall back to the seed bank ONLY when the
-      // live bank is entirely empty. A partially populated live bank must NOT be
-      // topped up from the seed — that would mix outdated seed content with the
-      // supervisor's current managed content in one graded assessment. A partial
-      // live bank is surfaced as a blocking coverage error instead.
-      const live = await getActiveQuestions(dept).catch(() => []);
-      const bank = live.length > 0 ? live : (SEED_BY_DEPT[dept] ?? SEED_QUESTIONS);
-      setQuestions(bank);
-      setBankCoverage(assessmentBankCoverage(bank));
+      // THREE OUTCOMES, deliberately distinct:
+      //   • read succeeded, non-empty  → use the live bank, then validate coverage
+      //   • read succeeded, empty      → use the committed seed bank, then validate
+      //   • read FAILED                → bank status is UNKNOWN. Never fall back to
+      //                                  the seed: a stale seed assessment could be
+      //                                  graded and stored as if it were current.
+      //
+      // A failed read is NOT "the bank is incomplete" — it is "we don't know" —
+      // so it gets its own retryable connection-error state.
+      //
+      // A partially populated live bank is never topped up from the seed either;
+      // mixing outdated seed content with the supervisor's managed content inside
+      // one graded assessment is worse than blocking.
+      if (!(await loadBankForDept(dept))) return;
       if (type) setAllDeptResults((prev) => ({ ...prev, [dept]: byType[type].scores }));
       // Land on the dashboard only when the full 3-phase assessment is complete;
       // otherwise the phase hub shows what's next (D5).
@@ -249,9 +302,15 @@ export default function NavigatorApp({ navigatorId, name, onSignOut }) {
 
   const handleSubmit = async (_ignoredName, answers) => {
     const dept = activeDept ?? 'pediatrics';
-    // Final guard before persisting an official result: a bank that cannot
-    // measure all six domains must never produce a stored profile, because the
-    // unmeasured domains would land as fabricated zeroes (i.e. Critical).
+    // Final guard before persisting an official result.
+    // If the bank read failed we do not know what the live bank contains, so no
+    // result may be saved from whatever is currently in memory.
+    if (bankLoadFailed) {
+      setView('bankUnavailable');
+      return;
+    }
+    // A bank that cannot measure all six domains must never produce a stored
+    // profile, because the unmeasured domains would land as fabricated zeroes.
     const coverage = assessmentBankCoverage(questions);
     if (!coverage.complete) {
       setBankCoverage(coverage);
@@ -441,6 +500,34 @@ export default function NavigatorApp({ navigatorId, name, onSignOut }) {
     );
   }
 
+  // The question bank could NOT BE READ. The bank status is unknown — which is
+  // different from knowing it is incomplete — so we neither start the check nor
+  // silently substitute the seed bank, which could be stale.
+  if (view === 'bankUnavailable') {
+    return (
+      <Shell role="navigator" view="phases" setView={() => {}} onSignOut={onSignOut}>
+        <EmptyState title="Couldn't load the question bank">
+          <p>
+            We couldn&rsquo;t reach the question bank for this department, so the check can&rsquo;t
+            start yet. This is a connection problem, not a problem with your results — nothing has
+            been recorded and nothing has been lost.
+          </p>
+          <p>
+            Try again in a moment. If it keeps failing, let your supervisor know.
+          </p>
+          <div className="bank-gap__actions">
+            <button className="btn btn--primary" onClick={retryBankLoad} disabled={bankRetrying}>
+              {bankRetrying ? 'Retrying…' : 'Try again'}
+            </button>
+            <button className="btn btn--ghost" onClick={() => setView('phases')} disabled={bankRetrying}>
+              ← Back to my assessment
+            </button>
+          </div>
+        </EmptyState>
+      </Shell>
+    );
+  }
+
   // The active assessment bank cannot measure all six domains. Blocking is the
   // safe failure: an unmeasured domain must never be stored as a score of 0.
   if (view === 'bankIncomplete') {
@@ -525,11 +612,18 @@ export default function NavigatorApp({ navigatorId, name, onSignOut }) {
           results={resultsByType}
           latestQa={latestQa}
           onStart={(id) => {
-            // Block the MCQ phase outright when the active bank cannot measure
-            // every domain — starting it would end in fabricated zeroes.
-            if (id === 'mcq' && bankCoverage && !bankCoverage.complete) {
-              setView('bankIncomplete');
-              return;
+            if (id === 'mcq') {
+              // Unknown bank (read failed) — never start from a possibly-stale
+              // seed assessment.
+              if (bankLoadFailed || !bankCoverage) {
+                setView('bankUnavailable');
+                return;
+              }
+              // Known-incomplete bank — starting it would end in fabricated zeroes.
+              if (!bankCoverage.complete) {
+                setView('bankIncomplete');
+                return;
+              }
             }
             setView(id === 'spot' ? 'spotfull' : id === 'qa' ? 'qatest' : 'check');
           }}

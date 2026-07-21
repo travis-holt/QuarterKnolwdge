@@ -6985,3 +6985,24 @@ textarea:focus-visible {
   color: var(--ink-soft);
   line-height: 1.55;
 }
+
+/* ── Bank-unavailable retry actions + stale-trend caption ────────────────────
+   A failed question-bank read is a connection problem, not a result problem:
+   the navigator gets a retry rather than a dead end. */
+
+.bank-gap__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.6rem;
+  margin-top: 1rem;
+}
+
+/* Shown beside a trend label when the LATEST snapshot measured nothing, so an
+   older reading is never mistaken for the current one. */
+.trend__stale-note {
+  margin-left: 0.5rem;
+  font-size: 11.5px;
+  color: var(--ink-faint);
+  font-style: italic;
+  white-space: nowrap;
+}
