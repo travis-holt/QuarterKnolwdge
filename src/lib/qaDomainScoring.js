@@ -1,6 +1,30 @@
 import { COMPETENCIES } from '../data/competencies.js';
 import { DOMAINS } from '../data/questions.js';
-import { QA_RUBRIC, QA_AUTO_FAILS, rubricCriteria } from '../data/qaRubric.js';
+import { rubricCriteria } from '../data/qaRubric.js';
+import { QA_RUBRIC_PROFILES, profileForGradedAttempt } from '../data/qaRubricProfiles.js';
+
+// QA-only domain/competency projections. These MUST be computed against the
+// rubric profile that ACTUALLY graded the attempt: an OB/GYN result summarized
+// against the Pediatrics rubric would look for a `close-survey` criterion that
+// never existed and would drop `close-offer-help` evidence entirely.
+//
+// Callers pass the resolved profile explicitly. `resolveScoringProfile` is the
+// fallback used when rendering a STORED result: it prefers the recorded rubric
+// version so a historical attempt is summarized under the rubric it was graded
+// with, never reinterpreted under a newer one.
+const DEFAULT_PROFILE = QA_RUBRIC_PROFILES.pediatrics;
+
+/**
+ * Resolve the profile to summarize a QA result with.
+ *  - an explicitly supplied profile always wins;
+ *  - otherwise the result's own stored grading metadata decides;
+ *  - otherwise (legacy results with no metadata) the historical shared rubric.
+ */
+export function resolveScoringProfile(qa, profile) {
+  if (profile) return profile;
+  const stored = profileForGradedAttempt(qa?.gradingMetadata, qa?.rubricDepartment);
+  return stored ?? DEFAULT_PROFILE;
+}
 
 function initBuckets(items) {
   return Object.fromEntries(items.map((item) => [item.id, null]));
@@ -10,12 +34,13 @@ function roundDetail(value) {
   return Math.round(value * 100) / 100;
 }
 
-function scoreQaByTag(qa, tagKey, items, rubric = QA_RUBRIC) {
+function scoreQaByTag(qa, tagKey, items, profile) {
+  const active = resolveScoringProfile(qa, profile);
   const criteria = Array.isArray(qa?.criteria) ? qa.criteria : [];
   const verdicts = new Map(criteria.map((criterion) => [criterion.id, criterion]));
   const scores = initBuckets(items);
 
-  for (const def of rubricCriteria(rubric)) {
+  for (const def of active.criteria) {
     const verdict = verdicts.get(def.id)?.verdict;
     if (!verdict || verdict === 'NA') continue;
     const tagIds = def[tagKey] ?? [];
@@ -44,7 +69,7 @@ function scoreQaByTag(qa, tagKey, items, rubric = QA_RUBRIC) {
     };
   }
 
-  return applyAutoFails(scores, qa, tagKey);
+  return applyAutoFails(scores, qa, tagKey, active.autoFails);
 }
 
 // Fold VERIFIED auto-fails into the per-tag summary. `qa.autoFails` is already
@@ -52,8 +77,10 @@ function scoreQaByTag(qa, tagKey, items, rubric = QA_RUBRIC) {
 // never re-decide whether a fail is verified here. Any domain/competency tagged
 // on a verified auto-fail is forced to score 0 with autoFailed:true so a
 // supervisor can never see an affected tag as a clean, high, "normal" score.
+// The auto-fail DEFINITIONS come from the grading profile, so a department that
+// scopes its auto-fails differently tags the correct domains/competencies.
 // QA-only — never touches the capability matrix or the pass/fail math.
-function applyAutoFails(scores, qa, tagKey, autoFailDefs = QA_AUTO_FAILS) {
+function applyAutoFails(scores, qa, tagKey, autoFailDefs) {
   const verified = Array.isArray(qa?.autoFails) ? qa.autoFails : [];
   if (!verified.length) return scores;
 
@@ -80,17 +107,19 @@ function applyAutoFails(scores, qa, tagKey, autoFailDefs = QA_AUTO_FAILS) {
   return scores;
 }
 
-export function scoreQaByDomain(qa, rubric = QA_RUBRIC) {
-  return scoreQaByTag(qa, 'domainIds', DOMAINS, rubric);
+export function scoreQaByDomain(qa, profile) {
+  return scoreQaByTag(qa, 'domainIds', DOMAINS, profile);
 }
 
-export function scoreQaByCompetency(qa, rubric = QA_RUBRIC) {
-  return scoreQaByTag(qa, 'competencyIds', COMPETENCIES, rubric);
+export function scoreQaByCompetency(qa, profile) {
+  return scoreQaByTag(qa, 'competencyIds', COMPETENCIES, profile);
 }
 
-export function qaDomainScoreSummary(qa, rubric = QA_RUBRIC) {
+export function qaDomainScoreSummary(qa, profile) {
   return {
-    domainScores: scoreQaByDomain(qa, rubric),
-    competencyScores: scoreQaByCompetency(qa, rubric),
+    domainScores: scoreQaByDomain(qa, profile),
+    competencyScores: scoreQaByCompetency(qa, profile),
   };
 }
+
+export { rubricCriteria };

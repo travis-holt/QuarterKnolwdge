@@ -25,10 +25,12 @@ import { correctTranscriptWithStats, glossaryPromptBlock } from './_qa-glossary.
 import { getApiKeys, geminiWithRotation, rotationFailure, MODEL } from './_gemini-client.js';
 import { validateSecret } from './_auth.js';
 import {
-  QA_RUBRIC, QA_AUTO_FAILS, QA_RUBRIC_VERSION, rubricCriteria,
   validateQaResponse, repairQaVerdictsForScenario, scoreQa, assessQa, buildGradeProjection,
   evaluateQaDeterministicFindings,
 } from './_qa-rubric.js';
+import {
+  getQaRubricProfile, requireQaRubricProfile, UnsupportedQaDepartmentError,
+} from '../src/data/qaRubricProfiles.js';
 import { qaDomainScoreSummary } from '../src/lib/qaDomainScoring.js';
 import { readFirebaseIdentity } from './_auth.js';
 import { FirebaseAdminConfigError, getFirebaseAdmin } from './_firebase-admin.js';
@@ -156,7 +158,17 @@ const RESPONSE_SCHEMA = {
   required: ['criteria', 'autoFails'],
 };
 
-export function buildMessages(scenario, transcript, department, sopContext = sopContextFor(department)) {
+/**
+ * Build the grader prompt for ONE resolved department rubric profile. The
+ * criteria enumerated in the prompt, the auto-fail list, the department grading
+ * rules, and the criterion-count assertion all come from that same profile, so
+ * the model can never be asked about a rubric different from the one that will
+ * score its verdicts.
+ */
+export function buildMessages(
+  scenario, transcript, department, sopContext = sopContextFor(department),
+  profile = requireQaRubricProfile(department),
+) {
   // Both 'patient' and 'caller' are caller-side roles; only 'navigator' is the
   // navigator. Never serialize a caller-side turn as "Navigator".
   const callText = transcript
@@ -164,10 +176,10 @@ export function buildMessages(scenario, transcript, department, sopContext = sop
     .map((t) => `${t.role === 'navigator' ? 'Navigator' : 'Caller'}: ${String(t.text ?? '').slice(0, MAX_TURN_CHARS)}`)
     .join('\n');
 
-  const rubricText = QA_RUBRIC
+  const rubricText = profile.rubric
     .map((cat) => `${cat.name}:\n${cat.criteria.map((c) => `  - [${c.id}] ${c.text}`).join('\n')}`)
     .join('\n');
-  const autoFailText = QA_AUTO_FAILS.map((a) => `  - [${a.id}] ${a.text}`).join('\n');
+  const autoFailText = profile.autoFails.map((a) => `  - [${a.id}] ${a.text}`).join('\n');
 
   const systemInstruction =
 `You are a strict QA auditor at a medical contact centre, scoring a patient navigator's call \
@@ -232,15 +244,11 @@ above so a navigator is never failed for something they actually did right:
 proper nouns (organization, locations, provider or queue names) or numbers. Judge whether the \
 navigator conveyed the CORRECT entity or rule — never fail a criterion only because a name, \
 place, or term looks mis-transcribed or was said as a valid synonym (see the vocabulary below).
-- Natural closings count: for the closing pleasantry criteria, a courteous natural wrap-up is \
-enough. If the caller has already said thanks or goodbye and the navigator responds in kind, or \
-the navigator gives any polite sign-off, treat the closing pleasantry as MET even without the \
-exact scripted phrase. Do not require rote wording.
-- WORKFLOW FAIRNESS RULES: For a standard medication refill, do not require PE / Physical Exam / physical status verification unless the scenario makes it the governing issue. Require medication name, preferred pharmacy, callback details when needed, out-of-medication urgency, a correct message/routing step, no promised approval, and no medication advice. Do not fail Knowledge solely because PE was not asked.
 - System-visible facts: do not penalize a navigator for not asking about facts normally checked in the ECW/system/chart unless the scenario requires caller confirmation. Do not invent a missing caller question as a failure.
-- Natural routing wording: exact TE or Telephone Encounter wording is not required. "send the request," "send a message," "send this over," "route this," "put in a note," or sending it to the nurse, provider, refill team, or clinical team counts when the workflow and destination are correct.
-- Still strict: these fairness rules never excuse a wrong queue/destination, no next step, missing medication/pharmacy/callback details when required, missed urgency, promised approval or unsupported same-day completion, medication/dosing or clinical advice, result interpretation, or privacy/verification failure.
+- Still strict: these fairness rules never excuse a wrong queue/destination, no next step, missing required caller details, missed urgency, promised approval or unsupported same-day completion, medication/dosing or clinical advice, result interpretation, or privacy/verification failure.
 Fairness rules never weaken verification, privacy/scope, routing, scheduling, or real SOP-knowledge failures.
+
+${profile.graderInstructions}
 
 Separately, check the auto-fail conditions. Set "triggered": true ONLY if the transcript \
 contains an explicit violation, and quote the offending navigator line verbatim in "evidence". \
@@ -266,7 +274,7 @@ ${scenario}
 Full call transcript:
 ${callText}
 
-Return a verdict object for ALL ${rubricCriteria().length} criteria ids and all ${QA_AUTO_FAILS.length} auto-fail ids.`;
+Return a verdict object for ALL ${profile.criteria.length} criteria ids and all ${profile.autoFails.length} auto-fail ids.`;
 
   return { systemInstruction, userMessage };
 }
@@ -283,8 +291,14 @@ function buildBody(systemInstruction, userMessage) {
   };
 }
 
-export function finalizeQaResult(scored, transcript, correctedTurns = 0, repairs = [], metadataIntegrity = { verified: true, status: 'verified' }, forcedReviewReasons = [], deterministicFindings = [], gradingMetadata = null, captureIntegrity = { complete: true }, transcriptMetadata = null) {
-  const review = assessQa(scored, transcript, { correctedTurns, repairs, deterministicFindings });
+export function finalizeQaResult(scored, transcript, correctedTurns = 0, repairs = [], metadataIntegrity = { verified: true, status: 'verified' }, forcedReviewReasons = [], deterministicFindings = [], gradingMetadata = null, captureIntegrity = { complete: true }, transcriptMetadata = null, profile = undefined) {
+  // The profile that scored this attempt also owns its safety-critical set and
+  // its domain/competency projections. Prefer an explicit profile; otherwise
+  // recover the one `scoreQa` stamped onto the scorecard.
+  const activeProfile = profile ?? getQaRubricProfile(scored?.rubricDepartment) ?? undefined;
+  const review = assessQa(scored, transcript, {
+    correctedTurns, repairs, deterministicFindings, profile: activeProfile,
+  });
   // assessQa owns deterministic review flags and recommendation changes. Keep
   // that logic in one place so each finding category is surfaced exactly once.
   if (forcedReviewReasons.includes('routing-policy-review-only')) {
@@ -325,7 +339,9 @@ export function finalizeQaResult(scored, transcript, correctedTurns = 0, repairs
   }
   const qa = {
     ...scored,
-    ...qaDomainScoreSummary(scored),
+    // Projected with the SAME profile that graded the attempt — never the
+    // globally imported rubric.
+    ...qaDomainScoreSummary(scored, activeProfile),
     domainScoreVersion: '2026-07-09-v1',
     review,
     correctedTurns,
@@ -370,7 +386,10 @@ function storedScenarioIntegrity(attempt, snapshot) {
 
 export function buildScenarioContextFromAttempt(attempt) {
   const snapshot = attempt.scenarioSnapshot ?? {};
-  const department = attempt.department ?? 'pediatrics';
+  // The department comes ONLY from the server-owned attempt. There is no
+  // default: an attempt with no stored department cannot be matched to a rubric
+  // profile, and `gradeCallQaTranscript` fails closed rather than guessing one.
+  const department = attempt.department ?? null;
   const status = storedScenarioIntegrity(attempt, attempt.scenarioSnapshot);
   const privateContext = snapshot.gradingContext ?? snapshot.scenario ?? '';
   const gradingScenario = buildTrustedGradingScenario({
@@ -443,6 +462,25 @@ export async function gradeCallQaTranscript({ transcript: rawTranscript, scenari
   const sopFresh = deps.sopContextForFresh ?? sopContextForFresh;
   const configEnv = deps.env ?? process.env;
   const graderModel = deps.graderModel ?? callQaGraderModel(configEnv);
+
+  // ── THE department rubric profile resolution point ────────────────────────
+  // Resolved ONCE from the server-authoritative department stored on the
+  // attempt (never a browser-supplied value), then threaded through prompt
+  // construction, validation, repairs, scoring, deterministic findings, review,
+  // and the domain/competency projections. An unsupported department FAILS
+  // CLOSED here — it must never silently inherit another department's rubric.
+  let profile;
+  try {
+    profile = requireQaRubricProfile(scenarioContext.department);
+  } catch (err) {
+    if (err instanceof UnsupportedQaDepartmentError) {
+      throw new GradingServiceError(
+        422,
+        'Scored Call QA is not configured for this department. A supervisor must review this attempt manually.',
+      );
+    }
+    throw err;
+  }
   const attemptTimeoutMs = callQaGeminiAttemptTimeoutMs(configEnv);
   const maxAttempts = callQaGeminiMaxAttempts(configEnv);
   const totalDeadlineMs = callQaGeminiTotalDeadlineMs(configEnv);
@@ -457,6 +495,7 @@ export async function gradeCallQaTranscript({ transcript: rawTranscript, scenari
     transcript,
     scenarioContext.department,
     await sopFresh(scenarioContext.department),
+    profile,
   );
   const body = buildBody(systemInstruction, userMessage);
 
@@ -491,7 +530,7 @@ export async function gradeCallQaTranscript({ transcript: rawTranscript, scenari
     } catch {
       continue;
     }
-    const check = validateQaResponse(parsed);
+    const check = validateQaResponse(parsed, profile);
     if (check.data) validated = check.data;
     else console.warn(`grade-call-qa: upstream response invalid model=${usedModel} attempt=${attemptsUsed} elapsedMs=${Date.now() - gradingStartedAt}`);
   }
@@ -502,16 +541,23 @@ export async function gradeCallQaTranscript({ transcript: rawTranscript, scenari
   const boundedTranscript = transcript
     .slice(0, MAX_TURNS)
     .map((t) => ({ role: t.role, text: String(t.text ?? '').slice(0, MAX_TURN_CHARS) }));
+  // One profile object flows into repairs, scoring, and findings, so the prompt
+  // rules, the deterministic scoring, and the auto-fail logic cannot diverge.
+  const repairContext = { ...scenarioContext.repairContext, profile };
   const repaired = scenarioContext.verified
-    ? repairQaVerdictsForScenario(validated, boundedTranscript, scenarioContext.repairContext)
+    ? repairQaVerdictsForScenario(validated, boundedTranscript, repairContext)
     : { criteria: validated.criteria, autoFails: validated.autoFails, repairs: [], reviewReasons: [] };
-  const scored = scoreQa(repaired.criteria, repaired.autoFails, boundedTranscript);
+  const scored = scoreQa(repaired.criteria, repaired.autoFails, boundedTranscript, profile);
   const deterministicFindings = evaluateQaDeterministicFindings(
-    scored.criteria, boundedTranscript, scenarioContext.repairContext,
+    scored.criteria, boundedTranscript, repairContext,
   );
   const gradingMetadata = {
     model: usedModel,
-    rubricVersion: QA_RUBRIC_VERSION,
+    // Which department rubric graded this attempt, and which version of it.
+    // Stored so a historical result is always rendered/calibrated under the
+    // rubric it was actually graded with.
+    rubricDepartment: profile.department,
+    rubricVersion: profile.rubricVersion,
     promptVersion: CALL_QA_PROMPT_VERSION,
     scenarioVersion: scenarioContext.scenarioVersion ?? null,
     sourceSopVersion: scenarioContext.sourceSopVersion ?? null,
@@ -534,6 +580,7 @@ export async function gradeCallQaTranscript({ transcript: rawTranscript, scenari
   const { qa, grade } = finalizeQaResult(
     scored, boundedTranscript, correctedTurns, repaired.repairs, scenarioContext,
     repaired.reviewReasons, deterministicFindings, gradingMetadata, captureIntegrity, transcriptMetadata,
+    profile,
   );
   return { qa, grade };
 }

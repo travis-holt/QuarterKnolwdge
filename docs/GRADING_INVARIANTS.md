@@ -8,8 +8,90 @@
 > [`api/_qa-grading-corpus.test.js`](../api/_qa-grading-corpus.test.js) — if one of
 > those tests fails after your change, re-read this document before "fixing" the test.
 >
-> Last updated: 2026-07-18 (private Call QA runtime merged with PR #33 calibration invariants;
-> randomized server-side selection + the private callerCaseFile caller contract).
+> Last updated: 2026-07-21 (department-based Call QA rubric profiles; OB/GYN is the first
+> dedicated department profile).
+
+## 0g. Department Call QA rubric profiles (2026-07-21)
+
+The Call QA rubric is **department-based**. These strengthen §0/§0a–§0f and are binding for
+the SCORED Call QA test.
+
+1. **There is exactly one department → rubric resolution point.**
+   `getQaRubricProfile(department)` in
+   [`src/data/qaRubricProfiles.js`](../src/data/qaRubricProfiles.js) is the only place a
+   department is mapped to a rubric. No `department === 'obgyn'` branch may be scattered
+   through the grading pipeline; department behavior is expressed as profile DATA
+   (criteria, points, applicability, auto-fails, evidence policies, grader instructions).
+2. **The department comes from the server-authoritative attempt, never the browser.**
+   `gradeCallQaTranscript` resolves the profile ONCE from
+   `scenarioContext.department` (derived from the stored attempt) and threads that one
+   object through prompt construction, response validation, repairs, scoring, category
+   totals, core/NA handling, auto-fail evaluation, deterministic findings, the review
+   layer, and the QA domain/competency projections.
+3. **Unsupported departments FAIL CLOSED.** A department with no profile throws
+   `UnsupportedQaDepartmentError`; the scored endpoint returns 422 and never calls the
+   grader. A future department must never silently inherit another department's rubric,
+   and there is no `?? 'pediatrics'` default anywhere in the scored path.
+4. **Validation and scoring can never use different rubrics.** `validateQaResponse`
+   stamps the validating profile's `rubricVersion` onto its output, and `scoreQa` THROWS
+   if it is handed a verdict for a criterion its profile does not define. A
+   Pediatrics-shaped model response is rejected as malformed under the OB/GYN profile
+   (triggering the existing retry) rather than being partially scored.
+5. **Every profile totals exactly 100 points and passes at 85.** Adding or re-shaping a
+   department may redistribute criteria WITHIN the 100 points but may not change the total
+   or the pass threshold. Enforced across every configured profile by
+   `gradingInvariants.test.js` (I-PROFILE).
+6. **Repairable ⊆ safety-critical, per profile.** Invariant R10 is now checked for each
+   profile independently, and every safety-critical id must exist in its own profile.
+7. **Evidence is navigator-only unless a criterion explicitly opts in.** The single named
+   exception is `identity-verification` (see §0h). Auto-fails may NEVER carry an evidence
+   policy — an auto-fail accuses the navigator of an explicit unsafe statement and always
+   requires a navigator quote.
+8. **Stored results are read under the rubric that graded them.** Every newly graded
+   attempt records `qa.gradingMetadata.rubricDepartment` + `rubricVersion`.
+   `profileForGradedAttempt()` resolves a stored result by its recorded version first, and
+   returns `null` (never a guess) for an unrecognised version. QA domain/competency
+   summaries, the shadow-automation completeness check, and the supervisor UI all use it,
+   so a historical attempt is never reinterpreted under a newer profile. **No Firestore
+   migration is performed and no historical grade is rewritten.**
+9. **Calibration is department-aware.** A calibration fixture is validated against its own
+   department's profile; unknown-for-this-department criterion/auto-fail ids fail
+   validation. Rubric drift is measured WITHIN a department
+   (`mixedRubricVersionWithinADepartment`) — two departments legitimately reporting
+   different rubric versions is department identity, not a mixed population.
+
+## 0h. The `identity-verification` evidence policy (2026-07-21)
+
+A narrow, explicitly named exception to the navigator-only evidence rule of §0.1–0.3.
+
+1. **Why it exists.** A caller frequently volunteers her own full name and date of birth in
+   one sentence, or identity is established across several chronological turns. The proof
+   of *which identifiers were collected* then legitimately lives in a CALLER turn, and a
+   navigator-only gate would fail a navigator who did nothing wrong.
+2. **It may establish only two things:** which identifiers were collected, and whether they
+   were collected before protected disclosure.
+3. **It is opt-in per criterion.** Only criteria declaring
+   `evidencePolicy: 'identity-verification'` may use it — currently OB/GYN `verify-three`
+   and `verify-before-access`. Caller wording can therefore never earn an unrelated
+   navigator-performance criterion.
+4. **MET credit only.** An evidence-based NEGATIVE remains navigator-only, so a caller's
+   words can never substantiate an accusation against the navigator; an unverifiable
+   negative stays `unresolved` and forces `needs_review` exactly as before.
+5. **Auto-fails are never covered**, including `af-hipaa` — the disclosing line is a
+   navigator line and must be quoted as one.
+6. **Transcript order is preserved.** A criterion declaring
+   `evidenceOrder: 'before-protected-disclosure'` only accepts evidence from a turn
+   STRICTLY BEFORE the first deterministically detected protected disclosure. Identifiers
+   collected afterwards can never retroactively satisfy "verified before access".
+   The disclosure detector is deliberately narrow and can only REJECT a MET (never create
+   one), so it behaves like the existing trust gates.
+7. **The verification definition has one source.** `OBGYN_VERIFICATION_IDENTIFIERS` renders
+   into `verify-three`, `verify-before-access`, the `af-hipaa` auto-fail text, and the
+   department grader instructions, so the regular criterion and the privacy auto-fail can
+   never accept different definitions.
+
+Prior last-updated: 2026-07-18 (private Call QA runtime merged with PR #33 calibration
+invariants; randomized server-side selection + the private callerCaseFile caller contract).
 
 ## 0f. Private Call QA runtime and caller-observable grading (2026-07-17)
 
@@ -367,6 +449,10 @@ trust-gate change or repair never erases what the grader actually said.
 The Call QA pipeline is designed so that **no single component is trusted alone**:
 
 ```
+server attempt department
+  → rubric profile resolution  (getQaRubricProfile — ONE resolution point; fails closed on an
+                                unsupported department; the resolved profile is threaded through
+                                every stage below, never re-imported globally)
 voice transcript
   → glossary correction        (deterministic, bounded to a curated glossary — never invents words)
   → pinned Gemini grader @ temp 0  (ONE recorded model; verdict MET/NOT_MET/NA + BASIS
@@ -626,3 +712,7 @@ Before merging any change that touches grading:
    CLAUDE.md in the same commit.
 7. Update this document, CLAUDE.md, and docs/HISTORY.md; replace any temporary
    verification placeholders before commit.
+8. If a department rubric changes: bump THAT department's `rubricVersion` (never mutate a
+   stored attempt), keep the profile at exactly 100 points and an 85 pass mark, satisfy
+   §0g.1–9, and confirm the other departments' profiles are byte-for-byte unaffected. If a
+   department is ADDED, it must be a new profile — never a fall-through to an existing one.

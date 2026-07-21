@@ -64,8 +64,7 @@
           "know-details": "NOT_MET",
           "sched-flow": "NOT_MET",
           "sched-recap": "NOT_MET",
-          "close-survey": "NOT_MET",
-          "close-anything-thanks": "NOT_MET"
+          "close-offer-help": "NOT_MET"
         },
         "autoFails": [
           "af-scope"
@@ -93,8 +92,7 @@
           "know-details": "NOT_MET",
           "sched-flow": "NOT_MET",
           "sched-recap": "NOT_MET",
-          "close-survey": "NOT_MET",
-          "close-anything-thanks": "NOT_MET"
+          "close-offer-help": "NOT_MET"
         },
         "autoFails": [
           "af-scope"
@@ -122,8 +120,7 @@
         "know-details": "NOT_MET",
         "sched-flow": "NOT_MET",
         "sched-recap": "NOT_MET",
-        "close-survey": "NOT_MET",
-        "close-anything-thanks": "NOT_MET"
+        "close-offer-help": "NOT_MET"
       },
       "autoFails": [
         "af-scope"
@@ -135,7 +132,7 @@
   },
   "modelRun": {
     "model": "gemini-2.5-flash",
-    "rubricVersion": "qa-rubric-v2",
+    "rubricVersion": "qa-rubric-obgyn-v1",
     "promptVersion": "call-qa-grader-v3",
     "scenarioVersion": "synthetic-rehearsal-v1",
     "recommendation": "fail",
@@ -215,11 +212,7 @@
         "verdict": "NOT_MET"
       },
       {
-        "id": "close-survey",
-        "verdict": "NOT_MET"
-      },
-      {
-        "id": "close-anything-thanks",
+        "id": "close-offer-help",
         "verdict": "NOT_MET"
       }
     ],

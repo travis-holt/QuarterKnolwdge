@@ -27,9 +27,31 @@ import {
   BASES,
   rubricCriteria,
 } from '../src/data/qaRubric.js';
+import {
+  QA_EVIDENCE_POLICIES,
+  QA_RUBRIC_PROFILES,
+  getQaRubricProfile,
+  requireQaRubricProfile,
+  UnsupportedQaDepartmentError,
+} from '../src/data/qaRubricProfiles.js';
 import { detectObgynContradictions, isObgynProhibitedActionNegated } from '../src/lib/contentGuards.js';
 
 export { QA_RUBRIC, QA_AUTO_FAILS, QA_PASS_THRESHOLD, QA_RUBRIC_VERSION, VERDICTS, BASES, rubricCriteria };
+export {
+  QA_EVIDENCE_POLICIES, QA_RUBRIC_PROFILES,
+  getQaRubricProfile, requireQaRubricProfile, UnsupportedQaDepartmentError,
+};
+
+// The department profile used when a caller does not supply one. This is the
+// HISTORICAL shared rubric (Pediatrics), so pre-existing callers and stored
+// results behave exactly as before. The SCORED runtime never relies on it:
+// `gradeCallQaTranscript` resolves the profile from the server-authoritative
+// attempt department and threads that one object through every stage.
+export const DEFAULT_QA_PROFILE = QA_RUBRIC_PROFILES.pediatrics;
+
+function profileOf(profile) {
+  return profile ?? DEFAULT_QA_PROFILE;
+}
 
 // ── Evidence verification ────────────────────────────────────────────────────
 
@@ -131,6 +153,80 @@ export function verifyNavigatorEvidence(transcript, quote) {
   return verifyEvidence(transcript, quote, NAVIGATOR_EVIDENCE);
 }
 
+// ── Identity-verification evidence policy (narrow, named exception) ──────────
+//
+// Identity is frequently established by the CALLER: "Hi, this is Maria Alvarez,
+// date of birth March 2nd 1991." A navigator-only evidence gate would mark that
+// call's verification unverified even though it is complete, so the identity
+// policy lets `verify-three` / `verify-before-access` verify a quote against ONE
+// contiguous turn of EITHER role.
+//
+// Scope limits (all enforced below and by tests):
+//  * MET credit only. An evidence-based NEGATIVE stays navigator-only, so a
+//    caller line can never substantiate an accusation against the navigator.
+//  * Auto-fails are never covered — af-hipaa still needs a navigator quote.
+//  * Only criteria that explicitly opt in via `evidencePolicy` are covered, so
+//    caller wording can never earn an unrelated navigator-performance criterion.
+//  * Transcript ORDER is preserved for `evidenceOrder:'before-protected-disclosure'`.
+
+// Deliberately NARROW: an explicit navigator statement/confirmation of a
+// protected specific. Generic helpfulness ("let me check that for you") is not a
+// disclosure. This gate can only REJECT a MET (never create one), so a miss
+// leaves the pre-existing behavior and an over-match costs a criterion the
+// supervisor still reviews.
+const PROTECTED_DISCLOSURE_PATTERNS = [
+  /\byour (?:appointment|appt|visit)\b[^.?!]*\b(?:is|was|on|at)\b/i,
+  /\byou(?:['’]re| are)\s+(?:scheduled|booked|set up)\b/i,
+  /\bi (?:have|see|show)\s+(?:you|her|him|them)\s+(?:down\s+)?(?:for|scheduled|booked)\b/i,
+  /\byour (?:next|last|upcoming|previous)\s+(?:appointment|appt|visit)\b/i,
+  /\byour (?:results?|labs?|lab work|test results?)\b[^.?!]*\b(?:show|showed|came|are|is|were)\b/i,
+  /\b(?:the|your) chart shows\b/i,
+  /\byour (?:balance|account balance)\b/i,
+  /\byour (?:provider|doctor)\s+(?:ordered|noted|wrote)\b/i,
+];
+
+export function findProtectedDisclosureIndex(transcript) {
+  const turns = Array.isArray(transcript) ? transcript : [];
+  for (let index = 0; index < turns.length; index++) {
+    const turn = turns[index];
+    if (turn?.role !== 'navigator') continue;
+    if (PROTECTED_DISCLOSURE_PATTERNS.some((pattern) => pattern.test(String(turn.text ?? '')))) return index;
+  }
+  return -1;
+}
+
+/**
+ * Verify identity-verification evidence against ONE contiguous turn of either
+ * role. With `requireBeforeDisclosure`, the matching turn must also come
+ * strictly BEFORE the first protected disclosure, so identifiers collected after
+ * the fact cannot retroactively satisfy "verified before access".
+ */
+export function verifyIdentityEvidence(transcript, quote, { requireBeforeDisclosure = false } = {}) {
+  const turns = Array.isArray(transcript) ? transcript : [];
+  const stripped = String(quote ?? '').replace(/^\s*["'“”]*\s*(navigator|caller|patient)\s*:\s*/i, '');
+  const needle = normalizeForMatch(stripped);
+  if (quoteWords(needle).length < 2) return false;
+
+  const limit = requireBeforeDisclosure ? findProtectedDisclosureIndex(transcript) : -1;
+  return turns.some((turn, index) => {
+    if (limit >= 0 && index >= limit) return false;
+    return normalizeForMatch(turn?.text).includes(needle);
+  });
+}
+
+/**
+ * Resolve the correct MET-evidence verifier for one criterion definition. Every
+ * criterion without an explicit `evidencePolicy` stays navigator-only.
+ */
+export function verifyCriterionEvidence(transcript, quote, criterionDef) {
+  if (criterionDef?.evidencePolicy === QA_EVIDENCE_POLICIES.IDENTITY_VERIFICATION) {
+    return verifyIdentityEvidence(transcript, quote, {
+      requireBeforeDisclosure: criterionDef.evidenceOrder === 'before-protected-disclosure',
+    });
+  }
+  return verifyNavigatorEvidence(transcript, quote);
+}
+
 // ── Response validation (model output → trusted verdicts) ───────────────────
 
 /**
@@ -165,10 +261,16 @@ export function validateCriterionBasis(verdict, basis, evidence) {
 }
 
 /**
- * Validate the model's raw JSON against the rubric. Pure; no I/O.
+ * Validate the model's raw JSON against the RESOLVED department rubric profile.
+ * Pure; no I/O. The same `profile` object must later be handed to `scoreQa`, so
+ * validation and scoring can never run against different criterion sets.
+ *
+ * @param {object} parsed
+ * @param {object} [profile] resolved department profile (default: Pediatrics)
  * @returns {{ data: {criteria: [], autoFails: []} } | { error: string }}
  */
-export function validateQaResponse(parsed) {
+export function validateQaResponse(parsed, profile) {
+  const active = profileOf(profile);
   if (!parsed || typeof parsed !== 'object') return { error: 'Response is not an object.' };
   const critList = Array.isArray(parsed.criteria) ? parsed.criteria : null;
   if (!critList) return { error: 'Missing criteria array.' };
@@ -188,19 +290,26 @@ export function validateQaResponse(parsed) {
     byId.set(c.id, { id: c.id, verdict, basis, evidence, note });
   }
 
-  const missing = rubricCriteria().filter((c) => !byId.has(c.id)).map((c) => c.id);
+  const missing = active.criteria.filter((c) => !byId.has(c.id)).map((c) => c.id);
   if (missing.length > 0) return { error: `Missing verdicts for: ${missing.join(', ')}` };
 
-  const afIds = new Set(QA_AUTO_FAILS.map((a) => a.id));
   const autoFails = (Array.isArray(parsed.autoFails) ? parsed.autoFails : [])
-    .filter((a) => a && typeof a === 'object' && afIds.has(a.id) && a.triggered === true)
+    .filter((a) => a && typeof a === 'object' && active.autoFailIds.has(a.id) && a.triggered === true)
     .map((a) => ({
       id: a.id,
       evidence: typeof a.evidence === 'string' ? a.evidence : '',
       note: typeof a.note === 'string' ? a.note : '',
     }));
 
-  return { data: { criteria: rubricCriteria().map((c) => byId.get(c.id)), autoFails } };
+  return {
+    data: {
+      criteria: active.criteria.map((c) => byId.get(c.id)),
+      autoFails,
+      // Stamp the profile that produced these verdicts so a downstream
+      // scoreQa() mismatch is a loud failure, not a silent mis-score.
+      rubricVersion: active.rubricVersion,
+    },
+  };
 }
 
 export const CALL_QA_FAIRNESS_RULES = {
@@ -590,9 +699,12 @@ export function getRefillWorkflowSignals(transcript, context = {}) {
 
 // The ONLY criteria the repair layer may ever touch, and the only direction it
 // may move a verdict (NOT_MET → MET). Enforced by tests as a grading invariant.
-export const REPAIRABLE_CRITERIA = new Set(['know-rule', 'doc-te']);
+// The authoritative per-department set lives on the resolved profile; this
+// export remains the default (Pediatrics) set for legacy callers.
+export const REPAIRABLE_CRITERIA = DEFAULT_QA_PROFILE.repairableCriteria;
 
 export function repairQaVerdictsForScenario(validated, transcript, context = {}) {
+  const repairable = profileOf(context.profile).repairableCriteria;
   const criteria = validated.criteria.map((criterion) => ({
     ...criterion,
     // Preserve the RAW model judgment before any repair mutates the effective
@@ -686,11 +798,12 @@ export function repairQaVerdictsForScenario(validated, transcript, context = {})
 // are persisted on `qa.deterministicFindings` for the supervisor UI.
 
 export function evaluateQaDeterministicFindings(criteria, transcript, context = {}) {
+  const repairable = profileOf(context.profile).repairableCriteria;
   const findings = [];
   const signals = getRefillWorkflowSignals(transcript, context);
   const policy = routingPolicyFor(context);
   const metRoutingCriteria = (Array.isArray(criteria) ? criteria : [])
-    .filter((criterion) => REPAIRABLE_CRITERIA.has(criterion.id) && criterion.verdict === 'MET')
+    .filter((criterion) => repairable.has(criterion.id) && criterion.verdict === 'MET')
     .map((criterion) => criterion.id);
 
   const decision = signals.routingDecision;
@@ -782,11 +895,20 @@ export function evaluateQaDeterministicFindings(criteria, transcript, context = 
  * @param {{id,evidence,note}[]} autoFails           validated triggered auto-fails
  * @param {{role,text}[]} transcript
  */
-export function scoreQa(verdicts, autoFails, transcript) {
-  const defs = new Map(rubricCriteria().map((c) => [c.id, c]));
+export function scoreQa(verdicts, autoFails, transcript, profile) {
+  const active = profileOf(profile);
+  const defs = active.criteriaById;
 
   const criteria = verdicts.map((v) => {
     const def = defs.get(v.id);
+    // A verdict for a criterion this profile does not define means validation
+    // and scoring ran against DIFFERENT rubrics. Fail loudly rather than
+    // silently mis-scoring against a mismatched criterion set.
+    if (!def) {
+      throw new Error(
+        `scoreQa: verdict "${v.id}" is not part of rubric profile "${active.department}" (${active.rubricVersion}).`,
+      );
+    }
     // Use the raw model judgment preserved by the repair layer (before it mutated
     // the effective fields); fall back to this verdict's own fields when scoreQa
     // is called directly on validated verdicts (no repair layer ran).
@@ -800,8 +922,12 @@ export function scoreQa(verdicts, autoFails, transcript) {
     let unresolved = Boolean(v.originalUnresolved);
     let unresolvedReason = unresolved ? 'negative-evidence-not-verified' : null;
 
-    if (verdict === 'MET' && !verifyNavigatorEvidence(transcript, v.evidence)) {
-      // A MET whose quote can't be verified in a navigator turn loses the credit.
+    // MET credit uses the criterion's own evidence policy (navigator-only by
+    // default; the narrow identity-verification exception may also read a caller
+    // turn). Negatives below stay navigator-only regardless of policy, so caller
+    // wording can never substantiate an accusation against the navigator.
+    if (verdict === 'MET' && !verifyCriterionEvidence(transcript, v.evidence, def)) {
+      // A MET whose quote can't be verified loses the credit.
       verdict = 'NOT_MET';
       basis = 'ABSENCE';
       unverified = true;
@@ -829,7 +955,7 @@ export function scoreQa(verdicts, autoFails, transcript) {
     };
   });
 
-  const categories = QA_RUBRIC.map((cat) => {
+  const categories = active.rubric.map((cat) => {
     const items = criteria.filter((c) => c.categoryId === cat.id);
     const applicable = items.filter((c) => c.verdict !== 'NA');
     return {
@@ -845,7 +971,7 @@ export function scoreQa(verdicts, autoFails, transcript) {
   const earnedTotal = categories.reduce((s, c) => s + c.earned, 0);
   const rawScore = applicableTotal > 0 ? Math.round((earnedTotal / applicableTotal) * 100) : 0;
 
-  const withText = (a) => ({ ...a, text: QA_AUTO_FAILS.find((d) => d.id === a.id)?.text ?? a.id });
+  const withText = (a) => ({ ...a, text: active.autoFails.find((d) => d.id === a.id)?.text ?? a.id });
   const verifiedAutoFails = [];
   const unverifiedAutoFails = [];
   for (const a of autoFails) {
@@ -855,10 +981,12 @@ export function scoreQa(verdicts, autoFails, transcript) {
 
   const autoFailed = verifiedAutoFails.length > 0;
   const score = autoFailed ? 0 : rawScore;
-  const pass = !autoFailed && score >= QA_PASS_THRESHOLD;
+  const pass = !autoFailed && score >= active.passThreshold;
 
   return {
-    score, rawScore, pass, passThreshold: QA_PASS_THRESHOLD, categories, criteria,
+    score, rawScore, pass, passThreshold: active.passThreshold, categories, criteria,
+    rubricDepartment: active.department,
+    rubricVersion: active.rubricVersion,
     autoFails: verifiedAutoFails,
     // Reported by the model but its quote didn't verify. It must never fail the
     // navigator (anti-hallucination), but it must ALSO never vanish silently —
@@ -872,9 +1000,10 @@ export function scoreQa(verdicts, autoFails, transcript) {
 // Criteria whose failure represents a patient-safety / compliance risk, not
 // just lost quality points: identity verification, applying the right SOP rule,
 // and routing to the right queue/contact.
-export const SAFETY_CRITICAL_CRITERIA = new Set([
-  'verify-three', 'verify-before-access', 'know-rule', 'doc-te',
-]);
+// The authoritative per-department set lives on the resolved profile
+// (`profile.safetyCriticalCriteria`); this export remains the default
+// (Pediatrics) set for legacy callers and cross-profile invariant checks.
+export const SAFETY_CRITICAL_CRITERIA = DEFAULT_QA_PROFILE.safetyCriticalCriteria;
 
 // A score within this many points of the pass mark is "borderline" — the AI
 // result alone should not decide pass/fail there.
@@ -894,7 +1023,9 @@ export const QA_REVIEW_MARGIN = 5;
  *             safetyRisk: 'none'|'elevated'|'critical',
  *             reviewFlags: {id:string, label:string, detail:string}[] }}
  */
-export function assessQa(qa, transcript, { correctedTurns = 0, repairs = [], deterministicFindings = [] } = {}) {
+export function assessQa(qa, transcript, { correctedTurns = 0, repairs = [], deterministicFindings = [], profile } = {}) {
+  const active = profileOf(profile);
+  const safetyCritical = active.safetyCriticalCriteria;
   const flags = [];
 
   const navigatorTurns = (transcript ?? []).filter((t) => t?.role === 'navigator').length;
@@ -932,7 +1063,7 @@ export function assessQa(qa, transcript, { correctedTurns = 0, repairs = [], det
       detail: `The grader reported ${unresolvedNegatives.length} negative finding(s) as observed (${unresolvedNegatives.map((c) => c.id).join(', ')}) but the quoted navigator evidence did not verify. Confirm against the transcript before treating them as observed behaviors.`,
     });
   }
-  const unresolvedSafety = unresolvedNegatives.filter((c) => SAFETY_CRITICAL_CRITERIA.has(c.id));
+  const unresolvedSafety = unresolvedNegatives.filter((c) => safetyCritical.has(c.id));
 
   if (qa.unverifiedAutoFails?.length > 0) {
     flags.push({
@@ -956,7 +1087,7 @@ export function assessQa(qa, transcript, { correctedTurns = 0, repairs = [], det
   }
 
   const safetyMissed = qa.criteria
-    .filter((c) => c.verdict === 'NOT_MET' && SAFETY_CRITICAL_CRITERIA.has(c.id));
+    .filter((c) => c.verdict === 'NOT_MET' && safetyCritical.has(c.id));
   if (safetyMissed.length > 0) {
     flags.push({
       id: 'safety-criterion-missed',
@@ -988,7 +1119,7 @@ export function assessQa(qa, transcript, { correctedTurns = 0, repairs = [], det
 
   // A repair may add points but must never silently flip the outcome: if the
   // call would have FAILED without the repaired criteria, a supervisor decides.
-  const defs = new Map(rubricCriteria().map((c) => [c.id, c]));
+  const defs = active.criteriaById;
   const repairedPoints = repairs
     .filter((r) => r.to === 'MET' && r.from === 'NOT_MET' && r.reviewRequired !== false)
     .reduce((s, r) => s + (defs.get(r.criterionId)?.points ?? 0), 0);

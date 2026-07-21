@@ -19,6 +19,7 @@ import {
 } from './grade-call-qa.js';
 import { COMPETENCY_IDS } from '../src/data/competencies.js';
 import { DOMAINS } from '../src/data/questions.js';
+import { QA_RUBRIC_PROFILES } from '../src/data/qaRubricProfiles.js';
 
 // ── Fixtures ─────────────────────────────────────────────────────────────────
 
@@ -54,7 +55,9 @@ describe('Call QA Gemini configuration', () => {
 });
 
 // A verdict list where everything is MET with real quotes from TRANSCRIPT.
-function allMetVerdicts() {
+// Build an all-MET model response for ONE rubric profile. Defaults to the
+// historical shared (Pediatrics) rubric so every pre-existing test is unchanged.
+function allMetVerdicts(profile = QA_RUBRIC_PROFILES.pediatrics) {
   const quotes = {
     'open-greet': 'Good morning, thank you for calling',
     'open-name': 'this is Dana',
@@ -76,8 +79,10 @@ function allMetVerdicts() {
     'sched-recap': 'Tuesday at 9 at 48 Baker Town Rd',
     'close-survey': 'stay on the line for our survey',
     'close-anything-thanks': 'anything else I can help with',
+    // OB/GYN profile
+    'close-offer-help': 'anything else I can help with',
   };
-  return rubricCriteria().map((c) => ({ id: c.id, verdict: 'MET', basis: 'EVIDENCE', evidence: quotes[c.id], note: '' }));
+  return profile.criteria.map((c) => ({ id: c.id, verdict: 'MET', basis: 'EVIDENCE', evidence: quotes[c.id], note: '' }));
 }
 
 // ── Rubric integrity ─────────────────────────────────────────────────────────
@@ -1318,7 +1323,8 @@ describe('OB/GYN caller-observable fairness repair', () => {
   const context = (workflowType, ruleIds) => ({
     department: 'obgyn', metadata: { workflowType, ruleIds },
   });
-  const withInternalAbsence = (criterionId, note) => allMetVerdicts().map((criterion) => (
+  // This whole block is OB/GYN, so responses must use the OB/GYN criterion set.
+  const withInternalAbsence = (criterionId, note) => allMetVerdicts(QA_RUBRIC_PROFILES.obgyn).map((criterion) => (
     criterion.id === criterionId
       ? { ...criterion, verdict: 'NOT_MET', basis: 'ABSENCE', evidence: '', note }
       : criterion
@@ -1374,8 +1380,8 @@ describe('OB/GYN caller-observable fairness repair', () => {
       transcript,
       context('mfm_owner', ['mfm_routing']),
     );
-    const scored = scoreQa(repaired.criteria, repaired.autoFails, transcript);
-    const review = assessQa(scored, transcript, { repairs: repaired.repairs });
+    const scored = scoreQa(repaired.criteria, repaired.autoFails, transcript, QA_RUBRIC_PROFILES.obgyn);
+    const review = assessQa(scored, transcript, { repairs: repaired.repairs, profile: QA_RUBRIC_PROFILES.obgyn });
     expect(review.reviewFlags.map((flag) => flag.id)).toContain('fairness-repair-applied');
     expect(review.reviewFlags.map((flag) => flag.id)).not.toContain('repair-changed-outcome');
   });
@@ -1427,7 +1433,10 @@ describe('gradeCallQaTranscript upstream budget', () => {
     gradingScenario: 'Synthetic private grading context.',
     repairContext: { department: 'obgyn', metadata: { workflowType: 'fixture', ruleIds: ['fixture-rule'] } },
   };
-  const validResponse = () => ({ criteria: allMetVerdicts(), autoFails: [] });
+  // This scenarioContext is OB/GYN, so the grader must be asked (and answer)
+  // with the OB/GYN profile's criterion set — a Pediatrics-shaped response is
+  // correctly rejected as malformed.
+  const validResponse = () => ({ criteria: allMetVerdicts(QA_RUBRIC_PROFILES.obgyn), autoFails: [] });
   const input = {
     transcript: TRANSCRIPT,
     scenarioContext,
@@ -1458,7 +1467,9 @@ describe('gradeCallQaTranscript upstream budget', () => {
       pass: true,
       gradingMetadata: {
         model: 'fixture-pinned-model',
-        rubricVersion: QA_RUBRIC_VERSION,
+        // This scenarioContext is OB/GYN, so the OB/GYN profile graded it.
+        rubricDepartment: 'obgyn',
+        rubricVersion: QA_RUBRIC_PROFILES.obgyn.rubricVersion,
         promptVersion: CALL_QA_PROMPT_VERSION,
         scenarioVersion: 'fixture-v1',
         sourceSopVersion: 'fixture-sop-v1',
@@ -1468,8 +1479,8 @@ describe('gradeCallQaTranscript upstream budget', () => {
         gradedAt: expect.any(String),
       },
     });
-    expect(qa.categories).toHaveLength(QA_RUBRIC.length);
-    expect(qa.criteria).toHaveLength(rubricCriteria().length);
+    expect(qa.categories).toHaveLength(QA_RUBRIC_PROFILES.obgyn.rubric.length);
+    expect(qa.criteria).toHaveLength(QA_RUBRIC_PROFILES.obgyn.criteria.length);
     expect(grade).toMatchObject({ score: 100, summary: expect.any(String) });
     expect(grade.strengths).toEqual(expect.any(Array));
     expect(grade.improvements).toEqual(expect.any(Array));

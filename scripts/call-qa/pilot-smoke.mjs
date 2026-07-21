@@ -11,6 +11,7 @@ import {
 } from '../../api/_qa-calibration-scenarios.js';
 import { isActiveQaInterview } from '../../src/lib/phases.js';
 import { CALL_QA_ROLLOUT_DEPARTMENTS } from '../../src/data/callQaScenarios.js';
+import { getQaRubricProfile } from '../../src/data/qaRubricProfiles.js';
 
 export const PILOT_SMOKE_VERIFIED = 'PILOT_SMOKE_VERIFIED';
 export const PILOT_SMOKE_FAILED = 'PILOT_SMOKE_FAILED';
@@ -23,16 +24,60 @@ async function readExample(name) {
 
 const getSyntheticScenario = scenarioResolverFrom(SYNTHETIC_CALIBRATION_SCENARIOS);
 
+// Criteria that were replaced when a department got its own rubric profile.
+// When a rehearsal fixture is retargeted to another department, a removed
+// criterion's label carries over to the criterion that replaced it, so the
+// rehearsed outcome (pass / fail / review) is preserved rather than silently
+// becoming an un-labelled gap. Synthetic rehearsal material only — this is not
+// a migration and never touches a stored attempt.
+const REPLACED_CRITERIA = {
+  // OB/GYN dropped the survey criterion; its closing signal now lives in the
+  // single explicit offer-of-help criterion.
+  'close-offer-help': ['close-anything-thanks', 'close-survey'],
+  'close-anything-thanks': ['close-offer-help'],
+  'close-survey': ['close-offer-help'],
+};
+
+function remapCriteriaLabels(labels, profile) {
+  const source = labels ?? {};
+  return Object.fromEntries([...profile.criterionIds].map((id) => {
+    if (Object.prototype.hasOwnProperty.call(source, id)) return [id, source[id]];
+    const inherited = (REPLACED_CRITERIA[id] ?? []).find((old) => source[old] != null);
+    return [id, inherited ? source[inherited] : 'NA'];
+  }));
+}
+
+function retargetToDepartmentRubric(fixture, department) {
+  const profile = getQaRubricProfile(department);
+  if (!profile) throw new Error(`pilot-smoke: no rubric profile for department "${department}".`);
+  const review = fixture.humanReview;
+  if (review) {
+    review.reviewers.forEach((reviewer) => {
+      reviewer.criteria = remapCriteriaLabels(reviewer.criteria, profile);
+    });
+    review.adjudicated.criteria = remapCriteriaLabels(review.adjudicated.criteria, profile);
+  }
+  if (fixture.modelRun) {
+    const byId = Object.fromEntries(
+      (fixture.modelRun.criteria ?? []).map((criterion) => [criterion.id, criterion.verdict]),
+    );
+    fixture.modelRun.criteria = Object.entries(remapCriteriaLabels(byId, profile))
+      .map(([id, verdict]) => ({ id, verdict }));
+    fixture.modelRun.rubricVersion = profile.rubricVersion;
+  }
+  return fixture;
+}
+
 function forScenario(base, caseId, scenarioId) {
   const scenario = getSyntheticScenario(scenarioId);
-  return {
+  return retargetToDepartmentRubric({
     ...structuredClone(base),
     caseId,
     department: scenario.department,
     scenarioId: scenario.id,
     workflowType: scenario.workflowType,
     difficulty: scenario.difficulty,
-  };
+  }, scenario.department);
 }
 
 function generalFail(base, caseId, scenarioId) {

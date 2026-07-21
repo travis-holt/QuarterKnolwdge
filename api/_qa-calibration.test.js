@@ -8,6 +8,7 @@ import {
 } from './_qa-calibration.js';
 import { SYNTHETIC_CALIBRATION_SCENARIOS as CALL_QA_SCENARIOS, SYNTHETIC_SCENARIO_VERSION } from './_qa-calibration-scenarios.js';
 import { rubricCriteria } from '../src/data/qaRubric.js';
+import { getQaRubricProfile } from '../src/data/qaRubricProfiles.js';
 
 const example = JSON.parse(readFileSync(
   new URL('./fixtures/call-qa-calibration/example-pass.json', import.meta.url),
@@ -18,8 +19,15 @@ const RUBRIC_IDS = rubricCriteria().map((criterion) => criterion.id);
 // exercise the gates themselves rather than the missing-evidence reason.
 const PRIVATE_EVIDENCE = { scenarios: CALL_QA_SCENARIOS, scenarioEvidence: 'private-manifest' };
 
-function completeCriteria(overrides = {}, fallback = 'NA') {
-  return Object.fromEntries(RUBRIC_IDS.map((id) => [id, overrides[id] ?? fallback]));
+// A fixture must label the rubric of ITS OWN department. Passing the department
+// keeps OB/GYN fixtures on the OB/GYN criterion set (close-offer-help, no
+// survey criterion) and Pediatrics fixtures on the historical shared set.
+function criterionIdsFor(department = 'pediatrics') {
+  return [...(getQaRubricProfile(department)?.criterionIds ?? RUBRIC_IDS)];
+}
+
+function completeCriteria(overrides = {}, fallback = 'NA', department = 'pediatrics') {
+  return Object.fromEntries(criterionIdsFor(department).map((id) => [id, overrides[id] ?? fallback]));
 }
 
 function calibrationFixture({
@@ -37,8 +45,8 @@ function calibrationFixture({
   modelRun = {},
 } = {}) {
   const reviewRequired = human === 'needs_review';
-  const humanLabels = completeCriteria(humanCriteria);
-  const modelLabels = completeCriteria(modelCriteria ?? humanCriteria);
+  const humanLabels = completeCriteria(humanCriteria, 'NA', scenario.department);
+  const modelLabels = completeCriteria(modelCriteria ?? humanCriteria, 'NA', scenario.department);
   const reviewer = (id) => ({
     reviewerId: id,
     criteria: humanLabels,
@@ -86,7 +94,7 @@ function calibrationFixture({
     },
     modelRun: modelRun === null ? null : {
       model: modelName,
-      rubricVersion: 'qa-rubric-v2',
+      rubricVersion: getQaRubricProfile(scenario.department).rubricVersion,
       promptVersion: 'call-qa-grader-v3',
       scenarioVersion: SYNTHETIC_SCENARIO_VERSION,
       recommendation: model,

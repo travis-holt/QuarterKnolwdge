@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { DOMAINS, domainName } from '../data/questions.js';
 import { COMPETENCIES, competencyName } from '../data/competencies.js';
-import { DEPARTMENTS, isAssessed } from '../data/departments.js';
+import { DEPARTMENTS, departmentName, isAssessed } from '../data/departments.js';
 import { LEVELS, THRESHOLDS, interviewScoreColor } from '../data/config.js';
 import { findRow, mentorSuggestions, trainingForRow, trainingEmptyStateReason, buildTrend, trainingImpact, buildDossier } from '../lib/scoring.js';
 import { OverallBadge, DomainScore } from './OverallStatus.jsx';
@@ -748,6 +748,21 @@ export default function NavigatorDetail({ rows, name, deptName, dept, deptMatrix
                               </>
                             ) : (
                               <p>Transcript source: <strong>Legacy browser-captured transcript</strong></p>
+                            )}
+                            {/* Which department rubric actually graded this
+                                attempt. Read straight from the stored grading
+                                metadata so a historical result is never
+                                relabelled under a newer rubric. */}
+                            {session.qa?.gradingMetadata?.rubricVersion && (
+                              <p>
+                                Graded with:{' '}
+                                <strong>
+                                  {session.qa.gradingMetadata.rubricDepartment
+                                    ? `${departmentName(session.qa.gradingMetadata.rubricDepartment)} rubric`
+                                    : 'shared rubric'}
+                                </strong>
+                                {' '}({session.qa.gradingMetadata.rubricVersion})
+                              </p>
                             )}
                           </div>
                         )}

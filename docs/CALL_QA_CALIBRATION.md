@@ -42,7 +42,14 @@ Fixtures live under `api/fixtures/call-qa-calibration/` and use
   sanitized transcript/count evidence is available
 
 For grading fixtures, every reviewer, the adjudicated result, and the model run
-must label every rubric criterion exactly once. Use `NA` when a criterion is
+must label every rubric criterion exactly once — the criteria of the fixture's
+OWN department. Since 2026-07-21 the rubric is department-based
+(`getQaRubricProfile(department)`), so an OB/GYN fixture is validated against the
+OB/GYN profile and a Pediatrics fixture against the shared/Pediatrics profile. A
+criterion id that belongs to another department fails validation
+("unknown rubric criterion for this department"), as does a `modelRun.rubricVersion`
+that is not that department's profile version. A fixture whose department has no
+rubric profile cannot be calibrated at all. Use `NA` when a criterion is
 inapplicable. Partial criterion maps, unknown criteria, and duplicate model
 criteria are invalid. Adjudicated outcomes are also exact:
 
@@ -120,6 +127,20 @@ Reports split grader model, rubric version, prompt version, scenario version,
 capture version, and live voice model. Multiple grader/rubric/prompt
 populations display `MIXED CALIBRATION POPULATION`. Readiness is blocked unless
 one version population independently satisfies every gate.
+
+**Rubric version is department-scoped (2026-07-21).** Each department carries its
+own rubric profile and version, so a multi-department population legitimately
+reports more than one rubric version. That is department identity, not
+calibration drift, and it does not by itself mark the population mixed. Real
+rubric drift is more than one rubric version WITHIN a single department, which
+the report measures as `versionBreakdowns.rubricVersionByDepartment` and the
+readiness gate checks via `mixedRubricVersionWithinADepartment()`. Grader model
+and prompt version remain global — they should be uniform across departments.
+Criterion-level metrics are computed over the union of every profile's criteria;
+a case only contributes to a criterion its own department rubric defines, and
+each criterion metric records the `departments` that define it. Per-department
+scenario/criterion coverage uses that department's own criteria, so a criterion
+that does not exist for a department is never reported as uncovered.
 
 ## Readiness policy
 
@@ -286,7 +307,9 @@ mismatch, prior final supervisor review, or calibration shortfall.
 
 The shadow policy is `call-qa-clean-pass-shadow-v2`. It additionally requires
 the supported calibration policy version, `qa.metadataIntegrity.verified ===
-true`, a complete 20-criterion rubric result, and server-authoritative
+true`, a complete rubric result measured against the profile that ACTUALLY
+graded the attempt (resolved from `qa.gradingMetadata.rubricVersion`; an
+unrecognised version is never treated as complete), and server-authoritative
 `qa.transcriptMetadata` whose attempt ID, capture status, capture-complete flag,
 capture version, and live model match the attempt.
 

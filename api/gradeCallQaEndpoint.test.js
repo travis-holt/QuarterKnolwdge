@@ -138,6 +138,8 @@ describe('gradeCallQaTranscript — pinned model + metadata', () => {
     );
     expect(qa.gradingMetadata).toEqual({
       model: 'gemini-2.5-flash-lite',
+      // The department rubric profile that actually graded this attempt.
+      rubricDepartment: 'pediatrics',
       rubricVersion: QA_RUBRIC_VERSION,
       promptVersion: CALL_QA_PROMPT_VERSION,
       scenarioVersion: CURATED.version,

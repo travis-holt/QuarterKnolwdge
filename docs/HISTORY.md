@@ -1,5 +1,151 @@
 ﻿# Development History - Knowledge Check
 
+## 2026-07-21 — Department-based Call QA rubric profiles; OB/GYN is the first dedicated profile
+
+**Status: draft PR against `main`, not merged, not deployed.** No Firestore migration, no
+production write, no private-scenario provisioning, and no historical grade rewritten.
+
+### The problem
+
+One shared rubric was treated as correct for every department. Three consequences on the
+OB/GYN floor:
+
+1. **The rubric asked for the wrong things.** It required a patient survey prompt OB/GYN does
+   not run, allowed "any polite sign-off" to satisfy closing, accepted a phone number or home
+   address in place of date of birth, and used Pediatrics-only documentation examples
+   (`Shots PE UTD`, `GS` newborns).
+2. **It was rigid where the floor is not.** Empathy and hold-narration were always-required
+   (`core: true`), so a navigator lost points for not performing scripted empathy on a routine
+   scheduling call, or for not narrating a two-second chart lookup — a thing a text transcript
+   cannot even establish.
+3. **There was nowhere to put a department difference.** The only tool available was another
+   `department === 'obgyn'` branch inside the grading pipeline, which is exactly how prompt
+   rules, deterministic scoring, and auto-fail logic drift apart.
+
+### The architecture
+
+`src/data/qaRubricProfiles.js` introduces **one authoritative resolution point** —
+`getQaRubricProfile(department)`. A profile carries everything needed to grade one department:
+department id, rubric version, categories/criteria, auto-fail definitions, criterion
+applicability (`core`), safety-critical + repairable sets, per-criterion evidence policies, and
+the department-specific grader instructions. Department behavior is **data, not branches**.
+
+`gradeCallQaTranscript` resolves the profile ONCE from the server-authoritative department on
+the stored attempt (never a browser value) and threads that single object through prompt
+construction, response validation, fairness repairs, scoring, category totals, core/NA handling,
+auto-fail evaluation, deterministic findings, the review layer, and the QA domain/competency
+projections. Two guards make drift impossible rather than merely discouraged:
+`validateQaResponse` stamps the validating profile's version onto its output, and `scoreQa`
+**throws** if handed a verdict for a criterion its profile does not define.
+
+- `pediatrics` reuses the historical shared rubric **verbatim** (`qa-rubric-v2`), so no
+  non-OB/GYN verdict, point, prompt line, or version string changes.
+- `obgyn` is the new `qa-rubric-obgyn-v1`.
+- An unsupported department resolves to `null` and the scored runtime **fails closed** (422,
+  grader never called). There is no `?? 'pediatrics'` fallback left in the scored path —
+  `buildScenarioContextFromAttempt` now returns `department: null` rather than defaulting.
+
+### The OB/GYN rubric — still 100 points, still passes at 85
+
+Category weights are **unchanged**: Opening 10 · Verification 10 · Call Control 10 ·
+Documentation Reason 10 · Communication 15 · Active Listening 10 · Knowledge 15 · Scheduling 15
+· Closing 5.
+
+| Area | Before (shared) | After (OB/GYN) |
+|---|---|---|
+| Opening | greeting 4 + own name 3 + org 3 | same points; greeting must also **offer assistance**; org accepts "Aizer Health" **or** "Aizer Women's Health"; navigator-name requirement **unchanged** |
+| Verification | 3 identifiers incl. "**or** home address / phone number" | exactly **first name + last name + DOB**; phone/address **never** substitute; volunteered identifiers count; multi-turn collection counts |
+| Empathy | `core: true` — always required | **conditional**: NA when the caller expressed no emotional/sensitive cue; MET on natural acknowledgment; NOT_MET only when a cue existed and went unacknowledged |
+| Active listening | "explicitly acknowledged … *I understand*, *I hear you*" | natural recognition of the request counts; scripted empathy not required. `listen-gather` stays strict |
+| Hold narration | `core: true` — narrate every system action | **conditional**: NA with no hold/meaningful wait; MET when an explained hold; NOT_MET only for an **explicit** unexplained hold. Dead air/delay may never be inferred from text |
+| Documentation | Pediatrics examples (`Shots PE UTD`, `GS`) | department-neutral / OB/GYN wording. Underlying standard unchanged |
+| Closing | `close-survey` 3 + `close-anything-thanks` 2 | ONE criterion **`close-offer-help`** at **5**: an explicit offer of further assistance. Thanks / goodbye / mutual close / survey-alone earn **0** |
+
+**Survey wording is score-neutral** for OB/GYN: no points, no deduction, does not satisfy the
+closing criterion, and survey + a valid offer still earns exactly 5. The grader instruction that
+let "any polite sign-off" satisfy closing is **removed** for OB/GYN and retained for Pediatrics.
+
+The new criterion uses a **new id** rather than reusing `close-survey`, which would have been
+actively misleading in stored results. Its domain/competency tags are the **union** of the two
+removed criteria (`documentation` + `intake`; `communication` + `customerHandling`), so closing
+evidence is not silently dropped from QA domain/competency summaries — asserted by test.
+
+`af-hipaa` for OB/GYN is rendered from the **same** `OBGYN_VERIFICATION_IDENTIFIERS` constant as
+`verify-three` / `verify-before-access`, so the regular criterion and the privacy auto-fail
+cannot accept different definitions.
+
+### The `identity-verification` evidence policy
+
+Callers routinely volunteer "this is Maria Alvarez, date of birth March 2nd 1991". Under the
+navigator-only evidence rule the only quotable proof of complete verification sits in a *caller*
+turn, so a correct call looked unverified. A narrow, explicitly named per-criterion policy now
+lets `verify-three` / `verify-before-access` verify a contiguous quote from ONE turn of either
+role. Scope limits, all tested:
+
+- **MET credit only** — an evidence-based negative stays navigator-only, so a caller's words can
+  never substantiate an accusation against the navigator.
+- **Opt-in per criterion** — caller wording cannot earn an unrelated navigator-performance
+  criterion (asserted against `comm-empathy` and `close-offer-help`).
+- **Auto-fails are never covered**, including `af-hipaa`.
+- **Order is preserved** — `verify-before-access` declares
+  `evidenceOrder: 'before-protected-disclosure'` and only accepts evidence from a turn strictly
+  before the first deterministically detected protected disclosure, so identifiers collected
+  afterwards can never retroactively satisfy it. The disclosure detector is deliberately narrow
+  and can only *reject* a MET, never create one.
+
+### Versioning, provenance, and history
+
+`qa.gradingMetadata` now records `rubricDepartment` alongside `rubricVersion`.
+`profileForGradedAttempt()` resolves a stored result by its **recorded version first** and
+returns `null` — never a guess — for an unrecognised version. QA domain/competency summaries,
+the shadow-automation completeness check, and the supervisor UI all use it, so a historical
+attempt keeps rendering under the rubric that graded it. The supervisor session panel now shows
+"Graded with: *<department>* rubric (*version*)". `CALL_QA_PROMPT_VERSION` is **unchanged** —
+the prompt *contract* (EVIDENCE/ABSENCE shapes, criterion ids, response schema) did not change;
+only per-department rubric content did, which the rubric version already records.
+
+### Tooling made department-aware
+
+- **Calibration** validates each fixture against its own department's profile; a criterion or
+  auto-fail id from another department now fails validation, as does a `rubricVersion` that is
+  not that department's. Criterion metrics run over the union of profiles (each recording which
+  `departments` define it); per-department coverage uses that department's own criteria.
+- **Rubric drift is now measured within a department.** Two departments reporting two rubric
+  versions is department identity, not drift, so the `requireSingleRubricVersion` gate checks
+  `mixedRubricVersionWithinADepartment()` instead of a flat count. Grader model and prompt
+  version remain global.
+- **Shadow automation** measures "complete rubric output" against the profile that actually
+  graded the attempt; an unrecognised rubric version is never complete (fails closed).
+- **Pilot smoke** retargets its rehearsal fixtures onto the target department's rubric, carrying
+  a replaced criterion's label onto its replacement so the rehearsed outcome is preserved.
+- **The deterministic corpus** resolves a profile per case exactly as the real pipeline does, and
+  gains three OB/GYN cases covering the fix direction and both abuse directions (conditional
+  criteria NA on a routine call; a sign-off-only close failing; a worried caller's unacknowledged
+  concern still costing its 5 points — "conditional" must never degrade into "never scored").
+
+### Manual-review fixtures
+
+`api/_qa-obgyn-review-fixtures.js` adds eight synthetic, non-production OB/GYN calls — strong
+routine call, thanks-and-goodbye close, worried caller handled well, worried caller
+unacknowledged, phone-instead-of-DOB, disclosure-before-DOB, quick silent chart check,
+unexplained hold — each executed through the real pipeline by `api/obgynRubricProfile.test.js`.
+Nothing is derived from or comparable to the private runtime bank, and none of it is calibration
+evidence.
+
+One fixture documents a genuine, pre-existing property worth naming: a call that fails **all**
+identity verification still scores 88 numerically, because verification is only 10 of 100 points.
+Both verification criteria are safety-critical, so the review layer refuses to call it a
+confident pass and routes it to a supervisor. Numeric pass + non-final `needs_review` is the
+designed behavior, not a gap — but it is now written down and asserted.
+
+### Verification
+
+`npm test` 1735 → **1822** across 77 → 78 files (all green). Build clean including the
+private-runtime bundle scan; 12/12 safe Playwright E2E; Firestore Rules 76/76; encoding guard
+clean; `qa:pilot-smoke` `PILOT_SMOKE_VERIFIED`. `qa:calibrate` and `qa:coverage` still report
+`INSUFFICIENT_DATA` with 0 human-pilot fixtures — **that is the correct, expected state, not a
+passing calibration result.**
+
 ## 2026-07-21 — PR #40 MERGED to `main` (`01a7f27`) and auto-deployed
 
 The one-official-status capability redesign is live.
