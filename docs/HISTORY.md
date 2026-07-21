@@ -1,5 +1,71 @@
 ﻿# Development History - Knowledge Check
 
+## 2026-07-21 — PR #40 MERGED to `main` (`01a7f27`) and auto-deployed
+
+The one-official-status capability redesign is live.
+
+### What merged
+
+| | |
+|---|---|
+| PR | #40 — *One official capability status per navigator per department* |
+| Merged head | `a18d00b` |
+| Merge commit | `01a7f27` |
+| Merged by | travis-holt, 2026-07-21 |
+| Diff | 38 files · +7,205 / −687 · 6 commits |
+
+### Merge-gate evidence (checked immediately before merging)
+
+- Local `HEAD`, `origin/feature/overall-capability-status` and GitHub's PR head were **all
+  `a18d00b`** — CI ran on the exact head that merged, not an earlier one.
+- Branch was **0 commits behind `main`**; `mergeable: MERGEABLE`; `mergeStateStatus: CLEAN`.
+- **0 unresolved review threads** (0 reviews, 0 comments).
+- GitHub Actions `verify` workflow: **success** on `headSha: a18d00b` (run 29842091680).
+- Local gate, all nine commands run: `vitest` **1,735/1,735 across 77 files** · `build` clean incl.
+  the Call QA private-runtime bundle scan · `test:e2e:safe` **12/12** · `test:rules` **76/76**
+  (51 result-authorization + 25 Call QA) · `qa:pilot-smoke` `PILOT_SMOKE_VERIFIED` · `qa:calibrate`
+  `INSUFFICIENT_DATA` (the documented expected state) · `qa:coverage` exit 0 ·
+  `check-encoding` passed · `git diff --check` clean.
+
+### Deployment
+
+Railway is Git-connected to `main` and auto-deploys on push, so the merge triggered a production
+deploy. This was raised with the owner before merging — the review had run under a standing "do not
+deploy" instruction — and the owner explicitly authorised the merge and the resulting deploy.
+
+**No migration was run and no Firestore data was modified.** The whole redesign derives status at
+runtime from the `scores` object result documents already carry, so no stored record needed
+rewriting. Firestore schemas, rules, migrations, result selection and persistence are unchanged.
+
+### What shipped
+
+One official capability status per navigator per department, from the arithmetic mean of all six
+domain scores: `0–39` Critical · `40–64` Learning · `65–89` Solid · `90–100` Can-Teach. Domain
+percentages remain diagnostic evidence. Competencies keep their own separate three-level scale.
+Five review passes are recorded in the entries below this one.
+
+The governing invariant established across those passes:
+
+> **Missing evidence must never be represented as failure, mastery, or a real 0%.
+> Only a genuinely measured numeric zero is a Critical result.**
+
+### Live watch items
+
+These are now production behaviours, tracked in CLAUDE.md §15:
+
+1. **Stored results re-classify on first view.** The new bands are stricter than the old
+   `<60/60–84/85+` scale. No data changed — only the derived label — but supervisors will see
+   navigators at different levels than last quarter and should be told before they notice.
+2. **Two new blocking screens are live.** An incomplete question bank, or a failed bank read, now
+   blocks the MCQ instead of silently fabricating zero scores. Correct, but it turns a quiet data
+   bug into a visible outage; watch for reports and verify bank coverage per department.
+3. **Smoke the deployment** — Matrix, a NavigatorDetail with history, and Team Overview against real
+   Railway data, confirming the Overall column, Incomplete vs Not-assessed labels, and N/A
+   aggregates.
+4. **Not shipped:** `err?.message ?? err` still appears in ~10 `api/*` server handlers. PR #40 fixed
+   only the navigator-facing site and added `safeErrorMessage()`; the server-side instances are a
+   cheap follow-up using the same helper.
+
 ## 2026-07-21 — PR #40: synthetic trend data is never "measured"; safe rejection logging
 
 A narrow final pass over PR #40 closing one correctness defect and one logging-safety item. Head

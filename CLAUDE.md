@@ -12,6 +12,7 @@
 > accurate at all times.
 >
 > **Last updated:** 2026-07-21 (**one official capability status per navigator per department** —
+> **MERGED to `main` as `01a7f27` (PR #40) on 2026-07-21 and auto-deployed to Railway.**
 > this REVERSES the original 2026-06-23 "never a single overall grade" principle. Each department
 > assessment now resolves to exactly one official status from the **arithmetic mean of all six
 > domain scores**, in four non-overlapping bands: `0–39` **Critical** · `40–64` **Learning** ·
@@ -2518,6 +2519,9 @@ of this file on 2026-07-07 to cut per-session context cost (it was ~55% of the f
   (`GEMINI_API_KEYS` set in Railway Variables; all 7 REST AI endpoints live + the `/api/live`
   WebSocket relay for the real-time voice call).
 - **Deployment status:** **Railway** (Git-connected to `main`). Railway auto-deploys on push.
+  **PR #40 (the one-official-status capability redesign) merged to `main` as `01a7f27` on
+  2026-07-21**, which triggered an auto-deploy. CI `verify` passed on the exact merged head
+  (`a18d00b`) before the merge. Post-deploy watch items are listed in §15.
   Before deploying this branch, Railway must add `FIREBASE_SERVICE_ACCOUNT_JSON`,
   `SUPERVISOR_PASSCODE_SERVER`, and `SESSION_SIGNING_SECRET` alongside existing
   `VITE_FIREBASE_*`/`GEMINI_API_KEYS`, then deploy code, verify both roles, and publish the tightened
@@ -3126,14 +3130,30 @@ npm run test:e2e     # run the Playwright browser tests (auto-builds + starts th
 ## 15. Current Priorities
 
 1. **Maintain this CLAUDE.md** on every change (highest standing priority).
-1b. **Confirm the capability-band redesign with the owner (2026-07-20).** The code ships the exact
-   ranges the owner specified (`0–39`/`40–64`/`65–89`/`90–100`) and they are centralized in
-   `config.js`, so re-banding is a one-file change. Two follow-ups need a human decision, not code:
-   (a) the bands are noticeably stricter than the old `<60/60–84/85+` scale, so **existing stored
-   results will re-classify on first view** (no data changes — only the derived label), and
-   supervisors should be told before they see it; (b) `MINICHECK_PASS` deliberately stayed at 60 so
-   recorded mini-check pass/fail history is untouched — decide whether it should track the new
-   Solid floor (65) going forward.
+1b. **POST-DEPLOY WATCH — the capability redesign is LIVE (merged `01a7f27`, 2026-07-21).**
+   PR #40 is merged and Railway has auto-deployed it, so the following are now live-system items,
+   not pre-merge questions:
+   - **Existing stored results re-classify on first view.** The bands (`0–39`/`40–64`/`65–89`/
+     `90–100`) are stricter than the old `<60/60–84/85+` scale. No stored data changed — only the
+     derived label — but a supervisor opening the matrix will see navigators sitting at different
+     levels than last quarter. **Tell supervisors before they notice it.** Re-banding is a one-file
+     change in `config.js` if the floor wants different ranges.
+   - **Two new blocking screens are live.** A supervisor whose active question bank is missing a
+     domain, or a navigator hitting a failed bank read, now sees a blocking screen instead of the
+     MCQ. This is deliberate (it replaces silently fabricated zeroes) but it converts a quiet data
+     bug into a visible outage — watch for reports and check bank coverage per department.
+   - **`MINICHECK_PASS` deliberately stayed at 60** so recorded mini-check pass/fail history is
+     untouched. Decide whether it should track the new Solid floor (65) going forward.
+   - **Smoke the live deployment**: open the Matrix, a NavigatorDetail with history, and the Team
+     Overview on Railway and confirm the Overall column, Incomplete/Not-assessed labels, and N/A
+     aggregates render as expected against real data.
+1c. **Follow-up (not shipped): `err?.message ?? err` remains in ~10 `api/*` server handlers.**
+   PR #40 fixed only the navigator-facing site and added `safeErrorMessage()`
+   ([src/lib/safeError.js](src/lib/safeError.js)). The same latent pattern — a non-Error rejection
+   falling through to the raw value and being serialized into logs — is still present server-side in
+   `grade-call-qa.js`, `live-relay.js`, `my-interviews.js`, `navigator-login.js`,
+   `navigator-roster.js`, `supervisor-login.js` and `_sop-store.js`. Cheap to fix with the existing
+   helper; deliberately out of scope for PR #40.
 2. ~~**Provision and rotate private Call QA content before any deployment.**~~ **DONE 2026-07-18:**
    an authorized operator authored 15 fresh private OB/GYN scenarios (reconciled against the
    owner-provided current-floor SOP, validated 15/15 by the production validator), dry-ran, then
