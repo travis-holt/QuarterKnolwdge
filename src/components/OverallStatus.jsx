@@ -37,27 +37,43 @@ export function OverallBadge({
   size = 'md',
   className = '',
 }) {
-  const pct = row ? row.overallScore : score;
-  const lvl = row ? row.overallLevel : level;
+  const rawPct = row ? row.overallScore : score;
+  const rawLvl = row ? row.overallLevel : level;
   const scored = row ? row.assessedDomains : assessedDomains;
   const outOf = (row ? row.totalDomains : totalDomains) ?? 6;
   const isComplete = row ? row.overallComplete !== false : complete;
   const text = label ?? (row ? row.overallLabel : null);
 
-  // No official status: either nothing scored, or a partial profile.
-  if (pct == null || !lvl) {
-    const partial = Number.isFinite(scored) && scored > 0;
+  // DEFENSIVE: `complete === false` always wins. If a caller supplies a stale or
+  // inconsistent score/level alongside an incomplete profile (e.g. a cached row
+  // from before the domains were cleared), we must NOT render an official
+  // badge — an incomplete profile has no official status, full stop.
+  const pct = isComplete ? rawPct : null;
+  const lvl = isComplete ? rawLvl : null;
+
+  // No official status: either nothing scored, or a partial profile. These two
+  // must stay visibly distinct — "part-way through" is not "never started".
+  if (pct == null || !lvl || !LEVELS[lvl]) {
+    // Partial when we have a positive assessed count, OR when the caller told us
+    // the profile is explicitly incomplete without supplying a count.
+    const partial = Number.isFinite(scored)
+      ? scored > 0
+      : isComplete === false;
+    const countNote = Number.isFinite(scored) ? `${scored} of ${outOf} domains scored. ` : '';
     return (
       <span
         className={`overall-badge overall-badge--na ${partial ? 'overall-badge--incomplete' : ''} ${className}`.trim()}
         title={
           partial
-            ? `Incomplete profile — ${scored} of ${outOf} domains scored. No official status until all six are scored.`
+            ? `Incomplete profile — ${countNote}No official status until all ${outOf} are scored.`
             : 'No assessment recorded for this department yet.'
         }
       >
         <span className="overall-badge__pct">—</span>
         <span className="overall-badge__label">{text ?? (partial ? 'Incomplete' : 'Not assessed')}</span>
+        {partial && Number.isFinite(scored) && (
+          <span className="overall-badge__scored">{scored} of {outOf} domains</span>
+        )}
       </span>
     );
   }

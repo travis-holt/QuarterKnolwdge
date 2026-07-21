@@ -1,10 +1,12 @@
 import { domainName } from '../data/questions.js';
-import { trainingByDomain, trainingPlan, trainingStats } from '../lib/scoring.js';
+import { trainingByDomain, trainingPlan, trainingStats, floorStats } from '../lib/scoring.js';
 
 // completionMap: { [navigatorId]: Set<domainId> } — who has practiced which domain.
 // roster: [{ id, name }] — used to look up navigatorId by name for the checkmark.
 export default function Training({ rows, deptName, onOpenNavigator, onPreviewModule, completionMap = {}, roster = [] }) {
   const stats = trainingStats(rows);
+  // Population context: how many of these rows actually carry a complete profile.
+  const floor = floorStats(rows);
   const byDomain = trainingByDomain(rows);
   const plan = trainingPlan(rows);
 
@@ -43,7 +45,12 @@ export default function Training({ rows, deptName, onOpenNavigator, onPreviewMod
         <div className="card kpi">
           <span className="kpi__value">{stats.navigatorsWithRequired}</span>
           <span className="kpi__label">navigators with required training</span>
-          <span className="kpi__sub">of {rows.length} assessed</span>
+          {/* `rows` includes incomplete and unassessed navigators, so calling
+              them all "assessed" overstated the measured population. */}
+          <span className="kpi__sub">
+            of {rows.length} navigator{rows.length === 1 ? '' : 's'} on the floor
+            {floor.assessed !== rows.length && ` · ${floor.assessed} with a complete profile`}
+          </span>
         </div>
         <div className="card kpi">
           <span className="kpi__value">{stats.totalStretch}</span>

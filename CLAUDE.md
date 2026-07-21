@@ -339,6 +339,32 @@ training assignments.
   `partialAverage(scores)` exposes the mean of the evidence that exists, but it is **explicitly
   diagnostic**: it is never called an overall score, never rendered with a level, and never feeds an
   official KPI.
+- **THE GOVERNING INVARIANT (2026-07-21):** *Missing evidence must never be represented as failure,
+  mastery, or a real 0%. Only a genuinely measured numeric zero is a Critical result.* This applies
+  end to end — bank coverage, per-domain scoring, official status, training empty states, floor
+  aggregates, trend series, and every label. Concretely:
+  - **Bank coverage.** `assessmentBankCoverage(questions)` / `isAssessmentBankComplete()` require at
+    least one *scoreable* question (`isScoreableQuestion`) for every configured domain. The navigator
+    MCQ phase is **blocked** — with a "this assessment isn't ready yet" screen naming the uncovered
+    domains — rather than scoring a bank that cannot measure all six. Nothing is persisted.
+    A partially-populated live bank is **never topped up from the seed bank**, because mixing
+    outdated seed content with current managed content inside one graded assessment is worse than
+    blocking. The seed bank is used only when the live bank is entirely empty.
+  - **Per-domain scoring.** `scorePerDomain()` returns **null** for a domain with no scoreable
+    questions ("nothing to answer") and a genuine **0** for a domain that was measured and earned
+    nothing. `scorePerDomain(answers, bank, { strict: true })` throws
+    `IncompleteAssessmentBankError` (carrying `missing`) instead of returning a profile with holes.
+  - **Training empty states.** `trainingEmptyStateReason(row)` resolves an empty assignment list to
+    `unassessed` / `incomplete` / `mastered` / `has-assignments`; `hasMasteredAllDomains(row)` is
+    true only for a complete profile with every domain ≥ 90. No surface may treat
+    `assignments.length === 0` as mastery, and mentoring is never suggested to an incomplete or
+    unassessed navigator.
+  - **Aggregates.** `floorStats().avgOverallScore` / `.solidPlusRate` and
+    `domainDistribution().avgScore` are **null** when there is no eligible evidence, and render as
+    `—`/`N/A` (never `0%`). `teamTrend()` omits timepoints with zero complete profiles, and
+    `buildTrend()` puts **null** (a gap in the sparkline) where a historical domain score is
+    missing. Counts stay genuine zeroes — "zero navigators are Critical" is a real fact. A complete
+    floor whose real average is 0 still displays `0%`.
 - **Missing evidence is never a zero (hardened 2026-07-20 review):** `domainBand(pct)` returns
   **null** for a missing or non-numeric domain — never `'critical'`. Only a genuinely recorded
   number in 0–39 is a Critical gap. An absent domain therefore produces **no** critical-gap alert,
@@ -709,8 +735,9 @@ training assignments.
     `scoreSpotTheErrorByDomain(graded)` → `{ domainId: percent }` from `[{domainId, correct}]`.
     Click-accuracy only. Same 0–100 scale as the main check, so results feed domain scores directly.
   - `src/components/SpotTheError.jsx` — phases: `loading` (fires one `/api/generate-audit` call per
-    planned item in parallel via `Promise.allSettled`, keeps whatever succeeds; full-mode domains
-    that fail to generate backfill to 0) → `active` (one item at a time; the navigator **picks the
+    planned item in parallel; **generation is all-or-nothing** — a full-mode run that cannot produce
+    an item for every domain fails rather than proceeding, so a domain that could not be generated is
+    **never backfilled as a navigator zero**) → `active` (one item at a time; the navigator **picks the
     message AND types a required "why is this the error" explanation** before Next commits the
     answer — the pick stays changeable until then, and **no correct/wrong feedback is shown during
     the run** (deferred-feedback redesign 2026-07-17); each item shows its domain tag) → `review`
@@ -2498,7 +2525,15 @@ of this file on 2026-07-07 to cut per-session context cost (it was ~55% of the f
     assessedDomains, totalDomains, partialAverage }`; `overallLevelRank(level)`
   - **Competency axis (separate):** `competencyScoreToLevel(pct)` →
     `'learning'|'solid'|'canTeach'|null` using `COMPETENCY_THRESHOLDS` (`<60`/`60–84`/`85+`).
-    Never use the capability `scoreToLevel()` on a competency score.
+    Never use the capability `scoreToLevel()` on a competency score. UI that iterates competency
+    bands must use **`COMPETENCY_LEVEL_ORDER`** (three levels), never `LEVEL_ORDER` (four) — the
+    Overview competency bars and legend previously used the four-band order and rendered a Critical
+    bucket the competency scale does not have.
+  - **Bank coverage:** `isScoreableQuestion(q)`, `assessmentBankCoverage(questions)` →
+    `{ complete, covered, missing, countsByDomain, scoreable, total }`,
+    `isAssessmentBankComplete(questions)`, and `IncompleteAssessmentBankError`.
+  - **Training empty state:** `trainingEmptyStateReason(row, assignments?)` →
+    `'unassessed'|'incomplete'|'mastered'|'has-assignments'`; `hasMasteredAllDomains(row)`.
   - `buildMatrixRows(samples, liveResult)` → rows `{ navigatorId, name, isLive, assessmentType,
     scores, overallScore, overallLevel, overallComplete, overallLabel, domainDevelopmentBands,
     competencyScores, competencyLevels }` (`levels` kept as a deprecated alias of

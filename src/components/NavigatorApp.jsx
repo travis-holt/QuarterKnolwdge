@@ -15,6 +15,7 @@ import Footer from './Footer.jsx';
 import {
   scorePerDomain,
   scorePerCompetency,
+  assessmentBankCoverage,
   buildMatrixRows,
   departmentMatrix,
   findRow,
@@ -59,6 +60,10 @@ export default function NavigatorApp({ navigatorId, name, onSignOut }) {
   const [activeType, setActiveType] = useState(null); // 'mcq' | 'spot' | 'qa' | null
   const [lastAnswers, setLastAnswers] = useState(null); // answers from the just-taken check (for coaching)
   const [questions, setQuestions] = useState(SEED_QUESTIONS); // active bank (seed fallback)
+  // Coverage of the loaded bank. An MCQ assessment cannot start or be saved
+  // unless every configured domain has at least one scoreable question, so an
+  // unmeasured domain is never persisted as a score of 0.
+  const [bankCoverage, setBankCoverage] = useState(null);
   const [results, setResults] = useState([]); // whole floor (for mentor data)
   const [moduleDomain, setModuleDomain] = useState(null);
   const [moduleCompletionKind, setModuleCompletionKind] = useState(null);
@@ -144,8 +149,16 @@ export default function NavigatorApp({ navigatorId, name, onSignOut }) {
       const type = pickActiveType(byType);
       setActiveType(type);
       // Fetch the active question bank for this department (needed by MCQ + coaching).
-      const qs = await getActiveQuestions(dept).catch(() => []);
-      setQuestions(qs.length > 0 ? qs : (SEED_BY_DEPT[dept] ?? SEED_QUESTIONS));
+      //
+      // Bank selection is deliberate: fall back to the seed bank ONLY when the
+      // live bank is entirely empty. A partially populated live bank must NOT be
+      // topped up from the seed — that would mix outdated seed content with the
+      // supervisor's current managed content in one graded assessment. A partial
+      // live bank is surfaced as a blocking coverage error instead.
+      const live = await getActiveQuestions(dept).catch(() => []);
+      const bank = live.length > 0 ? live : (SEED_BY_DEPT[dept] ?? SEED_QUESTIONS);
+      setQuestions(bank);
+      setBankCoverage(assessmentBankCoverage(bank));
       if (type) setAllDeptResults((prev) => ({ ...prev, [dept]: byType[type].scores }));
       // Land on the dashboard only when the full 3-phase assessment is complete;
       // otherwise the phase hub shows what's next (D5).
@@ -236,6 +249,15 @@ export default function NavigatorApp({ navigatorId, name, onSignOut }) {
 
   const handleSubmit = async (_ignoredName, answers) => {
     const dept = activeDept ?? 'pediatrics';
+    // Final guard before persisting an official result: a bank that cannot
+    // measure all six domains must never produce a stored profile, because the
+    // unmeasured domains would land as fabricated zeroes (i.e. Critical).
+    const coverage = assessmentBankCoverage(questions);
+    if (!coverage.complete) {
+      setBankCoverage(coverage);
+      setView('bankIncomplete');
+      return;
+    }
     const scores = scorePerDomain(answers, questions);
     const competencyScores = scorePerCompetency(answers, questions);
     const now = clientTimestamp();
@@ -419,6 +441,35 @@ export default function NavigatorApp({ navigatorId, name, onSignOut }) {
     );
   }
 
+  // The active assessment bank cannot measure all six domains. Blocking is the
+  // safe failure: an unmeasured domain must never be stored as a score of 0.
+  if (view === 'bankIncomplete') {
+    const missing = bankCoverage?.missing ?? [];
+    return (
+      <Shell role="navigator" view="phases" setView={() => {}} onSignOut={onSignOut}>
+        <EmptyState title="This assessment isn't ready yet">
+          <p>
+            The active question bank for this department doesn&rsquo;t cover every knowledge domain
+            yet, so the check can&rsquo;t produce a complete, fair result. Nothing has been recorded.
+          </p>
+          {missing.length > 0 && (
+            <p className="bank-gap__list">
+              Missing questions for:{' '}
+              <strong>{missing.map((id) => domainName(id)).join(', ')}</strong>
+            </p>
+          )}
+          <p>
+            Please let your supervisor know so they can restore coverage in the Question Bank. Your
+            other assessment phases are unaffected.
+          </p>
+          <button className="btn btn--ghost" onClick={() => setView('phases')}>
+            ← Back to my assessment
+          </button>
+        </EmptyState>
+      </Shell>
+    );
+  }
+
   if (view === 'deptselect') {
     return (
       <Shell role="navigator" view="deptselect" setView={() => {}} onSignOut={onSignOut}>
@@ -473,7 +524,15 @@ export default function NavigatorApp({ navigatorId, name, onSignOut }) {
           done={phaseDone}
           results={resultsByType}
           latestQa={latestQa}
-          onStart={(id) => setView(id === 'spot' ? 'spotfull' : id === 'qa' ? 'qatest' : 'check')}
+          onStart={(id) => {
+            // Block the MCQ phase outright when the active bank cannot measure
+            // every domain — starting it would end in fabricated zeroes.
+            if (id === 'mcq' && bankCoverage && !bankCoverage.complete) {
+              setView('bankIncomplete');
+              return;
+            }
+            setView(id === 'spot' ? 'spotfull' : id === 'qa' ? 'qatest' : 'check');
+          }}
         />
       )}
 
@@ -663,7 +722,14 @@ export default function NavigatorApp({ navigatorId, name, onSignOut }) {
         <Check
           onSubmit={async (_n, answers, miniQuestions) => {
             const scores = scorePerDomain(answers, miniQuestions);
-            const domainScore = scores[miniCheckDomain] ?? 0;
+            const domainScore = scores[miniCheckDomain];
+            // A mini-check with no scoreable question for its domain measured
+            // nothing: never coerce that to 0 (which would look like a failed
+            // attempt) and never record mastery from it.
+            if (!Number.isFinite(domainScore)) {
+              setView('training');
+              return;
+            }
             const passed = domainScore >= MINICHECK_PASS;
             if (passed) {
               // Re-save the active profile with the updated domain so the trend chart gains a point.

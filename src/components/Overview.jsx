@@ -1,7 +1,7 @@
 import { DOMAINS, domainName } from '../data/questions.js';
 import { COMPETENCIES, competencyName } from '../data/competencies.js';
 import { DEPARTMENTS } from '../data/departments.js';
-import { LEVELS, LEVEL_ORDER } from '../data/config.js';
+import { LEVELS, LEVEL_ORDER, COMPETENCY_LEVEL_ORDER } from '../data/config.js';
 import {
   floorStats,
   domainDistribution,
@@ -15,6 +15,15 @@ import { OverallBadge } from './OverallStatus.jsx';
 import CountUp from './CountUp.jsx';
 import Sparkline from './Sparkline.jsx';
 
+/**
+ * Render a percentage aggregate. `null` means "no eligible evidence" and shows
+ * N/A — never 0%, which would read as a real floor-wide result. A genuine
+ * measured 0 still renders as "0%".
+ */
+function fmtPct(value) {
+  return Number.isFinite(value) ? `${Math.round(value)}%` : 'N/A';
+}
+
 // teamHistory: flat array of resultHistory docs (all navigators, all times).
 export default function Overview({ rows, deptName, deptMatrix, onOpenNavigator, onViewMatrix, teamHistory = [] }) {
   const floorTrend = teamHistory.length ? teamTrend(teamHistory) : [];
@@ -27,7 +36,7 @@ export default function Overview({ rows, deptName, deptMatrix, onOpenNavigator, 
 
   // Strength domains: highest average score first (diagnostic, not a status).
   const strengths = [...dist]
-    .sort((a, b) => b.avgScore - a.avgScore)
+    .sort((a, b) => (b.avgScore ?? -1) - (a.avgScore ?? -1))
     .filter((d) => roster[d.domainId].length > 0)
     .slice(0, 3);
 
@@ -192,12 +201,12 @@ export default function Overview({ rows, deptName, deptMatrix, onOpenNavigator, 
           <div className="trend__overall">
             <span className="trend__label">Avg overall</span>
             <Sparkline values={floorTrend.map((t) => t.avgOverallScore)} color="var(--accent)" height={36} />
-            <span className="trend__pct">{Math.round(floorTrend[floorTrend.length - 1].avgOverallScore)}%</span>
+            <span className="trend__pct">{fmtPct(floorTrend[floorTrend.length - 1].avgOverallScore)}</span>
           </div>
           <div className="trend__overall" style={{ marginTop: '0.5rem' }}>
             <span className="trend__label">Solid+ rate</span>
             <Sparkline values={floorTrend.map((t) => t.solidPlusRate)} color="var(--level-canteach)" height={36} />
-            <span className="trend__pct">{Math.round(floorTrend[floorTrend.length - 1].solidPlusRate)}%</span>
+            <span className="trend__pct">{fmtPct(floorTrend[floorTrend.length - 1].solidPlusRate)}</span>
           </div>
           <div className="trend__tick-row">
             {floorTrend.map((t) => (
@@ -246,7 +255,7 @@ export default function Overview({ rows, deptName, deptMatrix, onOpenNavigator, 
                 })}
               </div>
               <span className="dist__meta">
-                avg {d.avgScore}%
+                avg {fmtPct(d.avgScore)}
                 {d.belowCritical > 0 && (
                   <span className="readoff__critical"> · {d.belowCritical} below 40%</span>
                 )}
@@ -276,14 +285,16 @@ export default function Overview({ rows, deptName, deptMatrix, onOpenNavigator, 
           <h2 className="overview__panel-title">Capability by competency</h2>
           <p className="readoff__sub">
             The how-they-work axis — critical thinking, communication, escalation and more — across
-            every navigator assessed, independent of department.
+            every navigator assessed, independent of department. This is a <strong>separate three-level
+            scale</strong> (&lt;60 Learning · 60–84 Solid · 85+ Can-Teach) with no Critical band — it is
+            not the official department status.
           </p>
           <div className="dist">
             {compDist.map((c) => (
               <div key={c.competencyId} className="dist__row">
                 <span className="dist__name">{competencyName(c.competencyId)}</span>
                 <div className="dist__bar" title={`${c.learning} Learning · ${c.solid} Solid · ${c.canTeach} Can-Teach`}>
-                  {LEVEL_ORDER.map((lvl) => {
+                  {COMPETENCY_LEVEL_ORDER.map((lvl) => {
                     const count = c[lvl];
                     if (!count) return null;
                     return (
@@ -305,7 +316,7 @@ export default function Overview({ rows, deptName, deptMatrix, onOpenNavigator, 
             ))}
           </div>
           <div className="matrix__legend overview__legend">
-            {LEVEL_ORDER.map((id) => (
+            {COMPETENCY_LEVEL_ORDER.map((id) => (
               <span key={id} className="legend-item">
                 <span className="legend-swatch" style={{ background: LEVELS[id].color }} />
                 {LEVELS[id].label}
@@ -348,7 +359,7 @@ export default function Overview({ rows, deptName, deptMatrix, onOpenNavigator, 
             <ul className="readoff__list">
               {strengths.map((d) => (
                 <li key={d.domainId} className="readoff__row readoff__row--col">
-                  <span className="tag">{domainName(d.domainId)} · avg {d.avgScore}%</span>
+                  <span className="tag">{domainName(d.domainId)} · avg {fmtPct(d.avgScore)}</span>
                   <span className="readoff__people">{roster[d.domainId].join(', ')}</span>
                 </li>
               ))}
@@ -367,7 +378,13 @@ export default function Overview({ rows, deptName, deptMatrix, onOpenNavigator, 
                   {r.isLive && <span className="matrix__you">you</span>}
                 </button>
                 <span className="readoff__count">
-                  {r.overallScore == null ? 'Not assessed' : `${r.overallScore}% overall · ${r.overallLabel}`}
+                  {/* Incomplete and Not assessed must stay distinct — both have a
+                      null official score, so key on the label, not the score. */}
+                  {r.overallScore == null
+                    ? (r.assessedDomains > 0
+                        ? `${r.overallLabel} · ${r.assessedDomains} of ${r.totalDomains} domains`
+                        : r.overallLabel)
+                    : `${r.overallScore}% overall · ${r.overallLabel}`}
                 </span>
               </li>
             ))}

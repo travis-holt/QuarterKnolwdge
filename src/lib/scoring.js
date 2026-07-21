@@ -24,6 +24,9 @@ import { moduleForDomain } from '../data/training.js';
 import { DEPARTMENTS } from '../data/departments.js';
 import { compareTimestampValues, timestampMillis } from './time.js';
 
+/** The configured domain ids, for fast membership checks. */
+const DOMAIN_IDS = new Set(DOMAINS.map((d) => d.id));
+
 function sameNavigator(record, row) {
   if (record?.navigatorId && row?.navigatorId) return record.navigatorId === row.navigatorId;
   return record?.name === row?.name;
@@ -56,29 +59,107 @@ export function optionPoints(question, optionId) {
 const earnedPoints = (answer, question) => optionPoints(question, answer);
 
 /**
+ * Is this a usable, scoreable assessment question?
+ * A question with no options, or with no domain we recognise, cannot contribute
+ * a score and must not count as coverage for its domain.
+ */
+export function isScoreableQuestion(question) {
+  if (!question || typeof question !== 'object') return false;
+  if (!DOMAIN_IDS.has(question.domainId)) return false;
+  return Array.isArray(question.options) && question.options.length > 0;
+}
+
+/**
+ * THE canonical assessment-bank coverage check.
+ *
+ * An MCQ assessment may only start (and may only be saved) when the active bank
+ * carries at least one scoreable question for EVERY configured domain. A domain
+ * with no questions cannot be measured, and measuring nothing must never be
+ * recorded as a score of 0 — that would fabricate a Critical result out of a
+ * supervisor's incomplete bank, not the navigator's performance.
+ *
+ * @param {object[]} questions - the active question bank
+ * @returns {{ complete: boolean, covered: string[], missing: string[],
+ *             countsByDomain: Record<string, number>, scoreable: number, total: number }}
+ */
+export function assessmentBankCoverage(questions) {
+  const list = Array.isArray(questions) ? questions : [];
+  const countsByDomain = Object.fromEntries(DOMAINS.map((d) => [d.id, 0]));
+  let scoreable = 0;
+  for (const q of list) {
+    if (!isScoreableQuestion(q)) continue;
+    countsByDomain[q.domainId] += 1;
+    scoreable += 1;
+  }
+  const missing = DOMAINS.filter((d) => countsByDomain[d.id] === 0).map((d) => d.id);
+  return {
+    complete: missing.length === 0,
+    covered: DOMAINS.filter((d) => countsByDomain[d.id] > 0).map((d) => d.id),
+    missing,
+    countsByDomain,
+    scoreable,
+    total: list.length,
+  };
+}
+
+/** Convenience predicate: does this bank cover all six configured domains? */
+export function isAssessmentBankComplete(questions) {
+  return assessmentBankCoverage(questions).complete;
+}
+
+/**
+ * Thrown before scoring when a bank cannot produce a complete official profile.
+ * Carries the missing domain ids so callers can name them to the supervisor.
+ */
+export class IncompleteAssessmentBankError extends Error {
+  constructor(missing) {
+    super(`Assessment bank is missing questions for: ${missing.join(', ')}`);
+    this.name = 'IncompleteAssessmentBankError';
+    this.missing = missing;
+  }
+}
+
+/**
  * Score a set of answers into a per-domain map (0–100), averaging earned points
  * across each domain's questions.
+ *
+ * MISSING BANK COVERAGE IS NOT A ZERO. A domain with no scoreable questions in
+ * the bank returns **null** ("this domain had nothing to answer"), never 0.
+ * A domain that DID have questions and earned nothing still returns a genuine
+ * numeric `0`, which correctly drives Critical behaviour downstream.
+ *
+ * Callers persisting an official result should validate with
+ * `assessmentBankCoverage()` first (or pass `{ strict: true }` to get an
+ * `IncompleteAssessmentBankError` instead of a profile with null holes).
+ *
  * @param {Record<string,string>} answers - questionId -> chosen optionId
  * @param {object[]} [questions] - the active question bank (defaults to the seed)
- * @returns {Record<string,number>} domainId -> score (0–100, rounded)
+ * @param {{ strict?: boolean }} [opts]
+ * @returns {Record<string, number|null>} domainId -> score (0–100) or null
  */
-export function scorePerDomain(answers = {}, questions = SEED_QUESTIONS) {
+export function scorePerDomain(answers = {}, questions = SEED_QUESTIONS, { strict = false } = {}) {
   const tally = {}; // domainId -> { earned, total }
   for (const domain of DOMAINS) {
     tally[domain.id] = { earned: 0, total: 0 };
   }
 
   for (const q of questions) {
+    if (!isScoreableQuestion(q)) continue;
     const bucket = tally[q.domainId];
-    if (!bucket) continue;
     bucket.total += 1;
     bucket.earned += earnedPoints(answers[q.id], q);
+  }
+
+  if (strict) {
+    const missing = DOMAINS.filter((d) => tally[d.id].total === 0).map((d) => d.id);
+    if (missing.length > 0) throw new IncompleteAssessmentBankError(missing);
   }
 
   const scores = {};
   for (const domain of DOMAINS) {
     const { earned, total } = tally[domain.id];
-    scores[domain.id] = total === 0 ? 0 : Math.round(earned / total);
+    // null = the bank had nothing to measure here. 0 = measured and earned zero.
+    scores[domain.id] = total === 0 ? null : Math.round(earned / total);
   }
   return scores;
 }
@@ -576,6 +657,7 @@ export function readinessTally(rows) {
   return rows
     .map((r) => {
       const level = levelOf(r);
+      const assessed = r.assessedDomains ?? assessedDomainCount(r.scores);
       return {
         navigatorId: r.navigatorId ?? null,
         name: r.name,
@@ -583,6 +665,10 @@ export function readinessTally(rows) {
         overallScore: scoreOf(r),
         overallLevel: level,
         overallLabel: r.overallLabel ?? overallStatus(r.scores).label,
+        // Lets consumers tell Incomplete (1-5 scored) from Not assessed (0).
+        assessedDomains: assessed,
+        totalDomains: DOMAINS.length,
+        complete: assessed === DOMAINS.length,
         canTeachDomainCount: DOMAINS.filter(
           (d) => Number.isFinite(r.scores?.[d.id]) && r.scores[d.id] >= THRESHOLDS.canTeach
         ).length,
@@ -648,13 +734,18 @@ export function floorStats(rows) {
     rowCount: rows.length,
     incompleteCount: distribution.incomplete,
     unassessedCount: distribution.unassessed,
-    solidPlusRate: assessed ? Math.round((solidPlus / assessed) * 100) : 0,
+    // NO EVIDENCE IS NOT ZERO. With no complete profile there is nothing to
+    // average or rate, so these are null and render as "N/A" — reporting 0%
+    // would read as "the whole floor scored zero". A complete floor that really
+    // does average 0 still returns a genuine numeric 0.
+    solidPlusRate: assessed ? Math.round((solidPlus / assessed) * 100) : null,
+    avgOverallScore: scores.length
+      ? Math.round(scores.reduce((a, b) => a + b, 0) / scores.length)
+      : null,
+    // Counts are genuine zeroes: "zero navigators are Critical" is a real fact.
     canTeachCount: distribution.canTeach,
     criticalCount: distribution.critical,
     learningCount: distribution.learning,
-    avgOverallScore: scores.length
-      ? Math.round(scores.reduce((a, b) => a + b, 0) / scores.length)
-      : 0,
     totalDomains: DOMAINS.length,
     distribution,
   };
@@ -686,7 +777,9 @@ export function domainDistribution(rows) {
       // Band counts + unassessed sum to `total`; `assessed` is the band population.
       assessed: scores.length,
       total: rows.length,
-      avgScore: scores.length ? Math.round(scores.reduce((a, b) => a + b, 0) / scores.length) : 0,
+      // null = nobody was scored in this domain (render "N/A"), not an average
+      // of zero. A domain where everyone genuinely scored 0 still returns 0.
+      avgScore: scores.length ? Math.round(scores.reduce((a, b) => a + b, 0) / scores.length) : null,
       belowCritical: counts.critical,
       belowSolid: counts.critical + counts.learning,
       needsTraining: counts.critical + counts.learning + counts.solid,
@@ -731,6 +824,31 @@ export function findRow(rows, identifier) {
 /** True when a training assignment priority counts as required (Critical or Required). */
 export function isRequiredAssignment(priority) {
   return REQUIRED_TRAINING_PRIORITIES.includes(priority);
+}
+
+/**
+ * Why does this navigator have no training assignments?
+ *
+ * `trainingForRow()` correctly skips unscored domains, so an EMPTY assignment
+ * list is ambiguous: it can mean genuine mastery, or it can mean there was
+ * nothing to assess. Surfaces must never congratulate a navigator who simply
+ * has not been assessed, so every empty-state consumer resolves the reason here
+ * instead of treating `assignments.length === 0` as proof of mastery.
+ *
+ * @returns {'unassessed'|'incomplete'|'mastered'|'has-assignments'}
+ */
+export function trainingEmptyStateReason(row, assignments = trainingForRow(row)) {
+  if (assignments.length > 0) return 'has-assignments';
+  const assessed = row?.assessedDomains ?? assessedDomainCount(row?.scores);
+  if (assessed === 0) return 'unassessed';
+  if (assessed < DOMAINS.length) return 'incomplete';
+  // Complete profile with nothing assigned: every domain really is >= 90.
+  return 'mastered';
+}
+
+/** True only when the navigator has a complete profile AND every domain >= 90. */
+export function hasMasteredAllDomains(row) {
+  return trainingEmptyStateReason(row) === 'mastered';
 }
 
 /**
@@ -1411,7 +1529,12 @@ export function buildTrend(history, { synthesize = true } = {}) {
 
   const points = [...syntheticPoints, ...realPoints];
   const domainSeries = {};
-  for (const d of DOMAINS) domainSeries[d.id] = points.map((p) => p.scores[d.id] ?? 0);
+  // A snapshot with no score for a domain contributes `null` (a gap in the
+  // line), never 0 — inserting a zero would draw an artificial crash for a
+  // domain that simply was not measured in that check.
+  for (const d of DOMAINS) {
+    domainSeries[d.id] = points.map((p) => (Number.isFinite(p.scores[d.id]) ? p.scores[d.id] : null));
+  }
   return { points, domainSeries, overallSeries: points.map((p) => p.overall) };
 }
 
@@ -1511,14 +1634,15 @@ export function teamTrend(allHistory) {
       null
     );
     const stats = floorStats(rows);
+    // A timepoint with no COMPLETE profile has no official aggregate. Omit it
+    // rather than plotting 0%, which would draw an artificial collapse.
+    if (stats.assessed === 0) return null;
     return {
       ts,
       label: formatTrendLabel(ts),
       avgOverallScore: stats.avgOverallScore,
       solidPlusRate: stats.solidPlusRate,
-      canTeachRate: stats.assessed
-        ? Math.round((stats.canTeachCount / stats.assessed) * 100)
-        : 0,
+      canTeachRate: Math.round((stats.canTeachCount / stats.assessed) * 100),
       criticalCount: stats.criticalCount,
       assessed: stats.assessed,
     };

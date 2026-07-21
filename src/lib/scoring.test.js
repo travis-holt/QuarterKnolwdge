@@ -18,6 +18,12 @@ import { describe, it, expect } from 'vitest';
 import {
   scorePerDomain,
   scorePerCompetency,
+  isScoreableQuestion,
+  assessmentBankCoverage,
+  isAssessmentBankComplete,
+  IncompleteAssessmentBankError,
+  trainingEmptyStateReason,
+  hasMasteredAllDomains,
   scoreToLevel,
   levelFor,
   domainBand,
@@ -68,8 +74,8 @@ import {
   optionPoints,
 } from './scoring.js';
 
-import { THRESHOLDS, COMPETENCY_THRESHOLDS, LEVELS, LEVEL_ORDER, COLUMN_GAP_THRESHOLD } from '../data/config.js';
-import { DOMAINS, QUESTIONS } from '../data/questions.js';
+import { THRESHOLDS, COMPETENCY_THRESHOLDS, LEVELS, LEVEL_ORDER, COMPETENCY_LEVEL_ORDER, COLUMN_GAP_THRESHOLD } from '../data/config.js';
+import { DOMAINS, QUESTIONS, SEED_QUESTIONS_OBGYN } from '../data/questions.js';
 import { COMPETENCIES } from '../data/competencies.js';
 import { DEPARTMENTS, ASSESSED_DEPT, isAssessed } from '../data/departments.js';
 
@@ -762,13 +768,11 @@ describe('floorStats', () => {
 
   it('handles an empty matrix without dividing by zero', () => {
     const stats = floorStats([]);
-    expect(stats).toMatchObject({
-      assessed: 0,
-      solidPlusRate: 0,
-      canTeachCount: 0,
-      criticalCount: 0,
-      avgOverallScore: 0,
-    });
+    // Counts are genuine zeroes; RATES/AVERAGES are null because there is no
+    // evidence to average — 0% would read as "the whole floor scored zero".
+    expect(stats).toMatchObject({ assessed: 0, canTeachCount: 0, criticalCount: 0 });
+    expect(stats.solidPlusRate).toBeNull();
+    expect(stats.avgOverallScore).toBeNull();
   });
 });
 
@@ -1246,11 +1250,13 @@ describe('scorePerDomain — malformed inputs', () => {
     expect(scores[FAKE_D1]).toBe(0);
   });
 
-  it('returns 0 for a question whose options field is missing', () => {
-    // the options?. guard in earnedPoints should handle this
+  it('treats a question with no options as UNSCOREABLE, not as a zero', () => {
+    // A malformed question cannot measure anything, so it provides no coverage
+    // for its domain and the domain reports null rather than a fabricated 0.
     const qs = [{ id: 'bad', domainId: FAKE_D0, competencies: [C0], correctOptionId: 'a' }];
     const scores = scorePerDomain({ bad: 'a' }, qs);
-    expect(scores[FAKE_D0]).toBe(0);
+    expect(scores[FAKE_D0]).toBeNull();
+    expect(isScoreableQuestion(qs[0])).toBe(false);
   });
 
   it('returns 0 when the chosen optionId does not exist in options', () => {
@@ -2033,13 +2039,19 @@ describe('BLOCKER 1 — missing domain evidence is never a zero', () => {
     expect(missing.critical).toBe(0);
     expect(missing.unassessed).toBe(1);
     expect(missing.assessed).toBe(0);
-    // Every count is a real number — no NaN leaks from an unbucketed band.
+    // Every COUNT is a real number — no NaN leaks from an unbucketed band.
     for (const d of dist) {
-      for (const key of ['critical', 'learning', 'solid', 'canTeach', 'unassessed', 'avgScore']) {
+      for (const key of ['critical', 'learning', 'solid', 'canTeach', 'unassessed']) {
         expect(Number.isFinite(d[key])).toBe(true);
       }
+      // avgScore is null when nobody was scored (never a fabricated 0), and a
+      // real number otherwise — but never NaN.
+      expect(d.avgScore === null || Number.isFinite(d.avgScore)).toBe(true);
+      expect(Number.isNaN(d.avgScore)).toBe(false);
       expect(d.critical + d.learning + d.solid + d.canTeach + d.unassessed).toBe(d.total);
     }
+    // The wholly-unscored domain reports no average at all.
+    expect(missing.avgScore).toBeNull();
   });
 
   it('does not inflate the floor average', () => {
@@ -2151,8 +2163,9 @@ describe('BLOCKER 2 — distribution categories are mutually exclusive', () => {
       { name: 'AlsoNone', scores: {} },
     ], null));
     expect(stats.assessed).toBe(0);
-    expect(stats.avgOverallScore).toBe(0);
-    expect(stats.solidPlusRate).toBe(0);
+    // No eligible evidence -> no official aggregate at all (renders N/A).
+    expect(stats.avgOverallScore).toBeNull();
+    expect(stats.solidPlusRate).toBeNull();
   });
 });
 
@@ -2353,5 +2366,297 @@ describe('departmentMatrix — Incomplete is not Unassessed', () => {
     const cell = cellsFor({ pediatrics: nDomains(3, 70) }).pediatrics;
     expect(cell.assessedDomains).toBe(3);
     expect(cell.totalDomains).toBe(6);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// FINAL-REVIEW REGRESSIONS (2026-07-21)
+//
+// The governing invariant: missing evidence must never be represented as
+// failure, mastery, or a real 0%. Only a genuinely measured numeric zero is a
+// Critical result.
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('assessment bank coverage', () => {
+  const q = (id, domainId) => ({
+    id,
+    domainId,
+    competencies: [C0],
+    correctOptionId: 'a',
+    options: [{ id: 'a', text: 'right', points: 100 }, { id: 'b', text: 'wrong', points: 0 }],
+  });
+  const fullBank = () => DOMAIN_IDS.map((d, i) => q(`q${i}`, d));
+
+  it('accepts a bank covering all six configured domains', () => {
+    const cov = assessmentBankCoverage(fullBank());
+    expect(cov.complete).toBe(true);
+    expect(cov.missing).toEqual([]);
+    expect(isAssessmentBankComplete(fullBank())).toBe(true);
+  });
+
+  it('rejects a bank missing one configured domain', () => {
+    const bank = fullBank().filter((x) => x.domainId !== D2);
+    const cov = assessmentBankCoverage(bank);
+    expect(cov.complete).toBe(false);
+    expect(cov.missing).toEqual([D2]);
+  });
+
+  it('rejects a bank missing several configured domains', () => {
+    const bank = fullBank().filter((x) => [D0, D1].includes(x.domainId));
+    const cov = assessmentBankCoverage(bank);
+    expect(cov.complete).toBe(false);
+    expect(cov.missing).toEqual([D2, D3, D4, D5]);
+  });
+
+  it('rejects an empty bank', () => {
+    expect(assessmentBankCoverage([]).complete).toBe(false);
+    expect(assessmentBankCoverage(undefined).complete).toBe(false);
+  });
+
+  it('does not count an unscoreable question as coverage', () => {
+    const bank = [...fullBank().filter((x) => x.domainId !== D2), { id: 'x', domainId: D2 }];
+    expect(assessmentBankCoverage(bank).missing).toEqual([D2]);
+    expect(isScoreableQuestion({ id: 'x', domainId: D2 })).toBe(false);
+    expect(isScoreableQuestion({ id: 'x', domainId: D2, options: [] })).toBe(false);
+    expect(isScoreableQuestion({ id: 'x', domainId: 'not-a-domain', options: [{ id: 'a' }] })).toBe(false);
+  });
+
+  it('the real Pediatrics and OB/GYN seed banks are complete and score normally', () => {
+    for (const bank of [QUESTIONS, SEED_QUESTIONS_OBGYN]) {
+      expect(isAssessmentBankComplete(bank)).toBe(true);
+      const scores = scorePerDomain({}, bank);
+      // Every domain measurable -> every domain numeric (all-wrong = 0).
+      for (const id of DOMAIN_IDS) expect(Number.isFinite(scores[id])).toBe(true);
+      expect(overallComplete(scores)).toBe(true);
+    }
+  });
+});
+
+describe('scorePerDomain — uncovered domain is null, measured zero is 0', () => {
+  const q = (id, domainId, points) => ({
+    id,
+    domainId,
+    correctOptionId: 'a',
+    options: [{ id: 'a', text: 'right', points: 100 }, { id: 'b', text: 'wrong', points }],
+  });
+
+  it('an uncovered domain is never stored as 0', () => {
+    const bank = DOMAIN_IDS.filter((d) => d !== D3).map((d, i) => q(`q${i}`, d, 0));
+    const scores = scorePerDomain({}, bank);
+    expect(scores[D3]).toBeNull();
+    expect(scores[D3]).not.toBe(0);
+  });
+
+  it('a covered domain where every response earns zero still records a real 0', () => {
+    const bank = DOMAIN_IDS.map((d, i) => q(`q${i}`, d, 0));
+    const answers = Object.fromEntries(bank.map((x) => [x.id, 'b'])); // all wrong
+    const scores = scorePerDomain(answers, bank);
+    for (const id of DOMAIN_IDS) expect(scores[id]).toBe(0);
+    // A genuine zero profile IS Critical — that behaviour must be preserved.
+    expect(overallComplete(scores)).toBe(true);
+    expect(overallScore(scores)).toBe(0);
+    expect(overallLevel(scores)).toBe('critical');
+  });
+
+  it('a partially populated bank cannot generate a complete official profile', () => {
+    const bank = DOMAIN_IDS.filter((d) => d !== D3).map((d, i) => q(`q${i}`, d, 0));
+    const scores = scorePerDomain({}, bank);
+    expect(overallComplete(scores)).toBe(false);
+    expect(overallScore(scores)).toBeNull();
+    expect(overallLevel(scores)).toBeNull();
+    expect(overallStatus(scores).label).toBe('Incomplete');
+  });
+
+  it('strict mode throws before scoring an incomplete bank', () => {
+    const bank = DOMAIN_IDS.filter((d) => d !== D3).map((d, i) => q(`q${i}`, d, 0));
+    expect(() => scorePerDomain({}, bank, { strict: true })).toThrow(IncompleteAssessmentBankError);
+    try {
+      scorePerDomain({}, bank, { strict: true });
+    } catch (err) {
+      expect(err.missing).toEqual([D3]);
+    }
+    // A complete bank does not throw.
+    expect(() => scorePerDomain({}, DOMAIN_IDS.map((d, i) => q(`q${i}`, d, 0)), { strict: true })).not.toThrow();
+  });
+
+  it('an uncovered domain produces no Critical gap and no training', () => {
+    const bank = DOMAIN_IDS.filter((d) => d !== D3).map((d, i) => q(`q${i}`, d, 0));
+    const answers = Object.fromEntries(bank.map((x) => [x.id, 'b']));
+    const scores = scorePerDomain(answers, bank);
+    const [row] = buildMatrixRows([{ name: 'X', scores }], null);
+    expect(row.domainDevelopmentBands[D3]).toBeNull();
+    expect(buildActionCenter([row]).criticalDomainGaps.every((g) => g.domainId !== D3)).toBe(true);
+    expect(trainingForRow(row).every((a) => a.domainId !== D3)).toBe(true);
+    // …but the genuinely-zero domains DO produce critical gaps.
+    expect(buildActionCenter([row]).criticalDomainGaps.some((g) => g.domainId === D0)).toBe(true);
+  });
+});
+
+describe('trainingEmptyStateReason — empty assignments are not proof of mastery', () => {
+  const rowWith = (scores) => buildMatrixRows([{ name: 'X', scores }], null)[0];
+
+  it('0 of 6 domains -> unassessed', () => {
+    expect(trainingEmptyStateReason(rowWith({}))).toBe('unassessed');
+    expect(hasMasteredAllDomains(rowWith({}))).toBe(false);
+  });
+
+  it('1-5 of 6 domains -> incomplete', () => {
+    expect(trainingEmptyStateReason(rowWith({ [D0]: 95 }))).toBe('incomplete');
+    const five = Object.fromEntries(DOMAIN_IDS.slice(0, 5).map((id) => [id, 95]));
+    expect(trainingEmptyStateReason(rowWith(five))).toBe('incomplete');
+    expect(hasMasteredAllDomains(rowWith(five))).toBe(false);
+  });
+
+  it('6 of 6 with every score >= 90 -> mastered', () => {
+    expect(trainingEmptyStateReason(rowWith(makeScores({}, 95)))).toBe('mastered');
+    expect(hasMasteredAllDomains(rowWith(makeScores({}, 95)))).toBe(true);
+    // Exactly at the boundary still counts as mastery.
+    expect(trainingEmptyStateReason(rowWith(makeScores({}, 90)))).toBe('mastered');
+  });
+
+  it('6 of 6 with a weak domain -> has-assignments', () => {
+    expect(trainingEmptyStateReason(rowWith(makeScores({ [D0]: 50 }, 95)))).toBe('has-assignments');
+    expect(hasMasteredAllDomains(rowWith(makeScores({ [D0]: 50 }, 95)))).toBe(false);
+  });
+
+  it('an all-zero complete profile is never mastery', () => {
+    expect(trainingEmptyStateReason(rowWith(makeScores({}, 0)))).toBe('has-assignments');
+  });
+});
+
+describe('aggregates report null (N/A) when there is no evidence', () => {
+  it('floorStats: no complete profiles -> null rate and null average', () => {
+    const rows = buildMatrixRows([
+      { name: 'Partial', scores: { [D0]: 100 } },
+      { name: 'None', scores: {} },
+    ], null);
+    const stats = floorStats(rows);
+    expect(stats.assessed).toBe(0);
+    expect(stats.avgOverallScore).toBeNull();
+    expect(stats.solidPlusRate).toBeNull();
+    // Counts remain genuine zeroes.
+    expect(stats.canTeachCount).toBe(0);
+    expect(stats.criticalCount).toBe(0);
+  });
+
+  it('floorStats: a genuine complete zero floor still reports 0%, not null', () => {
+    const rows = buildMatrixRows([{ name: 'Zero', scores: makeScores({}, 0) }], null);
+    const stats = floorStats(rows);
+    expect(stats.assessed).toBe(1);
+    expect(stats.avgOverallScore).toBe(0);
+    expect(stats.solidPlusRate).toBe(0);
+    expect(stats.criticalCount).toBe(1);
+  });
+
+  it('floorStats: mixed complete + incomplete uses complete profiles only', () => {
+    const rows = buildMatrixRows([
+      { name: 'Complete', scores: makeScores({}, 80) },
+      { name: 'Partial', scores: { [D0]: 100 } },
+      { name: 'None', scores: {} },
+    ], null);
+    const stats = floorStats(rows);
+    expect(stats.assessed).toBe(1);
+    expect(stats.avgOverallScore).toBe(80); // not (80+100)/2
+    expect(stats.solidPlusRate).toBe(100);
+    expect(stats.rowCount).toBe(3);
+  });
+
+  it('domainDistribution: avgScore is null when nobody was scored in that domain', () => {
+    const rows = buildMatrixRows([{ name: 'X', scores: { [D0]: 70 } }], null);
+    const dist = domainDistribution(rows);
+    expect(dist.find((d) => d.domainId === D0).avgScore).toBe(70);
+    expect(dist.find((d) => d.domainId === D1).avgScore).toBeNull();
+  });
+
+  it('domainDistribution: a genuine zero in a domain still averages to 0', () => {
+    const rows = buildMatrixRows([{ name: 'X', scores: makeScores({}, 0) }], null);
+    expect(domainDistribution(rows).find((d) => d.domainId === D0).avgScore).toBe(0);
+  });
+
+  it('teamTrend: omits timepoints with no complete profile', () => {
+    const snap = (navigatorId, ts, scores) => ({
+      navigatorId, name: navigatorId, assessmentType: 'mcq',
+      takenAt: { seconds: ts }, scores,
+    });
+    const trend = teamTrend([
+      snap('n1', 100, { [D0]: 90 }),            // incomplete -> no aggregate
+      snap('n1', 200, makeScores({}, 80)),      // complete
+    ]);
+    expect(trend).toHaveLength(1);
+    expect(trend[0].avgOverallScore).toBe(80);
+    // No point was emitted at 0% for the incomplete snapshot.
+    expect(trend.every((t) => t.avgOverallScore !== 0)).toBe(true);
+  });
+
+  it('buildTrend: a missing historical domain score becomes a gap, not a zero', () => {
+    const history = [
+      { takenAt: { seconds: 100 }, scores: makeScores({}, 80) },
+      { takenAt: { seconds: 200 }, scores: makeScores({}, 80) },
+      // D0 was not measured in this later check.
+      { takenAt: { seconds: 300 }, scores: { ...makeScores({}, 80), [D0]: undefined } },
+    ];
+    const trend = buildTrend(history, { synthesize: false });
+    const series = trend.domainSeries[D0];
+    expect(series[series.length - 1]).toBeNull();
+    expect(series[series.length - 1]).not.toBe(0);
+    // The measured points are untouched.
+    expect(series[0]).toBe(80);
+  });
+});
+
+describe('competency axis stays three-level', () => {
+  it.each([
+    [0, 'learning'], [39, 'learning'], [40, 'learning'], [59, 'learning'],
+    [60, 'solid'], [84, 'solid'], [85, 'canTeach'], [100, 'canTeach'],
+  ])('competency %i maps to %s', (score, expected) => {
+    expect(competencyScoreToLevel(score)).toBe(expected);
+  });
+
+  it('never produces a critical band', () => {
+    for (let s = 0; s <= 100; s++) expect(competencyScoreToLevel(s)).not.toBe('critical');
+  });
+
+  it('COMPETENCY_LEVEL_ORDER has exactly the three competency levels', () => {
+    expect(COMPETENCY_LEVEL_ORDER).toEqual(['learning', 'solid', 'canTeach']);
+    expect(COMPETENCY_LEVEL_ORDER).not.toContain('critical');
+  });
+
+  it('competency distribution counts are finite and sum to total', () => {
+    const rows = buildMatrixRows([
+      { name: 'A', scores: {}, competencyScores: { [C0]: 0, [C1]: 60 } },
+      { name: 'B', scores: {}, competencyScores: { [C0]: 39, [C1]: 85 } },
+      { name: 'C', scores: {}, competencyScores: { [C0]: 100, [C1]: 59 } },
+    ], null);
+    for (const c of competencyDistribution(rows)) {
+      for (const key of ['learning', 'solid', 'canTeach', 'total']) {
+        expect(Number.isFinite(c[key])).toBe(true);
+      }
+      expect(c.critical).toBeUndefined();
+      expect(c.learning + c.solid + c.canTeach).toBe(c.total);
+    }
+  });
+
+  it('the official department status still uses the separate four-band scale', () => {
+    // Same number, two different axes.
+    expect(competencyScoreToLevel(50)).toBe('learning');
+    expect(scoreToLevel(50)).toBe('learning');
+    expect(competencyScoreToLevel(30)).toBe('learning'); // no critical band here
+    expect(scoreToLevel(30)).toBe('critical'); // but the capability scale has one
+    expect(competencyScoreToLevel(87)).toBe('canTeach');
+    expect(scoreToLevel(87)).toBe('solid'); // different boundary on purpose
+  });
+});
+
+describe('readinessTally distinguishes Incomplete from Not assessed', () => {
+  it('carries assessedDomains so consumers can tell the two apart', () => {
+    const rows = buildMatrixRows([
+      { name: 'Partial', scores: { [D0]: 90 } },
+      { name: 'None', scores: {} },
+      { name: 'Full', scores: makeScores({}, 95) },
+    ], null);
+    const byName = Object.fromEntries(readinessTally(rows).map((r) => [r.name, r]));
+    expect(byName.Partial).toMatchObject({ overallScore: null, overallLabel: 'Incomplete', assessedDomains: 1, complete: false });
+    expect(byName.None).toMatchObject({ overallScore: null, overallLabel: 'Not assessed', assessedDomains: 0, complete: false });
+    expect(byName.Full).toMatchObject({ overallScore: 95, overallLabel: 'Can-Teach', assessedDomains: 6, complete: true });
   });
 });

@@ -3,6 +3,15 @@ import { domainName } from '../data/questions.js';
 import { LEVELS } from '../data/config.js';
 import { domainBand, overallStatus, optionPoints } from '../lib/scoring.js';
 import { OverallBadge } from './OverallStatus.jsx';
+
+/**
+ * Overall status for one stored attempt, tolerating legacy/malformed score maps
+ * (missing `scores`, nulls, strings, NaN). `overallStatus` only counts finite
+ * numbers, so a corrupt entry reads as unscored rather than throwing.
+ */
+function attemptStatus(attempt) {
+  return overallStatus(attempt?.scores ?? {});
+}
 import { getResultHistory } from '../lib/db.js';
 import { isFirebaseConfigured } from '../lib/firebase.js';
 import { timestampMillis } from '../lib/time.js';
@@ -94,30 +103,45 @@ export default function MyHistory({ navigatorId, department = 'pediatrics', dept
                   <span className="tag">{TYPE_LABEL[h.assessmentType] ?? 'Assessment'}</span>
                   {i === 0 && <span className="tag tag--accent">Latest</span>}
                 </div>
-                {overallStatus(h.scores).score != null && (
-                  <p className="history__overall">
-                    <OverallBadge
-                      score={overallStatus(h.scores).score}
-                      level={overallStatus(h.scores).level}
-                      label={overallStatus(h.scores).label}
-                      complete={overallStatus(h.scores).complete}
-                      size="sm"
-                    />
-                  </p>
-                )}
-                {/* Domain scores are diagnostic evidence — score tints, no level labels. */}
+                {/* Always show the overall state, including Incomplete — hiding
+                    it entirely would make a partial attempt look like no attempt. */}
+                <p className="history__overall">
+                  <OverallBadge
+                    score={attemptStatus(h).score}
+                    level={attemptStatus(h).level}
+                    label={attemptStatus(h).label}
+                    complete={attemptStatus(h).complete}
+                    assessedDomains={attemptStatus(h).assessedDomains}
+                    totalDomains={attemptStatus(h).totalDomains}
+                    size="sm"
+                  />
+                </p>
+                {/* Domain scores are diagnostic evidence — score tints, no level labels.
+                    Legacy/malformed entries (null, strings, NaN) render as "not scored"
+                    rather than indexing LEVELS with a null band. */}
                 <div className="chip-wrap history__chips">
-                  {Object.entries(h.scores ?? {}).map(([domainId, pct]) => (
-                    <span
-                      key={domainId}
-                      className="score-chip"
-                      style={{ background: LEVELS[domainBand(pct)].tint }}
-                      title={`${domainName(domainId)}: ${Math.round(pct)}%`}
-                    >
-                      {domainName(domainId)} · {Math.round(pct)}%
-                      {pct < 40 && <strong> · Critical gap</strong>}
-                    </span>
-                  ))}
+                  {Object.entries(h.scores ?? {}).map(([domainId, raw]) => {
+                    const pct = Number.isFinite(raw) ? raw : null;
+                    const band = pct === null ? null : domainBand(pct);
+                    if (band === null) {
+                      return (
+                        <span key={domainId} className="score-chip score-chip--na" title={`${domainName(domainId)}: not scored`}>
+                          {domainName(domainId)} · not scored
+                        </span>
+                      );
+                    }
+                    return (
+                      <span
+                        key={domainId}
+                        className="score-chip"
+                        style={{ background: LEVELS[band].tint }}
+                        title={`${domainName(domainId)}: ${Math.round(pct)}%`}
+                      >
+                        {domainName(domainId)} · {Math.round(pct)}%
+                        {pct < 40 && <strong> · Critical gap</strong>}
+                      </span>
+                    );
+                  })}
                 </div>
               </li>
             ))}

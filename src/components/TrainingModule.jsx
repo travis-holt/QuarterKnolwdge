@@ -331,6 +331,9 @@ export default function TrainingModule({
   }, [mod, department, supported]);
 
   const cohort = trainingByDomain(rows).find((d) => d.domainId === domainId);
+  // How many navigators were actually scored in this domain — an empty cohort
+  // means "covered" only if somebody was measured.
+  const assessedInDomain = rows.filter((r) => Number.isFinite(r?.scores?.[domainId])).length;
 
   // Departments without authored training content get an explicit unavailable
   // state — never another department's content, and never a completion control.
@@ -456,7 +459,13 @@ export default function TrainingModule({
           Based on this quarter&rsquo;s check — navigators weak in {domainName(domainId)}.
         </p>
         {!cohort || (cohort.critical.length === 0 && cohort.required.length === 0 && cohort.stretch.length === 0) ? (
-          <p className="readoff__empty">No one needs this module right now — the floor has it covered.</p>
+          // "Covered" is only true when someone was actually scored here.
+          // Unscored domains produce no cohort either, and that is not mastery.
+          <p className="readoff__empty">
+            {assessedInDomain === 0
+              ? `No assessment results are available for ${domainName(domainId)} yet.`
+              : 'No one needs this module right now — the floor has it covered.'}
+          </p>
         ) : (
           <div className="train-domain__cohorts">
             {cohort.critical.length > 0 && (

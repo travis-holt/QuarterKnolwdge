@@ -172,7 +172,12 @@ export default function Matrix({ rows, deptName, onTakeCheck, onOpenNavigator })
                   />
                 </span>
                 <span className="readiness__count">
-                  {r.overallScore == null ? '—' : `${r.overallScore}% · ${r.overallLabel}`}
+                  {/* A dash alone would merge Incomplete into Not assessed. */}
+                  {r.overallScore == null
+                    ? (r.assessedDomains > 0
+                        ? `${r.overallLabel} · ${r.assessedDomains}/${r.totalDomains}`
+                        : r.overallLabel)
+                    : `${r.overallScore}% · ${r.overallLabel}`}
                 </span>
               </li>
             ))}

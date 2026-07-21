@@ -123,6 +123,9 @@ import SupervisorApp from './SupervisorApp.jsx';
 import NavigatorApp from './NavigatorApp.jsx';
 import { apiFetch } from '../lib/apiFetch.js';
 
+// The six configured domain ids, for bank-coverage fixtures.
+const DOMAIN_IDS = ['intake', 'classification', 'routing', 'scheduling', 'boundaries', 'documentation'];
+
 // A full six-domain result the dashboard/training views can render from.
 const DOMAIN_SCORES = {
   intake: 90, classification: 72, routing: 55,
@@ -463,5 +466,87 @@ describe('NavigatorApp — flow behavior', () => {
     // on the dashboard (headings, nav, etc.) regardless of the merge outcome.
     await waitFor(() => expect(screen.getByText('92% in this domain')).toBeInTheDocument());
     expect(screen.queryByText('15% in this domain')).not.toBeInTheDocument();
+  });
+});
+
+// ── Assessment-bank coverage gate (2026-07-21) ──────────────────────────────
+// A live bank that cannot measure all six domains must BLOCK the MCQ phase.
+// Silently scoring it would persist fabricated zeroes for the missing domains,
+// which read as Critical results the navigator never earned.
+
+describe('NavigatorApp — incomplete assessment bank blocks the MCQ check', () => {
+  const scoreableQuestion = (id, domainId) => ({
+    id,
+    domainId,
+    status: 'active',
+    department: 'pediatrics',
+    competencies: [],
+    scenario: `Scenario ${id}`,
+    correctOptionId: 'a',
+    options: [
+      { id: 'a', text: 'Right', points: 100, rationale: 'r' },
+      { id: 'b', text: 'Wrong', points: 0, rationale: 'r' },
+    ],
+  });
+
+  const signIn = async () => {
+    render(<NavigatorApp session={{ role: 'navigator', name: 'Pat Rowan', navigatorId: 'nav-1' }} onSignOut={vi.fn()} />);
+    await screen.findByText(/Which department are you taking the check for/i);
+    fireEvent.click(screen.getByRole('button', { name: /Pediatrics/i }));
+  };
+
+  it('blocks the MCQ phase and names the uncovered domains', async () => {
+    // A live bank covering only two of the six configured domains.
+    const partial = ['intake', 'classification'].map((d, i) => scoreableQuestion(`q${i}`, d));
+    dbMocks.getActiveQuestions.mockImplementation(() => Promise.resolve(partial));
+
+    await signIn();
+    const start = await screen.findByRole('button', { name: /Start|Retake/i });
+    fireEvent.click(start);
+
+    expect(await screen.findByText(/This assessment isn't ready yet/i)).toBeInTheDocument();
+    expect(screen.getByText(/doesn’t cover every knowledge domain|doesn't cover every knowledge domain/i)).toBeInTheDocument();
+    // Nothing was persisted.
+    expect(dbMocks.saveResult).not.toHaveBeenCalled();
+  });
+
+  it('does NOT top a partial live bank up from the seed bank', async () => {
+    const partial = ['intake'].map((d, i) => scoreableQuestion(`q${i}`, d));
+    dbMocks.getActiveQuestions.mockImplementation(() => Promise.resolve(partial));
+
+    await signIn();
+    const start = await screen.findByRole('button', { name: /Start|Retake/i });
+    fireEvent.click(start);
+
+    // If the seed bank had been merged in, coverage would be complete and the
+    // check would have opened instead of the blocking screen.
+    expect(await screen.findByText(/This assessment isn't ready yet/i)).toBeInTheDocument();
+  });
+
+  it('allows the MCQ phase when the live bank covers every domain', async () => {
+    const full = DOMAIN_IDS.map((d, i) => scoreableQuestion(`q${i}`, d));
+    dbMocks.getActiveQuestions.mockImplementation(() => Promise.resolve(full));
+
+    await signIn();
+    const start = await screen.findByRole('button', { name: /Start|Retake/i });
+    fireEvent.click(start);
+
+    // The blocking screen is NOT shown; the check itself renders.
+    await waitFor(() =>
+      expect(screen.queryByText(/This assessment isn't ready yet/i)).not.toBeInTheDocument()
+    );
+  });
+
+  it('falls back to the seed bank when the live bank is entirely empty', async () => {
+    dbMocks.getActiveQuestions.mockImplementation(() => Promise.resolve([]));
+
+    await signIn();
+    const start = await screen.findByRole('button', { name: /Start|Retake/i });
+    fireEvent.click(start);
+
+    // The committed seed bank covers all six domains, so this is allowed.
+    await waitFor(() =>
+      expect(screen.queryByText(/This assessment isn't ready yet/i)).not.toBeInTheDocument()
+    );
   });
 });

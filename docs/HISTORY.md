@@ -1,5 +1,145 @@
 ﻿# Development History - Knowledge Check
 
+## 2026-07-21 — PR #40 full-codebase review: six correctness fixes
+
+A final full-codebase pass over PR #40 found six issues that all shared one root cause: **absent
+evidence being rendered as a measured result.** The overall-status architecture, the capability
+thresholds, the competency thresholds, mentor safeguards, domain-driven training, Call QA behaviour,
+OB/GYN content, Firestore rules, persistence, result selection and historical records are unchanged.
+
+The invariant these fixes establish, now stated in CLAUDE.md:
+
+> **Missing evidence must never be represented as failure, mastery, or a real 0%. Only a genuinely
+> measured numeric zero is a Critical result.**
+
+### 1. Incomplete bank coverage could fabricate Critical domain scores
+
+`scorePerDomain` returned `0` whenever a domain had no questions (`total === 0`), so a supervisor's
+partially-populated question bank produced navigator scores of 0 — i.e. **Critical results the
+navigator never earned**. `NavigatorApp` compounded it by accepting any non-empty active bank
+without checking that all six configured domains were represented.
+
+**Fix.** New canonical helpers in `scoring.js`: `isScoreableQuestion()` (a question needs a known
+domain and at least one option), `assessmentBankCoverage()` returning
+`{ complete, covered, missing, countsByDomain, scoreable, total }`, `isAssessmentBankComplete()`,
+and `IncompleteAssessmentBankError`.
+
+`scorePerDomain` now distinguishes the two cases explicitly — **null** for "this domain had no
+scoreable questions", a genuine **0** for "measured and earned nothing" — mirroring what
+`scorePerCompetency` already did for competencies. `{ strict: true }` throws rather than returning a
+profile with holes.
+
+Both navigator paths are gated: the MCQ phase is **blocked** at start with a screen naming the
+uncovered domains, and `handleSubmit` re-checks before persisting so nothing is written. Chosen
+failure mode is blocking rather than degrading, because a partial result is indistinguishable from a
+poor one once stored.
+
+A partial live bank is deliberately **not** topped up from the seed bank — that would mix outdated
+seed content with current supervisor-managed content inside one graded assessment. The seed bank is
+used only when the live bank is entirely empty.
+
+The mini-check path was hardened too: it no longer coerces an unmeasurable domain to `0` (which
+would have looked like a failed attempt) and records no mastery from it.
+
+### 2. Zero training assignments read as complete mastery
+
+`trainingForRow` correctly skips unscored domains, which made `assignments.length === 0` ambiguous —
+it can mean genuine mastery *or* nothing to assess. Several surfaces congratulated navigators who
+had simply never been assessed ("Every domain scored 90% or above — consider mentoring a colleague").
+
+**Fix.** New `trainingEmptyStateReason(row, assignments?)` resolves the reason to
+`unassessed` / `incomplete` / `mastered` / `has-assignments`, with `hasMasteredAllDomains(row)` true
+only for a complete profile where every domain is ≥ 90. Applied in `MyTraining`, `NavigatorDetail`
+and `TrainingModule` (whose cohort panel no longer claims "the floor has it covered" when nobody was
+scored in that domain). Mentoring is never suggested to an incomplete or unassessed navigator.
+
+Required states now render distinctly: 0/6 "No assessment results are available yet"; 1–5/6
+"Training cannot be finalized until the remaining domains are assessed" (with the count); 6/6 all
+≥ 90 keeps the mastery message; 6/6 with weak domains renders assignments.
+
+### 3. Missing aggregate evidence rendered as 0%
+
+`floorStats` returned `avgOverallScore: 0` and `solidPlusRate: 0` with zero complete profiles;
+`domainDistribution` returned `avgScore: 0` for a domain nobody had been scored in; `teamTrend`
+emitted 0% timepoints; and personal domain trend series inserted `0` for missing historical scores,
+drawing an artificial collapse.
+
+**Fix.** These official aggregates are now **null** when there is no eligible evidence.
+`teamTrend` omits timepoints with zero complete profiles entirely. `buildTrend` puts `null` where a
+historical domain score is missing, and `Sparkline` renders those as **gaps** (splitting the
+polyline into segments, marking a lone reading with a dot) rather than plotting them at zero.
+`CountUp` gained an `emptyLabel` (default `—`) and refuses to animate a non-finite value to 0.
+Overview renders percentages through a `fmtPct` helper that shows `N/A` for null.
+
+Counts remain genuine zeroes throughout — "zero navigators are Critical" is a real fact, not a gap.
+A complete floor whose actual average is 0 still displays `0%`.
+
+### 4. Competency UI used the four-band capability scale
+
+Competencies deliberately keep three levels (`<60` Learning · `60–84` Solid · `85+` Can-Teach) and
+have no Critical band, but the Overview competency bars and legend still iterated `LEVEL_ORDER`,
+rendering a Critical bucket that scale does not have.
+
+**Fix.** Both loops now use `COMPETENCY_LEVEL_ORDER`, and the panel lede states explicitly that this
+is a separate three-level scale, not the official department status. `competencyScoreToLevel` and
+`COMPETENCY_THRESHOLDS` remain independent of the capability scale.
+
+### 5. Incomplete versus Not assessed collapsed in several consumers
+
+Both states have `overallScore === null`, so consumers keying on the score alone merged them.
+Overview's "Ready for more" showed both as "Not assessed"; Matrix's readiness signal showed both as
+a bare dash; `MyHistory` hid the overall state for incomplete attempts entirely and indexed
+`LEVELS[domainBand(pct)]` directly — which throws on a null band from a legacy/malformed score.
+
+**Fix.** `readinessTally` now carries `assessedDomains`/`totalDomains`/`complete`, and both readiness
+surfaces label the states distinctly (with "X of 6 domains"). `MyHistory` always shows the overall
+state including Incomplete, and renders any non-finite legacy domain value as an explicit
+"not scored" chip instead of indexing `LEVELS` with null.
+
+`OverallBadge` is now **defensive**: `complete === false` (or `row.overallComplete === false`) always
+suppresses the official percentage and level, even when a caller supplies stale or inconsistent
+score/level props. An unknown level id degrades to the no-status badge rather than throwing.
+
+### 6. Misleading count and stale documentation
+
+Training's "of {rows.length} assessed" counted incomplete and unassessed navigators as assessed. It
+now reads "of N navigators on the floor", adding "· M with a complete profile" when they differ.
+
+CLAUDE.md corrected: the Spot-the-Error description claimed failed generations "backfill to 0" — the
+code is already all-or-nothing and never backfills, so the doc was the stale part. The governing
+invariant and all new helpers are now documented in F2/§9.
+
+### Files changed
+
+`src/lib/scoring.js` · `src/components/NavigatorApp.jsx` · `src/components/MyTraining.jsx` ·
+`src/components/NavigatorDetail.jsx` · `src/components/TrainingModule.jsx` ·
+`src/components/Overview.jsx` · `src/components/Matrix.jsx` · `src/components/MyHistory.jsx` ·
+`src/components/OverallStatus.jsx` · `src/components/Training.jsx` · `src/components/CountUp.jsx` ·
+`src/components/Sparkline.jsx` · `src/lib/scoring.test.js` ·
+`src/components/capabilityStatus.test.jsx` · `src/components/roleApps.behavior.test.jsx` ·
+**new** `src/components/trainingEmptyState.test.jsx` · `CLAUDE.md` · `docs/HISTORY.md`.
+
+### Tests added
+
+Scoring (`scoring.test.js`, 242 → 278): bank coverage accept/reject/empty/unscoreable, real seed
+banks complete and scoring normally, uncovered domain null vs measured zero, partial bank producing
+no official profile, strict-mode throw, uncovered domain producing no gap or training;
+`trainingEmptyStateReason` across all four states; null aggregates vs genuine zero for `floorStats`,
+`domainDistribution`, `teamTrend` and `buildTrend`; competency boundaries 0/39/40/59/60/84/85/100
+with finite sums and no Critical band; `readinessTally` distinguishing Incomplete from Not assessed.
+
+Components: `capabilityStatus.test.jsx` (34 → 47) — OverallBadge 0/6, 1/6, 5/6, 6/6, stale-props
+override, unknown level; Overview N/A vs genuine 0%, domain avg N/A, competency panel three-level,
+readiness distinction; `Matrix` readiness distinction. New `trainingEmptyState.test.jsx` (10) covers
+all four empty states across MyTraining, NavigatorDetail and TrainingModule.
+`roleApps.behavior.test.jsx` (18 → 22) covers the bank-coverage gate end to end: blocked with named
+domains, no seed top-up of a partial bank, complete bank allowed, empty bank falling back to seed.
+
+### Verification
+
+All commands were run; exact results are recorded in the PR description. No production deployment,
+migration, merge, or production write was performed.
+
 ## 2026-07-20 — PR #40 final cleanup: encoding guard, stale docs, cross-department Incomplete
 
 A narrow third pass over PR #40. The overall-capability architecture, the exact thresholds, the

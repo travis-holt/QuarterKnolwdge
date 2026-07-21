@@ -9,8 +9,18 @@ export default function CountUp({
   prefix = '',
   suffix = '',
   className,
+  // Rendered when `value` is null/undefined/NaN — i.e. there is no evidence to
+  // report. This must NOT animate to 0: "no data" and "measured zero" are
+  // different facts, and 0% would read as a real floor-wide result.
+  emptyLabel = '—',
 }) {
-  const [ref, display] = useCountUp(value, { decimals, duration });
+  const missing = !Number.isFinite(value);
+  // Hooks must run unconditionally; feed the hook 0 and discard its output when
+  // the value is missing.
+  const [ref, display] = useCountUp(missing ? 0 : value, { decimals, duration });
+  if (missing) {
+    return <span ref={ref} className={className}>{emptyLabel}</span>;
+  }
   return (
     <span ref={ref} className={className}>
       {prefix}

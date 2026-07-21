@@ -3,7 +3,7 @@ import { DOMAINS, domainName } from '../data/questions.js';
 import { COMPETENCIES, competencyName } from '../data/competencies.js';
 import { DEPARTMENTS, isAssessed } from '../data/departments.js';
 import { LEVELS, THRESHOLDS, interviewScoreColor } from '../data/config.js';
-import { findRow, mentorSuggestions, trainingForRow, buildTrend, trainingImpact, buildDossier } from '../lib/scoring.js';
+import { findRow, mentorSuggestions, trainingForRow, trainingEmptyStateReason, buildTrend, trainingImpact, buildDossier } from '../lib/scoring.js';
 import { OverallBadge, DomainScore } from './OverallStatus.jsx';
 import { getInterviews, getResultHistory, updateInterviewGradeOverride, updateQaFinalReview } from '../lib/db.js';
 import { qaFinalReviewLabel, qaFinalVerdict, qaHistoryBadgeLabel, qaBadgeTone } from '../lib/qaFinalReview.js';
@@ -214,6 +214,7 @@ export default function NavigatorDetail({ rows, name, deptName, dept, deptMatrix
     .sort((a, b) => scoreOfDomain(a) - scoreOfDomain(b));
   const mentors = mentorSuggestions(rows, name);
   const training = trainingForRow(row);
+  const trainingReason = trainingEmptyStateReason(row, training);
 
   // Ordered worst → best so the bars read as a development priority list.
   // Unscored domains sort last rather than producing a NaN comparison.
@@ -533,7 +534,14 @@ export default function NavigatorDetail({ rows, name, deptName, dept, deptMatrix
         <h2 className="overview__panel-title">Assigned training</h2>
         <p className="readoff__sub">Auto-assigned from this quarter&rsquo;s results.</p>
         {training.length === 0 ? (
-          <p className="readoff__empty">Nothing assigned — every domain is at 90% or above.</p>
+          // Empty != mastered: unscored domains produce no assignment either.
+          <p className="readoff__empty">
+            {trainingReason === 'unassessed'
+              ? 'No assessment results are available yet for this department.'
+              : trainingReason === 'incomplete'
+                ? `Training cannot be finalized until the remaining domains are assessed (${row.assessedDomains} of ${DOMAINS.length} scored).`
+                : 'Nothing assigned — every domain is at 90% or above.'}
+          </p>
         ) : (
           <ul className="readoff__list">
             {training.map((a) => {

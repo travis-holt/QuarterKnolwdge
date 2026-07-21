@@ -18,9 +18,12 @@ import Navigators from './Navigators.jsx';
 import Overview from './Overview.jsx';
 import ActionCenter from './ActionCenter.jsx';
 import { buildMatrixRows, departmentMatrix } from '../lib/scoring.js';
+import { OverallBadge } from './OverallStatus.jsx';
+import { COMPETENCIES } from '../data/competencies.js';
 import { DOMAINS, domainName } from '../data/questions.js';
 
 const DOMAIN_IDS = DOMAINS.map((d) => d.id);
+const COMPETENCY_IDS = COMPETENCIES.map((c) => c.id);
 const scoresOf = (values) => Object.fromEntries(DOMAIN_IDS.map((id, i) => [id, values[i]]));
 
 // 92+88+96+90+94+86 = 546 → 91 overall → Can-Teach
@@ -463,5 +466,173 @@ describe('Overview cross-department table — Incomplete stays visible', () => {
     const incomplete = renderDept(nDomains(2, 70)).container;
     expect(deptCell(unassessed).textContent).not.toContain('Incomplete');
     expect(deptCell(incomplete).textContent).toContain('Incomplete');
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// FINAL-REVIEW COMPONENT REGRESSIONS (2026-07-21)
+// Missing evidence must never render as failure, mastery, or a real 0%.
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('OverallBadge — defensive against inconsistent caller data', () => {
+  it('0/6 renders Not assessed', () => {
+    const { container } = render(<OverallBadge score={null} level={null} complete={false} assessedDomains={0} />);
+    expect(container.textContent).toContain('Not assessed');
+    expect(container.textContent).not.toContain('Incomplete');
+  });
+
+  it('1/6 renders Incomplete with no official percentage or level', () => {
+    const { container } = render(<OverallBadge score={null} level={null} complete={false} assessedDomains={1} />);
+    expect(container.textContent).toContain('Incomplete');
+    expect(container.textContent).toContain('1 of 6 domains');
+    expect(container.textContent).not.toMatch(/\d+%/);
+    expect(container.textContent).not.toMatch(/Critical|Learning|Solid|Can-Teach/);
+  });
+
+  it('5/6 renders Incomplete with no official percentage or level', () => {
+    const { container } = render(<OverallBadge score={null} level={null} complete={false} assessedDomains={5} />);
+    expect(container.textContent).toContain('Incomplete');
+    expect(container.textContent).toContain('5 of 6 domains');
+    expect(container.textContent).not.toMatch(/\d+%/);
+  });
+
+  it('6/6 renders the official status', () => {
+    const { container } = render(<OverallBadge score={91} level="canTeach" complete assessedDomains={6} />);
+    expect(container.textContent).toContain('91%');
+    expect(container.textContent).toContain('Can-Teach');
+  });
+
+  it('STALE props cannot override complete={false}', () => {
+    // A caller passing a leftover score/level alongside an incomplete profile
+    // must still get the Incomplete badge — never an official status.
+    const { container } = render(
+      <OverallBadge score={100} level="canTeach" complete={false} assessedDomains={1} />
+    );
+    expect(container.textContent).not.toContain('100%');
+    expect(container.textContent).not.toContain('Can-Teach');
+    expect(container.textContent).toContain('Incomplete');
+  });
+
+  it('a row whose overallComplete is false cannot render an official badge', () => {
+    const staleRow = {
+      overallScore: 95, overallLevel: 'canTeach', overallComplete: false,
+      overallLabel: 'Incomplete', assessedDomains: 2, totalDomains: 6,
+    };
+    const { container } = render(<OverallBadge row={staleRow} />);
+    expect(container.textContent).not.toContain('95%');
+    expect(container.textContent).toContain('Incomplete');
+  });
+
+  it('an unknown level id degrades to the no-status badge instead of crashing', () => {
+    expect(() =>
+      render(<OverallBadge score={70} level="bogus" complete assessedDomains={6} />)
+    ).not.toThrow();
+  });
+});
+
+describe('Overview — no-evidence aggregates render N/A, not 0%', () => {
+  const renderOverview = (samples) =>
+    render(
+      <Overview
+        rows={rowsFor(samples)}
+        deptName="Pediatrics"
+        deptMatrix={[]}
+        onOpenNavigator={vi.fn()}
+        onViewMatrix={vi.fn()}
+        teamHistory={[]}
+      />
+    );
+
+  it('shows N/A (never 0%) when no navigator has a complete profile', () => {
+    const { container } = renderOverview([
+      { navigatorId: 'p', name: 'Pat', scores: { [DOMAIN_IDS[0]]: 100 } },
+      { navigatorId: 'n', name: 'Nia', scores: {} },
+    ]);
+    // The two percentage KPI VALUES fall back to the empty label rather than 0%.
+    const values = [...container.querySelectorAll('.kpi__value')].map((n) => n.textContent);
+    expect(values[0]).toBe('—'); // Solid-or-above rate
+    expect(values[3]).toBe('—'); // average overall score
+    expect(values[0]).not.toContain('0%');
+    expect(values[3]).not.toContain('0%');
+  });
+
+  it('shows a genuine 0% when a complete profile really scored zero', () => {
+    const { container } = renderOverview([
+      { navigatorId: 'z', name: 'Zed', scores: scoresOf([0, 0, 0, 0, 0, 0]) },
+    ]);
+    const values = [...container.querySelectorAll('.kpi__value')].map((n) => n.textContent);
+    // Solid+ rate 0% and average 0% are REAL results here.
+    expect(values[0]).toContain('0');
+    expect(values[3]).toContain('0');
+    expect(values[0]).not.toBe('—');
+  });
+
+  it('domain average shows N/A when nobody was scored in that domain', () => {
+    const { container } = renderOverview([
+      { navigatorId: 'p', name: 'Pat', scores: { [DOMAIN_IDS[0]]: 70 } },
+    ]);
+    const dist = container.querySelector('.dist').textContent;
+    expect(dist).toContain('avg 70%');
+    expect(dist).toContain('avg N/A');
+  });
+
+  it('competency panel uses the three-level scale and never renders Critical', () => {
+    const { container } = render(
+      <Overview
+        rows={rowsFor([
+          { navigatorId: 'a', name: 'A', scores: {}, competencyScores: { [COMPETENCY_IDS[0]]: 30 } },
+          { navigatorId: 'b', name: 'B', scores: {}, competencyScores: { [COMPETENCY_IDS[0]]: 95 } },
+        ])}
+        deptName="Pediatrics"
+        deptMatrix={[]}
+        onOpenNavigator={vi.fn()}
+        onViewMatrix={vi.fn()}
+        teamHistory={[]}
+      />
+    );
+    const panel = [...container.querySelectorAll('.overview__panel')]
+      .find((p) => p.textContent.includes('Capability by competency'));
+    expect(panel).toBeTruthy();
+    // The competency legend lists exactly Learning / Solid / Can-Teach.
+    const legend = panel.querySelector('.overview__legend').textContent;
+    expect(legend).toContain('Learning');
+    expect(legend).toContain('Solid');
+    expect(legend).toContain('Can-Teach');
+    expect(legend).not.toContain('Critical');
+    // A score of 30 is Learning on this axis (not Critical) and is counted.
+    const bar = panel.querySelector('.dist__bar');
+    expect(bar.getAttribute('title')).toContain('1 Learning');
+    expect(bar.textContent).not.toContain('NaN');
+  });
+
+  it('Ready for more distinguishes Incomplete from Not assessed', () => {
+    const { container } = renderOverview([
+      { navigatorId: 'p', name: 'Pat Partial', scores: { [DOMAIN_IDS[0]]: 90 } },
+      { navigatorId: 'n', name: 'Nia None', scores: {} },
+    ]);
+    const col = [...container.querySelectorAll('.overview__col')]
+      .find((c) => c.textContent.includes('Ready for more'));
+    expect(col.textContent).toContain('Incomplete');
+    expect(col.textContent).toContain('Not assessed');
+  });
+});
+
+describe('Matrix readiness — Incomplete is not Not assessed', () => {
+  it('labels each state distinctly', () => {
+    const { container } = render(
+      <Matrix
+        rows={rowsFor([
+          { navigatorId: 'p', name: 'Pat Partial', scores: { [DOMAIN_IDS[0]]: 90 } },
+          { navigatorId: 'n', name: 'Nia None', scores: {} },
+        ])}
+        deptName="Pediatrics"
+        onTakeCheck={null}
+        onOpenNavigator={vi.fn()}
+      />
+    );
+    const readiness = [...container.querySelectorAll('.readoff')]
+      .find((r) => r.textContent.includes('Readiness signal'));
+    expect(readiness.textContent).toContain('Incomplete');
+    expect(readiness.textContent).toContain('Not assessed');
   });
 });
