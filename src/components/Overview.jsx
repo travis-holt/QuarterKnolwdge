@@ -1,18 +1,25 @@
 import { DOMAINS, domainName } from '../data/questions.js';
 import { COMPETENCIES, competencyName } from '../data/competencies.js';
 import { DEPARTMENTS } from '../data/departments.js';
-import { LEVELS, LEVEL_ORDER } from '../data/config.js';
+import { LEVELS, LEVEL_ORDER, COMPETENCY_LEVEL_ORDER } from '../data/config.js';
 import {
   floorStats,
   domainDistribution,
   competencyDistribution,
   columnGaps,
-  canTeachRoster,
+  domainMentorRoster,
   readinessTally,
   teamTrend,
 } from '../lib/scoring.js';
+import { OverallBadge } from './OverallStatus.jsx';
 import CountUp from './CountUp.jsx';
 import Sparkline from './Sparkline.jsx';
+import { formatPercent } from '../lib/formatScore.js';
+
+// Percentage aggregates go through the SHARED formatter: null means "no
+// eligible evidence" and shows N/A — never 0%, which would read as a real
+// floor-wide result. A genuine measured 0 still renders as "0%".
+const fmtPct = formatPercent;
 
 // teamHistory: flat array of resultHistory docs (all navigators, all times).
 export default function Overview({ rows, deptName, deptMatrix, onOpenNavigator, onViewMatrix, teamHistory = [] }) {
@@ -21,13 +28,13 @@ export default function Overview({ rows, deptName, deptMatrix, onOpenNavigator, 
   const dist = domainDistribution(rows);
   const compDist = competencyDistribution(rows);
   const gaps = columnGaps(rows);
-  const roster = canTeachRoster(rows);
+  const roster = domainMentorRoster(rows);
   const readiness = readinessTally(rows);
 
-  // Strength domains: most Can-Teach coverage, highest first.
+  // Strength domains: highest average score first (diagnostic, not a status).
   const strengths = [...dist]
-    .sort((a, b) => b.canTeach - a.canTeach)
-    .filter((d) => d.canTeach > 0)
+    .sort((a, b) => (b.avgScore ?? -1) - (a.avgScore ?? -1))
+    .filter((d) => roster[d.domainId].length > 0)
     .slice(0, 3);
 
   return (
@@ -44,8 +51,8 @@ export default function Overview({ rows, deptName, deptMatrix, onOpenNavigator, 
       <div className="card overview__panel">
         <h2 className="overview__panel-title">Strength by department</h2>
         <p className="readoff__sub">
-          Each navigator&rsquo;s overall level per department (average across domains).
-          The metrics below this drill into <strong>{deptName}</strong> — switch departments up top.
+          Each navigator&rsquo;s one official status per department — the average across all six
+          domains. The metrics below drill into <strong>{deptName}</strong> — switch departments up top.
         </p>
         <div className="matrix-scroll">
           <table className="matrix deptmatrix">
@@ -68,16 +75,29 @@ export default function Overview({ rows, deptName, deptMatrix, onOpenNavigator, 
                   </th>
                   {DEPARTMENTS.map((d) => {
                     const cell = row.depts[d.id];
+                    // A null cell means the department was never assessed at all.
                     if (!cell) {
-                      return <td key={d.id} className="matrix__cell"><span className="deptcell deptcell--na">—</span></td>;
+                      return (
+                        <td key={d.id} className="matrix__cell">
+                          <span className="deptcell deptcell--na" title="Not assessed">—</span>
+                        </td>
+                      );
                     }
-                    const level = LEVELS[cell.level];
+                    // An INCOMPLETE department cell is not null: pass the
+                    // assessed-domain metadata so OverallBadge shows "Incomplete"
+                    // (with an "X of 6 domains scored" tooltip) rather than
+                    // mistaking it for an unassessed department.
                     return (
                       <td key={d.id} className="matrix__cell">
-                        <span className="deptcell" style={{ background: level.color, color: level.text }}>
-                          {cell.overall}%
-                          <span className="deptcell__lvl">{level.label}</span>
-                        </span>
+                        <OverallBadge
+                          score={cell.overall}
+                          level={cell.level}
+                          label={cell.label}
+                          complete={cell.complete}
+                          assessedDomains={cell.assessedDomains}
+                          totalDomains={cell.totalDomains}
+                          size="sm"
+                        />
                       </td>
                     );
                   })}
@@ -97,30 +117,74 @@ export default function Overview({ rows, deptName, deptMatrix, onOpenNavigator, 
         </div>
       </div>
 
-      {/* ── Headline KPIs ─────────────────────────────────────────────── */}
+      {/* ── Headline KPIs — navigator-level, based on official overall status ── */}
       <div className="kpis">
         <div className="card kpi">
           <span className="kpi__value"><CountUp value={stats.solidPlusRate} suffix="%" /></span>
-          <span className="kpi__label">of the floor is Solid or above</span>
-          <span className="kpi__sub">across all domains assessed</span>
+          <span className="kpi__label">of navigators are Solid or above</span>
+          <span className="kpi__sub">official overall status</span>
         </div>
         <div className="card kpi">
-          <span className="kpi__value">
-            <CountUp value={stats.coveredDomains} /><span className="kpi__of">/{stats.totalDomains}</span>
+          <span className="kpi__value"><CountUp value={stats.canTeachCount} /></span>
+          <span className="kpi__label">navigators Can-Teach overall</span>
+          <span className="kpi__sub">90%+ average across six domains</span>
+        </div>
+        <div className={`card kpi ${stats.criticalCount > 0 ? 'kpi--critical' : ''}`}>
+          <span className="kpi__value"><CountUp value={stats.criticalCount} /></span>
+          <span className="kpi__label">navigators Critical overall</span>
+          <span className="kpi__sub">
+            {stats.criticalCount > 0
+              ? 'immediate supervisor attention recommended'
+              : 'no navigator is below 40% overall'}
           </span>
-          <span className="kpi__label">domains have a teacher</span>
-          <span className="kpi__sub">at least one Can-Teach navigator</span>
         </div>
         <div className="card kpi">
-          <span className="kpi__value"><CountUp value={stats.avgReadiness} decimals={1} /></span>
-          <span className="kpi__label">avg Can-Teach domains / navigator</span>
-          <span className="kpi__sub">team readiness depth</span>
+          <span className="kpi__value"><CountUp value={stats.avgOverallScore} suffix="%" /></span>
+          <span className="kpi__label">average overall score</span>
+          <span className="kpi__sub">
+            across {stats.assessed} complete profile{stats.assessed === 1 ? '' : 's'}
+          </span>
         </div>
-        <div className="card kpi">
-          <span className="kpi__value"><CountUp value={stats.assessed} /></span>
-          <span className="kpi__label">navigators assessed</span>
-          <span className="kpi__sub">this quarter</span>
-        </div>
+      </div>
+
+      {(stats.incompleteCount > 0 || stats.unassessedCount > 0) && (
+        <p className="overview__eligibility-note">
+          Official status KPIs above cover the <strong>{stats.assessed}</strong> navigator
+          {stats.assessed === 1 ? '' : 's'} with a complete six-domain profile.
+          {stats.incompleteCount > 0 && ` ${stats.incompleteCount} incomplete`}
+          {stats.incompleteCount > 0 && stats.unassessedCount > 0 && ' and'}
+          {stats.unassessedCount > 0 && ` ${stats.unassessedCount} not yet assessed`}
+          {' '}excluded — a partial profile has no official status and never moves these numbers.
+        </p>
+      )}
+
+      {/* ── Official overall-status distribution ──────────────────────── */}
+      <div className="card overview__panel">
+        <h2 className="overview__panel-title">Overall status distribution · {deptName}</h2>
+        <p className="readoff__sub">
+          One official status per navigator, from the average across all six domains.
+        </p>
+        <ul className="statusdist">
+          {LEVEL_ORDER.map((id) => (
+            <li key={id} className="statusdist__row">
+              <span className="statusdist__swatch" style={{ background: LEVELS[id].color }} />
+              <span className="statusdist__label">{LEVELS[id].label}</span>
+              <span className="statusdist__count">{stats.distribution[id]}</span>
+            </li>
+          ))}
+          {stats.distribution.incomplete > 0 && (
+            <li className="statusdist__row statusdist__row--note">
+              <span className="statusdist__label">Incomplete profiles — no official status</span>
+              <span className="statusdist__count">{stats.distribution.incomplete}</span>
+            </li>
+          )}
+          {stats.distribution.unassessed > 0 && (
+            <li className="statusdist__row statusdist__row--note">
+              <span className="statusdist__label">Not yet assessed</span>
+              <span className="statusdist__count">{stats.distribution.unassessed}</span>
+            </li>
+          )}
+        </ul>
       </div>
 
       {/* ── Floor trend (when history is available) ───────────────────── */}
@@ -128,17 +192,18 @@ export default function Overview({ rows, deptName, deptMatrix, onOpenNavigator, 
         <div className="card overview__panel">
           <h2 className="overview__panel-title">Floor trend over time</h2>
           <p className="readoff__sub">
-            Solid-or-above rate and average readiness across all navigators, per check cycle.
+            Average overall score and the Solid-or-above rate across all navigators, per check
+            cycle — both measured on each navigator&rsquo;s official overall status.
           </p>
           <div className="trend__overall">
-            <span className="trend__label">Solid+ rate</span>
-            <Sparkline values={floorTrend.map((t) => t.solidPlusRate)} color="var(--accent)" height={36} />
-            <span className="trend__pct">{Math.round(floorTrend[floorTrend.length - 1].solidPlusRate)}%</span>
+            <span className="trend__label">Avg overall</span>
+            <Sparkline values={floorTrend.map((t) => t.avgOverallScore)} color="var(--accent)" height={36} />
+            <span className="trend__pct">{fmtPct(floorTrend[floorTrend.length - 1].avgOverallScore)}</span>
           </div>
           <div className="trend__overall" style={{ marginTop: '0.5rem' }}>
-            <span className="trend__label">Avg readiness</span>
-            <Sparkline values={floorTrend.map((t) => t.avgReadiness)} color="var(--level-canteach)" height={36} />
-            <span className="trend__pct">{floorTrend[floorTrend.length - 1].avgReadiness.toFixed(1)}</span>
+            <span className="trend__label">Solid+ rate</span>
+            <Sparkline values={floorTrend.map((t) => t.solidPlusRate)} color="var(--level-canteach)" height={36} />
+            <span className="trend__pct">{fmtPct(floorTrend[floorTrend.length - 1].solidPlusRate)}</span>
           </div>
           <div className="trend__tick-row">
             {floorTrend.map((t) => (
@@ -151,16 +216,23 @@ export default function Overview({ rows, deptName, deptMatrix, onOpenNavigator, 
       {/* ── Domain capability distribution ────────────────────────────── */}
       <div className="card overview__panel">
         <div className="overview__panel-head">
-          <h2 className="overview__panel-title">Capability by domain · {deptName}</h2>
+          <h2 className="overview__panel-title">Domain score distribution · {deptName}</h2>
           <button className="linkbtn" onClick={onViewMatrix}>
             Open the full matrix →
           </button>
         </div>
+        <p className="readoff__sub">
+          Diagnostic score ranges per domain — how many navigators fall in each band, their average
+          score, and how many need training. These are scores, not official navigator statuses.
+        </p>
         <div className="dist">
           {dist.map((d) => (
             <div key={d.domainId} className="dist__row">
               <span className="dist__name">{domainName(d.domainId)}</span>
-              <div className="dist__bar" title={`${d.learning} Learning · ${d.solid} Solid · ${d.canTeach} Can-Teach`}>
+              <div
+                className="dist__bar"
+                title={`${d.critical} below 40% · ${d.learning} 40–64% · ${d.solid} 65–89% · ${d.canTeach} 90%+`}
+              >
                 {LEVEL_ORDER.map((lvl) => {
                   const count = d[lvl];
                   if (!count) return null;
@@ -179,6 +251,12 @@ export default function Overview({ rows, deptName, deptMatrix, onOpenNavigator, 
                   );
                 })}
               </div>
+              <span className="dist__meta">
+                avg {fmtPct(d.avgScore)}
+                {d.belowCritical > 0 && (
+                  <span className="readoff__critical"> · {d.belowCritical} below 40%</span>
+                )}
+              </span>
             </div>
           ))}
         </div>
@@ -187,6 +265,12 @@ export default function Overview({ rows, deptName, deptMatrix, onOpenNavigator, 
             <span key={id} className="legend-item">
               <span className="legend-swatch" style={{ background: LEVELS[id].color }} />
               {LEVELS[id].label}
+              <span className="legend-range">
+                {id === 'critical' && '0–39%'}
+                {id === 'learning' && '40–64%'}
+                {id === 'solid' && '65–89%'}
+                {id === 'canTeach' && '90–100%'}
+              </span>
             </span>
           ))}
         </div>
@@ -198,14 +282,16 @@ export default function Overview({ rows, deptName, deptMatrix, onOpenNavigator, 
           <h2 className="overview__panel-title">Capability by competency</h2>
           <p className="readoff__sub">
             The how-they-work axis — critical thinking, communication, escalation and more — across
-            every navigator assessed, independent of department.
+            every navigator assessed, independent of department. This is a <strong>separate three-level
+            scale</strong> (&lt;60 Learning · 60–84 Solid · 85+ Can-Teach) with no Critical band — it is
+            not the official department status.
           </p>
           <div className="dist">
             {compDist.map((c) => (
               <div key={c.competencyId} className="dist__row">
                 <span className="dist__name">{competencyName(c.competencyId)}</span>
                 <div className="dist__bar" title={`${c.learning} Learning · ${c.solid} Solid · ${c.canTeach} Can-Teach`}>
-                  {LEVEL_ORDER.map((lvl) => {
+                  {COMPETENCY_LEVEL_ORDER.map((lvl) => {
                     const count = c[lvl];
                     if (!count) return null;
                     return (
@@ -227,7 +313,7 @@ export default function Overview({ rows, deptName, deptMatrix, onOpenNavigator, 
             ))}
           </div>
           <div className="matrix__legend overview__legend">
-            {LEVEL_ORDER.map((id) => (
+            {COMPETENCY_LEVEL_ORDER.map((id) => (
               <span key={id} className="legend-item">
                 <span className="legend-swatch" style={{ background: LEVELS[id].color }} />
                 {LEVELS[id].label}
@@ -241,7 +327,7 @@ export default function Overview({ rows, deptName, deptMatrix, onOpenNavigator, 
       <div className="overview__cols">
         <div className="card overview__col">
           <h2 className="readoff__title">Training priorities</h2>
-          <p className="readoff__sub">Domains where most navigators are still Learning.</p>
+          <p className="readoff__sub">Domains where most navigators score below 65%.</p>
           {gaps.length === 0 ? (
             <p className="readoff__empty">No floor-wide gaps right now.</p>
           ) : (
@@ -249,7 +335,12 @@ export default function Overview({ rows, deptName, deptMatrix, onOpenNavigator, 
               {gaps.map((g) => (
                 <li key={g.domainId} className="readoff__row">
                   <span className="tag tag--accent">{domainName(g.domainId)}</span>
-                  <span className="readoff__count">{g.learningCount}/{g.total} Learning</span>
+                  <span className="readoff__count">
+                    {g.belowSolidCount}/{g.total} below 65%
+                    {g.criticalCount > 0 && (
+                      <span className="readoff__critical"> · {g.criticalCount} critical</span>
+                    )}
+                  </span>
                 </li>
               ))}
             </ul>
@@ -258,14 +349,14 @@ export default function Overview({ rows, deptName, deptMatrix, onOpenNavigator, 
 
         <div className="card overview__col">
           <h2 className="readoff__title">Floor strengths</h2>
-          <p className="readoff__sub">Best-covered domains, with their teachers.</p>
+          <p className="readoff__sub">Highest-scoring domains, with their qualified mentors.</p>
           {strengths.length === 0 ? (
-            <p className="readoff__empty">No Can-Teach coverage yet.</p>
+            <p className="readoff__empty">No qualified domain mentors yet.</p>
           ) : (
             <ul className="readoff__list">
               {strengths.map((d) => (
                 <li key={d.domainId} className="readoff__row readoff__row--col">
-                  <span className="tag">{domainName(d.domainId)}</span>
+                  <span className="tag">{domainName(d.domainId)} · avg {fmtPct(d.avgScore)}</span>
                   <span className="readoff__people">{roster[d.domainId].join(', ')}</span>
                 </li>
               ))}
@@ -275,7 +366,7 @@ export default function Overview({ rows, deptName, deptMatrix, onOpenNavigator, 
 
         <div className="card overview__col">
           <h2 className="readoff__title">Ready for more</h2>
-          <p className="readoff__sub">Navigators by Can-Teach depth.</p>
+          <p className="readoff__sub">Navigators by official overall status.</p>
           <ul className="readoff__list">
             {readiness.slice(0, 5).map((r) => (
               <li key={r.name} className="readoff__row">
@@ -283,7 +374,15 @@ export default function Overview({ rows, deptName, deptMatrix, onOpenNavigator, 
                   {r.name}
                   {r.isLive && <span className="matrix__you">you</span>}
                 </button>
-                <span className="readoff__count">{r.canTeachCount} Can-Teach</span>
+                <span className="readoff__count">
+                  {/* Incomplete and Not assessed must stay distinct — both have a
+                      null official score, so key on the label, not the score. */}
+                  {r.overallScore == null
+                    ? (r.assessedDomains > 0
+                        ? `${r.overallLabel} · ${r.assessedDomains} of ${r.totalDomains} domains`
+                        : r.overallLabel)
+                    : `${r.overallScore}% overall · ${r.overallLabel}`}
+                </span>
               </li>
             ))}
           </ul>

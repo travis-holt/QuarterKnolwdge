@@ -203,7 +203,7 @@ async function main() {
       await assertFails(updateDoc(doc(navA(), 'interviews', 'qa-b'), { grade: { score: 88 }, qa: { score: 88 } }));
     });
 
-    // â”€â”€ Private scenario bank: Admin only â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    // ── Private scenario bank: Admin only ────────────────────────────
     await testEnv.clearFirestore();
     section('E. Private Call QA scenario bank (Admin only)');
     const privateId = 'qa-test-call-001__test-v1';

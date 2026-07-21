@@ -15,11 +15,13 @@ import Footer from './Footer.jsx';
 import {
   scorePerDomain,
   scorePerCompetency,
+  assessmentBankCoverage,
   buildMatrixRows,
   departmentMatrix,
   findRow,
 } from '../lib/scoring.js';
 import { mergeNavigatorFloorAndOwnResult } from '../lib/navigatorResultMerge.js';
+import { safeErrorMessage } from '../lib/safeError.js';
 import { getResult, saveResult, getActiveQuestions, getCompletions, saveCompletion } from '../lib/db.js';
 import { apiFetch } from '../lib/apiFetch.js';
 import { MINICHECK_SIZE, MINICHECK_PASS } from '../data/config.js';
@@ -59,6 +61,14 @@ export default function NavigatorApp({ navigatorId, name, onSignOut }) {
   const [activeType, setActiveType] = useState(null); // 'mcq' | 'spot' | 'qa' | null
   const [lastAnswers, setLastAnswers] = useState(null); // answers from the just-taken check (for coaching)
   const [questions, setQuestions] = useState(SEED_QUESTIONS); // active bank (seed fallback)
+  // Coverage of the loaded bank. An MCQ assessment cannot start or be saved
+  // unless every configured domain has at least one scoreable question, so an
+  // unmeasured domain is never persisted as a score of 0.
+  const [bankCoverage, setBankCoverage] = useState(null);
+  // True when the live-bank READ itself failed. Distinct from incomplete
+  // coverage: the bank status is unknown, not known-bad.
+  const [bankLoadFailed, setBankLoadFailed] = useState(false);
+  const [bankRetrying, setBankRetrying] = useState(false);
   const [results, setResults] = useState([]); // whole floor (for mentor data)
   const [moduleDomain, setModuleDomain] = useState(null);
   const [moduleCompletionKind, setModuleCompletionKind] = useState(null);
@@ -127,6 +137,56 @@ export default function NavigatorApp({ navigatorId, name, onSignOut }) {
     });
   }, [navigatorId]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  /**
+   * Load the active question bank for one department.
+   *
+   * Returns true when a bank was established (live or seed) and false when the
+   * read FAILED — in which case the caller must stop, because the bank status is
+   * unknown and no assessment may start or save from an unknown bank.
+   *
+   * Seed fallback happens ONLY after a successful read confirms the live bank is
+   * genuinely empty. A rejected read never yields the seed bank.
+   */
+  const loadBankForDept = async (dept) => {
+    let live;
+    try {
+      live = await getActiveQuestions(dept);
+    } catch (err) {
+      // Log a SAFE, BOUNDED string. `err?.message ?? err` would fall through to
+      // the raw rejection value when it is not an Error, and a plain object
+      // could carry question content, options, answer keys or a Firestore
+      // snapshot. The department id is kept — it is not assessment content.
+      console.error(
+        'getActiveQuestions failed for department',
+        dept,
+        safeErrorMessage(err, 'Unknown question-bank read error')
+      );
+      setBankLoadFailed(true);
+      setBankCoverage(null);
+      setView('bankUnavailable');
+      return false;
+    }
+    setBankLoadFailed(false);
+    // Read succeeded. Empty means the supervisor has no live bank yet, which the
+    // committed seed bank legitimately covers.
+    const bank = live.length > 0 ? live : (SEED_BY_DEPT[dept] ?? SEED_QUESTIONS);
+    setQuestions(bank);
+    setBankCoverage(assessmentBankCoverage(bank));
+    return true;
+  };
+
+  /** Retry a failed bank read without making the navigator sign out. */
+  const retryBankLoad = async () => {
+    const dept = activeDept;
+    if (!dept || bankRetrying) return;
+    setBankRetrying(true);
+    try {
+      if (await loadBankForDept(dept)) setView('phases');
+    } finally {
+      setBankRetrying(false);
+    }
+  };
+
   // When a department is selected, load BOTH result types for it.
   const handleDeptSelect = async (dept) => {
     setActiveDept(dept);
@@ -144,8 +204,21 @@ export default function NavigatorApp({ navigatorId, name, onSignOut }) {
       const type = pickActiveType(byType);
       setActiveType(type);
       // Fetch the active question bank for this department (needed by MCQ + coaching).
-      const qs = await getActiveQuestions(dept).catch(() => []);
-      setQuestions(qs.length > 0 ? qs : (SEED_BY_DEPT[dept] ?? SEED_QUESTIONS));
+      //
+      // THREE OUTCOMES, deliberately distinct:
+      //   • read succeeded, non-empty  → use the live bank, then validate coverage
+      //   • read succeeded, empty      → use the committed seed bank, then validate
+      //   • read FAILED                → bank status is UNKNOWN. Never fall back to
+      //                                  the seed: a stale seed assessment could be
+      //                                  graded and stored as if it were current.
+      //
+      // A failed read is NOT "the bank is incomplete" — it is "we don't know" —
+      // so it gets its own retryable connection-error state.
+      //
+      // A partially populated live bank is never topped up from the seed either;
+      // mixing outdated seed content with the supervisor's managed content inside
+      // one graded assessment is worse than blocking.
+      if (!(await loadBankForDept(dept))) return;
       if (type) setAllDeptResults((prev) => ({ ...prev, [dept]: byType[type].scores }));
       // Land on the dashboard only when the full 3-phase assessment is complete;
       // otherwise the phase hub shows what's next (D5).
@@ -236,6 +309,21 @@ export default function NavigatorApp({ navigatorId, name, onSignOut }) {
 
   const handleSubmit = async (_ignoredName, answers) => {
     const dept = activeDept ?? 'pediatrics';
+    // Final guard before persisting an official result.
+    // If the bank read failed we do not know what the live bank contains, so no
+    // result may be saved from whatever is currently in memory.
+    if (bankLoadFailed) {
+      setView('bankUnavailable');
+      return;
+    }
+    // A bank that cannot measure all six domains must never produce a stored
+    // profile, because the unmeasured domains would land as fabricated zeroes.
+    const coverage = assessmentBankCoverage(questions);
+    if (!coverage.complete) {
+      setBankCoverage(coverage);
+      setView('bankIncomplete');
+      return;
+    }
     const scores = scorePerDomain(answers, questions);
     const competencyScores = scorePerCompetency(answers, questions);
     const now = clientTimestamp();
@@ -419,6 +507,63 @@ export default function NavigatorApp({ navigatorId, name, onSignOut }) {
     );
   }
 
+  // The question bank could NOT BE READ. The bank status is unknown — which is
+  // different from knowing it is incomplete — so we neither start the check nor
+  // silently substitute the seed bank, which could be stale.
+  if (view === 'bankUnavailable') {
+    return (
+      <Shell role="navigator" view="phases" setView={() => {}} onSignOut={onSignOut}>
+        <EmptyState title="Couldn't load the question bank">
+          <p>
+            We couldn&rsquo;t reach the question bank for this department, so the check can&rsquo;t
+            start yet. This is a connection problem, not a problem with your results — nothing has
+            been recorded and nothing has been lost.
+          </p>
+          <p>
+            Try again in a moment. If it keeps failing, let your supervisor know.
+          </p>
+          <div className="bank-gap__actions">
+            <button className="btn btn--primary" onClick={retryBankLoad} disabled={bankRetrying}>
+              {bankRetrying ? 'Retrying…' : 'Try again'}
+            </button>
+            <button className="btn btn--ghost" onClick={() => setView('phases')} disabled={bankRetrying}>
+              ← Back to my assessment
+            </button>
+          </div>
+        </EmptyState>
+      </Shell>
+    );
+  }
+
+  // The active assessment bank cannot measure all six domains. Blocking is the
+  // safe failure: an unmeasured domain must never be stored as a score of 0.
+  if (view === 'bankIncomplete') {
+    const missing = bankCoverage?.missing ?? [];
+    return (
+      <Shell role="navigator" view="phases" setView={() => {}} onSignOut={onSignOut}>
+        <EmptyState title="This assessment isn't ready yet">
+          <p>
+            The active question bank for this department doesn&rsquo;t cover every knowledge domain
+            yet, so the check can&rsquo;t produce a complete, fair result. Nothing has been recorded.
+          </p>
+          {missing.length > 0 && (
+            <p className="bank-gap__list">
+              Missing questions for:{' '}
+              <strong>{missing.map((id) => domainName(id)).join(', ')}</strong>
+            </p>
+          )}
+          <p>
+            Please let your supervisor know so they can restore coverage in the Question Bank. Your
+            other assessment phases are unaffected.
+          </p>
+          <button className="btn btn--ghost" onClick={() => setView('phases')}>
+            ← Back to my assessment
+          </button>
+        </EmptyState>
+      </Shell>
+    );
+  }
+
   if (view === 'deptselect') {
     return (
       <Shell role="navigator" view="deptselect" setView={() => {}} onSignOut={onSignOut}>
@@ -473,7 +618,22 @@ export default function NavigatorApp({ navigatorId, name, onSignOut }) {
           done={phaseDone}
           results={resultsByType}
           latestQa={latestQa}
-          onStart={(id) => setView(id === 'spot' ? 'spotfull' : id === 'qa' ? 'qatest' : 'check')}
+          onStart={(id) => {
+            if (id === 'mcq') {
+              // Unknown bank (read failed) — never start from a possibly-stale
+              // seed assessment.
+              if (bankLoadFailed || !bankCoverage) {
+                setView('bankUnavailable');
+                return;
+              }
+              // Known-incomplete bank — starting it would end in fabricated zeroes.
+              if (!bankCoverage.complete) {
+                setView('bankIncomplete');
+                return;
+              }
+            }
+            setView(id === 'spot' ? 'spotfull' : id === 'qa' ? 'qatest' : 'check');
+          }}
         />
       )}
 
@@ -663,7 +823,14 @@ export default function NavigatorApp({ navigatorId, name, onSignOut }) {
         <Check
           onSubmit={async (_n, answers, miniQuestions) => {
             const scores = scorePerDomain(answers, miniQuestions);
-            const domainScore = scores[miniCheckDomain] ?? 0;
+            const domainScore = scores[miniCheckDomain];
+            // A mini-check with no scoreable question for its domain measured
+            // nothing: never coerce that to 0 (which would look like a failed
+            // attempt) and never record mastery from it.
+            if (!Number.isFinite(domainScore)) {
+              setView('training');
+              return;
+            }
             const passed = domainScore >= MINICHECK_PASS;
             if (passed) {
               // Re-save the active profile with the updated domain so the trend chart gains a point.

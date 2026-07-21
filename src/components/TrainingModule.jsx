@@ -331,6 +331,9 @@ export default function TrainingModule({
   }, [mod, department, supported]);
 
   const cohort = trainingByDomain(rows).find((d) => d.domainId === domainId);
+  // How many navigators were actually scored in this domain — an empty cohort
+  // means "covered" only if somebody was measured.
+  const assessedInDomain = rows.filter((r) => Number.isFinite(r?.scores?.[domainId])).length;
 
   // Departments without authored training content get an explicit unavailable
   // state — never another department's content, and never a completion control.
@@ -455,10 +458,29 @@ export default function TrainingModule({
         <p className="readoff__sub">
           Based on this quarter&rsquo;s check — navigators weak in {domainName(domainId)}.
         </p>
-        {!cohort || (cohort.required.length === 0 && cohort.stretch.length === 0) ? (
-          <p className="readoff__empty">No one needs this module right now — the floor has it covered.</p>
+        {!cohort || (cohort.critical.length === 0 && cohort.required.length === 0 && cohort.stretch.length === 0) ? (
+          // "Covered" is only true when someone was actually scored here.
+          // Unscored domains produce no cohort either, and that is not mastery.
+          <p className="readoff__empty">
+            {assessedInDomain === 0
+              ? `No assessment results are available for ${domainName(domainId)} yet.`
+              : 'No one needs this module right now — the floor has it covered.'}
+          </p>
         ) : (
           <div className="train-domain__cohorts">
+            {cohort.critical.length > 0 && (
+              <div className="cohort">
+                <span className="cohort__tag cohort__tag--critical">Critical ({cohort.critical.length})</span>
+                <span className="cohort__names">
+                  {cohort.critical.map((n, i) => (
+                    <span key={n}>
+                      {i > 0 && ', '}
+                      <button className="linkbtn" onClick={() => onOpenNavigator(n)}>{n}</button>
+                    </span>
+                  ))}
+                </span>
+              </div>
+            )}
             {cohort.required.length > 0 && (
               <div className="cohort">
                 <span className="cohort__tag cohort__tag--req">Required ({cohort.required.length})</span>

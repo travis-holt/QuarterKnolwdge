@@ -11,7 +11,50 @@
 > [§8 Current System State](#8-current-system-state) and [§15 Current Priorities](#15-current-priorities)
 > accurate at all times.
 >
-> **Last updated:** 2026-07-20 (**department-controlled training modules** — PR #38 merged onto the
+> **Last updated:** 2026-07-21 (**one official capability status per navigator per department** —
+> this REVERSES the original 2026-06-23 "never a single overall grade" principle. Each department
+> assessment now resolves to exactly one official status from the **arithmetic mean of all six
+> domain scores**, in four non-overlapping bands: `0–39` **Critical** · `40–64` **Learning** ·
+> `65–89` **Solid** · `90–100` **Can-Teach** (palette Burgundy → Orange → Gold → Green, with a light
+> `tint` per band for diagnostics). Supervisors read "72% Overall · Solid" instead of reconciling six
+> separate per-domain classifications. All six domain percentages remain visible as **diagnostic
+> evidence** — driving targeted training, coaching, development paths, trends, critical-gap alerts,
+> question-health evidence and mentor qualification — but a domain is never rendered as its own
+> official level. A domain below 40 is flagged **"Critical gap"** even when the overall status is
+> higher. Thresholds stay centralized in `config.js`; `overallScore`/`overallLevel`/`overallStatus`
+> in `scoring.js` are the single canonical calculation (`departmentOverall` is now a thin alias).
+> Safety rails: an **incomplete profile** (any of the six domains missing/non-numeric) is labelled
+> "Incomplete" and can never be promoted to Solid or Can-Teach; **mentoring** requires Can-Teach
+> overall AND ≥90% in that specific domain; **training** is assigned purely from domain scores, so a
+> Can-Teach-overall navigator still receives a Required assignment for a weak domain; **Critical** is
+> a developmental/supervisory signal, never an automatic employment decision; and status is never
+> communicated by colour alone. **No Firestore migration** — everything derives at runtime from the
+> `scores` object result documents already carry, and legacy result/pairing records keep rendering.
+> **Merge-blocker review pass (same day):** three defects in the first implementation are fixed —
+> (1) a MISSING domain was being coerced to `0` and read as `'critical'`, fabricating gaps, training,
+> column gaps, learning signals, mentor suggestions and alerts; a missing domain is now an explicit
+> unassessed `null` band and only a RECORDED 0–39 is a Critical gap; (2) an incomplete profile was
+> double-counted (as `incomplete` AND inside Learning/Critical) and could inflate the floor average,
+> so `overallScore` now returns null unless all six domains are numeric, `partialAverage` is a
+> separate diagnostic field, distribution buckets are mutually exclusive and sum exactly to total,
+> and official KPIs use complete profiles only; (3) competency scores were being passed through the
+> new four-band capability mapper, producing `NaN` distribution counts and dropping sub-40
+> competencies from the Overview — competencies now keep their ORIGINAL thresholds via
+> `competencyScoreToLevel`/`COMPETENCY_THRESHOLDS`.
+> **Final cleanup pass (same day):** repaired the remaining Latin-1 round-trip damage (corrupted
+> arrows and box-drawing rules in two test files, plus a pre-existing instance in
+> `tests/firestore-rules/call-qa-interviews.rules.mjs`) and **widened `scripts/check-encoding.mjs`**
+> from a single hard-coded lead pair to the full continuation class, so the guard now catches every
+> double-encoded 3-byte sequence (arrows, box drawing, math, punctuation) rather than curly quotes
+> alone; fixed the guard's own Windows blind spot (`.pathname` gave `/C:/...` as a cwd, so
+> `git ls-files` failed with ENOENT and the repo scan silently never ran on Windows); and made
+> `departmentMatrix()` keep **Incomplete distinct from Unassessed** — a cell is null only at 0 of 6
+> domains, while 1–5 of 6 returns a real cell labelled `Incomplete` with `assessedDomains`, so an
+> in-progress assessment is no longer indistinguishable from an untaken one.
+> Unit suite 1417 → **1572** across 73 files (all green, including the encoding guard for the first
+> time); build clean; 12/12 safe Playwright E2E; Firestore Rules **76/76** (51 + 25).
+> See docs/HISTORY.md 2026-07-20) ·
+> **Prior same-day update:** 2026-07-20 (**department-controlled training modules** — PR #38 merged onto the
 > latest `main` after PR #37, the answer-length balance, and PR #39 (OB/GYN Spot-the-Error bank v5),
 > which are all preserved intact. The first PR #38 implementation fixed the content leak but gave
 > `TrainingModule` a **private department state** plus a module-local selector, which allowed three
@@ -25,7 +68,7 @@
 > Behavioural Health render "Training content is not available for this department yet." The catalog
 > metadata and pure filtering helpers are unchanged; both regression directions and every current-floor
 > SOP rule still hold. Unit suite 1374 → **1417** across 71 files. See docs/HISTORY.md 2026-07-20) ·
-> **Prior same-day update:** 2026-07-19 (OB/GYN Spot-the-Error bank v5 — all 30 calls are individually authored as literal ten-turn transcripts in their six domain files; the shared transcript builder is removed, error turns are distributed 8/8/7/7 across Agent indices 2/4/6/8, chart-opening placement varies, post-error patients continue naturally, and human-review metadata records the subtle trap plus two correct distractor decisions for every call; an audit-only marker refreshes already-migrated environments without rewriting MCQs) ·
+> **Earlier update:** 2026-07-19 (OB/GYN Spot-the-Error bank v5 — all 30 calls are individually authored as literal ten-turn transcripts in their six domain files; the shared transcript builder is removed, error turns are distributed 8/8/7/7 across Agent indices 2/4/6/8, chart-opening placement varies, post-error patients continue naturally, and human-review metadata records the subtle trap plus two correct distractor decisions for every call; an audit-only marker refreshes already-migrated environments without rewriting MCQs) ·
 > **Earlier same-day update:** 2026-07-19 (OB/GYN Spot-the-Error bank v4 — all 30 calls were expanded into multi-fact scenarios with approved greetings and whole-chart language, but subsequent review found the shared structure, fixed error position, and direct-correction follow-ups still made the target too easy) ·
 > **Earlier update:** 2026-07-19 (OB/GYN answer-length balancing — conspicuously long correct MCQ options and indexed Spot-the-Error lines were shortened without changing scenarios, distractors, correct mappings, workflow violations, or scoring; regression tests prevent answer length from revealing the target, and a new marker-gated bank version upserts the concise wording on already-migrated environments) ·
 > **Earlier update:** 2026-07-19 (OB/GYN current-floor assessment bank v3 — the owner-confirmed Women's Health SOP v1.0 now drives a curated 24-item MCQ bank and 30-item Spot-the-Error bank; all 24 executable workflow rules and all 14 audit workflow types are covered; a marker-gated migration archives stale active non-manual OB/GYN content without deleting history or touching Pediatrics/manual drafts; exact SOP/rule/source provenance and deterministic one-Agent-error guards are enforced by tests) ·
@@ -156,7 +199,10 @@
   **patient navigators** (contact-centre agents who handle patient calls) and renders the
   **capability map** it produces. The check asks scenario questions ("a patient calls wanting X,
   situation is Y — what do you do"), each tagged to a knowledge **domain**, and scores
-  **per domain per person** — never a single overall grade.
+  **per domain per person**. Each department assessment then produces **one official overall
+  capability status** for supervisor clarity, calculated from the arithmetic mean of all six
+  domain scores; the individual domain percentages remain visible as diagnostic evidence for
+  targeted training, coaching, trends, critical-gap alerts, and safe mentor qualification.
 - **Core mission:** Turn a team's operational knowledge into a clear, actionable capability map
   that supports readiness decisions, coaching, and training by domain.
 - **Vision statement:** Become the standing instrument a contact-centre team lead uses each
@@ -171,7 +217,8 @@
   auto-assigned training — in seconds, with no install or accounts.
 - **Main user problems solved:**
   1. Knowledge assessment that tests **application, not recall**.
-  2. No single vanity score — **per-domain** signal that's actually actionable.
+  2. **One unambiguous official status per navigator per department**, backed by an actionable
+     **per-domain** breakdown — supervisors get a clear answer *and* the evidence behind it.
   3. Surfaces **floor-wide training priorities** and **mentorship capacity** automatically.
   4. **Auto-assigns training** to each navigator based on their weak points.
   5. Extends the same lens across **multiple departments**.
@@ -191,8 +238,10 @@
 ### Short-Term Goals (current)
 - Deliver a credible, self-contained **prototype to demo to management**. ✅ Done.
 - Derive domains/questions from the real SOP. ✅ Done.
-- Per-domain scoring → Learning/Solid/Can-Teach levels with editable thresholds. ✅ Done.
-- Capability matrix (hero) with column gaps, can-teach roster, readiness tally. ✅ Done.
+- Per-domain scoring → **one official overall status** (Critical/Learning/Solid/Can-Teach) per
+  department, with editable thresholds; domain percentages kept as diagnostic evidence. ✅ Done.
+- Capability matrix (hero) with an Overall column, column gaps, domain-mentor roster, and
+  overall-status readiness ranking. ✅ Done.
 - Analytics dashboards (team overview + per-navigator). ✅ Done.
 - Auto-assign training by weak point, with previewable SOP-grounded module content. ✅ Done.
 - Department dimension (Pediatrics + 3 mockup departments). ✅ Done.
@@ -201,8 +250,10 @@
 ### Mid-Term Goals
 - ✅ **Multi-department live checks:** Pediatrics and OB/GYN are now live checks. Adult Medicine
   and Behavioural Health remain mockups pending their SOPs.
-- **Mentor pairing (floor-wide):** auto-match Learning ↔ Can-Teach with balanced mentor load.
-- **Coverage / bus-factor risk view:** flag domains with only 0–1 teachers (single point of failure).
+- **Mentor pairing (floor-wide):** auto-match weaker navigators to qualified mentors (Can-Teach
+  overall **and** ≥90% in the domain) with balanced mentor load.
+- **Coverage / bus-factor risk view:** flag domains with only 0–1 qualified mentors (single point
+  of failure).
 - **Training completion tracking:** Assigned → In progress → Done states (in-memory for the demo).
 
 ### Long-Term Vision
@@ -218,11 +269,14 @@ capability map and dashboards and act on them (assign training, plan mentorship)
 
 **Typical workflows / user journey:**
 1. **Take the check** — Start → step through ~20 domain-tagged multiple-choice scenarios → submit.
-2. **See results** — per-domain % and level (Learning/Solid/Can-Teach); no single grade.
-3. **Read the matrix** — sample navigators + the taker's new row, color-coded; with column gaps,
-   can-teach roster, readiness tally.
-4. **Explore analytics** — Team Overview (floor KPIs, distribution, cross-department strength) and
-   per-navigator dashboards (strengths, growth areas, assigned training, suggested mentors).
+2. **See results** — one official overall status (Critical/Learning/Solid/Can-Teach) from the
+   six-domain average, plus every per-domain % as the diagnostic evidence behind it.
+3. **Read the matrix** — every navigator's one official Overall status beside the six diagnostic
+   domain scores; with column gaps, the domain-mentor roster, and the overall-status readiness
+   ranking.
+4. **Explore analytics** — Team Overview (navigator-level KPIs, official status distribution,
+   diagnostic domain distribution, cross-department strength) and per-navigator dashboards
+   (strongest domains, priority focus areas, critical domain gaps, assigned training, mentors).
 5. **Manage training** — Training tab shows auto-assigned modules by domain cohort and by
    navigator; preview a module's mockup lesson content.
 6. **Switch departments** — the department bar re-scopes the matrix/dashboards/training to
@@ -254,63 +308,238 @@ training assignments.
 - **Dependencies:** `QUESTIONS`, `DOMAINS`.
 - **Notes:** Stepped flow chosen over single-page for demo clarity.
 
-### F2 — Multi-Signal Scoring → Level Mapping (two axes)
-- **Purpose:** Convert answers into per-domain **and** per-competency scores; never one total.
-- **User benefit:** Actionable, non-punitive signal on both *what* (domain) and *how* (competency).
+### F2 — Scoring → ONE official status + diagnostic domain evidence
+- **Purpose:** Convert answers into per-domain **and** per-competency scores, then resolve the six
+  domain scores into **exactly one official capability status per navigator per department**.
+- **User benefit:** Supervisors get a single unambiguous answer ("72% Overall · Solid") plus the
+  per-domain evidence that explains it, instead of six separate classifications to reconcile.
 - **Technical implementation:** `scorePerDomain(answers, questions)` and
   `scorePerCompetency(answers, questions)` in [src/lib/scoring.js](src/lib/scoring.js) average each
-  option's `points` (partial credit, not binary); `scoreToLevel()` maps to the 3 levels. Thresholds
-  in [src/data/config.js](src/data/config.js) (`THRESHOLDS = { learning: 60, canTeach: 85 }`).
+  option's `points` (partial credit, not binary). `scoreToLevel()` is the **one canonical band
+  mapping**; `overallScore()` / `overallLevel()` / `overallStatus()` are the **one canonical overall
+  calculation** (`departmentOverall()` is a thin alias, so a single averaging formula exists).
+  Thresholds live only in [src/data/config.js](src/data/config.js)
+  (`THRESHOLDS = { critical: 40, solid: 65, canTeach: 90 }`).
+- **Bands (non-overlapping):** `0–39` **Critical** · `40–64` **Learning** · `65–89` **Solid** ·
+  `90–100` **Can-Teach**. Palette progresses Burgundy `#8B1E2D` → Orange `#C9682C` → Gold `#D8A72E`
+  → Green `#347A4D`; each level also carries a light `tint` used for diagnostic domain cells.
+  Status is **never** communicated by colour alone — every surface renders the percentage and the
+  written label.
+- **Overall formula:** sum of the six configured domain scores ÷ six, **rounded only after the
+  complete average**, within a single department, from a single instrument's stored `scores`
+  (MCQ / Spot / Call QA are never blended, and departments are never averaged together). Derived at
+  runtime — **no Firestore migration**.
+- **Missing-domain safety (hardened 2026-07-20 review):** `overallScore()` returns **null unless
+  all six domains are numeric** — a partial profile has NO official score and NO official level.
+  `{intake: 100}` is **Incomplete**, not "100% Can-Teach" and not "Learning". `overallStatus()`
+  distinguishes three mutually exclusive states — `unassessed` (nothing scored) · `!complete`
+  (Incomplete, no official level) · `complete` (exactly one official level). Because an incomplete
+  profile has no level at all, `overallLevel === 'canTeach'` already implies completeness, so every
+  downstream mentor / readiness / question-health check inherits that safety.
+  `partialAverage(scores)` exposes the mean of the evidence that exists, but it is **explicitly
+  diagnostic**: it is never called an overall score, never rendered with a level, and never feeds an
+  official KPI.
+- **THE GOVERNING INVARIANT (2026-07-21):** *Missing evidence must never be represented as failure,
+  mastery, or a real 0%. Only a genuinely measured numeric zero is a Critical result.* This applies
+  end to end — bank coverage, per-domain scoring, official status, training empty states, floor
+  aggregates, trend series, and every label. Concretely:
+  - **Bank coverage.** `assessmentBankCoverage(questions)` / `isAssessmentBankComplete()` require at
+    least one *scoreable* question (`isScoreableQuestion`) for every configured domain. The navigator
+    MCQ phase is **blocked** — with a "this assessment isn't ready yet" screen naming the uncovered
+    domains — rather than scoring a bank that cannot measure all six. Nothing is persisted.
+    A partially-populated live bank is **never topped up from the seed bank**, because mixing
+    outdated seed content with current managed content inside one graded assessment is worse than
+    blocking. The seed bank is used only when the live bank is entirely empty.
+  - **A failed bank READ is not an empty bank (2026-07-21).** `loadBankForDept()` in `NavigatorApp`
+    distinguishes three outcomes: a successful non-empty read uses the live bank; a successful
+    **empty** read legitimately falls back to the department's committed seed bank; and a **rejected**
+    read means the bank status is *unknown*, so it renders its own retryable
+    "couldn't load the question bank" connection-error state (`view === 'bankUnavailable'`) and
+    permits neither starting the MCQ nor saving a result. Seed fallback is allowed **only after a
+    successful read confirms the live bank is empty** — never on an error, because a stale seed
+    assessment could otherwise be graded and stored as if it were current. The read error is logged
+    (message only, never the payload) rather than swallowed, and the navigator can retry without
+    signing out. The read error is normalized through `safeErrorMessage()`
+    ([src/lib/safeError.js](src/lib/safeError.js)) before logging: `err?.message ?? err` would fall
+    through to the raw rejection value, and a non-Error object could carry question content, options,
+    answer keys, a Firestore snapshot or a request payload straight into `console.error`. Only an
+    `Error`'s own message or a string rejection is logged (truncated); anything else becomes a
+    generic label. Arbitrary objects are never serialized and stack traces are never logged. The
+    department id is kept — it is not assessment content.
+  - **Unscoreable questions provide no evidence at all.** `isScoreableQuestion()` (known domain +
+    at least one option) now gates **both** `scorePerDomain` and `scorePerCompetency`. A malformed
+    question contributes neither a domain score nor a competency score; a competency exercised only
+    by unscoreable questions returns `null`. A *measurable* question still yields a genuine `0` when
+    the navigator leaves it unanswered or picks a zero-point/nonexistent option.
+  - **Per-domain scoring.** `scorePerDomain()` returns **null** for a domain with no scoreable
+    questions ("nothing to answer") and a genuine **0** for a domain that was measured and earned
+    nothing. `scorePerDomain(answers, bank, { strict: true })` throws
+    `IncompleteAssessmentBankError` (carrying `missing`) instead of returning a profile with holes.
+  - **Training empty states.** `trainingEmptyStateReason(row)` resolves an empty assignment list to
+    `unassessed` / `incomplete` / `mastered` / `has-assignments`; `hasMasteredAllDomains(row)` is
+    true only for a complete profile with every domain ≥ 90. No surface may treat
+    `assignments.length === 0` as mastery, and mentoring is never suggested to an incomplete or
+    unassessed navigator.
+  - **Aggregates.** `floorStats().avgOverallScore` / `.solidPlusRate` and
+    `domainDistribution().avgScore` are **null** when there is no eligible evidence, and render as
+    `—`/`N/A` (never `0%`). `teamTrend()` omits timepoints with zero complete profiles, and
+    `buildTrend()` puts **null** (a gap in the sparkline) where a historical domain score is
+    missing. Counts stay genuine zeroes — "zero navigators are Critical" is a real fact. A complete
+    floor whose real average is 0 still displays `0%`.
+  - **Synthetic trend points are scaffolding, never evidence (2026-07-21).** `buildTrend()` prepends
+    illustrative `simulated: true` points when real history is thin, and they may still be *drawn*
+    (they are labelled "(illustrative)"). They must never be described as measured, as historical
+    evidence, as a prior result, or as the navigator's last score. The flattened
+    `overallSeries`/`domainSeries` arrays deliberately cannot convey provenance, so any
+    "last measured" style caption reads **`latestRealOverall`** / **`latestRealDomainValues`**
+    (plus `hasRealMeasurements`), which are computed from real, non-simulated snapshots only and are
+    `null` when no real measurement exists — in which case the caption is omitted entirely.
+    `latestMeasured()` in `formatScore.js` remains a generic, **provenance-unaware** array helper and
+    must not be used for such captions. A genuine historical `0` is a real measurement and still
+    captions "last measured 0%".
+  - **Only finite numeric evidence may appear as a percentage (2026-07-21).** `Math.round(null)` is
+    `0`, so any label rounding a possibly-null value silently fabricates a measured zero. All
+    score/percentage labels go through one shared formatter,
+    [src/lib/formatScore.js](src/lib/formatScore.js) — `formatPercent()` (genuine `0` → `"0%"`;
+    finite → rounded; null/undefined/NaN/non-numeric → `"N/A"`), `formatSeriesCurrent()`,
+    `latestMeasured()` and `isMeasured()`. `trendOverall()` returns **null** (not 0) when a snapshot
+    has no measurable evidence, and `buildTrend().overallSeries` is `(number|null)[]` for the same
+    reason. `Sparkline` splits its line around gaps and dots isolated readings rather than plotting
+    them at zero. `NavigatorDetail` labels the **latest snapshot** — showing `N/A` when the most
+    recent check measured nothing, with a separate "last measured X%" caption, so an older reading
+    is never presented as current.
+- **Missing evidence is never a zero (hardened 2026-07-20 review):** `domainBand(pct)` returns
+  **null** for a missing or non-numeric domain — never `'critical'`. Only a genuinely recorded
+  number in 0–39 is a Critical gap. An absent domain therefore produces **no** critical-gap alert,
+  **no** required/critical training assignment, **no** column gap, **no** distribution band count,
+  **no** Learning Loop weak-domain signal, **no** mentor suggestion or pairing, and **no** Action
+  Center entry. A recorded `0` still does all of those things — the two cases are deliberately
+  distinguishable everywhere, and regression-tested as such.
+- **Competency axis is separate:** `competencyScoreToLevel()` + `COMPETENCY_THRESHOLDS`
+  (`<60` Learning · `60–84` Solid · `85+` Can-Teach) keep the competency axis on its **original**
+  bands. The capability re-band deliberately did not touch competencies. Never call the capability
+  `scoreToLevel()` on a competency score: it would silently re-band every rating and emit a
+  `'critical'` id the competency distribution has no bucket for (which produced `NaN` counts and
+  dropped sub-40 competencies from the Overview until the 2026-07-20 review fixed it).
 - **Status:** Complete.
-- **Dependencies:** `THRESHOLDS`, `LEVELS`, `COMPETENCIES`.
-- **Notes:** `<60` Learning, `60–84` Solid, `85+` Can-Teach (same bands for both axes). Each option
-  carries `points` (0–100) + an SOP-referenced `rationale`; the 100-point option is `correctOptionId`.
+- **Dependencies:** `THRESHOLDS`, `LEVELS`, `LEVEL_ORDER`, `COMPETENCIES`.
+- **Notes:** Domain scores keep the same bands, but only as **diagnostic ranges** driving tints and
+  training priority — a domain is never rendered as "Routing · Solid". Competency scores remain a
+  **separate axis**, presented explicitly as competency analysis rather than the department status.
+  Each option carries `points` (0–100) + an SOP-referenced `rationale`; the 100-point option is
+  `correctOptionId`.
 
 ### F3 — Capability Matrix (hero screen)
-- **Purpose:** Navigators × domains grid, color-coded by level; the centrepiece.
-- **User benefit:** Whole-floor capability at a glance.
+- **Purpose:** Navigator × **Overall** + six domain columns; the centrepiece.
+- **User benefit:** One official status per navigator at a glance, with the diagnostic scores that
+  produced it in the same row.
 - **Technical implementation:** [src/components/Matrix.jsx](src/components/Matrix.jsx); rows from
-  `buildMatrixRows()`. Live taker appears as a highlighted new row; rows are clickable to the
-  navigator dashboard.
+  `buildMatrixRows()`. The **Overall** cell renders `<OverallBadge>` (strong level colour + % +
+  label); each domain cell renders `<DomainScore>` — the raw percentage on a light score-range tint,
+  with a **"Critical gap"** warning below 40 — never a Learning/Solid/Can-Teach pill. Shared badge
+  primitives live in [src/components/OverallStatus.jsx](src/components/OverallStatus.jsx). The
+  legend lists all four levels with their ranges and states that it primarily describes the official
+  Overall status while domain colours are diagnostic score ranges. Live taker appears as a
+  highlighted new row; rows are clickable to the navigator dashboard.
 - **Status:** Complete.
-- **Dependencies:** F2, `SAMPLE_NAVIGATORS`, department scope.
+- **Dependencies:** F2, department scope.
 
-### F4 — Matrix Read-offs (column gaps · can-teach roster · readiness tally)
+### F4 — Matrix Read-offs (column gaps · domain mentors · readiness)
 - **Purpose:** The "so what" — turn the grid into priorities.
 - **User benefit:** Immediate training/mentorship signal.
-- **Technical implementation:** `columnGaps()`, `canTeachRoster()`, `readinessTally()` in
+- **Technical implementation:** `columnGaps()`, `domainMentorRoster()`, `readinessTally()` in
   [src/lib/scoring.js](src/lib/scoring.js). `COLUMN_GAP_THRESHOLD = 0.5`.
 - **Status:** Complete.
+- **Notes:** A **column gap** is now "a majority of navigators score **below 65%**" (Critical +
+  Learning bands, with the critical count reported separately) rather than "sit at Learning".
+  `readinessTally()` ranks by **official overall status, then overall score**, and exposes
+  `readyForMore` (true only for overall Can-Teach) plus `canTeachDomainCount` as supporting depth —
+  it no longer counts Can-Teach cells as the classification. `canTeachRoster` remains as a
+  backward-compatible alias of `domainMentorRoster` (see F7).
 
 ### F5 — Team Overview Dashboard
-- **Purpose:** Floor-wide KPIs + capability distribution + cross-department strength.
-- **User benefit:** Leadership "state of the floor" view.
+- **Purpose:** Floor-wide **navigator-level** KPIs + official status distribution + domain
+  diagnostics + cross-department strength.
+- **User benefit:** Leadership "state of the floor" view in terms of people, not cells.
 - **Technical implementation:** [src/components/Overview.jsx](src/components/Overview.jsx);
-  `floorStats()`, `domainDistribution()`, `departmentMatrix()`.
+  `floorStats()`, `overallDistribution()`, `domainDistribution()`, `departmentMatrix()`.
+- **KPIs:** % of navigators Solid or above · navigators Can-Teach overall · **navigators Critical
+  overall** (highlighted) · average overall score · navigators assessed. The old cell-based KPIs
+  ("avg Can-Teach domains / navigator", "domains have a teacher", solid-rate across every domain
+  cell) are **removed**.
+- **Eligible profiles (hardened 2026-07-20 review):** every official-status KPI is computed over
+  **complete six-domain profiles only**. `floorStats().assessed` counts complete profiles — the
+  population the KPIs actually describe — while `rowCount`, `incompleteCount` and `unassessedCount`
+  report the rest. A one-domain `{intake: 100}` therefore cannot inflate the floor average, and an
+  unassessed navigator is never counted as assessed. The Overview renders an eligibility note
+  explaining any exclusion.
+- **Distribution:** an official overall-status distribution sits above the per-domain panel and is
+  **mutually exclusive** — each navigator lands in exactly one of Critical / Learning / Solid /
+  Can-Teach / Incomplete / Unassessed, so `critical + learning + solid + canTeach + incomplete +
+  unassessed === total` exactly. (Before the 2026-07-20 review an incomplete row was counted twice:
+  once as `incomplete` and again inside Learning or Critical.) The per-domain panel is explicitly a
+  **diagnostic score distribution**, reports each domain's average score and sub-40 count, and
+  carries its own `unassessed` bucket so an unscored domain is never bucketed into a band (which
+  previously produced `NaN`).
+- **Cross-department table (fixed 2026-07-20 cleanup):** `departmentMatrix()` returns null for a
+  department cell **only when it is fully unassessed** (0 of 6 domains). An **incomplete**
+  department (1–5 of 6) returns a real cell — `overall: null`, `level: null`, `complete: false`,
+  `label: 'Incomplete'`, plus `assessedDomains`/`totalDomains` — so the table shows "—/Incomplete"
+  with an "X of 6 domains scored" tooltip instead of collapsing an in-progress assessment into
+  "Not assessed". Both `Overview`'s "Strength by department" table and `NavigatorDetail`'s
+  department strip pass that metadata to `OverallBadge`; omitting it would make the badge mistake
+  an incomplete department for an unassessed one. `partialAverage` is never rendered there as an
+  official percentage.
 - **Status:** Complete.
 
 ### F6 — Navigators List + Per-Navigator Dashboard
 - **Purpose:** Drill into one person's development picture.
-- **User benefit:** Coaching-ready individual view.
+- **User benefit:** Coaching-ready individual view, headed by one official status.
 - **Technical implementation:** [src/components/Navigators.jsx](src/components/Navigators.jsx) and
-  [src/components/NavigatorDetail.jsx](src/components/NavigatorDetail.jsx) — strengths, growth
-  areas, per-domain bars (worst→best), per-department strip, assigned training, suggested mentors.
+  [src/components/NavigatorDetail.jsx](src/components/NavigatorDetail.jsx).
+  **Roster cards** show `Name` + `91% Overall · Can-Teach` and keep a six-segment domain score strip
+  (each segment a score-range tint, tooltip = domain name + percentage); the old
+  "3 Can-Teach" / "2 Learning · 3 Solid · 1 Can-Teach" counters are **removed**, and a Critical
+  overall card is visibly urgent (`.nav-card--critical`) while still readable.
+  **NavigatorDetail** headers a single `<OverallBadge>` (`91% Overall` / `Can-Teach`); the
+  "can teach N of 6 domains" lede and the Can-Teach-domain counter are gone. Sections are named from
+  raw scores — **Strongest domains**, **Priority focus areas**, **Critical domain gaps** — and each
+  per-domain card shows its percentage with neutral wording (`Critical gap` / `Focus area` /
+  `Developing` / `Strong score`), never an official level badge.
 - **Status:** Complete.
 - **Dependencies:** F2, F8, F10, `departmentMatrix()`, `mentorSuggestions()`.
 
 ### F7 — Suggested Mentors (per navigator)
-- **Purpose:** For each non-Can-Teach domain, list colleagues who can teach it.
-- **User benefit:** Built-in mentorship matching at the individual level.
-- **Technical implementation:** `mentorSuggestions()` in [src/lib/scoring.js](src/lib/scoring.js).
+- **Purpose:** For each domain a navigator has not mastered, list colleagues **qualified** to mentor it.
+- **User benefit:** Built-in mentorship matching that cannot recommend an unsafe mentor.
+- **Technical implementation:** `domainMentorRoster()` + `mentorSuggestions()` in
+  [src/lib/scoring.js](src/lib/scoring.js).
+- **Mentor safety rule (both conditions required):** a navigator may mentor a domain only when
+  (1) their **official overall status is Can-Teach** AND (2) they scored **≥ 90% in that specific
+  domain**. So overall 94 + Routing 95 → eligible Routing mentor; overall 94 + Routing 62 → not
+  eligible for Routing; overall 84 + Routing 100 → not an official mentor at all. The domain itself
+  is never described as "Can-Teach" — the domain score is only the subject qualification.
 - **Status:** Complete.
-- **Notes:** Floor-wide mentor *pairing* (load-balanced) is **Planned** (see Roadmap).
+- **Notes:** `canTeachRoster` is kept as a deprecated alias so older callers keep working.
 
 ### F8 — Auto-Assigned Training
-- **Purpose:** Assign training per navigator by weak point (Required for Learning, Stretch for Solid).
-- **User benefit:** Turns the matrix into an action plan automatically.
+- **Purpose:** Assign training per navigator by **individual domain score** — never by the official
+  overall status.
+- **User benefit:** Turns the matrix into an action plan automatically, and a strong average never
+  hides a weak domain.
 - **Technical implementation:** `trainingForRow()`, `trainingPlan()`, `trainingByDomain()`,
-  `trainingStats()` in [src/lib/scoring.js](src/lib/scoring.js); rules in `TRAINING_RULES`
-  ([src/data/config.js](src/data/config.js)); [src/components/Training.jsx](src/components/Training.jsx).
+  `trainingStats()`, `buildDevPath()`, `adaptiveTrainingRecommendations()` in
+  [src/lib/scoring.js](src/lib/scoring.js); rules in `TRAINING_RULES`
+  ([src/data/config.js](src/data/config.js)); [src/components/Training.jsx](src/components/Training.jsx),
+  [src/components/MyTraining.jsx](src/components/MyTraining.jsx),
+  [src/components/TrainingModule.jsx](src/components/TrainingModule.jsx) (cohort).
+- **Assignment rules by domain score:** `0–39` **Critical** (required, rank 0) · `40–64`
+  **Required** (required, rank 1) · `65–89` **Stretch** (optional, rank 2) · `90–100` no automatic
+  assignment. `isRequiredAssignment()` treats Critical + Required as mandatory.
+- **Independence from the overall status:** a navigator who is **Can-Teach overall (91%) can still
+  carry a Required assignment for Routing at 58%** — this is correct and covered by tests. Training
+  explanations cite the measured score ("Assigned because Routing scored 54%", or "Immediate focus
+  because Routing scored 34%"), never a level name.
 - **Status:** Complete.
 
 ### F9 — Rich Training Modules (SOP-grounded, interactive)
@@ -549,8 +778,9 @@ training assignments.
     `scoreSpotTheErrorByDomain(graded)` → `{ domainId: percent }` from `[{domainId, correct}]`.
     Click-accuracy only. Same 0–100 scale as the main check, so results feed domain scores directly.
   - `src/components/SpotTheError.jsx` — phases: `loading` (fires one `/api/generate-audit` call per
-    planned item in parallel via `Promise.allSettled`, keeps whatever succeeds; full-mode domains
-    that fail to generate backfill to 0) → `active` (one item at a time; the navigator **picks the
+    planned item in parallel; **generation is all-or-nothing** — a full-mode run that cannot produce
+    an item for every domain fails rather than proceeding, so a domain that could not be generated is
+    **never backfilled as a navigator zero**) → `active` (one item at a time; the navigator **picks the
     message AND types a required "why is this the error" explanation** before Next commits the
     answer — the pick stays changeable until then, and **no correct/wrong feedback is shown during
     the run** (deferred-feedback redesign 2026-07-17); each item shows its domain tag) → `review`
@@ -601,10 +831,14 @@ training assignments.
   every `saveResult`). Pure functions in `scoring.js`: `buildTrend(history, { synthesize })` →
   per-domain and overall sparkline series (prepends `TREND_SYNTH_POINTS` illustrative leading points
   when real history < 2); `trainingImpact(history, completions, domainId)` → before/after/delta;
-  `teamTrend(allHistory)` → floor solidPlusRate + avgReadiness per time bucket.
+  `teamTrend(allHistory)` → per time bucket: `avgOverallScore`, `solidPlusRate`, `canTeachRate`,
+  `criticalCount`, `assessed` — all computed from each navigator's **official overall status**, no
+  longer from a count of Can-Teach domain cells. The existing assessment-type comparability rule is
+  preserved, so MCQ and Spot the Error snapshots are never mixed inside one navigator's series.
   UI: `src/components/Sparkline.jsx` (inline SVG polyline, no dep); trend panel in
   `NavigatorDetail.jsx` (per-domain sparklines + delta badges, fetched via `getResultHistory`);
-  team-trend widget in `Overview.jsx` (solidPlusRate + avgReadiness over time via `subscribeResultHistory`).
+  team-trend widget in `Overview.jsx` (average overall score + Solid-or-above rate over time via
+  `subscribeResultHistory`).
 - **Status:** Complete.
 - **Files:** new `src/components/Sparkline.jsx`; edited `src/lib/scoring.js`, `src/lib/scoring.test.js`,
   `src/lib/db.js`, `src/components/{NavigatorDetail,Overview,NavigatorApp,SupervisorApp}.jsx`.
@@ -624,13 +858,24 @@ training assignments.
 
 ### F19 — Supervisor Action Center
 - **Purpose:** Unified dashboard aggregating who needs attention and why.
-- **User benefit:** Supervisors open one tab and see ranked: critical gaps, training overdue,
-  declining trends, failed practice, and navigators ready for more. Each row is clickable.
+- **User benefit:** Supervisors open one tab and see ranked: **Critical overall** navigators first,
+  then critical domain gaps, Learning overall, training overdue, declining trends, failed practice,
+  and who is ready for more. Each row is clickable.
 - **Technical implementation:** `buildActionCenter(rows, { history, interviews, completions })` in
-  `scoring.js` → five category arrays. New `src/components/ActionCenter.jsx`. Supervisor tab
+  `scoring.js` → category arrays. New `src/components/ActionCenter.jsx`. Supervisor tab
   `action` + nav entry "Action Center" + render block in `SupervisorApp.jsx`. New
   `subscribeInterviews(cb, onError)` live subscription in `db.js`; passes `allInterviews` +
   `deptHistory` to ActionCenter.
+- **Categories:** `criticalOverall` (official overall status below 40 — rendered first, with
+  "Immediate supervisor attention recommended") · `criticalDomainGaps` (any domain below 40, shown
+  even when the navigator's overall status is healthy — e.g. *Overall 72% Solid · Routing 32%
+  Critical domain gap*) · `learningOverall` · `trainingOverdue` (critical assignments escalate to
+  `severity:'high'`) · `decliningTrends` · `failedPractice` · `readyForMore` (**only** navigators
+  whose `overallLevel === 'canTeach'`, shown as "94% overall · Can-Teach" rather than a Can-Teach
+  domain count). `criticalGaps` is retained as a deprecated alias of `criticalDomainGaps`.
+- **Not an employment decision:** Critical is a developmental and supervisory signal only. It never
+  triggers automatic employment decisions, punitive actions, account restrictions, suspensions, or
+  access removal, and the UI says so.
 - **Status:** Complete.
 - **Files:** new `src/components/ActionCenter.jsx`; edited `src/lib/{scoring,scoring.test,db}.js`,
   `src/components/{SupervisorApp,Nav}.jsx`, `src/styles.css`.
@@ -662,13 +907,24 @@ training assignments.
 
 ### F21 — Mentor Matching Engine (persisted pairings + outcomes)
 - **Purpose:** Load-balanced mentor-mentee pairings with Firestore persistence and outcome delta tracking.
-- **User benefit:** Supervisor sees suggested pairings (Learning/Solid mentees → least-loaded Can-Teach
+- **User benefit:** Supervisor sees suggested pairings (weaker mentees → least-loaded **qualified**
   mentors, capped at `MENTOR_MAX_LOAD`), assigns with one click, and tracks score improvement over time.
+- **Mentor safety rule:** mentors come from `domainMentorRoster()`, so every pairing satisfies BOTH
+  conditions — **overall status Can-Teach** AND **≥ 90% in the specific domain**. A navigator who is
+  Can-Teach overall but weak in a domain cannot mentor it, and a perfect domain score never
+  qualifies someone whose overall status is lower. Mentor capacity in `Mentorship.jsx` lists only
+  overall-Can-Teach navigators.
 - **Technical implementation:**
   - `buildMentorMatches(rows, { maxLoad })` in `scoring.js` → `{ pairings, load, unmatched }`.
-    Learning mentees prioritized over Solid; least-loaded mentor first; unmatched when no teacher
-    or mentor at cap.
-  - `pairingOutcomes(savedPairings, rows)` → enriches each pairing with `{ currentScore, delta, improved }`.
+    Mentees prioritized **Critical → Learning → Solid** (then by domain score); least-loaded mentor
+    first; unmatched when no qualified mentor or all mentors at cap.
+  - New pairing records carry `mentorOverallScore`, `mentorOverallLevel`, `mentorDomainScore`,
+    `menteeOverallScore`, `menteeOverallLevel`, and `baselineDomainScore`. The legacy `menteeLevel`
+    and `baselineScore` fields are still written, so **existing saved pairing documents keep
+    rendering unchanged and are never destructively rewritten**.
+  - `pairingOutcomes(savedPairings, rows)` → enriches each pairing with
+    `{ baseline, currentScore, delta, improved }`, preferring `baselineDomainScore` and falling back
+    to a legacy record's `baselineScore`.
   - New `pairings` Firestore collection + `db.js` exports: `savePairing`, `subscribePairings`,
     `updatePairingStatus`. Pairings carry `department` (legacy defaults to Pediatrics in UI filters)
     so shared domain IDs do not collide across departments. Collection rule added to `firestore.rules` (Phase 0).
@@ -1614,6 +1870,112 @@ stateDiagram-v2
 
 ## 6. Technical Decisions Log
 
+### 2026-07-20 — One official capability status per navigator per department
+- **Decision:** Each department assessment now produces **exactly one official capability status**,
+  calculated from the **arithmetic mean of all six domain scores**, in four non-overlapping bands:
+  `0–39` **Critical** · `40–64` **Learning** · `65–89` **Solid** · `90–100` **Can-Teach**. The six
+  domain percentages remain fully visible as **diagnostic evidence** — they continue to drive
+  targeted training, coaching, development paths, trends, critical-gap alerts, question-health
+  evidence, and mentor qualification — but a domain is never presented as its own official
+  navigator classification. Supervisors read "72% Overall · Solid", not six separate levels.
+- **Reasoning:** The original "never a single overall grade" principle (2026-06-23) optimised for
+  actionability but produced an unusable supervisor experience: with six domain levels per person
+  per department, a reader had to reconcile six classifications to answer "how is this navigator
+  doing?" — and different readers reconciled them differently. A single official status makes the
+  answer unambiguous and comparable, while keeping every bit of the diagnostic detail that made the
+  per-domain model valuable. A fourth **Critical** band was added because the old three-band scale
+  had no way to distinguish "needs development" from "needs attention now".
+- **Why the mean:** it is the only summary that (a) uses all six domains, (b) is trivially
+  explainable to a supervisor, and (c) cannot be gamed by a single strong domain. Rounding happens
+  **only after** the complete average, within one department, on one instrument's stored scores.
+- **Alternatives considered:** *weakest-domain-wins* (rejected — one bad domain would mask genuine
+  overall competence and make the status volatile); *median* (rejected — discards the magnitude of
+  an outlier, which is exactly the signal a supervisor needs); *keeping six levels and adding a
+  seventh summary level* (rejected — this is the ambiguity being removed); *a migration writing
+  `overallScore` onto every result document* (rejected — the value is derivable, so a migration
+  would add write risk and a permanent consistency burden for nothing).
+- **Missing-domain safety:** an incomplete profile has **no official status at all**. `{intake: 100}`
+  is labelled **"Incomplete"** with `overallScore === null` and `overallLevel === null` — it is not
+  Can-Teach, and it is not Learning either. Because an incomplete profile carries no level,
+  `overallLevel === 'canTeach'` already implies completeness, which makes every downstream
+  mentor/readiness check safe by construction.
+  *(The first implementation of this decision instead **capped** an incomplete profile at
+  `learning`. That was superseded the same day — see the 2026-07-20 "Absent evidence is a distinct
+  state, not a zero" entry below — because a cap still assigns an official level the navigator has
+  not earned, and it let incomplete rows be double-counted in the status distribution.)*
+- **Mentor safety:** a navigator may mentor a domain only when they are **Can-Teach overall AND
+  ≥ 90% in that specific domain** — closing both the "strong in one thing only" and "strong overall
+  but weak here" failure modes.
+- **Training independence:** training is assigned **purely from individual domain scores**
+  (Critical `0–39` / Required `40–64` / Stretch `65–89` / none `90+`). A Can-Teach-overall navigator
+  still receives a Required assignment for a weak domain; a high average never suppresses it.
+- **Impact:** `THRESHOLDS`/`LEVELS`/`LEVEL_ORDER`/`TRAINING_RULES` re-shaped in `config.js` (all
+  thresholds stay centralized there — no band literals in components). `scoring.js` gains
+  `overallScore`/`overallLevel`/`overallStatus`/`overallComplete`/`overallDistribution`/
+  `domainBand`/`isCriticalDomainGap`/`domainMentorRoster`/`isRequiredAssignment`;
+  `departmentOverall` becomes a thin alias so **one** averaging formula exists. `buildMatrixRows`
+  rows now expose `overallScore`/`overallLevel`/`overallComplete`/`overallLabel` and
+  `domainDevelopmentBands` (with `levels` kept as a deprecated read-only alias). `floorStats`,
+  `readinessTally`, `columnGaps`, `domainDistribution`, `buildActionCenter`, `teamTrend`,
+  `computeQuestionHealth`, `buildLearningSignals`, `adaptiveTrainingRecommendations`,
+  `mentorSuggestions`, and `buildMentorMatches` all move from cell-counting to overall-status
+  semantics. New shared `src/components/OverallStatus.jsx` primitives
+  (`OverallBadge`/`OverallSummary`/`DomainScore`) are the only surfaces allowed to render an
+  official level. **No Firestore migration**: status is derived at runtime from the `scores` object
+  result documents already carry, and legacy pairing/result documents keep rendering unchanged.
+- **Accessibility:** status is never colour-only — every badge and chip renders the percentage and
+  the written label, and a critical domain gap carries explicit "Critical gap" text.
+- **Not an employment decision:** Critical is a developmental/supervisory signal. It never drives
+  automatic employment decisions, punitive action, restrictions, suspension, or access removal.
+
+### 2026-07-20 — Absent evidence is a distinct state, not a zero (PR #40 review)
+- **Decision:** A domain with no recorded score is an explicit **unassessed** state (`null` band),
+  never `0` and never `'critical'`. A profile missing any of the six domains holds **no official
+  capability status at all** — no score, no level — and is counted only as `incomplete`.
+- **Reasoning:** The first implementation used `scores[d.id] ?? 0`, which silently converted "we
+  never measured this" into "they scored zero". A navigator who had answered one domain was
+  therefore reported with five Critical gaps, five Critical training assignments, five column gaps
+  and a batch of Action Center alerts — all fabricated from absent data. The same coercion let a
+  one-domain `{intake: 100}` average to "100% overall" and inflate the floor KPIs, while
+  `overallDistribution` counted that row twice (as `incomplete` *and* inside Learning). Reporting
+  invented findings against a real person is a correctness and fairness failure, not a cosmetic one.
+- **Alternatives considered:** *keep the zero-fill and filter at each call site* (rejected — a dozen
+  independent call sites, each an opportunity to forget); *treat incomplete as Critical so it stays
+  visible* (rejected — that is the fabrication being removed, and it punishes an unfinished
+  assessment); *drop incomplete rows entirely from the UI* (rejected — a supervisor needs to see
+  that someone's assessment is unfinished; it just must not be a status).
+- **Impact:** `domainBand()` returns null for non-numeric input; `overallScore()` returns null
+  unless all six domains are numeric; new `partialAverage()` carries the diagnostic mean separately
+  and never feeds a KPI; `overallStatus()` reports three mutually exclusive states
+  (`unassessed`/`incomplete`/`complete`); `overallDistribution()` buckets are mutually exclusive and
+  sum exactly to total; `floorStats()` computes official KPIs over complete profiles only and
+  reports `rowCount`/`incompleteCount`/`unassessedCount` alongside; `columnGaps()` measures only the
+  navigators actually scored on that domain; `domainDistribution()` gains an `unassessed` bucket (it
+  previously produced `NaN` for an unbucketed band); and `trainingForRow`, `mentorSuggestions`,
+  `buildMentorMatches`, `buildLearningSignals` and `buildActionCenter` all skip unscored domains.
+  A recorded `0` still produces a Critical gap, Critical training and a weak-domain signal — the two
+  cases are deliberately distinguishable and regression-tested as such.
+
+### 2026-07-20 — The competency axis keeps its own thresholds (PR #40 review)
+- **Decision:** Competency scores are mapped by `competencyScoreToLevel()` against
+  `COMPETENCY_THRESHOLDS` (`<60` Learning · `60–84` Solid · `85+` Can-Teach) — the values they had
+  before the capability re-band. The capability `scoreToLevel()` must never be applied to a
+  competency score.
+- **Reasoning:** The capability redesign was about the official department status. Routing
+  competencies through the new four-band mapper silently re-banded every competency rating AND
+  emitted a `'critical'` id that `competencyDistribution` had no bucket for, so `counts.critical`
+  became `NaN` and any competency below 40 vanished from the Team Overview entirely. That is a
+  regression in a feature nobody asked to change.
+- **Alternatives considered:** *adopt the four capability bands for competencies too* (rejected as
+  an undocumented scope expansion — it would move real ratings with no owner decision behind it;
+  it remains available later if the owner asks); *add a `critical` bucket to the competency
+  distribution* (rejected — it hides the real problem, which is that two different scales were
+  being conflated).
+- **Impact:** New `competencyScoreToLevel()` + `COMPETENCY_THRESHOLDS`/`COMPETENCY_LEVEL_ORDER`.
+  `buildMatrixRows`, `competencyDistribution`, `buildLearningSignals` and `Coaching.jsx` all use it.
+  `competencyDistribution` derives from the score (not a precomputed level) and skips ids it has no
+  bucket for, so a stray capability band on a legacy row can no longer produce `NaN`.
+
 ### 2026-07-13 — Bind Firestore result document IDs to BOTH path and body ownership
 - **Decision:** `results/{docId}` `get`/`create`/`update` now require the document ID to be one of
   the authenticated navigator's own deterministic result IDs (`isOwnResultDocId(docId)`) AND the
@@ -1683,11 +2045,15 @@ stateDiagram-v2
 - **Impact:** Content is specific and credible; re-keying to a new SOP means editing
   `questions.js` only.
 
-### 2026-06-23 — Per-domain scoring, never a single total
-- **Decision:** Scores and levels are per domain; no overall grade anywhere.
+### 2026-06-23 — Per-domain scoring, never a single total — **SUPERSEDED 2026-07-20**
+- **Decision (original):** Scores and levels are per domain; no overall grade anywhere.
 - **Reasoning:** Keep the signal actionable and domain-keyed, including when thresholds are used
   for readiness or mini-check decisions.
-- **Impact:** All UI and analytics are domain-keyed.
+- **Impact:** All UI and analytics were domain-keyed.
+- **Superseded by** the 2026-07-20 "One official capability status per navigator per department"
+  decision below. Per-domain scoring itself is UNCHANGED and remains the actionable diagnostic
+  layer; what changed is that the six domain scores now also roll up into **one official status**
+  so supervisors are not asked to reconcile six separate classifications per person.
 
 ### 2026-06-23 — Centralised tunable knobs in `config.js`
 - **Decision:** Thresholds, level labels/colors, palette, and training rules live in one file.
@@ -1929,6 +2295,26 @@ of this file on 2026-07-07 to cut per-session context cost (it was ~55% of the f
   `src/lib/navigatorResultMerge.js`). **This PR does not make MCQ/Spot scoring itself
   server-authoritative** — see the client-authoritative scoring limitation in
   [§12](#12-bugs--known-issues) and the required migration in [§15](#15-current-priorities).
+- **One official capability status per navigator per department (2026-07-20):** every department
+  assessment resolves to a single official status — `0–39` **Critical**, `40–64` **Learning**,
+  `65–89` **Solid**, `90–100` **Can-Teach** — from the arithmetic mean of all six domain scores,
+  rounded only after the complete average, within one department and one instrument. Supervisors
+  see "72% Overall · Solid" on the Matrix (new **Overall** column), roster cards, NavigatorDetail
+  header, and the cross-department strip. The six domain percentages remain everywhere as
+  **diagnostic evidence** (score-range tints + numbers, never a Learning/Solid/Can-Teach pill), and
+  any domain below 40 is flagged **"Critical gap"** even when the overall status is higher. Training
+  is still assigned purely from domain scores (Critical/Required/Stretch), so a Can-Teach-overall
+  navigator still gets targeted work on a weak domain. Mentoring requires **both** Can-Teach overall
+  and ≥90% in that domain. **Missing evidence is never a zero:** an unscored domain is an explicit
+  unassessed state (`null` band), so it produces no critical gap, training assignment, column gap,
+  distribution count, learning signal, mentor suggestion, or alert — while a recorded `0` still
+  produces all of them. **Incomplete profiles hold no official status at all** (no score, no level),
+  are counted only as `incomplete`, and are excluded from every official KPI; the distribution
+  buckets are mutually exclusive and sum exactly to the row total. Competencies stay on their own
+  original thresholds via `competencyScoreToLevel`. Everything is derived at runtime from the
+  existing `scores` object —
+  **no Firestore migration, no result/pairing/history document rewritten**. Critical is a
+  developmental and supervisory signal only, never an automatic employment decision.
 - **Working end to end (logic + UI):** supervisor adds navigators / generates+curates questions
   (per department) → navigators sign in → **pick department** (Pediatrics or OB/GYN) → enter the
   **3-phase assessment sequence** (MCQ scenario check → coaching → full-profile Spot the Error →
@@ -1975,7 +2361,7 @@ of this file on 2026-07-07 to cut per-session context cost (it was ~55% of the f
   (init → chat/voice turns → `/api/live` relay) for caller consistency. Scored Call QA deliberately
   does not: its caller receives no grading context, expected actions, critical misses, scoring notes,
   rule/workflow metadata, or hidden chart state. Final verification: `npm test` =
-  **1,417/1,417 across 71 files**; Firestore Rules emulator assertions = **76/76**
+  **1,701/1,701 across 76 files**; Firestore Rules emulator assertions = **76/76**
   (51 result authorization + 25 Call QA); production build
   includes the private-runtime bundle scan. GitHub Actions mirrors the
   normal local gate on `main` pushes and PRs: `npm ci` → `npm test` → `npm run build` (no deploy step).
@@ -2021,7 +2407,7 @@ of this file on 2026-07-07 to cut per-session context cost (it was ~55% of the f
   Pediatrics; their modules will follow once their SOPs land.
 - **Experimental / mockup:**
   - **Adult Medicine and Behavioural Health** are not assessed; **Pediatrics and OB/GYN** are live.
-- **Test coverage:** **1,417 unit tests across 71 files** and **76 Firestore Rules emulator
+- **Test coverage:** **1,701 unit tests across 76 files** and **76 Firestore Rules emulator
   assertions** (51 result authorization + 25 Call QA) after the 2026-07-18 merge-readiness pass
   (calibration-private-bank adaptation, callerCaseFile, randomized selection, contextual audit
   guard + 14-workflow generation smoke, encoding guard, provisioning tool) atop the 2026-07-17
@@ -2137,7 +2523,10 @@ of this file on 2026-07-07 to cut per-session context cost (it was ~55% of the f
   `VITE_FIREBASE_*`/`GEMINI_API_KEYS`, then deploy code, verify both roles, and publish the tightened
   Firestore rules. Production fails closed if the explicit supervisor/Admin credentials are absent.
 - **Question health:** active questions in the Question Bank now show a colored health dot once
-  they hit 10+ responses. Sub-20% correct rate triggers a "Review Required" flag with a "Can-Teach
+  they hit 10+ responses. The Can-Teach-miss signal now keys off the navigator's **official overall
+  status** at submission time (`overallLevel(result.scores) === 'canTeach'`), not their score in the
+  question's own domain, and an incomplete profile is never counted as Can-Teach.
+  Sub-20% correct rate triggers a "Review Required" flag with a "Can-Teach
   signal" if expert-level navigators are also failing — the Reverse QA feature. Health uses every
   answer-bearing `resultHistory` retake (with a current-result fallback for legacy rows), not just
   the overwritten latest submission.
@@ -2146,7 +2535,7 @@ of this file on 2026-07-07 to cut per-session context cost (it was ~55% of the f
   OB/GYN = **37** seed questions (offline fallback) + the **48-item MCQ v2 operating-model bank**
   (24 Pediatrics + 24 OB/GYN) that replaces the weak active bank via a marker-gated
   archive-and-replace migration (bank grows in Firestore per dept) · 4 departments (**Pediatrics
-  + OB/GYN live**, 2 mockup) · **1,417 unit tests across 71 files** + **76 assertions**
+  + OB/GYN live**, 2 mockup) · **1,701 unit tests across 76 files** + **76 assertions**
   across two committed Firestore Rules emulator suites (`npm run test:rules`; require Java, run in
   CI, not part of the unit-test count) ·
   **14** Firestore collections
@@ -2166,13 +2555,39 @@ of this file on 2026-07-07 to cut per-session context cost (it was ~55% of the f
 - **[src/lib/scoring.js](src/lib/scoring.js)** — all pure logic. Exports:
   - `scorePerDomain(answers, questions)` → `{ [domainId]: percent }` (points-based; defaults to seed)
   - `scorePerCompetency(answers, questions)` → `{ [competencyId]: percent|null }` (null = untagged)
-  - `scoreToLevel(pct)` → `'learning'|'solid'|'canTeach'`; `levelFor(pct)` → full descriptor
-  - `buildMatrixRows(samples, liveResult)` → rows `{ name, isLive, scores, levels,
-    competencyScores, competencyLevels }`
-  - `columnGaps(rows)`, `canTeachRoster(rows)`, `readinessTally(rows)`
+  - `scoreToLevel(pct)` → `'critical'|'learning'|'solid'|'canTeach'` — THE canonical band mapping
+    (`0–39`/`40–64`/`65–89`/`90–100`); `levelFor(pct)` → full descriptor;
+    `domainBand(pct)` → the same mapping for a single domain, but **null when the domain has no
+    numeric score** (missing evidence is never a zero and never `'critical'`);
+    `isCriticalDomainGap(pct)` → true only for a RECORDED number below 40
+  - **THE official status:** `overallScore(scores)` → rounded mean of the six domain scores,
+    **null unless all six are numeric**; `overallComplete(scores)`; `assessedDomainCount(scores)`;
+    `partialAverage(scores)` → **diagnostic-only** mean of the domains present (never an official
+    score, never feeds a KPI); `overallLevel(scores)` → official level, **null for an incomplete or
+    unassessed profile**; `overallStatus(scores)` → `{ score, level, complete, unassessed, label,
+    assessedDomains, totalDomains, partialAverage }`; `overallLevelRank(level)`
+  - **Competency axis (separate):** `competencyScoreToLevel(pct)` →
+    `'learning'|'solid'|'canTeach'|null` using `COMPETENCY_THRESHOLDS` (`<60`/`60–84`/`85+`).
+    Never use the capability `scoreToLevel()` on a competency score. UI that iterates competency
+    bands must use **`COMPETENCY_LEVEL_ORDER`** (three levels), never `LEVEL_ORDER` (four) — the
+    Overview competency bars and legend previously used the four-band order and rendered a Critical
+    bucket the competency scale does not have.
+  - **Bank coverage:** `isScoreableQuestion(q)`, `assessmentBankCoverage(questions)` →
+    `{ complete, covered, missing, countsByDomain, scoreable, total }`,
+    `isAssessmentBankComplete(questions)`, and `IncompleteAssessmentBankError`.
+  - **Training empty state:** `trainingEmptyStateReason(row, assignments?)` →
+    `'unassessed'|'incomplete'|'mastered'|'has-assignments'`; `hasMasteredAllDomains(row)`.
+  - `buildMatrixRows(samples, liveResult)` → rows `{ navigatorId, name, isLive, assessmentType,
+    scores, overallScore, overallLevel, overallComplete, overallLabel, domainDevelopmentBands,
+    competencyScores, competencyLevels }` (`levels` kept as a deprecated alias of
+    `domainDevelopmentBands`)
+  - `columnGaps(rows)`, `domainMentorRoster(rows)` (alias `canTeachRoster`), `readinessTally(rows)`,
+    `overallDistribution(rows)`
   - `floorStats(rows)`, `domainDistribution(rows)`, `competencyDistribution(rows)`, `findRow(rows, name)`
-  - `deptSamples(samples, deptId)`, `departmentOverall(scores)`, `departmentMatrix(samples, live)`
-  - `trainingForRow(row)`, `trainingPlan(rows)`, `trainingByDomain(rows)`, `trainingStats(rows)`
+  - `deptSamples(samples, deptId)`, `departmentOverall(scores)` (thin alias of `overallScore`),
+    `departmentMatrix(samples, live)`
+  - `trainingForRow(row)`, `trainingPlan(rows)`, `trainingByDomain(rows)`, `trainingStats(rows)`,
+    `isRequiredAssignment(priority)`
   - `mentorSuggestions(rows, name)`
   - **Note:** `scorePerDomain`/`scorePerCompetency` take the active `questions` bank as a param;
     components pass the Firestore active bank, falling back to `SEED_QUESTIONS`.
@@ -2181,7 +2596,11 @@ of this file on 2026-07-07 to cut per-session context cost (it was ~55% of the f
   state, Firestore subscriptions, and data live inside the role apps.
 
 ### Data modules (the "knobs")
-- **[src/data/config.js](src/data/config.js):** `THRESHOLDS`, `LEVELS`, `LEVEL_ORDER`,
+- **[src/data/config.js](src/data/config.js):** `THRESHOLDS` (`critical`/`solid`/`canTeach` — the
+  ONLY place capability bands are defined), `COMPETENCY_THRESHOLDS` (the SEPARATE competency axis:
+  `learning`/`canTeach`), `LEVELS` (4 bands, each with `color`/`text`/`tint`),
+  `LEVEL_ORDER`, `COMPETENCY_LEVEL_ORDER`, `INCOMPLETE_LABEL`, `UNASSESSED_LABEL`,
+  `REQUIRED_TRAINING_PRIORITIES`,
   `COLUMN_GAP_THRESHOLD`, `TRAINING_RULES`, `PALETTE`.
 - **[src/data/questions.js](src/data/questions.js):** `DOMAINS` (`{id,name,blurb}` — since
   2026-07-02 the 6 job-aligned ids: `intake`, `classification`, `routing`, `scheduling`,
@@ -2202,17 +2621,35 @@ of this file on 2026-07-07 to cut per-session context cost (it was ~55% of the f
 
 ### Key shapes
 ```js
-// matrix row (two axes)
-{ name, isLive,
-  scores: {domainId: pct}, levels: {domainId: 'learning'|'solid'|'canTeach'},
-  competencyScores: {competencyId: pct}, competencyLevels: {competencyId: level} }
-// department-matrix row (cross-department)
-{ name, isLive, depts: { [deptId]: { overall, level } | null } }   // null = not assessed
+// matrix row — ONE official status + diagnostic evidence
+{ navigatorId, name, isLive, assessmentType,
+  scores: {domainId: pct},
+  // official (the only fields that may render a capability level).
+  // score AND level are null unless all six domains are numeric:
+  overallScore, overallLevel: 'critical'|'learning'|'solid'|'canTeach'|null,
+  overallComplete, overallUnassessed, overallLabel, assessedDomains,
+  partialAverage,  // diagnostic only — never an official score
+  // diagnostic (score ranges, NOT official statuses).
+  // null = that domain was never scored — never 0, never 'critical':
+  domainDevelopmentBands: {domainId: 'critical'|'learning'|'solid'|'canTeach'|null},
+  levels,  // deprecated read-only alias of domainDevelopmentBands
+  // competency axis uses COMPETENCY_THRESHOLDS, not the capability bands:
+  competencyScores: {competencyId: pct},
+  competencyLevels: {competencyId: 'learning'|'solid'|'canTeach'} }
+// department-matrix row (cross-department).
+// A cell is null ONLY when that department is fully unassessed (0 of 6 domains).
+// An INCOMPLETE department (1-5 of 6) still returns a real cell with
+// overall/level null and label 'Incomplete', so the cross-department table can
+// tell "partial evidence" apart from "no evidence".
+{ name, isLive, depts: { [deptId]:
+    { overall, level, complete, label, assessedDomains, totalDomains } | null } }
 // question (Firestore `questions` doc + seed)
 { domainId, competencies:[id], scenario, options:[{id,text,points,rationale}],
   correctOptionId, status:'draft'|'active'|'archived', source, createdAt }
-// training assignment
-{ domainId, level, priority: 'Required'|'Stretch', goal, module }
+// training assignment — driven by the DOMAIN score, never the overall status
+{ domainId, band, score, priority: 'Critical'|'Required'|'Stretch',
+  assignment: 'required'|'optional', goal, isCritical, module,
+  level }  // deprecated alias of band
 ```
 
 ### Database schemas / API endpoints / env vars
@@ -2390,8 +2827,14 @@ npm run test:e2e     # run the Playwright browser tests (auto-builds + starts th
   gained a top-center spotlight. State signals were untouched — every `border-color`-based
   highlight (`.phase-card--next`, selected options, dept strips) still renders because card
   borders stayed real.
-- **Level colors (traffic-light, `LEVELS`):** Learning red `#c0392b`, Solid amber `#e0b13c`,
-  Can-Teach green `#3e8e5a` (unchanged — priority/level encoding kept off the brand gradient).
+- **Capability level colors (`LEVELS`, updated 2026-07-20):** a four-step Burgundy → Orange → Gold
+  → Green progression — Critical `#8B1E2D`, Learning `#C9682C`, Solid `#D8A72E`, Can-Teach
+  `#347A4D`. Each level also carries readable `text` and a light `tint`
+  (`#F4DADD`/`#F7E1D2`/`#F6EBC8`/`#DCECDF`). **Strong colours** are reserved for the OFFICIAL
+  overall badge; **tints** wash the diagnostic domain score cells, bars and critical-gap callouts.
+  Mirrored in CSS as `--level-{critical,learning,solid,canteach}` plus `-tint` variants. Level
+  encoding stays off the brand gradient, and **status is never colour-only** — every badge and chip
+  renders the percentage and the written label.
 - **Motion:** tokens `--ease-out/spring`, `--dur-1/2/3`; CSS helpers `.reveal/.is-in`,
   `.view-enter`, `.stagger > *`; dependency-free hooks `useInView`/`useCountUp` + `Reveal`/`CountUp`
   components (no animation library). KPIs count up; sections fade/stagger in on view; bars animate
@@ -2434,7 +2877,7 @@ npm run test:e2e     # run the Playwright browser tests (auto-builds + starts th
 - Heatmap intensity toggle (show % inside matrix cells).
 
 ### Technical Debt
-- **1,417 unit tests across 71 files** as of 2026-07-20 (plus **76 assertions** across two
+- **1,701 unit tests across 76 files** as of 2026-07-21 (plus **76 assertions** across two
   committed Firestore Rules emulator suites, `npm run test:rules`, run separately from the unit-test
   gate). **Role-app
   coverage** (`App`, `Start`,
@@ -2626,7 +3069,7 @@ npm run test:e2e     # run the Playwright browser tests (auto-builds + starts th
     over hard-coding in components.
   - Keep all scoring/analytics logic **pure** and in [src/lib/scoring.js](src/lib/scoring.js).
     Components render; they don't compute business logic.
-  - Levels are an enum: `'learning' | 'solid' | 'canTeach'`. Use `scoreToLevel()`/`LEVELS`, never
+  - Levels are an enum: `'critical' | 'learning' | 'solid' | 'canTeach'`. Use `scoreToLevel()`/`LEVELS`, never
     re-derive bands inline.
   - Domains are referenced by `id`; question/training/navigator data all key on the same domain ids.
 - **Coding standards:** React function components + hooks; ES modules; 2-space indent; descriptive
@@ -2683,6 +3126,14 @@ npm run test:e2e     # run the Playwright browser tests (auto-builds + starts th
 ## 15. Current Priorities
 
 1. **Maintain this CLAUDE.md** on every change (highest standing priority).
+1b. **Confirm the capability-band redesign with the owner (2026-07-20).** The code ships the exact
+   ranges the owner specified (`0–39`/`40–64`/`65–89`/`90–100`) and they are centralized in
+   `config.js`, so re-banding is a one-file change. Two follow-ups need a human decision, not code:
+   (a) the bands are noticeably stricter than the old `<60/60–84/85+` scale, so **existing stored
+   results will re-classify on first view** (no data changes — only the derived label), and
+   supervisors should be told before they see it; (b) `MINICHECK_PASS` deliberately stayed at 60 so
+   recorded mini-check pass/fail history is untouched — decide whether it should track the new
+   Solid floor (65) going forward.
 2. ~~**Provision and rotate private Call QA content before any deployment.**~~ **DONE 2026-07-18:**
    an authorized operator authored 15 fresh private OB/GYN scenarios (reconciled against the
    owner-provided current-floor SOP, validated 15/15 by the production validator), dry-ran, then

@@ -1,4 +1,867 @@
-# Development History - Knowledge Check
+﻿# Development History - Knowledge Check
+
+## 2026-07-21 — PR #40: synthetic trend data is never "measured"; safe rejection logging
+
+A narrow final pass over PR #40 closing one correctness defect and one logging-safety item. Head
+before this pass: `fcf5e76`. Every previously completed PR #40 correction is preserved. No
+thresholds, grading, scoring, bank-coverage or seed-fallback behaviour, training rules, mentor
+qualification, persistence, Firestore schemas or rules, migrations, `MINICHECK_PASS`, OB/GYN or
+Pediatrics content, or production configuration changed.
+
+### 1. Synthetic trend points could be captioned as "last measured"
+
+`buildTrend()` prepends illustrative synthetic points (correctly flagged `simulated: true`) when a
+navigator has fewer than `TREND_SYNTH_POINTS` real snapshots, so the chart is never empty. The
+"last measured X%" caption added in the previous pass derived its value from
+`latestMeasured(trend.overallSeries)` — and that helper sees only a flattened numeric array. It
+cannot tell a genuine measurement from chart scaffolding.
+
+Reproduced directly: a navigator whose single real snapshot recorded nothing produced
+
+```
+points:        [ { label: 'Q−1 (illustrative)', simulated: true, overall: 30 },
+                 { label: 'Jan 1970',           simulated: false, overall: null } ]
+overallSeries: [ 30, null ]
+latestMeasured(series) => 30      // captioned "last measured 30%"
+```
+
+The navigator had never scored 30. That is exactly the governing invariant being violated —
+missing evidence represented as a measured result.
+
+**Fix.** Provenance is now exposed explicitly from `buildTrend()` rather than inferred from numbers:
+
+```js
+{ points, domainSeries, overallSeries,
+  latestRealOverall,        // number|null — real, non-simulated snapshots only
+  latestRealDomainValues,   // Record<domainId, number|null>
+  hasRealMeasurements }     // boolean
+```
+
+These scan **real** points only (`simulated !== true`) backwards for finite evidence, and are `null`
+when no real snapshot ever measured that value. `NavigatorDetail` reads them for both the overall and
+the per-domain captions; when they are `null` the caption is **omitted entirely** and the current
+value simply reads `N/A`. A genuine historical `0` is real evidence and still captions
+"last measured 0%".
+
+Synthesis itself is untouched: synthetic points are still generated, still drawn, still labelled
+`(illustrative)`, and still carry `simulated: true`. They are scaffolding for an otherwise-empty
+chart — they are simply never *described* as measurements.
+
+`latestMeasured()` stays in `formatScore.js` as a generic array helper but now carries an explicit
+**provenance-unaware** warning telling callers not to use it for "last measured" captions over any
+series that may contain simulated points. It has no remaining call sites in application code; the
+dead import was removed from `NavigatorDetail`.
+
+### 2. Non-Error rejections could log an arbitrary object
+
+`NavigatorApp`'s bank-read failure logged `err?.message ?? err`. When a rejection is not an Error and
+has no `message`, that falls through to the **raw value** — and a plain object could carry question
+text, answer options, answer keys, a Firestore snapshot or a request payload straight into
+`console.error`, where it would be serialized.
+
+**Fix.** New `src/lib/safeError.js` exports `safeErrorMessage(err, fallback)`:
+
+- `Error` with a string message → that message, truncated to 200 chars;
+- string rejection → the string, truncated;
+- anything else → a generic label (here, `"Unknown question-bank read error"`).
+
+Arbitrary objects are never serialized and stack traces are never logged. The check is deliberately
+`err instanceof Error` rather than duck-typing on `.message`, because a non-Error object's `message`
+property is untrusted and could itself be assembled from payload data. The department id is still
+logged — it is not assessment content.
+
+It lives in its own module rather than in `formatScore.js`: an error-normalization helper has no
+cohesion with score formatting.
+
+### Files changed
+
+`src/lib/scoring.js` (buildTrend provenance) · `src/lib/formatScore.js` (provenance warning on
+`latestMeasured`) · **new** `src/lib/safeError.js` · `src/components/NavigatorDetail.jsx` ·
+`src/components/NavigatorApp.jsx` · `src/lib/scoring.test.js` ·
+`src/components/sparklineTrend.test.jsx` · **new** `src/lib/safeError.test.js` · `CLAUDE.md` ·
+`docs/HISTORY.md`.
+
+### Tests added
+
+- `scoring.test.js` (294 → 304): an empty real snapshot with synthesis reports no real measurement;
+  synthetic values never become `latestRealOverall`; an older real score followed by an empty
+  snapshot reports the older real score; an older synthetic value does not count; a history snapshot
+  explicitly flagged `simulated` is excluded; a genuine historical `0` counts; domain provenance
+  follows the same rule; the `simulated` marker and `(illustrative)` labels survive.
+- `sparklineTrend.test.jsx` (11 → 19): a single empty real snapshot shows `N/A` with no caption;
+  no synthetic value is ever quoted; illustrative points still render when synthesis supplies enough
+  of them; an older real score is captioned; a genuine historical `0` captions "last measured 0%";
+  domain captions follow the same rule and are omitted when only synthetic data exists.
+- **New** `safeError.test.js` (16): Error message only, no stack; string handling and truncation;
+  object rejections never exposing their fields; a `message` field on a non-Error object not trusted;
+  generic label for every other type; caller-supplied fallback; empty-message fallback; an object
+  with a readable `toString` still not serialized.
+
+### Verification
+
+Every command was run; exact results are recorded in the PR description. No deployment, migration,
+Firestore data change, merge, or production write occurred.
+
+## 2026-07-21 — PR #40 final correction: read failures, competency scoreability, trend labels
+
+A narrow third correction pass over PR #40, closing three residual paths where absent evidence could
+still surface as a measured result. Head before this pass: `7c63736`. All previously completed PR #40
+fixes are preserved; capability and competency thresholds, mentor qualification, training thresholds,
+MCQ point maths for valid questions, Spot the Error and Call QA grading, OB/GYN and Pediatrics
+content, Firestore schemas/rules, persistence, result selection, migrations and `MINICHECK_PASS` are
+all unchanged.
+
+### 1. A failed live-bank read was treated as an empty bank
+
+`NavigatorApp` loaded the bank with:
+
+```js
+const live = await getActiveQuestions(dept).catch(() => []);
+const bank = live.length > 0 ? live : (SEED_BY_DEPT[dept] ?? SEED_QUESTIONS);
+```
+
+That `.catch(() => [])` made two very different situations identical:
+
+- Firestore **succeeded** and the live bank is genuinely empty, and
+- Firestore or the network **failed**, so the live bank's contents are unknown.
+
+The second case silently launched the committed **seed** assessment. A navigator could then sit a
+potentially stale assessment, have it graded, and have the result stored as their official profile —
+purely because a network read blipped.
+
+**Fix.** New `loadBankForDept(dept)` handles three distinct outcomes:
+
+| Read | Bank used | MCQ |
+|---|---|---|
+| succeeded, non-empty | live bank | allowed after coverage validation |
+| succeeded, empty | department seed bank | allowed after coverage validation |
+| **rejected** | *none* | **blocked** — status unknown |
+
+A rejected read sets `bankLoadFailed`, clears coverage, and routes to a dedicated
+`view === 'bankUnavailable'` state: *"Couldn't load the question bank"*, explaining it is a
+connection problem, that nothing was recorded, and offering **Try again** (which re-reads the active
+department's bank without signing out) alongside a back link. Both gates enforce it — the phase-hub
+start handler and `handleSubmit`, so no result can be saved from an unknown bank. The error is
+logged with its message only (never the payload, which could carry question content) rather than
+swallowed.
+
+This is deliberately kept separate from the existing *incomplete bank* state: "we couldn't read it"
+is not "we read it and it's missing domains", and the two produce different screens.
+
+`docs/PLAN-3-phase-assessment.md` still contains the old `.catch(() => [])` snippet. It is a
+historical execution plan written against commit `6ebb82e`, so the snippet is preserved unedited and
+the document now carries a superseded banner pointing at the current behaviour.
+
+### 2. Unscoreable questions still contributed zeroes to competencies
+
+`scorePerDomain` had already been taught to ignore questions failing `isScoreableQuestion()`, but
+`scorePerCompetency` still processed them. A question with no options measured nothing yet
+contributed **0 points** to every competency it was tagged with, dragging that competency's average
+down for evidence that never existed. A test explicitly asserted this incorrect behaviour.
+
+**Fix.** The same scoreability rule now gates competency scoring. A competency exercised only by
+unscoreable questions returns `null`; a competency with no tagged scoreable questions returns `null`;
+and a competency measured by a valid question still returns a genuine `0` when the navigator left it
+unanswered or chose a zero-point or nonexistent option. Unknown competency ids are still ignored
+safely, and the three-band thresholds (`<60` Learning · `60–84` Solid · `85+` Can-Teach) are
+untouched.
+
+The test asserting `0` for an optionless question was **replaced** by one asserting `null`.
+
+### 3. Trend labels could still round null to 0%
+
+`buildTrend` stored `null` for missing historical domain scores and `Sparkline` drew gaps correctly,
+but the text labels beside the charts did:
+
+```js
+Math.round(series[series.length - 1]) + '%'
+```
+
+`Math.round(null)` is `0`, so a domain the latest check never measured was labelled **0%** — a
+fabricated Critical-looking reading. `trendOverall()` compounded it by falling back to `0` when a
+snapshot had no measurable evidence at all, injecting an artificial overall trend point.
+
+**Fix.** `trendOverall()` now returns `null` when neither `overallScore` nor `partialAverage` exists,
+and `buildTrend().overallSeries` is `(number|null)[]`. A new shared formatter,
+`src/lib/formatScore.js`, is the single place that decides measured-versus-gap:
+
+- `formatPercent(v)` — genuine `0` → `"0%"`; finite → rounded; null/undefined/NaN/non-numeric →
+  `"N/A"`.
+- `formatSeriesCurrent(series)` — labels the **latest snapshot**, deliberately *not* the latest
+  measured value, so a stale reading is never presented as current.
+- `latestMeasured(series)` — the last finite value, ignoring trailing gaps.
+- `isMeasured(v)` — finite-number predicate.
+
+`NavigatorDetail` uses `formatSeriesCurrent` for both the overall and per-domain labels, and when the
+latest snapshot measured nothing it adds a separate *"last measured X%"* caption so the historical
+segment stays visible without implying it is current. `Overview`'s local `fmtPct` now delegates to the
+shared `formatPercent`. `Sparkline` continues to split its line around gaps and dot isolated
+readings. `teamTrend`'s existing behaviour — omitting timepoints with zero complete profiles — is
+unchanged.
+
+Every consumer of `overallSeries`, `domainSeries`, `Sparkline` and `trendOverall` was audited; no
+`Math.round(series[…])` remains anywhere in the tracked tree.
+
+### Files changed
+
+`src/components/NavigatorApp.jsx` · `src/components/NavigatorDetail.jsx` ·
+`src/components/Overview.jsx` · `src/lib/scoring.js` · **new** `src/lib/formatScore.js` ·
+`src/styles.css` · `src/lib/scoring.test.js` · **new** `src/lib/formatScore.test.js` ·
+**new** `src/components/sparklineTrend.test.jsx` · `src/components/roleApps.behavior.test.jsx` ·
+`docs/PLAN-3-phase-assessment.md` (superseded banner only) · `CLAUDE.md` · `docs/HISTORY.md`.
+
+### Tests added or updated
+
+- `roleApps.behavior.test.jsx` (22 → 30): rejected read shows the connection-error state; no seed
+  fallback on failure; MCQ stays closed; `saveResult` never called; retry loads the correct bank once
+  the read succeeds; a successful empty read still uses the seed bank; a partial live bank stays
+  blocked as *incomplete* (a distinct screen); a complete live bank stays allowed.
+- `scoring.test.js` (278 → 294): competency null for no-options / empty-options / unknown-domain
+  questions; genuine `0` for zero-point, nonexistent-option and unanswered valid questions; mixed
+  banks averaging only scoreable questions; unknown competency ids still safe; real Pediatrics and
+  OB/GYN banks still valid; distribution finite with no Critical bucket; thresholds unchanged.
+  Trend: empty snapshot → null overall, partial snapshot → `partialAverage`, measured-then-missing
+  does not collapse to zero, genuine zero still `0`, series entries never NaN.
+  **Replaced** the test expecting an optionless question to score `0`.
+- **New** `formatScore.test.js` (26): `isMeasured`, `formatPercent`, `latestMeasured` and
+  `formatSeriesCurrent`, including an explicit assertion that `Math.round(null) === 0` while the
+  formatter does not inherit that.
+- **New** `sparklineTrend.test.jsx` (11): Sparkline gap splitting, lone-reading dots, refusal to
+  render fewer than two measured points, genuine zero plotted; NavigatorDetail latest-null → N/A,
+  latest-undefined → N/A, genuine latest `0` → `0%`, empty latest snapshot → N/A plus the
+  "last measured" caption, fully-measured snapshot → percentage with no caption.
+
+### Verification
+
+Every command below was run; exact results are in the PR description. No production deployment,
+migration, Firestore data change, merge, or production write was performed.
+
+## 2026-07-21 — PR #40 full-codebase review: six correctness fixes
+
+A final full-codebase pass over PR #40 found six issues that all shared one root cause: **absent
+evidence being rendered as a measured result.** The overall-status architecture, the capability
+thresholds, the competency thresholds, mentor safeguards, domain-driven training, Call QA behaviour,
+OB/GYN content, Firestore rules, persistence, result selection and historical records are unchanged.
+
+The invariant these fixes establish, now stated in CLAUDE.md:
+
+> **Missing evidence must never be represented as failure, mastery, or a real 0%. Only a genuinely
+> measured numeric zero is a Critical result.**
+
+### 1. Incomplete bank coverage could fabricate Critical domain scores
+
+`scorePerDomain` returned `0` whenever a domain had no questions (`total === 0`), so a supervisor's
+partially-populated question bank produced navigator scores of 0 — i.e. **Critical results the
+navigator never earned**. `NavigatorApp` compounded it by accepting any non-empty active bank
+without checking that all six configured domains were represented.
+
+**Fix.** New canonical helpers in `scoring.js`: `isScoreableQuestion()` (a question needs a known
+domain and at least one option), `assessmentBankCoverage()` returning
+`{ complete, covered, missing, countsByDomain, scoreable, total }`, `isAssessmentBankComplete()`,
+and `IncompleteAssessmentBankError`.
+
+`scorePerDomain` now distinguishes the two cases explicitly — **null** for "this domain had no
+scoreable questions", a genuine **0** for "measured and earned nothing" — mirroring what
+`scorePerCompetency` already did for competencies. `{ strict: true }` throws rather than returning a
+profile with holes.
+
+Both navigator paths are gated: the MCQ phase is **blocked** at start with a screen naming the
+uncovered domains, and `handleSubmit` re-checks before persisting so nothing is written. Chosen
+failure mode is blocking rather than degrading, because a partial result is indistinguishable from a
+poor one once stored.
+
+A partial live bank is deliberately **not** topped up from the seed bank — that would mix outdated
+seed content with current supervisor-managed content inside one graded assessment. The seed bank is
+used only when the live bank is entirely empty.
+
+The mini-check path was hardened too: it no longer coerces an unmeasurable domain to `0` (which
+would have looked like a failed attempt) and records no mastery from it.
+
+### 2. Zero training assignments read as complete mastery
+
+`trainingForRow` correctly skips unscored domains, which made `assignments.length === 0` ambiguous —
+it can mean genuine mastery *or* nothing to assess. Several surfaces congratulated navigators who
+had simply never been assessed ("Every domain scored 90% or above — consider mentoring a colleague").
+
+**Fix.** New `trainingEmptyStateReason(row, assignments?)` resolves the reason to
+`unassessed` / `incomplete` / `mastered` / `has-assignments`, with `hasMasteredAllDomains(row)` true
+only for a complete profile where every domain is ≥ 90. Applied in `MyTraining`, `NavigatorDetail`
+and `TrainingModule` (whose cohort panel no longer claims "the floor has it covered" when nobody was
+scored in that domain). Mentoring is never suggested to an incomplete or unassessed navigator.
+
+Required states now render distinctly: 0/6 "No assessment results are available yet"; 1–5/6
+"Training cannot be finalized until the remaining domains are assessed" (with the count); 6/6 all
+≥ 90 keeps the mastery message; 6/6 with weak domains renders assignments.
+
+### 3. Missing aggregate evidence rendered as 0%
+
+`floorStats` returned `avgOverallScore: 0` and `solidPlusRate: 0` with zero complete profiles;
+`domainDistribution` returned `avgScore: 0` for a domain nobody had been scored in; `teamTrend`
+emitted 0% timepoints; and personal domain trend series inserted `0` for missing historical scores,
+drawing an artificial collapse.
+
+**Fix.** These official aggregates are now **null** when there is no eligible evidence.
+`teamTrend` omits timepoints with zero complete profiles entirely. `buildTrend` puts `null` where a
+historical domain score is missing, and `Sparkline` renders those as **gaps** (splitting the
+polyline into segments, marking a lone reading with a dot) rather than plotting them at zero.
+`CountUp` gained an `emptyLabel` (default `—`) and refuses to animate a non-finite value to 0.
+Overview renders percentages through a `fmtPct` helper that shows `N/A` for null.
+
+Counts remain genuine zeroes throughout — "zero navigators are Critical" is a real fact, not a gap.
+A complete floor whose actual average is 0 still displays `0%`.
+
+### 4. Competency UI used the four-band capability scale
+
+Competencies deliberately keep three levels (`<60` Learning · `60–84` Solid · `85+` Can-Teach) and
+have no Critical band, but the Overview competency bars and legend still iterated `LEVEL_ORDER`,
+rendering a Critical bucket that scale does not have.
+
+**Fix.** Both loops now use `COMPETENCY_LEVEL_ORDER`, and the panel lede states explicitly that this
+is a separate three-level scale, not the official department status. `competencyScoreToLevel` and
+`COMPETENCY_THRESHOLDS` remain independent of the capability scale.
+
+### 5. Incomplete versus Not assessed collapsed in several consumers
+
+Both states have `overallScore === null`, so consumers keying on the score alone merged them.
+Overview's "Ready for more" showed both as "Not assessed"; Matrix's readiness signal showed both as
+a bare dash; `MyHistory` hid the overall state for incomplete attempts entirely and indexed
+`LEVELS[domainBand(pct)]` directly — which throws on a null band from a legacy/malformed score.
+
+**Fix.** `readinessTally` now carries `assessedDomains`/`totalDomains`/`complete`, and both readiness
+surfaces label the states distinctly (with "X of 6 domains"). `MyHistory` always shows the overall
+state including Incomplete, and renders any non-finite legacy domain value as an explicit
+"not scored" chip instead of indexing `LEVELS` with null.
+
+`OverallBadge` is now **defensive**: `complete === false` (or `row.overallComplete === false`) always
+suppresses the official percentage and level, even when a caller supplies stale or inconsistent
+score/level props. An unknown level id degrades to the no-status badge rather than throwing.
+
+### 6. Misleading count and stale documentation
+
+Training's "of {rows.length} assessed" counted incomplete and unassessed navigators as assessed. It
+now reads "of N navigators on the floor", adding "· M with a complete profile" when they differ.
+
+CLAUDE.md corrected: the Spot-the-Error description claimed failed generations "backfill to 0" — the
+code is already all-or-nothing and never backfills, so the doc was the stale part. The governing
+invariant and all new helpers are now documented in F2/§9.
+
+### Files changed
+
+`src/lib/scoring.js` · `src/components/NavigatorApp.jsx` · `src/components/MyTraining.jsx` ·
+`src/components/NavigatorDetail.jsx` · `src/components/TrainingModule.jsx` ·
+`src/components/Overview.jsx` · `src/components/Matrix.jsx` · `src/components/MyHistory.jsx` ·
+`src/components/OverallStatus.jsx` · `src/components/Training.jsx` · `src/components/CountUp.jsx` ·
+`src/components/Sparkline.jsx` · `src/lib/scoring.test.js` ·
+`src/components/capabilityStatus.test.jsx` · `src/components/roleApps.behavior.test.jsx` ·
+**new** `src/components/trainingEmptyState.test.jsx` · `CLAUDE.md` · `docs/HISTORY.md`.
+
+### Tests added
+
+Scoring (`scoring.test.js`, 242 → 278): bank coverage accept/reject/empty/unscoreable, real seed
+banks complete and scoring normally, uncovered domain null vs measured zero, partial bank producing
+no official profile, strict-mode throw, uncovered domain producing no gap or training;
+`trainingEmptyStateReason` across all four states; null aggregates vs genuine zero for `floorStats`,
+`domainDistribution`, `teamTrend` and `buildTrend`; competency boundaries 0/39/40/59/60/84/85/100
+with finite sums and no Critical band; `readinessTally` distinguishing Incomplete from Not assessed.
+
+Components: `capabilityStatus.test.jsx` (34 → 47) — OverallBadge 0/6, 1/6, 5/6, 6/6, stale-props
+override, unknown level; Overview N/A vs genuine 0%, domain avg N/A, competency panel three-level,
+readiness distinction; `Matrix` readiness distinction. New `trainingEmptyState.test.jsx` (10) covers
+all four empty states across MyTraining, NavigatorDetail and TrainingModule.
+`roleApps.behavior.test.jsx` (18 → 22) covers the bank-coverage gate end to end: blocked with named
+domains, no seed top-up of a partial bank, complete bank allowed, empty bank falling back to seed.
+
+### Verification
+
+All commands were run; exact results are recorded in the PR description. No production deployment,
+migration, merge, or production write was performed.
+
+## 2026-07-20 — PR #40 final cleanup: encoding guard, stale docs, cross-department Incomplete
+
+A narrow third pass over PR #40. The overall-capability architecture, the exact thresholds, the
+colours, the domain training rules, the mentor safeguards and the three previously-fixed merge
+blockers are all preserved unchanged.
+
+### 1. Remaining encoding corruption removed, and the guard widened
+
+The earlier repair pass fixed only the curly-quote/dash family, because that is the only family
+`scripts/check-encoding.mjs` could detect. Two other families survived the same PowerShell
+`Add-Content` round-trip:
+
+| Corrupted | Intended | Where |
+|---|---|---|
+| a-circumflex + dagger + right-quote | `→` U+2192 | 6x in `src/lib/scoring.test.js` |
+| a-circumflex + right-double-quote + euro | `─` U+2500 | 154x `scoring.test.js`, 9x `capabilityStatus.test.jsx`, 30x `call-qa-interviews.rules.mjs` |
+
+Every sequence was enumerated and verified by reversing the Windows-1252 remap and strictly decoding
+the result as UTF-8, rather than guessing at a search-and-replace. Repair only rewrote a run when it
+decoded cleanly **and** produced a character outside Latin-1, so genuinely accented prose was never
+touched. The box-drawing damage in `tests/firestore-rules/call-qa-interviews.rules.mjs` was
+**pre-existing on `main`**, not introduced by this branch; it is fixed here because the task was to
+leave zero corruption in the tracked tree.
+
+**Root cause of the survival:** the guard matched only the literal lead pair for the cp1252 euro
+byte. Every 3-byte UTF-8 character in U+2000–U+2FFF shares the same 0xE2 lead, so arrows and box
+drawing corrupt into the same shape with a different second byte. The pattern is now
+`a-circumflex` followed by the **full continuation class** already used for the 2-byte Latin path,
+which covers punctuation, arrows, box drawing, math, block and geometric shapes in one rule.
+Requiring a continuation-class character immediately after the lead keeps real words safe: French
+spells a-circumflex followed by a letter, never by a dagger or a euro sign.
+
+**The guard also never ran on Windows.** `api/encoding.test.js` passed
+`new URL('..', import.meta.url).pathname`, which yields `/C:/Users/...` — not a valid cwd — so
+`git ls-files` failed with `spawnSync git ENOENT` and the repository scan silently no-oped on every
+Windows checkout. That is why the corruption reached the branch at all despite a green-looking
+guard. Fixed with `fileURLToPath`. The full unit suite is now green **including** the encoding
+guard, for the first time in this branch.
+
+New tests in `api/encoding.test.js` (3 tests -> 7): detects corrupted arrows (`34 -> 72`,
+`complete -> canTeach`); detects corrupted box drawing (`-- section`, a long rule); allows the real
+arrows, real box-drawing characters, em dashes, curly quotes, accents and Arabic this repo actually
+uses; and does not flag French words where a-circumflex precedes a letter.
+
+### 2. Stale "capped at Learning" documentation corrected
+
+The first implementation of the redesign capped an incomplete profile at `learning`. The
+merge-blocker review replaced that with a hard null, but two documents still described the cap as
+current behaviour.
+
+The final rule, now stated consistently everywhere:
+
+| Domains scored | Result |
+|---|---|
+| 0 of 6 | **Not assessed** — `overallScore` null, `overallLevel` null |
+| 1–5 of 6 | **Incomplete** — `overallScore` null, `overallLevel` null, no capability classification |
+| 6 of 6 | Official overall score **and** official capability level |
+
+`partialAverage` remains available as diagnostic progress data only.
+
+Corrected: the `CLAUDE.md` decision-log entry (which claimed the profile was "capped at `learning`")
+and the `docs/HISTORY.md` "Missing-domain safety" section. Both now state the current rule and carry
+an explicit superseded note explaining that the cap existed briefly and why it was replaced — a cap
+still hands out an official level the navigator has not earned, and it allowed incomplete rows to be
+double-counted in the status distribution. Historical narrative is preserved, not rewritten.
+
+### 3. Cross-department view keeps Incomplete distinct from Unassessed
+
+`departmentMatrix()` returned `null` for a cell whenever `status.score` was null. Since an
+incomplete profile deliberately has `score === null`, the cross-department table rendered these two
+very different situations identically:
+
+- a navigator who has never started that department, and
+- a navigator who is part-way through it
+
+**Fix.** A cell is null **only** when the department is genuinely unassessed (0 of 6 domains). An
+incomplete department (1–5 of 6) now returns a real cell:
+
+```js
+{ overall: null, level: null, complete: false, label: 'Incomplete',
+  assessedDomains: 3, totalDomains: 6 }
+```
+
+`Overview`'s "Strength by department" table and `NavigatorDetail`'s department strip both pass
+`assessedDomains`/`totalDomains` through to `OverallBadge`. Without that metadata the badge would
+fall back to "Not assessed" and reintroduce the same conflation at the render layer;
+`NavigatorDetail` additionally stopped indexing `LEVELS` with a null level id. Neither surface ever
+renders `partialAverage` as an official percentage.
+
+`PhaseHub` keeps its `partialAverage` fallback: it is a progress summary that prints a plain
+`avg X%` and never attaches a capability level to a partial profile.
+
+Regression tests — 8 in `scoring.test.js` (0/6 null; absent department null; 1/6 and 5/6 real
+Incomplete cells; 6/6 official percentage and level; a 1/6 profile holding 100% reporting neither
+100% nor Can-Teach; all three states side by side; `assessedDomains` carried through) and 8 in
+`capabilityStatus.test.jsx` (the same matrix at the render layer, plus the tooltip wording and the
+visual distinction between unassessed and incomplete).
+
+### Files changed
+
+`scripts/check-encoding.mjs` · `api/encoding.test.js` · `src/lib/scoring.js` (`departmentMatrix`
+only) · `src/components/Overview.jsx` · `src/components/NavigatorDetail.jsx` ·
+`src/lib/scoring.test.js` · `src/components/capabilityStatus.test.jsx` ·
+`tests/firestore-rules/call-qa-interviews.rules.mjs` (encoding repair only, no logic change) ·
+`CLAUDE.md` · `docs/HISTORY.md`.
+
+### Verification
+
+| Command | Result |
+|---|---|
+| `npx vitest run` | **1,572 passed / 1,572** across 73 files — fully green |
+| `npm run build` | clean, incl. the private-runtime bundle scan |
+| `npm run test:e2e:safe` | **12/12** passed (real Chromium) |
+| `npm run test:rules` | **76/76** assertions (51 result-authorization + 25 Call QA), exit 0 |
+| `npm run qa:pilot-smoke` | `PILOT_SMOKE_VERIFIED`, exit 0 |
+| `npm run qa:calibrate` | `INSUFFICIENT_DATA` (documented expected state), exit 0 |
+| `npm run qa:coverage` | exit 0 |
+| `node scripts/check-encoding.mjs` | passed |
+| `git diff --check` | clean |
+
+Repository-wide searches for the three mojibake lead sequences and for "capped at learning" /
+"capped at Learning" all return **zero matches**.
+
+The Firestore Rules suite required a JRE, which is not on this machine's PATH; it was run against
+the portable Temurin 21 JRE already present under the user's temp directory from an earlier session.
+No Java was installed and no PATH was permanently modified.
+
+No production deployment, migration, or write was performed, and PR #40 remains unmerged.
+
+## 2026-07-20 — PR #40 merge-blocker review: three correctness fixes
+
+A review of PR #40 against the latest `main` found three defects in the first implementation of the
+overall-status redesign. The architecture, exact thresholds, colours, domain training rules, mentor
+safeguards, OB/GYN content, Call QA logic, Firestore rules, migrations and result history are all
+preserved unchanged; only the defects below are fixed.
+
+### Blocker 1 — missing domain evidence was being converted into a score of 0
+
+`buildMatrixRows` derived `domainDevelopmentBands` with `scores[d.id] ?? 0`, and `bandFor` /
+`trainingForRow` repeated the same fallback. Because 0 falls in the Critical band, **"we never
+measured this domain" was reported as "they scored 0%, which is critical."**
+
+A navigator with a single recorded domain produced, entirely from absent data:
+
+```
+bands:              5 × "critical"
+training:           5 × Critical (required)
+criticalDomainGaps: 5
+columnGaps:         5
+```
+
+Reporting five invented critical findings against a real person is a correctness and fairness
+failure, not a cosmetic one.
+
+**Fix.** `domainBand(pct)` now returns **`null`** for a missing or non-numeric value — an explicit
+*unassessed* diagnostic state. Only a genuinely recorded number in 0–39 is a Critical gap. A missing
+domain now produces **no** critical-gap alert, **no** required/critical training assignment, **no**
+column gap, **no** distribution band count, **no** Learning Loop weak-domain signal, **no** mentor
+suggestion or pairing (and no "unmatched mentee" entry either), and **no** Action Center row.
+
+Call sites hardened: `buildMatrixRows`, `bandFor` (which now derives from the raw score first, so a
+legacy `levels` map cannot reintroduce a phantom band), `trainingForRow`, `columnGaps` — which now
+measures only the navigators actually scored on that domain, in both numerator and denominator —
+`domainDistribution` (new `unassessed` bucket; it previously did `counts[null] += 1` and produced
+`NaN`), `buildLearningSignals`, `mentorSuggestions`, `buildMentorMatches`, and `buildActionCenter`.
+
+A **recorded `0` still behaves exactly as before**: Critical band, Critical training, critical-gap
+alert, weak-domain signal. The two cases are deliberately distinguishable everywhere and are
+regression-tested against each other.
+
+The UI follows: `DomainScore`, the Matrix cells, the roster strip and the NavigatorDetail per-domain
+cards render an explicit "Not scored" dash on a neutral hatched surface — never `0%`, never a band
+tint, never a Critical gap.
+
+The test that asserted the old behaviour (*"defaults a missing domain score to 0 → critical band"*)
+was **removed and replaced** by one asserting the opposite.
+
+### Blocker 2 — incomplete profiles were double-counted and could inflate KPIs
+
+`overallDistribution` incremented `incomplete` **and then also** incremented Learning or Critical
+for the same row, so the categories overlapped and did not sum to the total:
+
+```
+{ learning: 1, incomplete: 1, unassessed: 1, total: 2 }   // sums to 3
+```
+
+Separately, `overallScore` averaged whatever domains happened to exist, so a one-domain
+`{intake: 100}` reported **100% overall** and dragged the floor average up with it, and
+`floorStats.assessed` counted every row including fully unassessed ones.
+
+**Fix.** `overallScore()` now returns **null unless all six domains are numeric**. An incomplete
+profile therefore has no official score *and* no official level — it is neither Learning nor
+Critical, it is **Incomplete**. `overallStatus()` reports three mutually exclusive states —
+`unassessed` (nothing scored) · `!complete` (Incomplete) · `complete` (exactly one official level) —
+and `overallDistribution` buckets are mutually exclusive, so:
+
+```
+critical + learning + solid + canTeach + incomplete + unassessed === total
+```
+
+`floorStats` now computes every official KPI over **complete six-domain profiles only**:
+`assessed` is the count of complete profiles (the population the KPIs describe), with `rowCount`,
+`incompleteCount` and `unassessedCount` reported alongside. A partial profile can no longer move the
+average, the Solid+ rate, or the Can-Teach/Critical counts. The Team Overview renders an eligibility
+note whenever rows were excluded.
+
+`partialAverage(scores)` is kept as a **separate, explicitly diagnostic** field for surfaces that
+genuinely need the mean of the evidence that exists. It is never called an overall score, never
+rendered with a capability level, and never feeds an official KPI. `PhaseHub` uses it as the
+fallback for its "avg X%" phase-progress summary — a progress readout, not a status.
+
+A useful consequence of the stricter rule: because an incomplete profile has no level at all,
+`overallLevel === 'canTeach'` now *implies* completeness, so the mentor, readiness and
+question-health checks inherit the safety without re-checking it.
+
+The declining-trend comparison in `buildActionCenter` now skips a snapshot with no official score
+rather than treating it as 0, which would otherwise have fabricated a large "decline".
+
+### Blocker 3 — competency regression (NaN counts, disappearing competencies)
+
+`buildMatrixRows` had been changed to pass competency scores through the new four-band capability
+`scoreToLevel`, while `competencyDistribution` still initialised only `{learning, solid, canTeach}`.
+A competency below 40 therefore hit `counts['critical'] += 1` on an undefined bucket:
+
+```
+{ competencyId: 'sopKnowledge', learning: 0, solid: 0, canTeach: 0, critical: NaN, total: 1 }
+```
+
+The competency vanished from the Team Overview entirely.
+
+**Fix.** The competency axis keeps its **original independent thresholds**. New
+`competencyScoreToLevel()` maps against `COMPETENCY_THRESHOLDS` (`<60` Learning · `60–84` Solid ·
+`85+` Can-Teach) and has no Critical band. `buildMatrixRows`, `competencyDistribution`,
+`buildLearningSignals` and `Coaching.jsx` all use it. `competencyDistribution` now derives the level
+from the **score** rather than trusting a precomputed level, and skips any id it has no bucket for,
+so a stray capability band on a legacy row can no longer produce `NaN`.
+
+The requested feature concerned the official department status, not competency re-banding. Adopting
+the four capability bands for competencies remains available as a future owner decision; it is not
+made here.
+
+### Regression tests added
+
+`src/lib/scoring.test.js` (+53 tests) and `src/components/capabilityStatus.test.jsx` (+7 tests):
+
+- `{one domain: 100}` is Incomplete; zero critical gaps; zero training assignments; zero column
+  gaps; zero weak-domain signals; zero mentor suggestions/pairings; no official band; does not
+  inflate the floor average.
+- A recorded `0` still yields a Critical gap, Critical training and a weak-domain signal — asserted
+  side by side with the missing-domain case.
+- Distribution categories are mutually exclusive and sum exactly to total, for a seven-row fixture
+  covering all six states.
+- Unassessed rows do not count as assessed; `floorStats` KPIs use complete profiles only.
+- Competency scores at **0, 39, 40, 59, 60, 84, 85, 100**; every distribution count finite; counts
+  sum to total; a below-40 competency neither NaNs nor disappears; a stray `'critical'` id on a
+  legacy row is ignored.
+- Complete profiles retain all prior threshold, training, readiness, mentorship and question-health
+  behaviour.
+- UI: Matrix renders "Incomplete" with no percentage and no level; unscored cells render a dash, not
+  `0%` or a Critical gap; Action Center raises nothing for missing domains; Overview excludes partial
+  profiles from official KPIs; roster cards report "1 of 6 domains scored".
+
+### Also in this pass
+
+`docs/HISTORY.md` and `CLAUDE.md` corrected: the stale "can-teach roster" / "readiness tally" /
+"Can-Teach depth" terminology in §2 Product Goals and §3 Product Usage now reads as the
+domain-mentor roster and the overall-status readiness ranking, and the F2/F5/§8/§9 sections document
+the unassessed contract, eligible-profile KPIs and the separate competency axis.
+
+One self-inflicted issue worth recording: appending the new test blocks via PowerShell
+`Add-Content` round-tripped the files through Latin-1 and mangled every em-dash into the classic
+three-byte mojibake sequence. The repository's own `scripts/check-encoding.mjs` guard caught it
+immediately, and the files were repaired before commit — a good demonstration that the encoding
+guard earns its place.
+
+### Verification
+
+- `npx vitest run` — **1,552 passed / 1,552** across 73 files (1,512 before this pass).
+- `npm run build` — clean, including the `check-call-qa-client-bundle` private-runtime scan.
+- `npm run test:e2e:safe` — **12/12 passed** (real Chromium, real server).
+- `npm run test:rules` — Firestore Rules emulator suite, **76/76 assertions**.
+- `npm run qa:pilot-smoke`, `npm run qa:calibrate`, `npm run qa:coverage` — offline Call QA checks.
+- `node scripts/check-encoding.mjs` — passed.
+
+`api/encoding.test.js > finds no mojibake in tracked source files` still fails on Windows with
+`spawnSync git ENOENT` (the test passes `new URL('..', import.meta.url).pathname`, i.e.
+`/C:/Users/...`, as a cwd). Pre-existing and unrelated — confirmed identical on a clean worktree of
+untouched `main` — and the underlying script that CI runs passes.
+
+No production deployment, migration, or write was performed.
+
+## 2026-07-20 — One official capability status per navigator per department
+
+**This reverses an original product principle.** Since 2026-06-23 the app deliberately produced
+"per-domain scoring, never a single total". That optimised for actionability but made the
+supervisor experience unusable: with six domain levels per person per department, a supervisor had
+to reconcile six separate classifications to answer "how is this navigator doing?" — and different
+readers reconciled them differently. Each department assessment now produces **exactly one official
+capability status**, calculated from the **arithmetic mean of all six domain scores**. The
+individual domain percentages remain visible everywhere as **diagnostic evidence** for targeted
+training, coaching, development paths, trends, critical-gap alerts, question-health evidence, and
+safe mentor qualification.
+
+Supervisors now read:
+
+```
+72% Overall · Solid
+```
+
+### The exact bands
+
+Non-overlapping, centralized in `src/data/config.js`, with every boundary pinned by tests:
+
+| Range | Status |
+|-------|--------|
+| 0–39 | **Critical** |
+| 40–64 | **Learning** |
+| 65–89 | **Solid** |
+| 90–100 | **Can-Teach** |
+
+`0 → Critical · 39 → Critical · 40 → Learning · 64 → Learning · 65 → Solid · 89 → Solid ·
+90 → Can-Teach · 100 → Can-Teach`.
+
+```js
+export const THRESHOLDS = { critical: 40, solid: 65, canTeach: 90 };
+```
+
+A fourth **Critical** band was added because the previous three-band scale had no way to separate
+"needs development" from "needs attention now".
+
+### Colour scheme
+
+A four-step **Burgundy → Orange → Gold → Green** progression replaces the old three-step traffic
+light. Every level carries a strong `color`, a readable `text`, and a light `tint`:
+
+| Level | color | text | tint |
+|-------|-------|------|------|
+| Critical | `#8B1E2D` | `#FFFFFF` | `#F4DADD` |
+| Learning | `#C9682C` | `#FFFFFF` | `#F7E1D2` |
+| Solid | `#D8A72E` | `#3F3210` | `#F6EBC8` |
+| Can-Teach | `#347A4D` | `#FFFFFF` | `#DCECDF` |
+
+**Strong colours** are reserved for the official overall badge. **Tints** wash the diagnostic domain
+score cells, bars and critical-gap callouts. Mirrored into CSS as `--level-{critical,learning,solid,
+canteach}` plus `-tint` variants. **Status is never communicated by colour alone** — every badge and
+chip renders the percentage and the written label, and a sub-40 domain carries explicit
+"Critical gap" text.
+
+### The averaging formula
+
+One canonical implementation in `src/lib/scoring.js`; `departmentOverall()` became a thin alias of
+`overallScore()` so exactly **one** averaging formula exists in the app.
+
+```
+92 + 88 + 96 + 90 + 94 + 86 = 546
+546 ÷ 6 = 91          →  91% Overall · Can-Teach
+```
+
+Rules enforced by tests: all six configured domains; rounding **only after** the complete average;
+never blending MCQ / Spot the Error / Call QA; never averaging across departments; the existing
+active-result selection preserved; **no Firestore migration** — status is derived at runtime from
+the `scores` object result documents already carry.
+
+### Missing-domain safety
+
+An incomplete profile can never be inflated. `overallComplete()` requires all six domains to be
+numeric and `overallStatus()` labels an incomplete profile **"Incomplete"**.
+
+> **⚠ Superseded the same day.** As first written, this section shipped a *cap*: `overallLevel()`
+> returned `learning` (or `critical` when genuinely low) for an incomplete profile, so
+> `{ intake: 100 }` "resolved to `learning`, never `canTeach`". **That behaviour no longer exists.**
+> The merge-blocker review below replaced the cap with a hard null: an incomplete profile now has
+> `overallScore === null` and `overallLevel === null` and holds **no official capability status at
+> all** — not Can-Teach, not Solid, not Learning, not Critical. A cap still hands out an official
+> level the navigator has not earned, and it allowed incomplete rows to be counted twice in the
+> status distribution. See *"PR #40 merge-blocker review: three correctness fixes"* at the top of
+> this file for the final rule.
+
+A useful consequence that survived the correction: because an incomplete profile carries no level at
+all, `overallLevel === 'canTeach'` implies completeness, so every downstream mentor and readiness
+check inherits the safety by construction rather than re-checking.
+
+### Domain scores stay diagnostic — and critical gaps stay loud
+
+Domain percentages keep the same bands, but only as **score ranges** driving tints and training
+priority. Nothing renders "Routing · Solid" any more. A domain below 40 is flagged as a
+**Critical gap** even when the overall status is higher:
+
+```
+Overall: 72% · Solid
+Routing: 34% · Critical gap
+```
+
+The navigator remains officially Solid; the supervisor still gets the urgent Routing warning.
+`buildMatrixRows` rows now expose `overallScore` / `overallLevel` / `overallComplete` /
+`overallLabel` as the official fields and `domainDevelopmentBands` for diagnostics, with `levels`
+retained as a deprecated read-only alias so no legacy caller breaks.
+
+### Targeted training is preserved and independent of the overall status
+
+Training is assigned **purely from individual domain scores**:
+
+| Domain score | Priority | Assignment | Rank |
+|---|---|---|---|
+| 0–39 | Critical | required | 0 |
+| 40–64 | Required | required | 1 |
+| 65–89 | Stretch | optional | 2 |
+| 90–100 | — | none | — |
+
+A navigator who is **Can-Teach overall (91%) still receives a Required assignment for Routing at
+58%** — a high average never suppresses a weak-domain assignment. Explanations now cite the measured
+score ("Assigned because Routing scored 54%", "Immediate focus because Routing scored 34%") instead
+of a level name.
+
+### Mentorship safeguards
+
+A navigator may mentor a domain only when **both** hold: their official overall status is
+**Can-Teach** *and* they scored **≥ 90% in that specific domain**.
+
+- Overall 94, Routing 95 → eligible Routing mentor
+- Overall 94, Routing 62 → not eligible for Routing
+- Overall 84, Routing 100 → not an official mentor at all
+
+`canTeachRoster()` became `domainMentorRoster()` (old name kept as an alias). New pairing records
+carry `mentorOverallScore` / `mentorOverallLevel` / `mentorDomainScore` / `menteeOverallScore` /
+`menteeOverallLevel` / `baselineDomainScore`, while still writing the legacy `menteeLevel` and
+`baselineScore` fields — **no existing pairing document is rewritten**.
+
+### Everything else that moved
+
+- **Action Center** — new `criticalOverall` (first, "Immediate supervisor attention recommended"),
+  `criticalDomainGaps`, and `learningOverall` categories; `readyForMore` now admits **only**
+  overall-Can-Teach navigators; critical training assignments escalate to `severity:'high'`.
+  Critical is explicitly a developmental/supervisory signal — it drives no automatic employment
+  decision, restriction, suspension, or access removal, and the UI says so.
+- **Team Overview** — cell-based KPIs replaced with navigator-level ones (% Solid-or-above,
+  Can-Teach count, **Critical count**, average overall score, assessed) plus an official
+  overall-status distribution. The domain panel is relabelled a diagnostic score distribution and
+  now reports each domain's average score and sub-40 count.
+- **Readiness / trends** — `readinessTally()` ranks by official status then overall score and
+  exposes `readyForMore`; `teamTrend()` reports `avgOverallScore` / `solidPlusRate` /
+  `canTeachRate` / `criticalCount`, preserving the existing MCQ-vs-Spot comparability rule.
+- **Question health** — the Can-Teach-miss signal now keys off the navigator's **overall** status at
+  submission time, not their score in the question's own domain; incomplete profiles never count.
+- **Learning Loop** — evidence wording moved to measured scores ("Routing scored 54%. No completed
+  practice is recorded."); critical gaps rank ahead of ordinary required-training gaps; a new
+  `overallRisks` signal surfaces Critical and Learning overall statuses.
+- **Competencies** — untouched as a scoring axis, but the Coaching screen now states explicitly that
+  competency analysis is separate from the official department status.
+- **Spot the Error** — only a full six-domain run shows an official status; a single-domain run
+  shows its percentage without a level. Per-domain review rows show percentages, not level pills.
+
+### Files changed
+
+`src/data/config.js` · `src/lib/scoring.js` · **new** `src/components/OverallStatus.jsx` ·
+`src/components/{Matrix,Navigators,NavigatorDetail,Overview,ActionCenter,Mentorship,Training,MyTraining,MyHistory,Coaching,SpotTheError,TrainingModule}.jsx` ·
+`src/styles.css` · `src/lib/scoring.test.js` · `src/lib/gradingInvariants.test.js` ·
+**new** `src/components/capabilityStatus.test.jsx` ·
+**new** `src/components/navigatorDetail.capability.test.jsx` · `playwright.config.js` ·
+`CLAUDE.md` · `docs/HISTORY.md`.
+
+`playwright.config.js` got a one-line `testIgnore` addition (`**/.claude/worktrees/**`, alongside
+the existing `**/.codex-worktrees/**`): a stray agent worktree carries its own `node_modules`, so
+globbing a spec from it loaded a **second** copy of `@playwright/test` and Playwright aborted at
+config load. That was blocking the E2E verification step; it is test-infrastructure hygiene and
+changes no product behaviour.
+
+### Verification
+
+- `npx vitest run` — **1,512 passed / 1,512** across 73 files (up from 1,417 across 71).
+- `npm run build` — clean, including the `check-call-qa-client-bundle` private-runtime scan.
+- `npm run test:e2e:safe` — **12/12 passed** (real Chromium, real server, 1.8m).
+- `node scripts/check-encoding.mjs` — passed.
+
+**One pre-existing failure is unrelated to this work:** `api/encoding.test.js > finds no mojibake in
+tracked source files` fails on Windows with `spawnSync git ENOENT`, because the test passes
+`new URL('..', import.meta.url).pathname` (which yields `/C:/Users/...`) as a cwd. Confirmed
+identical on a clean `git worktree` of untouched `main`, and the underlying
+`scripts/check-encoding.mjs` — the check CI actually runs — passes.
+
+### Explicitly not touched
+
+No OB/GYN question bank, audit transcript, SOP rule, training content, private Call QA scenario,
+grading pipeline, relay, persistence, migration, or Firestore security rule was modified. No
+production deployment, production write, or migration was performed.
+
 
 ## 2026-07-20 — Department-controlled training modules (PR #38 integration + integrity fixes)
 

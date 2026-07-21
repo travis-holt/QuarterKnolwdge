@@ -1,7 +1,7 @@
 import { useState } from 'react';
-import { domainName } from '../data/questions.js';
-import { LEVELS, MINICHECK_SIZE } from '../data/config.js';
-import { trainingForRow, buildDevPath, sequenceDevSteps } from '../lib/scoring.js';
+import { DOMAINS, domainName } from '../data/questions.js';
+import { MINICHECK_SIZE } from '../data/config.js';
+import { trainingForRow, buildDevPath, sequenceDevSteps, trainingEmptyStateReason } from '../lib/scoring.js';
 import { apiFetch } from '../lib/apiFetch.js';
 
 const STEP_LABELS = {
@@ -43,6 +43,7 @@ export default function MyTraining({
   department = 'pediatrics',
 }) {
   const training = trainingForRow(row);
+  const emptyReason = trainingEmptyStateReason(row, training);
   // Preserve compatibility with older callers that only pass completedDomains.
   const practiceCompletions = [...completedDomains].map((d) => ({ domainId: d, kind: 'practice' }));
   const completionEvidence = completions.length > 0 ? completions : practiceCompletions;
@@ -101,9 +102,9 @@ export default function MyTraining({
       <header className="overview__head">
         <h1 className="overview__title">My training</h1>
         <p className="overview__lede">
-          Auto-assigned from your check — <strong>Required</strong> where you&rsquo;re at Learning,
-          <strong> Stretch</strong> where you&rsquo;re Solid and climbing toward Can-Teach. Follow the
-          steps in each domain or personalise the order with AI.
+          Auto-assigned from your individual domain scores — <strong>Critical</strong> below 40%,
+          <strong> Required</strong> 40–64%, <strong>Stretch</strong> 65–89%. Follow the steps in each
+          domain or personalise the order with AI.
         </p>
         {training.length > 0 && (
           <button
@@ -118,13 +119,34 @@ export default function MyTraining({
       </header>
 
       {training.length === 0 ? (
-        <div className="card empty__card">
-          <h2 className="empty__title">Nothing assigned 🎉</h2>
-          <p className="empty__body">
-            You&rsquo;re at Can-Teach across the board — no training needed this quarter. Consider
-            mentoring a colleague.
-          </p>
-        </div>
+        // An empty assignment list is NOT proof of mastery: unscored domains are
+        // skipped by trainingForRow, so we resolve WHY it is empty first.
+        emptyReason === 'unassessed' ? (
+          <div className="card empty__card">
+            <h2 className="empty__title">No results yet</h2>
+            <p className="empty__body">
+              No assessment results are available yet. Complete the check for this department and your
+              training plan will appear here.
+            </p>
+          </div>
+        ) : emptyReason === 'incomplete' ? (
+          <div className="card empty__card">
+            <h2 className="empty__title">Assessment incomplete</h2>
+            <p className="empty__body">
+              Training cannot be finalized until the remaining domains are assessed
+              {Number.isFinite(row?.assessedDomains) && ` (${row.assessedDomains} of ${DOMAINS.length} scored so far)`}.
+              Finish the outstanding domains and your plan will be generated.
+            </p>
+          </div>
+        ) : (
+          <div className="card empty__card">
+            <h2 className="empty__title">Nothing assigned 🎉</h2>
+            <p className="empty__body">
+              Every domain scored 90% or above — no training needed this quarter. Consider mentoring a
+              colleague.
+            </p>
+          </div>
+        )
       ) : (
         <ul className="readoff__list mytraining__list">
           {training.map((a) => {
@@ -135,7 +157,13 @@ export default function MyTraining({
             return (
               <li key={a.domainId} className="card train-assign train-assign--detail">
                 <div className="train-assign__top">
-                  <span className={`cohort__tag ${a.priority === 'Required' ? 'cohort__tag--req' : 'cohort__tag--stretch'}`}>
+                  <span className={`cohort__tag ${
+                    a.priority === 'Critical'
+                      ? 'cohort__tag--critical'
+                      : a.priority === 'Required'
+                        ? 'cohort__tag--req'
+                        : 'cohort__tag--stretch'
+                  }`}>
                     {a.priority}
                   </span>
                   {practiced && (
@@ -155,7 +183,10 @@ export default function MyTraining({
                     {a.module?.title ?? domainName(a.domainId)}
                   </button>
                   <span className="train-assign__why">
-                    Assigned because {domainName(a.domainId)} is at {LEVELS[a.level].label} · {a.goal}
+                    {a.isCritical
+                      ? `Immediate focus because ${domainName(a.domainId)} scored ${a.score}%`
+                      : `Assigned because ${domainName(a.domainId)} scored ${a.score}%`}
+                    {' · '}{a.goal}
                     {a.module && ` · ~${a.module.estMinutes} min`}
                   </span>
                   {nextStep?.rationale && (

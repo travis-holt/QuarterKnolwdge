@@ -1,5 +1,5 @@
 import { buildPhases, PHASE_META, completedCount, nextPhase, phaseOrderForDept } from '../lib/phases.js';
-import { departmentOverall } from '../lib/scoring.js';
+import { departmentOverall, partialAverage } from '../lib/scoring.js';
 import { qaSummaryLabel, qaBadgeTone } from '../lib/qaFinalReview.js';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -29,8 +29,13 @@ function phaseSummary(id, results, latestQa) {
     };
   }
   const scores = results?.[id]?.scores;
-  const overall = scores ? departmentOverall(scores) : null;
-  return overall == null ? null : { label: 'Completed', detail: `avg ${overall}%`, tone: 'pass' };
+  if (!scores) return null;
+  // This is a phase-progress summary, not an official capability status: it
+  // renders a plain "avg", never a Critical/Learning/Solid/Can-Teach level. A
+  // complete profile uses the official mean; a partial one falls back to the
+  // explicitly-diagnostic partial average so a finished phase still reports.
+  const avg = departmentOverall(scores) ?? partialAverage(scores);
+  return avg == null ? null : { label: 'Completed', detail: `avg ${avg}%`, tone: 'pass' };
 }
 
 export default function PhaseHub({ deptName, deptId, done = {}, results, latestQa, onStart }) {
