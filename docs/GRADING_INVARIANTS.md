@@ -8,16 +8,18 @@
 > [`api/_qa-grading-corpus.test.js`](../api/_qa-grading-corpus.test.js) — if one of
 > those tests fails after your change, re-read this document before "fixing" the test.
 >
-> Last updated: 2026-07-21 (department-based Call QA rubric profiles; OB/GYN is the first
-> dedicated department profile. Corrected twice the same day after two independent
-> reviews. Correction pass #1: real structured identity verification, a centralized
-> protected-disclosure detector, an enforced validate→repair→score profile binding, and
+> Last updated: 2026-07-22 (correction pass #5 — §0l — supersedes the parts of §0k it amends:
+> af-hipaa never verifies from an incomplete/omitted canonical identity, conservative name-component
+> splitting, one-patient typed-answer sequences, provider full-name detection, and cross-criterion
+> verdict consistency. Earlier: department-based Call QA rubric profiles; OB/GYN is the first
+> dedicated department profile. Correction pass #1: real structured identity verification, a
+> centralized protected-disclosure detector, an enforced validate→repair→score profile binding, and
 > fail-closed handling of unknown historical rubric versions. Correction pass #2 (§0i):
 > clause-level disclosure detection, patient-identity ownership for name claims,
 > server-derived identity evidence, real spoken/calendar DOB parsing, strict raw-response
 > validation, a truthful prompt-version policy, and metadata-less history resolving to the
-> historical shared rubric. Correction pass #4 is §0k; current grader prompt version
-> `call-qa-grader-v7`.)
+> historical shared rubric. Correction pass #4 is §0k. Current grader prompt version
+> `call-qa-grader-v7`; OB/GYN rubric `qa-rubric-obgyn-v1`.)
 
 ## 0k. Canonical identity chronology and live gate (2026-07-22, correction pass #4)
 
@@ -27,12 +29,15 @@
    fails closed. Sequential field answers form one candidate only within a coherent uninterrupted
    patient-verification sequence. The value-free audit retains structural metadata, never
    identifier values in feedback or logs.
-2. **Name fields have semantics.** In a full-name designation the first token is the permitted
-   `firstName`; every remaining token is the `lastName`. This supports hyphenated and apostrophe
-   surnames plus the documented multi-token rule (`Maria de la Cruz` => `Maria` / `de la Cruz`).
-   A first-name question establishes only `firstName`, a last-name question only `lastName`, and a
-   full-name question establishes ordered components. Claims may not swap, overlap, or submit the
-   full name as either one field. Provider and caller-name questions establish neither field.
+2. **Name fields have semantics.** *(Amended by §0l.6 — the "every remaining token is the lastName"
+   rule was replaced with conservative, fail-closed splitting.)* In a full-name designation the first
+   token is the permitted `firstName`; the surname is determined only for two-token names or a
+   recognized bounded surname-particle run (`Maria de la Cruz` => `Maria` / `de la Cruz`); an
+   ambiguous 3+-token name (`Maria Elena Alvarez`) fails closed rather than guessing. Hyphenated and
+   apostrophe surnames are single tokens. A first-name question establishes only `firstName`, a
+   last-name question only `lastName`, and a full-name question establishes ordered components.
+   Claims may not swap, overlap, or submit the full name as either one field. Provider and
+   caller-name questions establish neither field.
 3. **DOB ownership is transcript-level and claim-span based.** The server starts at the submitted
    claim's verified turn, quote, value span and parsed DOB span; it does not reparse an entire turn
    and accidentally short-circuit on a phone/address. Same-designation DOBs, explicit patient or
@@ -40,11 +45,15 @@
    uninterrupted bound sequence can attach a DOB. `your DOB` after a different patient is named,
    ambiguous pronouns, caller/patient competition, patient switches, and multiple candidates fail
    closed.
-4. **One canonical chronology drives all privacy decisions.** `verify-three`,
+4. **One canonical chronology drives all privacy decisions.** *(Amended by §0l.1 — an INCOMPLETE
+   canonical identity no longer verifies af-hipaa; it is uncertainty, not proof.)* `verify-three`,
    `verify-before-access`, and `af-hipaa` consume the same identity evaluation and disclosure
-   chronology. A model-triggered `af-hipaa` verifies only when its navigator quote exists, that
-   quoted span is itself a detected protected disclosure, and identity was incomplete then. A real
-   quote after verification or a non-disclosure quote never proves the auto-fail.
+   chronology. A model-triggered `af-hipaa` verifies (and zeroes the call) only when its navigator
+   quote exists in an identified navigator turn, that quoted span is itself a detected protected
+   disclosure, canonical identity is COMPLETE and completed at or after that disclosure, and it does
+   not contradict a proven "verified before access". A real quote after verification, a
+   non-disclosure quote, or an incomplete/omitted canonical identity never proves the auto-fail —
+   the last routes to critical review (§0l.1).
 5. **A deterministic model conflict requires critical review, not speculative zeroing.** When the
    model reports `af-hipaa: false` but the bounded detector proves an auditable protected navigator
    disclosure before canonical identity completion, the server records a
@@ -57,8 +66,10 @@
    fields are malformed and receive one retry; two malformed responses make the grader unusable.
    Because this is model-visible, the prompt is **`call-qa-grader-v7`**. The rubric remains
    **`qa-rubric-obgyn-v1`** and historical grades are immutable.
-7. **The live contract smoke cannot borrow production credentials or pass by skipping.** It reads
-   only `CALL_QA_LIVE_SMOKE_API_KEY` or `CALL_QA_LIVE_SMOKE_API_KEYS`, uses the pinned grader and ten
+7. **The live contract smoke cannot borrow production credentials or pass by skipping.** *(Amended
+   by §0l.7 — the case set is now 15 and each case asserts the complete privacy-relevant state; the
+   dedicated-key resolver no longer masks a populated singular key.)* It reads only
+   `CALL_QA_LIVE_SMOKE_API_KEY` or `CALL_QA_LIVE_SMOKE_API_KEYS`, uses the pinned grader and the
    synthetic cases, and has no Firestore/private-bank dependency or calibration authority.
    Verified = exit 0 + `LIVE_CONTRACT_SMOKE_VERIFIED`; failure = nonzero +
    `LIVE_CONTRACT_SMOKE_FAILED`; missing key = distinct nonzero + `LIVE_CONTRACT_SMOKE_NOT_RUN`.
@@ -69,6 +80,62 @@
 relationship; uncertainty and contradictions remain review-only. Numeric rubric weighting still
 awaits owner sign-off, and calibration remains `INSUFFICIENT_DATA` until genuine adjudicated human
 evidence exists.
+
+## 0l. af-hipaa trust, name components, sequences, provider detection, verdict consistency, live smoke (2026-07-22, correction pass #5)
+
+The fifth independent review attacked the enforcement §0k introduced. Each invariant below has an
+adversarial reproduction test (written to fail against `da26baa` before the fix) in
+[`api/qaCorrectionPass5.test.js`](../api/qaCorrectionPass5.test.js). All fixes are pure server-side
+enforcement or smoke/docs; there is **no model-visible contract change**, so the prompt stays
+`call-qa-grader-v7` and the OB/GYN rubric stays `qa-rubric-obgyn-v1`.
+
+1. **An incomplete canonical identity never verifies af-hipaa.** A verified automatic HIPAA fail
+   zeroes the call, so it requires POSITIVE server-verifiable chronology, never a model Boolean or a
+   mere ABSENCE of structured identity evidence. `af-hipaa` verifies only when its quote is a
+   detected protected disclosure in an identified navigator turn AND canonical identity is COMPLETE
+   and completed at or after that disclosure AND it does not contradict a proven "verified before
+   access". An incomplete / missing / unprovable canonical identity (e.g. the model omitted the
+   `identityEvidence` arrays on a genuinely verified call) is UNCERTAINTY: the server does not
+   auto-zero; it records a `deterministic-privacy-conflict` and forces critical supervisor review.
+2. **The verified caller quote is preserved for DOB ownership.** `verifyIdentifierClaim` returns the
+   original verified caller quote (plus the raw value and normalized quote) rather than replacing the
+   quote with the bare value. DOB ownership uses the VALUE to locate the date's position (versus name
+   designations) and the QUOTE to detect ownership language, so `Her DOB is …` / `the patient's DOB
+   is …` / `Maria's date of birth is …` in a caller's own multi-turn answer are credited, while a
+   phone/address elsewhere in the same turn cannot short-circuit ownership and a bare DOB to a
+   generic question on a third-party call still fails closed.
+3. **Typed field answers belong to ONE patient sequence.** Field answers are grouped into discrete
+   candidate sequences; a deterministic subject-switch cue ("second/other patient", "now for the
+   other …", "switching to …") or a second full designation opens a new candidate. A first name from
+   one candidate and a last name from another cannot be flattened into one identity — field answers
+   spanning more than one candidate fail closed. Bare "now for your DOB" phrasing on a
+   single-patient call is NOT a switch. Candidate audit metadata stays value-free.
+4. **Name-component splitting is conservative and bounded.** Two tokens → first/last. A bounded,
+   documented surname-particle list (`de la`, `de los`, `van der`, `von`, `del`, …) yields
+   `Maria de la Cruz` → `Maria` / `de la Cruz`. Hyphenated/apostrophe surnames are single tokens.
+   Any other 3+-token name (`Maria Elena Alvarez`, `Maria Elena Sofia Alvarez`) is ambiguous and
+   returns null — the surname is never guessed, so a last-name claim must be grounded by a separate
+   last-name exchange or route to review. A full name is never accepted as `firstName` or `lastName`.
+5. **Provider full-name questions take precedence over the patient-name detector.** The provider/
+   staff-name patterns accept optional field qualifiers between the clinician term and "name"
+   ("your OB's last name", "the doctor's first and last name", "spell the midwife's last name") and
+   an expanded clinician-term list (provider, doctor, physician, dr, nurse, midwife, NP, PA,
+   clinician, specialist, surgeon, OB, OB/GYN, gynecologist). Any answer to such a question
+   establishes ZERO patient-name fields, so a clinician name plus a caller DOB never satisfies
+   patient identity.
+6. **Verification verdicts must be logically consistent.** `verify-before-access` MET requires
+   `verify-three` MET — proving the identifiers were collected before a disclosure necessarily
+   proves they were collected. The impossible pair (`verify-before-access` MET while `verify-three`
+   NOT_MET) is a malformed response that trips the retry; the reverse is legal (identity can complete
+   after a disclosure). A verified `af-hipaa` is incompatible with a proven "verified before access".
+7. **The live contract smoke asserts the COMPLETE privacy state and resolves keys correctly.** Each
+   case checks the relevant verdicts AND, where privacy is at issue, `qa.autoFails`,
+   `qa.unverifiedAutoFails`, the `deterministic-privacy-conflict` review flag, and
+   `qa.review.recommendation` — so a case can never report PASS while the scorecard hides a false
+   auto-fail, an unverified allegation, or a needed critical review. Five explicit HIPAA/chronology
+   cases were added (15 cases total). The dedicated-key resolver parses the plural env var first and
+   falls back to the singular only when the plural yields no usable key (a set-but-empty plural no
+   longer masks a populated singular), trimming, de-duplicating, and never printing values.
 
 ## 0j. Identity coherence and provenance (2026-07-22, correction pass #3)
 

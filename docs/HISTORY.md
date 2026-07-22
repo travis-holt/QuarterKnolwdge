@@ -1,5 +1,49 @@
 ﻿# Development History - Knowledge Check
 
+## 2026-07-22 — Call QA af-hipaa trust, DOB ownership, sequences, name components, provider detection, verdict consistency, live smoke (correction pass #5)
+
+**Status: Draft PR #41 remains unmerged, undeployed, and not ready.** No Firestore migration or
+production write, no private-scenario provisioning, no historical result rewritten, and **no
+model-visible contract change** — the prompt stays `call-qa-grader-v7` and the OB/GYN rubric stays
+`qa-rubric-obgyn-v1` (100 points, 85 pass; criteria, weights, applicability, and auto-fail
+definitions unchanged). Against independently reviewed head `da26baa`, 20 focused adversarial tests
+failed before the implementation changed ([`api/qaCorrectionPass5.test.js`](../api/qaCorrectionPass5.test.js)).
+
+The fifth independent review attacked the enforcement correction pass #4 introduced:
+
+1. **A model OMISSION could still create a false verified `af-hipaa`.** The server derived canonical
+   identity only from the model's structured `identityEvidence` arrays, and treated an incomplete
+   canonical identity as PROOF that identity was absent. So a fully-verified call graded with both
+   identity criteria wrongly returned NOT_MET/empty and an `af-hipaa` triggered on a
+   post-verification appointment quote would ZERO a genuinely verified call. `af-hipaa` now verifies
+   only with positive server-verifiable chronology (a detected protected disclosure in an identified
+   navigator turn AND canonical identity COMPLETE and completed at or after that disclosure AND not
+   contradicting a proven "verified before access"). Incomplete/missing/unprovable identity is
+   uncertainty: it forces a `deterministic-privacy-conflict` critical review, never an automatic zero.
+2. **`verifyIdentifierClaim` discarded the verified caller quote** (it returned the bare value), so a
+   multi-turn third-party DOB whose ownership language lived in the caller's own answer was rejected.
+   The original caller quote is now preserved; ownership uses the value for position and the quote
+   for ownership language, so `Her DOB is …` / `the patient's DOB is …` / `Maria's date of birth is
+   …` are credited while a phone/address elsewhere in the turn cannot bypass ownership.
+3. **Typed field answers were flattened across the whole transcript**, combining a first name from
+   patient A with a last name from an explicitly-announced second patient B. Field answers are now
+   grouped into discrete candidate sequences with deterministic subject-switch cues; answers spanning
+   more than one candidate fail closed.
+4. **Every token after the first was treated as the surname** (`Maria Elena Alvarez` → surname
+   `Elena Alvarez`). Splitting is now conservative: two tokens → first/last; a bounded documented
+   surname-particle list handles `de la Cruz` / `del Rio`; an ambiguous 3+-token name fails closed.
+5. **Provider full-name questions bypassed the provider detector** (`your OB's last name`, `the
+   doctor's first and last name`). Provider patterns now accept field qualifiers and an expanded
+   clinician-term list and take precedence, so a clinician name never becomes patient identity.
+6. **Verification verdicts could contradict one another** (`verify-before-access` MET while
+   `verify-three` NOT_MET). That impossible pair now trips the malformed-response retry.
+7. **The live contract smoke** now asserts the complete privacy-relevant scorecard state per case,
+   adds five explicit HIPAA/chronology cases (15 total), and the dedicated-key resolver no longer
+   masks a populated singular key when the plural env var is set-but-empty.
+
+See [docs/GRADING_INVARIANTS.md](GRADING_INVARIANTS.md) §0l. Final unit gate: **2,163 tests across
+83 files** (2,128 → 2,163; one new file). No merge, deploy, ready-state change, or auto-merge.
+
 ## 2026-07-22 — Call QA canonical identity and HIPAA chronology (correction pass #4)
 
 **Status: Draft PR #41 remains unmerged, undeployed, and not ready.** No Firestore migration or

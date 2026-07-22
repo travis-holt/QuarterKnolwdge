@@ -42,16 +42,22 @@ Fixtures live under `api/fixtures/call-qa-calibration/` and use
   sanitized transcript/count evidence is available
 
 For grading fixtures, every reviewer, the adjudicated result, and the model run
-must label every rubric criterion exactly once — the criteria of the fixture's
-OWN department. Since 2026-07-21 the rubric is department-based
-(`getQaRubricProfile(department)`), so an OB/GYN fixture is validated against the
-OB/GYN profile and a Pediatrics fixture against the shared/Pediatrics profile. A
-criterion id that belongs to another department fails validation
+must label every rubric criterion exactly once — the criteria of the profile the
+fixture's RECORDED `modelRun.rubricVersion` resolves to (see the provenance
+compatibility matrix below), NOT necessarily the department's CURRENT profile.
+Since 2026-07-21 the rubric is department-based (`getQaRubricProfile(department)`),
+so a NEW OB/GYN fixture (`qa-rubric-obgyn-v1`) is validated against the OB/GYN
+profile, a NEW Pediatrics fixture against the shared/Pediatrics profile, and a
+GENUINE HISTORICAL OB/GYN fixture recorded under the shared rubric
+(`qa-rubric-v2`) is validated against that shared rubric and accepted as
+historical evidence. A criterion id that does not belong to the profile the
+recorded version resolves to fails validation
 ("unknown rubric criterion for this department"), as does a `modelRun.rubricVersion`
-that is not that department's profile version. A fixture whose department has no
-rubric profile cannot be calibrated at all. Use `NA` when a criterion is
-inapplicable. Partial criterion maps, unknown criteria, and duplicate model
-criteria are invalid. Adjudicated outcomes are also exact:
+that resolves to no profile OR is incompatible with the department per the matrix
+below. A fixture whose department has no rubric profile cannot be calibrated at
+all. Use `NA` when a criterion is inapplicable. Partial criterion maps, unknown
+criteria, and duplicate model criteria are invalid. Adjudicated outcomes are also
+exact:
 
 - `pass` => `finalPass: true`, `reviewRequired: false`
 - `fail` => `finalPass: false`, `reviewRequired: false`
@@ -339,11 +345,17 @@ human-reviewed, adjudicated calls with all outcome and coverage minimums met.
 CALL_QA_LIVE_SMOKE_API_KEY=dedicated-non-production-key npm run qa:live-contract-smoke
 ```
 
-The plural `CALL_QA_LIVE_SMOKE_API_KEYS` is also supported. This command deliberately does **not**
-read the application's `GEMINI_API_KEY(S)` pool. It runs the same ten synthetic semantic cases
-against the pinned scored grader model with static SOP context, no Firestore or private-bank
-access, no provisioning, and no patient identifiers in output. It is contract evidence only: it
-has no calibration, release-automation, or scoring-authority effect.
+The plural `CALL_QA_LIVE_SMOKE_API_KEYS` is also supported and takes precedence when it holds at
+least one usable key; a set-but-empty plural variable falls back to the singular (correction pass
+#5 — the earlier nullish-coalescing resolver masked a populated singular key). This command
+deliberately does **not** read the application's `GEMINI_API_KEY(S)` pool. It runs 15 synthetic
+semantic cases (including five explicit HIPAA/chronology cases) against the pinned scored grader
+model with static SOP context, no Firestore or private-bank access, no provisioning, and no patient
+identifiers in output. Each case asserts the complete privacy-relevant scorecard state — verdicts
+plus, where applicable, `qa.autoFails`, `qa.unverifiedAutoFails`, the `deterministic-privacy-conflict`
+flag, and `qa.review.recommendation` — so a case can never report PASS while the scorecard hides a
+false auto-fail or a needed critical review. It is contract evidence only: it has no calibration,
+release-automation, or scoring-authority effect.
 
 The merge/release gate requires **both** exit 0 and the exact marker
 `LIVE_CONTRACT_SMOKE_VERIFIED`. A malformed or semantically wrong run exits nonzero and prints

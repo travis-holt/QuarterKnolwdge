@@ -440,6 +440,34 @@ export function validateQaResponse(parsed, profile) {
     }
   }
 
+  // ── Cross-criterion logical consistency (correction pass #5, B6) ────────────
+  //
+  // Proving the identifiers were collected BEFORE a protected disclosure
+  // necessarily proves they were collected. So the ORDERED identity criterion
+  // (verify-before-access) cannot be MET while the BASE identity criterion
+  // (verify-three) is not MET — that is a logically impossible pair of verdicts,
+  // so it is a malformed response that must trip the retry rather than silently
+  // producing contradictory verdicts. The reverse (verify-three MET while
+  // verify-before-access is NOT_MET) is legal: identity can complete AFTER a
+  // disclosure.
+  const orderedIdentity = active.criteria.find(
+    (c) => c.evidencePolicy === QA_EVIDENCE_POLICIES.IDENTITY_VERIFICATION
+      && c.evidenceOrder === 'before-protected-disclosure');
+  const baseIdentity = active.criteria.find(
+    (c) => c.evidencePolicy === QA_EVIDENCE_POLICIES.IDENTITY_VERIFICATION
+      && c.evidenceOrder !== 'before-protected-disclosure');
+  if (orderedIdentity && baseIdentity) {
+    const ordered = byId.get(orderedIdentity.id);
+    const base = byId.get(baseIdentity.id);
+    if (ordered?.verdict === 'MET' && base?.verdict !== 'MET') {
+      return {
+        error: `Criterion ${orderedIdentity.id} MET requires ${baseIdentity.id} MET: `
+          + 'proving the identifiers were collected before a protected disclosure necessarily '
+          + 'proves they were collected.',
+      };
+    }
+  }
+
   const autoFailsError = validateAutoFailShapes(parsed.autoFails, active);
   if (autoFailsError) return { error: autoFailsError };
 
@@ -1329,13 +1357,28 @@ export function scoreQa(verdicts, autoFails, transcript, profile, profileBinding
     // An auto-fail is a navigator behavior: only a navigator turn can verify it.
     let verified = verifyNavigatorEvidence(transcript, a.evidence);
     if (verified && a.id === 'af-hipaa' && identityDefs.length > 0) {
+      // A verified automatic HIPAA fail zeroes the call, so it demands POSITIVE,
+      // server-verifiable chronology — never a model Boolean and never a mere
+      // ABSENCE of structured identity evidence. An incomplete / missing /
+      // unprovable canonical identity is UNCERTAINTY, not proof that identity was
+      // absent (correction pass #5, B1): the model may simply have omitted the
+      // arrays on a genuinely verified call. So af-hipaa verifies ONLY when the
+      // server can prove BOTH (a) the quoted navigator span is a protected
+      // disclosure that exists in an identified navigator turn AND (b) canonical
+      // identity is COMPLETE and completed AT OR AFTER that disclosure. Identity
+      // complete strictly BEFORE the disclosure means no violation; identity
+      // incomplete means the uncertain case handled below as a review conflict.
       const quote = normalizeForMatch(a.evidence);
       const turnIndex = (transcript ?? []).findIndex((turn) => turn?.role === 'navigator'
         && normalizeForMatch(turn.text).includes(quote));
       const disclosure = findProtectedDisclosureInTurn(a.evidence);
       verified = Boolean(disclosure)
         && turnIndex >= 0
-        && (!canonicalIdentity.complete || canonicalIdentity.completedAtIndex >= turnIndex);
+        && canonicalIdentity.complete === true
+        && canonicalIdentity.completedAtIndex >= turnIndex
+        // Never verify an af-hipaa that contradicts a proven "verified before
+        // access": the two are mutually exclusive by definition.
+        && !(canonicalOrder?.satisfied === true);
     }
     const decorated = a.id === 'af-hipaa' && !verified
       && canonicalOrder?.disclosureIndex >= 0 && !canonicalOrder.satisfied

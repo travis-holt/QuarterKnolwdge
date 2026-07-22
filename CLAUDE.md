@@ -11,7 +11,44 @@
 > [§8 Current System State](#8-current-system-state) and [§15 Current Priorities](#15-current-priorities)
 > accurate at all times.
 >
-> **Last updated:** 2026-07-22 (**CORRECTION PASS #4 — canonical identity + HIPAA chronology.**
+> **Last updated:** 2026-07-22 (**CORRECTION PASS #5 — af-hipaa trust, DOB ownership quote,
+> patient sequences, name components, provider detection, verdict consistency, live smoke.**
+> Draft PR #41 remains **NOT merged, NOT deployed, and NOT ready**. Against independently reviewed
+> head `da26baa`, 20 focused adversarial tests failed before implementation changes
+> (`api/qaCorrectionPass5.test.js`). (1) A model **OMISSION** of the structured identity arrays can
+> no longer create a false VERIFIED `af-hipaa`: an incomplete/missing/unprovable canonical identity
+> is UNCERTAINTY, so a triggered HIPAA auto-fail verifies (and zeroes the call) ONLY when the server
+> can prove positive chronology — the quote is a detected protected disclosure in an identified
+> navigator turn AND canonical identity is COMPLETE and completed at or after that disclosure — and
+> never when it would contradict a proven "verified before access". The incomplete case forces a
+> mandatory critical supervisor-review conflict instead of an automatic zero. (2) `verifyIdentifierClaim`
+> now PRESERVES the verified caller quote (it previously returned the bare value), so a multi-turn
+> third-party DOB whose ownership language lives in the caller's own answer ("Her DOB is …", "the
+> patient's DOB is …", "Maria's date of birth is …") is credited, while a phone/address elsewhere in
+> the turn still cannot bypass ownership and a bare DOB to a generic question on a third-party call
+> still fails closed. (3) Typed field answers are grouped into discrete candidate SEQUENCES with
+> deterministic subject-switch cues, so a first name from patient A and a last name from an explicitly
+> announced second patient B fail closed rather than merging. (4) Name-component splitting is
+> conservative: two tokens → first/last; a bounded, documented surname-particle list ("de la Cruz",
+> "del Rio") is recognised; a 3+-token name with an unrecognised middle ("Maria Elena Alvarez") is
+> ambiguous and FAILS CLOSED — the surname is never guessed. (5) Provider FULL-NAME questions
+> ("your OB's last name", "the doctor's first and last name", "spell the midwife's last name") now
+> take precedence over the patient-name detector via optional field qualifiers and an expanded
+> clinician-term list, so a clinician name is never taken as the patient's. (6) Verification verdicts
+> must be logically consistent: `verify-before-access` MET while `verify-three` is NOT_MET is
+> impossible and now trips the malformed-response retry (the reverse remains legal). (7) The live
+> contract smoke asserts the COMPLETE privacy-relevant state per case (verdicts, `qa.autoFails`,
+> `qa.unverifiedAutoFails`, the deterministic-privacy-conflict flag, and `qa.review.recommendation`),
+> adds five explicit HIPAA/chronology cases (**15 synthetic cases total**), and the dedicated-key
+> resolver no longer masks a populated singular key when the plural env var is set-but-empty. All
+> fixes are pure SERVER-SIDE enforcement or smoke/docs — **no model-visible contract change**, so the
+> prompt stays **`call-qa-grader-v7`** and the OB/GYN rubric stays **`qa-rubric-obgyn-v1`** (100
+> points, 85 pass, unchanged criteria/weights/applicability/auto-fail definitions). Pediatrics is
+> unchanged and historical grades remain immutable/separate by provenance. Numeric weighting still
+> awaits owner sign-off; calibration remains `INSUFFICIENT_DATA`. No migration, production write,
+> private provisioning, historical rewrite, merge, deploy, or ready-state change. See docs/HISTORY.md
+> and docs/GRADING_INVARIANTS.md §0l. Final unit gate: **2,163 tests across 83 files**. ·
+> **Prior update:** 2026-07-22 (**CORRECTION PASS #4 — canonical identity + HIPAA chronology.**
 > Draft PR #41 remains **NOT merged, NOT deployed, and NOT ready**. Against independently reviewed
 > head `fe54788`, 16 focused adversarial tests failed before implementation changes. The correction
 > replaces unioned person tokens with discrete patient candidates (exact repeats deduplicate;
@@ -2750,7 +2787,7 @@ of this file on 2026-07-07 to cut per-session context cost (it was ~55% of the f
   (init → chat/voice turns → `/api/live` relay) for caller consistency. Scored Call QA deliberately
   does not: its caller receives no grading context, expected actions, critical misses, scoring notes,
   rule/workflow metadata, or hidden chart state. Final verification: `npm test` =
-  **2,077/2,077 across 82 files**; Firestore Rules emulator assertions = **76/76**
+  **2,163/2,163 across 83 files**; Firestore Rules emulator assertions = **76/76**
   (51 result authorization + 25 Call QA); production build
   includes the private-runtime bundle scan. GitHub Actions mirrors the
   normal local gate on `main` pushes and PRs: `npm ci` → `npm test` → `npm run build` (no deploy step).
@@ -2796,7 +2833,7 @@ of this file on 2026-07-07 to cut per-session context cost (it was ~55% of the f
   Pediatrics; their modules will follow once their SOPs land.
 - **Experimental / mockup:**
   - **Adult Medicine and Behavioural Health** are not assessed; **Pediatrics and OB/GYN** are live.
-- **Test coverage:** **2,077 unit tests across 82 files** and **76 Firestore Rules emulator
+- **Test coverage:** **2,163 unit tests across 83 files** and **76 Firestore Rules emulator
   assertions** (51 result authorization + 25 Call QA). The 2026-07-21 department-rubric-profile
   work added `api/obgynRubricProfile.test.js` (75 tests: profile architecture/fail-closed
   resolution, OB/GYN opening/verification/closing/empathy/listening/narration/documentation
@@ -2934,7 +2971,7 @@ of this file on 2026-07-07 to cut per-session context cost (it was ~55% of the f
   OB/GYN = **37** seed questions (offline fallback) + the **48-item MCQ v2 operating-model bank**
   (24 Pediatrics + 24 OB/GYN) that replaces the weak active bank via a marker-gated
   archive-and-replace migration (bank grows in Firestore per dept) · 4 departments (**Pediatrics
-  + OB/GYN live**, 2 mockup) · **2,077 unit tests across 82 files** + **76 assertions**
+  + OB/GYN live**, 2 mockup) · **2,163 unit tests across 83 files** + **76 assertions**
   across two committed Firestore Rules emulator suites (`npm run test:rules`; require Java, run in
   CI, not part of the unit-test count) ·
   **14** Firestore collections
@@ -3276,7 +3313,7 @@ npm run test:e2e     # run the Playwright browser tests (auto-builds + starts th
 - Heatmap intensity toggle (show % inside matrix cells).
 
 ### Technical Debt
-- **2,077 unit tests across 82 files** as of 2026-07-22 (plus **76 assertions** across two
+- **2,163 unit tests across 83 files** as of 2026-07-22 (plus **76 assertions** across two
   committed Firestore Rules emulator suites, `npm run test:rules`, run separately from the unit-test
   gate). **Role-app
   coverage** (`App`, `Start`,

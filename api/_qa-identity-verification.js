@@ -406,10 +406,19 @@ const PATIENT_NAME_QUESTION_PATTERNS = [
 // answer identifies a clinician — never the patient. This takes precedence over
 // the patient-name-question patterns (correction pass #3): "Can I have the
 // doctor's name?" contains "name" but is not a patient-identity exchange.
+// One clinician/staff term alternation, reused across the patterns. "ob/gyn"
+// must precede "ob" in the alternation so the longer form matches first.
+const PROVIDER_TERM = "(?:provider|doctor|physician|dr\\.?|nurse|midwife|np|pa|clinician|specialist|surgeon|ob\\/?gyn|ob|gyn|gynecologist)";
+// Optional FIELD qualifiers that may sit between the clinician term and "name":
+// "first", "last", "first and last", "full", "legal", "maiden". Without these a
+// provider FULL-NAME question ("your OB's last name", "the doctor's first and
+// last name") slipped past the detector and was treated as a patient question.
+const CLINICIAN_NAME_QUALIFIER = "(?:first\\s+and\\s+last\\s+|first\\s+|last\\s+|full\\s+|legal\\s+|maiden\\s+)*";
 const PROVIDER_NAME_QUESTION_PATTERNS = [
-  /\b(?:provider|doctor|physician|dr\.?|nurse|midwife|clinician|specialist|surgeon)(?:'s|’s)?\s+name\b/i,
-  /\bwho\s+is\s+(?:your|the|her|his|their)\s+(?:provider|doctor|physician|nurse|midwife|clinician|specialist|surgeon)\b/i,
-  /\bwhich\s+(?:provider|doctor|physician|specialist)\b/i,
+  new RegExp(`\\b${PROVIDER_TERM}(?:'s|’s)?\\s+${CLINICIAN_NAME_QUALIFIER}name\\b`, 'i'),
+  new RegExp(`\\bwho\\s+is\\s+(?:your|the|her|his|their)\\s+${PROVIDER_TERM}\\b`, 'i'),
+  new RegExp(`\\bwhich\\s+${PROVIDER_TERM}\\b`, 'i'),
+  new RegExp(`\\bspell\\s+(?:your|the|her|his|their)\\s+${PROVIDER_TERM}(?:'s|’s)?\\s+${CLINICIAN_NAME_QUALIFIER}name\\b`, 'i'),
 ];
 
 // Titles that mark a name as a provider or staff member, never the patient.
@@ -453,11 +462,56 @@ function patientNameQuestionField(text) {
   return isPatientNameQuestion(raw) ? 'fullName' : null;
 }
 
-function nameComponents(text) {
+// ── Conservative name-component splitting (correction pass #5, B4) ───────────
+//
+// A full name does NOT reliably decompose into "first token = given name, every
+// remaining token = surname". "Maria Elena Alvarez" may carry a MIDDLE name, so
+// treating "Elena Alvarez" as the surname is wrong — it can award an incorrect
+// last name or reject the correct one. The project sources establish no policy
+// that every trailing token is the surname, so we FAIL CLOSED on ambiguity.
+//
+// Supported, bounded, auditable structures:
+//   * exactly two tokens                       -> first = t0, last = t1
+//   * a recognized surname-particle run that begins right after the first token
+//     and is followed by exactly one surname token ("Maria de la Cruz",
+//     "Maria del Rio") -> first = t0, last = the particle(s) + final token
+//   * hyphenated / apostrophe surnames are already single tokens
+// Anything else (3+ tokens with an unrecognized middle) returns null: the
+// surname cannot be determined from the full name alone, so a last-name claim
+// must be grounded by a separate last-name exchange or route to review.
+//
+// The particle list is deliberately BOUNDED and documented so it stays
+// auditable; it is not a general onomastics engine.
+const SURNAME_PARTICLE_SEQUENCES = [
+  ['de', 'la'], ['de', 'los'], ['de', 'las'],
+  ['van', 'der'], ['van', 'den'], ['von', 'der'],
+  ['de'], ['del'], ['della'], ['di'], ['da'], ['dos'], ['das'], ['du'],
+  ['van'], ['von'], ['der'], ['den'], ['la'], ['le'], ['el'], ['al'],
+  ['bin'], ['ibn'], ['mac'], ['mc'], ['saint'], ['st'],
+].sort((a, b) => b.length - a.length);
+
+/**
+ * Split a person name into first-name and surname token arrays, conservatively.
+ * Returns null when the surname cannot be determined without guessing.
+ */
+export function splitPersonName(text) {
   const tokens = filterNameSpanTokens(text);
   if (tokens.length < 2) return null;
-  return { firstName: [tokens[0]], lastName: tokens.slice(1) };
+  if (tokens.length === 2) return { firstName: [tokens[0]], lastName: [tokens[1]] };
+  const lower = tokens.map((token) => token.toLowerCase());
+  for (const seq of SURNAME_PARTICLE_SEQUENCES) {
+    // The particle run must start exactly at token 1 and be followed by exactly
+    // one surname token: first = t0, surname = particle(s) + final token.
+    if (tokens.length === 1 + seq.length + 1
+      && seq.every((particle, offset) => lower[1 + offset] === particle)) {
+      return { firstName: [tokens[0]], lastName: tokens.slice(1) };
+    }
+  }
+  return null;
 }
+
+// Retained internal alias for existing call sites.
+const nameComponents = splitPersonName;
 
 /**
  * Every name span in ONE caller turn that genuinely designates THE PATIENT.
@@ -674,7 +728,18 @@ export function verifyIdentifierClaim(transcript, claim) {
     if (ownership) return { ok: false, field, reason: ownership };
   }
 
-  return { ok: true, field, value, turnIndex, role, quote: rawValue };
+  // Preserve the VERIFIED CALLER QUOTE (not the bare value): a multi-turn
+  // third-party DOB carries its ownership language in the caller's own answer
+  // ("Her DOB is …", "the patient's DOB is …"), and replacing the quote with the
+  // value discarded exactly that language (correction pass #5, B2). `value` stays
+  // normalized for token comparisons; `rawValue` is the original value text; and
+  // `quote` is the original verified caller quote, retained separately.
+  return {
+    ok: true, field, value, turnIndex, role,
+    rawValue,
+    quote: stripRoleLabel(String(claim?.quote ?? '')),
+    normalizedQuote: quote,
+  };
 }
 
 // ── One patient subject (correction pass #3, B1) ─────────────────────────────
@@ -686,15 +751,47 @@ export function verifyIdentifierClaim(transcript, claim) {
 // from the whole call and reports when two different people were named as the
 // patient (ambiguous → fail closed).
 
+// Deterministic navigator/caller cues that a NEW patient is now being discussed.
+// A cue closes the current field-answer sequence and opens another, so typed
+// field answers on either side of it can never be flattened into one identity.
+// Deliberately conservative: bare "now" phrasing only counts when it is followed
+// by an explicit other/second-patient reference, so a routine "and now your date
+// of birth?" on a single-patient call is NOT a switch.
+const SUBJECT_SWITCH_CUES = [
+  /\b(?:second|other|another|different|next)\s+patient\b/i,
+  /\b(?:second|other|another)\s+child\b/i,
+  /\bmy\s+other\s+(?:daughter|son|child|kid)\b/i,
+  /\bswitching\s+to\b/i,
+  /\bregarding\s+the\s+other\b/i,
+  /\bnow\s+for\s+(?:the\s+)?(?:second|other|another|my\s+other)\b/i,
+  /\bfor\s+(?:the\s+)?(?:second|other|another)\s+(?:patient|child|one)\b/i,
+];
+
+function hasSubjectSwitchCue(text) {
+  return SUBJECT_SWITCH_CUES.some((pattern) => pattern.test(String(text ?? '')));
+}
+
 /**
  * Resolve the ONE patient the call is about, as a set of normalized name tokens.
  *
- * @returns {{ tokens: Set<string>, ambiguous: boolean, spans: object[] }}
+ * Correction pass #5 (B3): typed field answers are grouped into discrete
+ * candidate SEQUENCES rather than flattened across the whole transcript, so a
+ * first name from patient A and a last name from an explicitly-announced second
+ * patient B can never be combined. A subject-switch cue (or a second full
+ * designation) opens a new candidate; field answers that span more than one
+ * candidate fail closed.
+ *
+ * @returns {{ tokens: Set<string>, ambiguous: boolean, spans: object[],
+ *             candidates: object[] }}
  */
 export function resolvePatientSubject(transcript) {
   const turns = Array.isArray(transcript) ? transcript : [];
   const spans = [];
+  let sequenceId = 0;
   for (let index = 0; index < turns.length; index++) {
+    // A switch cue in ANY turn (usually the navigator's prompt) opens a new
+    // candidate sequence before the caller's answer is attributed.
+    if (hasSubjectSwitchCue(turns[index]?.text)) sequenceId += 1;
     if (!CALLER_ROLE_ALIASES.has(turns[index]?.role)) continue;
     let preceding = '';
     for (let prior = index - 1; prior >= 0; prior--) {
@@ -702,36 +799,50 @@ export function resolvePatientSubject(transcript) {
     }
     for (const span of classifyPatientNameSpans(String(turns[index].text ?? ''), preceding)) {
       const tokens = normalizeForMatch(span.text).split(' ').filter(Boolean);
-      if (tokens.length) spans.push({ tokens, turnIndex: index, kind: span.kind, field: span.field ?? null, subject: span.subject ?? null });
+      if (tokens.length) {
+        spans.push({
+          tokens, turnIndex: index, kind: span.kind,
+          field: span.field ?? null, subject: span.subject ?? null, sequenceId,
+        });
+      }
     }
   }
   // Two FULL-PERSON DESIGNATIONS that share no tokens, where at least one is a
   // multi-token full name, means two different people were designated as the
-  // patient — e.g. "calling for Maria Smith and my daughter Jane Alvarez". A
-  // single-FIELD answer ("Maria." then "Alvarez-Reyes.") is two fields of ONE
-  // patient across turns, never a conflict, so field spans never make an attempt
-  // ambiguous.
+  // patient — e.g. "calling for Maria Smith and my daughter Jane Alvarez".
   const designations = spans.filter((span) => span.kind === 'designation' || span.field === 'fullName');
   const uniqueDesignations = [...new Map(designations.map((span) => [span.tokens.join(' '), span])).values()];
+
+  // Typed field answers are grouped by their candidate SEQUENCE. A single field
+  // answered with two different values inside ONE candidate is a mid-sequence
+  // switch/correction (fail closed); field answers spread across MORE THAN ONE
+  // candidate sequence are two different patients (fail closed). Exact repeats
+  // inside one candidate deduplicate and are harmless.
   const sequenceFields = spans.filter((span) => span.kind === 'field' && span.field !== 'fullName');
-  const fieldValues = new Map();
+  const fieldSequences = new Map();
   for (const span of sequenceFields) {
-    const values = fieldValues.get(span.field) ?? new Set();
+    const byField = fieldSequences.get(span.sequenceId) ?? new Map();
+    const values = byField.get(span.field) ?? new Set();
     values.add(span.tokens.join(' '));
-    fieldValues.set(span.field, values);
+    byField.set(span.field, values);
+    fieldSequences.set(span.sequenceId, byField);
   }
-  // Policy for corrections/switches: exact repeats are harmless; two different
-  // values for the same typed field, or two different full designations, are an
-  // unresolved subject switch and fail closed. No shared token joins candidates.
+  const withinCandidateConflict = [...fieldSequences.values()]
+    .some((byField) => [...byField.values()].some((values) => values.size > 1));
+  const fieldCandidateCount = fieldSequences.size;
+
   const ambiguous = uniqueDesignations.length > 1
-    || [...fieldValues.values()].some((values) => values.size > 1);
+    || withinCandidateConflict
+    || fieldCandidateCount > 1;
   const canonicalTokens = ambiguous ? []
     : uniqueDesignations.length === 1
       ? uniqueDesignations[0].tokens
       : sequenceFields.flatMap((span) => span.tokens);
   return {
     tokens: new Set(canonicalTokens), ambiguous, spans,
+    // Value-free structural audit metadata (no identifier values).
     candidates: uniqueDesignations.map((span) => ({ designationTurn: span.turnIndex, kind: span.kind })),
+    fieldCandidateCount,
   };
 }
 
@@ -768,8 +879,14 @@ function designationSpansWithPositions(text) {
 function dobOwnershipFailure(transcript, dobClaim, subject) {
   const dobTurnIndex = dobClaim.turnIndex;
   const text = String(transcript?.[dobTurnIndex]?.text ?? '');
-  const quote = String(dobClaim.quote ?? dobClaim.value ?? '');
-  const dobPos = text.toLowerCase().indexOf(quote.toLowerCase());
+  // The DOB VALUE locates the date inside the turn (to compare against name
+  // designations by position); the verified caller QUOTE carries any ownership
+  // language. Using the value for the position and the full quote for ownership
+  // means a phone/address elsewhere in the same turn can never short-circuit the
+  // ownership check (correction pass #5, B2).
+  const valueText = String(dobClaim.rawValue ?? dobClaim.value ?? '');
+  const ownershipQuote = String(dobClaim.quote ?? valueText);
+  const dobPos = text.toLowerCase().indexOf(valueText.toLowerCase());
   if (dobPos < 0) return 'dob-claim-span-not-found';
   const preceding = designationSpansWithPositions(text)
     .filter((span) => span.start >= 0 && span.start < dobPos)
@@ -786,8 +903,11 @@ function dobOwnershipFailure(transcript, dobClaim, subject) {
   for (let index = dobTurnIndex - 1; index >= 0; index--) {
     if (transcript[index]?.role === 'navigator') { question = String(transcript[index].text ?? ''); break; }
   }
-  const patientLinked = /\b(?:the\s+patient(?:'s|’s)?|his|her|the\s+child(?:'s|’s)?)\s+(?:date\s+of\s+birth|dob)\b/i.test(`${question} ${quote}`)
-    || /\b[\p{L}'’-]+(?:'s|’s)\s+(?:date\s+of\s+birth|dob)\b/iu.test(`${question} ${quote}`);
+  // Ownership may be established by the navigator's question OR by the caller's
+  // own verified answer quote.
+  const ownershipText = `${question} ${ownershipQuote}`;
+  const patientLinked = /\b(?:the\s+patient(?:'s|’s)?|his|her|the\s+child(?:'s|’s)?)\s+(?:date\s+of\s+birth|dob)\b/i.test(ownershipText)
+    || /\b[\p{L}'’-]+(?:'s|’s)\s+(?:date\s+of\s+birth|dob)\b/iu.test(ownershipText);
   if (priorThirdParty && /\byour\s+(?:date\s+of\s+birth|dob)\b/i.test(question) && !patientLinked) {
     return 'dob-ownership-ambiguous-third-party-caller';
   }

@@ -50,10 +50,24 @@ function scenarioContext(department) {
 const CLOSE_OFFER = nav('Is there anything else I can help you with today?');
 const CLOSE_THANKS = nav('Thank you, have a great day. Goodbye.');
 const GREET = nav('Thank you for calling Aizer Women\'s Health, this is Dana. How can I help you today?');
+// A confirmation that DISCLOSES an existing appointment (a protected detail).
+const DISCLOSE_APPT = nav('I can see your appointment is Tuesday at 2:15 with Dr. Reyes.');
 
-// Each case asserts a SEMANTIC outcome on the returned scorecard. The assertions
-// reference criterion ids and verdicts only — never identifier values.
-const verdictOf = (qa, id) => qa.criteria.find((c) => c.id === id)?.verdict;
+// Each case asserts the COMPLETE semantic state relevant to it — criterion
+// verdicts AND, where the case is about privacy, the auto-fail / review state.
+// The assertions reference ids, verdicts, and flags only — never identifier
+// values, so a printed failure message can never leak PHI.
+const verdictOf = (qa, id) => qa.criteria?.find((c) => c.id === id)?.verdict;
+const verifiedAutoFail = (qa, id) => (qa.autoFails ?? []).some((a) => a.id === id);
+const unverifiedAutoFail = (qa, id) => (qa.unverifiedAutoFails ?? []).some((a) => a.id === id);
+const reviewFlag = (qa, id) => (qa.review?.reviewFlags ?? []).some((f) => f.id === id);
+const recommendationOf = (qa) => qa.review?.recommendation;
+
+// Return the first failing rule's message, or true when every rule holds.
+function checkAll(...rules) {
+  for (const [ok, message] of rules) if (!ok) return message;
+  return true;
+}
 
 export const LIVE_CONTRACT_SMOKE_CASES = [
   {
@@ -66,7 +80,12 @@ export const LIVE_CONTRACT_SMOKE_CASES = [
       CLOSE_OFFER,
       caller('No, that is everything, thank you.'),
     ],
-    check: (qa) => verdictOf(qa, 'verify-three') === 'MET' || 'verify-three should be MET when the caller volunteers name + DOB in one turn',
+    check: (qa) => checkAll(
+      [verdictOf(qa, 'verify-three') === 'MET', 'verify-three should be MET when the caller volunteers name + DOB in one turn'],
+      [verdictOf(qa, 'verify-before-access') === 'MET', 'verify-before-access should be MET when identity precedes any disclosure'],
+      [!verifiedAutoFail(qa, 'af-hipaa'), 'no verified af-hipaa on a verified call'],
+      [!unverifiedAutoFail(qa, 'af-hipaa'), 'no af-hipaa should be reported on a verified call with no protected disclosure'],
+    ),
   },
   {
     id: '2-separate-one-word-answers',
@@ -83,7 +102,11 @@ export const LIVE_CONTRACT_SMOKE_CASES = [
       nav('Thank you. I can book that for you.'),
       CLOSE_OFFER,
     ],
-    check: (qa) => verdictOf(qa, 'verify-three') === 'MET' || 'verify-three should be MET across separate one-word answers',
+    check: (qa) => checkAll(
+      [verdictOf(qa, 'verify-three') === 'MET', 'verify-three should be MET across separate one-word answers'],
+      [verdictOf(qa, 'verify-before-access') === 'MET', 'verify-before-access should be MET when identity precedes any disclosure'],
+      [!verifiedAutoFail(qa, 'af-hipaa'), 'no verified af-hipaa on a verified call'],
+    ),
   },
   {
     id: '3-third-party-patient',
@@ -94,7 +117,10 @@ export const LIVE_CONTRACT_SMOKE_CASES = [
       nav('Thank you, I can help with that.'),
       CLOSE_OFFER,
     ],
-    check: (qa) => verdictOf(qa, 'verify-three') === 'MET' || 'verify-three should be MET for an authorized third-party caller',
+    check: (qa) => checkAll(
+      [verdictOf(qa, 'verify-three') === 'MET', 'verify-three should be MET for an authorized third-party caller'],
+      [!verifiedAutoFail(qa, 'af-hipaa'), 'no verified af-hipaa on a verified third-party call'],
+    ),
   },
   {
     id: '4-callers-own-dob-different-patient',
@@ -177,13 +203,109 @@ export const LIVE_CONTRACT_SMOKE_CASES = [
     check: (qa) => (verdictOf(qa, 'comm-empathy') === 'NA' && verdictOf(qa, 'control-narrate') === 'NA')
       || 'a routine call with no emotional cue and no hold should leave comm-empathy and control-narrate NA',
   },
+
+  // ── HIPAA / chronology cases (correction pass #5, B7) ───────────────────────
+  // These assert the COMPLETE privacy-relevant state, not just one verdict, so a
+  // case can never report PASS while the returned scorecard hides a false auto-
+  // fail, an unverified allegation, or a needed critical review.
+  {
+    id: '11-identity-before-disclosure-clean',
+    department: 'obgyn',
+    transcript: [
+      GREET,
+      caller('Hi, this is Maria Alvarez, date of birth March 2nd 1991. Can you check my appointment?'),
+      DISCLOSE_APPT,
+      CLOSE_OFFER,
+      caller('No, that is everything, thank you.'),
+    ],
+    check: (qa) => checkAll(
+      [verdictOf(qa, 'verify-three') === 'MET', 'verify-three should be MET before the disclosure'],
+      [verdictOf(qa, 'verify-before-access') === 'MET', 'verify-before-access should be MET — identity completed before the appointment was disclosed'],
+      [!verifiedAutoFail(qa, 'af-hipaa'), 'no verified af-hipaa when identity completed before the disclosure'],
+      [!unverifiedAutoFail(qa, 'af-hipaa'), 'no af-hipaa should be reported on this clean call'],
+      [!reviewFlag(qa, 'deterministic-privacy-conflict'), 'no deterministic privacy conflict on a clean call'],
+    ),
+  },
+  {
+    id: '12-disclosure-before-identity',
+    department: 'obgyn',
+    transcript: [
+      GREET,
+      DISCLOSE_APPT,
+      caller('Oh, thank you. This is Maria Alvarez, date of birth March 2nd 1991.'),
+      CLOSE_OFFER,
+    ],
+    // Must NOT be a clean pass: either a correctly verified af-hipaa or a
+    // mandatory critical review, per the safe server policy.
+    check: (qa) => checkAll(
+      [verdictOf(qa, 'verify-before-access') === 'NOT_MET', 'verify-before-access must NOT verify when a disclosure precedes identity'],
+      [recommendationOf(qa) !== 'pass', 'a call that disclosed before verifying must never be a clean automatic pass'],
+      [verifiedAutoFail(qa, 'af-hipaa') || reviewFlag(qa, 'deterministic-privacy-conflict') || recommendationOf(qa) === 'needs_review' || recommendationOf(qa) === 'fail',
+        'a pre-verification disclosure must produce a verified af-hipaa or a mandatory critical review'],
+    ),
+  },
+  {
+    id: '13-partial-identity-then-disclosure',
+    department: 'obgyn',
+    transcript: [
+      GREET,
+      caller('Hi, this is Maria Alvarez.'),
+      DISCLOSE_APPT,
+      CLOSE_OFFER,
+    ],
+    check: (qa) => checkAll(
+      [verdictOf(qa, 'verify-three') === 'NOT_MET', 'verify-three must NOT verify with only a partial identity'],
+      [recommendationOf(qa) !== 'pass', 'a partially-verified call that disclosed a protected detail must not be a clean pass'],
+    ),
+  },
+  {
+    id: '14-non-disclosure-safe-call',
+    department: 'obgyn',
+    transcript: [
+      GREET,
+      caller('Hi, this is Maria Alvarez, date of birth March 2nd 1991. I would like to book an annual visit.'),
+      nav('Of course. I can book you an appointment for Tuesday at 2:15 with Dr. Reyes.'),
+      CLOSE_OFFER,
+    ],
+    check: (qa) => checkAll(
+      [!verifiedAutoFail(qa, 'af-hipaa'), 'no verified af-hipaa when nothing protected was disclosed'],
+      [!unverifiedAutoFail(qa, 'af-hipaa'), 'no af-hipaa should be reported when nothing protected was disclosed'],
+      [!reviewFlag(qa, 'deterministic-privacy-conflict'), 'no privacy conflict when nothing protected was disclosed'],
+    ),
+  },
+  {
+    id: '15-post-verification-disclosure-conformance',
+    department: 'obgyn',
+    transcript: [
+      GREET,
+      caller('Hi, this is Maria Alvarez, date of birth March 2nd 1991. Can you look up my appointment?'),
+      DISCLOSE_APPT,
+      nav('You are all set.'),
+      CLOSE_OFFER,
+    ],
+    // A correct model must NOT trigger af-hipaa on a POST-verification disclosure.
+    // If it does, the server prevents the zero, but this gate must still fail the
+    // model-conformance check.
+    check: (qa) => checkAll(
+      [!verifiedAutoFail(qa, 'af-hipaa'), 'the server must never zero a call that verified before disclosing'],
+      [!unverifiedAutoFail(qa, 'af-hipaa'), 'a correct model must NOT trigger af-hipaa on a post-verification disclosure'],
+    ),
+  },
 ];
 
 const CASES = LIVE_CONTRACT_SMOKE_CASES;
 
+// Resolve the DEDICATED, non-production smoke credentials. Correction pass #5:
+// nullish-coalescing masked the singular key when the plural variable was set
+// but EMPTY (an empty string is not nullish). Parse the plural first and use it
+// only when it yields at least one usable key; otherwise fall back to the
+// singular. Trim, drop empties, and de-duplicate (order-preserving). Values are
+// never printed. Generic GEMINI_API_KEY(S) are intentionally never consulted.
 export function liveSmokeApiKeys(env = process.env) {
-  return String(env.CALL_QA_LIVE_SMOKE_API_KEYS ?? env.CALL_QA_LIVE_SMOKE_API_KEY ?? '')
-    .split(',').map((key) => key.trim()).filter(Boolean);
+  const parse = (raw) => String(raw ?? '').split(',').map((key) => key.trim()).filter(Boolean);
+  const plural = parse(env.CALL_QA_LIVE_SMOKE_API_KEYS);
+  const chosen = plural.length > 0 ? plural : parse(env.CALL_QA_LIVE_SMOKE_API_KEY);
+  return [...new Set(chosen)];
 }
 
 export async function runLiveContractSmoke({
