@@ -18,6 +18,69 @@
 > validation, a truthful prompt-version policy, and metadata-less history resolving to the
 > historical shared rubric. Grader prompt version `call-qa-grader-v5`.)
 
+## 0j. Identity coherence and provenance (2026-07-22, correction pass #3)
+
+The third independent review attacked the boundaries §0i introduced. These invariants are
+binding and each has an adversarial reproduction test in
+[`api/qaVerificationSubject.test.js`](../api/qaVerificationSubject.test.js) plus end-to-end
+coverage in [`api/qaVerificationPipeline.test.js`](../api/qaVerificationPipeline.test.js) and
+[`api/_qa-calibration.test.js`](../api/_qa-calibration.test.js).
+
+1. **The three identifiers belong to ONE patient.** `resolvePatientSubject` resolves the single
+   patient's name tokens from the whole call. A first/last name value must be a token of that
+   patient's name; a DOB is attributed to the **nearest preceding name designation** in its turn,
+   so a caller's own DOB stated before naming a different patient does not verify; and two
+   different people designated as the patient (`ambiguous-patient-subject`) fails closed. `scoreQa`
+   evaluates ONE canonical identity array and feeds BOTH `verify-three` and `verify-before-access`,
+   and `validateQaResponse` rejects the two identity criteria carrying different arrays — the two
+   criteria can never be credited from different identities. The evaluation carries a value-free
+   `audit` record (`firstNameTurn`/`lastNameTurn`/`dobTurn`/`completedAtTurn`/`subjectConsistent`),
+   never the identifier values.
+2. **Name ownership is field-and-context aware, not "alphabetic tokens = a name."** A stopword set
+   removes ordinary request/scheduling/clinical/weekday words; a full-person DESIGNATION (a
+   self-identification or third-party designation) must be Title-cased, so a lowercase phrase like
+   "I am really scared" is not treated as a rival name; the bare "who is" patient alternative is
+   removed; and a provider-name question ("Who is your provider?", "the doctor's name") is
+   distinguished from a patient-name question and never establishes patient identity. Single-FIELD
+   answers to an explicit patient-name question are exempt from the capitalization requirement — the
+   navigator's question grounds them.
+3. **A one-word name answer verifies.** "First name?" → "Maria." is accepted for a caller-side name
+   claim whose quote is essentially just the value; the two-word minimum still applies to all other
+   evidence, and a DOB is never a single bare token.
+4. **The identity contract is CALLER-ONLY everywhere.** The response schema `identityEvidence.role`
+   enum is `['caller']`, the evidence-role rules no longer invite navigator turns, and
+   `validateQaResponse` rejects a navigator-role identity claim. This is a model-visible change, so
+   the prompt version moved to **`call-qa-grader-v6`**.
+5. **A MET identity criterion needs a complete structured payload or the response RETRIES.**
+   `validateQaResponse` requires a MET identity criterion to carry exactly one claim per identifier
+   (firstName, lastName, dob), no duplicates; a missing/empty/partial/duplicate payload trips the
+   existing same-model malformed-response retry rather than degrading into a navigator deduction.
+6. **A protected-disclosure match takes PRECEDENCE over a generic safe prefix within one clause.**
+   `findProtectedDisclosureInTurn` checks the protected-disclosure categories on each clause BEFORE
+   treating it as benign, so "Okay your labs are normal." / "I can help you confirm your appointment
+   is Tuesday." are disclosures. **Correction to §0i:** the detector's only failure mode is NOT a
+   lost criterion — an UNDER-match (a phrasing no pattern catches) can leave a claimed MET standing,
+   so it is a trust gate that raises the bar, not a comprehensive PHI detector.
+7. **Raw validation rejects non-string `evidence`/`note`.** They are required strings; a numeric or
+   object value is rejected (tripping the retry) rather than coerced to `""`, which would let a
+   malformed ABSENCE criterion pass.
+8. **Historical calibration resolves by the RECORDED rubric version.** `_qa-calibration.js`
+   validates a graded fixture's human and model criteria against the rubric the RECORDED version
+   maps to (never the current department profile), and enforces an explicit
+   (department, rubricVersion, promptVersion) compatibility matrix via `callQaProvenanceCompatible`.
+   A genuine OB/GYN v3 record graded under the shared `qa-rubric-v2` validates its OLD closing ids
+   under the shared rubric; impossible tuples (`obgyn` + v3 + `qa-rubric-obgyn-v1`, or a NEW OB/GYN
+   run claiming the shared rubric under v6) are rejected; an unknown recorded version is rejected;
+   and a synthetic example must still use the current prompt version. Compatibility policy:
+   `pediatrics` + `qa-rubric-v2` under any supported prompt; `obgyn` + `qa-rubric-v2` under v3 only
+   (pre-profile); `obgyn` + `qa-rubric-obgyn-v1` under v4/v5/v6.
+
+**Live model-contract gate.** `npm run qa:live-contract-smoke` runs ten synthetic transcripts
+through the real prompt/schema/validator against the pinned grader model (no Firestore, no private
+bank, synthetic identities, no full DOB printed). It is opt-in, is NOT calibration evidence, exits
+nonzero on a malformed or semantically wrong response, and exits 0 with a SKIPPED notice when no key
+is configured. A real-key run is a pre-merge/release step.
+
 ## 0i. Verification integrity (2026-07-21, correction pass #2)
 
 The second independent review probed the trust boundaries rather than the authored
@@ -87,11 +150,13 @@ end-to-end fixture in
    being normalized into a seemingly valid result.
 6. **Being interpretable is not the same as being producible.**
    `SUPPORTED_CALL_QA_PROMPT_VERSIONS` lists the versions this build can interpret in a
-   STORED record; `isCurrentPromptVersion` is what a NEW run must use. Genuine stored
-   evidence (`human-pilot` / `operational-pilot`) may carry any supported version; an
-   authored `synthetic-example` must carry the current one, so a fixture cannot manufacture
-   a historical population that never existed. Unknown versions fail closed, and the
-   readiness gates keep prompt populations from blending.
+   STORED record; `isCurrentPromptVersion` is what a NEW run must use. A genuine graded
+   `human-pilot` record may carry any supported version; an authored `synthetic-example` must
+   carry the current one, so a fixture cannot manufacture a historical population that never
+   existed. An `operational-pilot` fixture is terminal and UNGRADED — it has no `modelRun` and
+   therefore declares no prompt/rubric/model version at all (it feeds only capture-reliability
+   and safety gates), so it is never a carrier of a historical version. Unknown versions fail
+   closed, and the readiness gates keep prompt populations from blending.
 7. **A metadata-less historical result uses the HISTORICAL SHARED rubric.**
    Before department profiles existed there was one rubric and every department was graded
    with it, so a stored result carrying no rubric metadata was necessarily produced by

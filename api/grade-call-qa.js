@@ -124,7 +124,7 @@ export function buildTrustedGradingScenario(scenario) {
   return lines.join('\n');
 }
 
-const RESPONSE_SCHEMA = {
+export const RESPONSE_SCHEMA = {
   type: 'OBJECT',
   properties: {
     criteria: {
@@ -141,6 +141,11 @@ const RESPONSE_SCHEMA = {
           // practice only for criteria whose profile declares the identity
           // policy; every other criterion sends an empty array. Optional in the
           // schema so departments without an identity policy are unaffected.
+          //
+          // CALLER-ONLY (v6): identity is proven by what the CALLER supplied. The
+          // navigator saying a name proves nothing about verification, and the
+          // server always rejects a navigator-sourced identifier — so the schema
+          // must not advertise a `role` the server will always throw away.
           identityEvidence: {
             type: 'ARRAY',
             items: {
@@ -148,7 +153,7 @@ const RESPONSE_SCHEMA = {
               properties: {
                 field:     { type: 'STRING', enum: ['firstName', 'lastName', 'dob'] },
                 value:     { type: 'STRING' },
-                role:      { type: 'STRING', enum: ['navigator', 'caller'] },
+                role:      { type: 'STRING', enum: ['caller'] },
                 turnIndex: { type: 'INTEGER' },
                 quote:     { type: 'STRING' },
               },
@@ -206,21 +211,25 @@ export function evidenceRoleRules(profile) {
 
   lines.push(
     `- IDENTITY EXCEPTION — ${identityIds.map((id) => `[${id}]`).join(' and ')} ONLY: identity is`
-      + ' frequently established BY THE CALLER ("Hi, this is Maria Alvarez, date of birth March 2nd'
-      + ' 1991"). For these criteria you MAY cite caller turns as well as navigator turns, and the'
-      + ' navigator loses nothing for not re-asking for something the caller already volunteered.'
-      + ' Identifiers may be collected across several turns.',
+      + ' established BY THE CALLER ("Hi, this is Maria Alvarez, date of birth March 2nd 1991").'
+      + ' For these criteria — and ONLY these — you cite CALLER turns, so the navigator loses'
+      + ' nothing for not re-asking for something the caller already volunteered. Identifiers may'
+      + ' be collected across several turns. You still NEVER cite a navigator turn for identity: the'
+      + ' navigator saying a name proves nothing about what the caller supplied, and the server'
+      + ' rejects any navigator-sourced identifier.',
     '- The identity exception is limited to establishing WHICH identifiers were collected and'
       + ' WHETHER they were collected before protected information was shared. It never allows'
       + ' caller wording to earn any other criterion.',
     '',
     'STRUCTURED IDENTITY EVIDENCE (required for the identity criteria above):',
     `For ${identityIds.map((id) => `[${id}]`).join(' and ')} you MUST also fill the`
-      + ' "identityEvidence" array with ONE entry per identifier you claim was collected:',
+      + ' "identityEvidence" array with ONE entry per identifier you claim was collected. When both'
+      + ' identity criteria are MET, submit the SAME array for both:',
     '  { "field": "firstName" | "lastName" | "dob", "value": "<the identifier itself>",',
-    '    "role": "caller" | "navigator", "turnIndex": <the [n] index of the turn>,',
-    '    "quote": "<verbatim contiguous quote from THAT turn containing the value>" }',
+    '    "role": "caller", "turnIndex": <the [n] index of the CALLER turn>,',
+    '    "quote": "<verbatim contiguous quote from THAT caller turn containing the value>" }',
     'Rules for this array (the server re-checks every one of them, so a guess will be rejected):',
+    '  * The "role" is always "caller". A navigator turn is never valid identity evidence.',
     '  * "value" must be the identifier ALONE — the actual first name, the actual last name, or the'
       + ' actual date of birth. Not a label, not a question, not a sentence.',
     '  * "quote" must appear verbatim in the turn you name in "turnIndex", and must CONTAIN "value".',
@@ -229,25 +238,36 @@ export function evidenceRoleRules(profile) {
       + ' quote a turn where the identifier was actually STATED.',
     '  * A phone number or a home address is NEVER a date of birth. Do not submit one as "dob".',
     '  * The first name and the last name must be DIFFERENT values.',
-    '  * If an identifier was never collected, OMIT it from the array — do not invent it.',
+    '  * If a MET verdict is given for an identity criterion, the array MUST prove all THREE'
+      + ' identifiers (firstName, lastName, dob) — exactly one entry per field, no duplicates. A'
+      + ' MET verdict with a missing or incomplete array is a malformed response.',
+    '  * If an identifier was never collected, mark the criterion NOT_MET rather than inventing it.',
+    '',
+    'ONE PATIENT (the server enforces this — mixed identities are rejected):',
+    '  * All three identifiers must belong to the SAME patient. Do NOT combine one patient\'s DOB'
+      + ' with a different patient\'s name, and do NOT take the first name from one person and the'
+      + ' last name from another.',
+    '  * When the caller names BOTH herself and a different patient ("My name is Sarah, date of'
+      + ' birth …, but the appointment is for Maria Alvarez"), the PATIENT is Maria Alvarez — submit'
+      + ' Maria\'s name AND Maria\'s date of birth, never Sarah\'s DOB.',
     '',
     'WHOSE NAME COUNTS (the server enforces this — a name that is not the PATIENT\'S is rejected):',
-    '  * Every identifier must come from a CALLER turn. The navigator saying a name proves nothing'
-      + ' about what the caller supplied, so never cite a navigator turn here.',
     '  * The NAVIGATOR\'S OWN NAME is never the patient\'s name. "Thank you for calling, this is'
       + ' Dana" identifies the navigator — Dana is not a firstName.',
     '  * A PROVIDER or STAFF name is never the patient\'s name. "I need Dr. Reyes", "your'
-      + ' appointment is with Dr. Reyes", a nurse or a pharmacist — none of these is a lastName.',
+      + ' appointment is with Dr. Reyes", a nurse or a pharmacist — none of these is a lastName.'
+      + ' The answer to "Who is your provider?" is a clinician, not the patient.',
+    '  * Ordinary request words are never a name. "This is about my refill", "an appointment", or'
+      + ' "next Tuesday" contain no patient name.',
     '  * A name merely MENTIONED in passing is not identity. "I spoke with Maria yesterday" does'
       + ' not establish that the patient is Maria.',
     '  * The name must be stated as the patient\'s: the caller identifying herself ("this is Maria'
       + ' Alvarez", "my name is Maria Alvarez"), naming the patient explicitly ("the patient is'
       + ' Maria Alvarez", "I\'m calling for my daughter, Maria Alvarez", "the appointment is for'
-      + ' Maria Alvarez"), or ANSWERING the navigator\'s question for the patient\'s name.',
+      + ' Maria Alvarez"), or ANSWERING the navigator\'s question for the patient\'s name (a'
+      + ' one-word answer such as "Maria." to "First name?" is fine).',
     '  * An authorized third party may supply the patient\'s identifiers — a parent calling about a'
-      + ' child is normal and correct. But when the caller names BOTH herself and a different'
-      + ' patient ("My name is Sarah, but the appointment is for Maria Alvarez"), the PATIENT is'
-      + ' Maria Alvarez; do not submit Sarah.',
+      + ' child is normal and correct.',
     '',
     'DATES OF BIRTH: a spoken date is perfectly acceptable and is NOT a transcription problem —'
       + ' "March second nineteen ninety-one", "the second of March nineteen ninety-one",'

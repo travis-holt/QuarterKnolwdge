@@ -166,15 +166,28 @@ describe('E2E · safe opener followed by a protected disclosure in the SAME turn
 describe('E2E · a name that is not the patient\'s never verifies identity', () => {
   const transcript = [
     nav('Thank you for calling Aizer Women\'s Health, this is Dana. How can I help you today?'),
-    caller('I need Dr. Reyes. My date of birth is March 2nd 1991.'),
+    caller('I need to reach Dr. Reyes, and Dr. Chen referred me. My date of birth is March 2nd 1991.'),
     nav('Is there anything else I can help you with?'),
   ];
 
-  it('rejects the navigator\'s own name submitted as the patient first name', async () => {
-    const { qa } = await runPipeline(transcript, modelResponse({
+  it('a navigator-role identity claim is a malformed response (caller-only, v6)', async () => {
+    // v6 forbids a navigator-sourced identifier at the schema/validation level, so
+    // it can never even reach scoring — it trips the malformed-response retry, and
+    // with no valid alternative the grader is reported unusable.
+    await expect(runPipeline(transcript, modelResponse({
       identityEvidence: [
         { field: 'firstName', value: 'Dana', role: 'navigator', turnIndex: 0, quote: 'this is Dana' },
-        { field: 'lastName', value: 'Reyes', role: 'caller', turnIndex: 1, quote: 'I need Dr. Reyes' },
+        { field: 'lastName', value: 'Reyes', role: 'caller', turnIndex: 1, quote: 'Dr. Reyes' },
+        { field: 'dob', value: 'March 2nd 1991', role: 'caller', turnIndex: 1, quote: 'date of birth is March 2nd 1991' },
+      ],
+    }))).rejects.toThrow();
+  });
+
+  it('rejects provider names submitted as the patient identity', async () => {
+    const { qa } = await runPipeline(transcript, modelResponse({
+      identityEvidence: [
+        { field: 'firstName', value: 'Reyes', role: 'caller', turnIndex: 1, quote: 'I need to reach Dr. Reyes' },
+        { field: 'lastName', value: 'Chen', role: 'caller', turnIndex: 1, quote: 'Dr. Chen referred me' },
         { field: 'dob', value: 'March 2nd 1991', role: 'caller', turnIndex: 1, quote: 'date of birth is March 2nd 1991' },
       ],
     }));
@@ -202,15 +215,16 @@ describe('E2E · a name that is not the patient\'s never verifies identity', () 
     expect(criterion(qa, 'verify-three').verdict).toBe('MET');
   });
 
-  it('ignores an unrelated name the caller merely mentioned', async () => {
+  it('ignores an unrelated full name the caller merely mentioned', async () => {
     const mention = [
       nav('Thank you for calling Aizer Women\'s Health, this is Dana. How can I help you today?'),
-      caller('I spoke with Maria yesterday. My date of birth is March 2nd 1991.'),
+      caller('I spoke with Maria Alvarez yesterday. My date of birth is March 2nd 1991.'),
       nav('Is there anything else I can help you with?'),
     ];
     const { qa } = await runPipeline(mention, modelResponse({
       identityEvidence: [
-        { field: 'firstName', value: 'Maria', role: 'caller', turnIndex: 1, quote: 'I spoke with Maria yesterday' },
+        { field: 'firstName', value: 'Maria', role: 'caller', turnIndex: 1, quote: 'I spoke with Maria Alvarez yesterday' },
+        { field: 'lastName', value: 'Alvarez', role: 'caller', turnIndex: 1, quote: 'I spoke with Maria Alvarez yesterday' },
         { field: 'dob', value: 'March 2nd 1991', role: 'caller', turnIndex: 1, quote: 'date of birth is March 2nd 1991' },
       ],
     }));
@@ -296,6 +310,37 @@ describe('E2E · malformed first response triggers the retry, second response sc
     expect(upstreamCalls).toBe(2);
     expect(qa.autoFails).toHaveLength(0);
   });
+
+  // B5 — a MET identity criterion with no structured payload is a MODEL contract
+  // failure, not a navigator failure. It must trip the retry, not silently become
+  // a navigator deduction.
+  it('retries after a MET identity criterion with an EMPTY payload, then scores the good response', async () => {
+    const malformed = modelResponse({ identityEvidence: [] }); // verify-three MET, empty array
+    const good = modelResponse();
+    const { qa, upstreamCalls } = await runPipeline(BASE_TRANSCRIPT, [malformed, good]);
+    expect(upstreamCalls).toBe(2);
+    // The FIRST (malformed) response never deducted the navigator's verification.
+    expect(criterion(qa, 'verify-three').verdict).toBe('MET');
+    expect(qa.score).toBeGreaterThan(0);
+  });
+
+  it('retries after a MET identity criterion missing the DOB claim', async () => {
+    const malformed = modelResponse({
+      identityEvidence: [
+        { field: 'firstName', value: 'Maria', role: 'caller', turnIndex: 1, quote: 'this is Maria Alvarez' },
+        { field: 'lastName', value: 'Alvarez', role: 'caller', turnIndex: 1, quote: 'this is Maria Alvarez' },
+      ],
+    });
+    const good = modelResponse();
+    const { qa, upstreamCalls } = await runPipeline(BASE_TRANSCRIPT, [malformed, good]);
+    expect(upstreamCalls).toBe(2);
+    expect(criterion(qa, 'verify-three').verdict).toBe('MET');
+  });
+
+  it('two malformed identity responses fail as an unusable grader, never a false navigator failure', async () => {
+    const malformed = modelResponse({ identityEvidence: [] });
+    await expect(runPipeline(BASE_TRANSCRIPT, [malformed, malformed])).rejects.toThrow(/unusable/i);
+  });
 });
 
 describe('E2E · historical rendering', () => {
@@ -347,7 +392,7 @@ describe('E2E · prompt contract matches what the server enforces', () => {
   );
 
   it('is stamped with the current prompt version', () => {
-    expect(CALL_QA_PROMPT_VERSION).toBe('call-qa-grader-v5');
+    expect(CALL_QA_PROMPT_VERSION).toBe('call-qa-grader-v6');
   });
 
   it('tells the model the navigator\'s own name is not the patient\'s', () => {

@@ -11,9 +11,49 @@
 > [§8 Current System State](#8-current-system-state) and [§15 Current Priorities](#15-current-priorities)
 > accurate at all times.
 >
-> **Last updated:** 2026-07-21 (**CORRECTION PASS #2 — Call QA verification integrity.** Still a
+> **Last updated:** 2026-07-22 (**CORRECTION PASS #3 — identity coherence + provenance.** Still a
+> **DRAFT PR against `main`, NOT merged and NOT deployed** (PR #41). A third independent review
+> attacked the trust boundaries the second pass introduced and found eight more issues; each was
+> reproduced with a failing adversarial test first (`api/qaVerificationSubject.test.js` +
+> additions to `api/qaVerificationPipeline.test.js` / `api/_qa-calibration.test.js`) and then
+> fixed. (1) **The three identifiers are now bound to ONE patient identity.** `resolvePatientSubject`
+> resolves the single patient from the whole call; a name value must be a token of that patient's
+> name, a DOB is attributed to the nearest preceding name designation (a caller's own DOB can no
+> longer pair with a different patient's name), and two people named as the patient fails closed.
+> `scoreQa` evaluates ONE canonical identity array and feeds BOTH `verify-three` and
+> `verify-before-access`, and `validateQaResponse` rejects the two identity criteria carrying
+> DIFFERENT arrays — so they can never be credited from different identities. A privacy-safe,
+> value-free `audit` record accompanies the evaluation. (2) **Name ownership no longer accepts
+> ordinary English.** A stopword set removes request/scheduling/clinical/weekday words, a
+> full-person DESIGNATION must be Title-cased (so "I am really scared" is not a name), the bare
+> "who is" patient alternative is gone, and a provider-name question is distinguished from a
+> patient-name question. (3) **One-word name answers verify** ("First name?" → "Maria.") without
+> weakening the two-word minimum for ordinary evidence. (4) **The identity contract is CALLER-ONLY
+> everywhere** — the response schema `role` enum is `['caller']`, the evidence-role rules no longer
+> invite navigator turns, and validation rejects a navigator-role identity claim; prompt moves to
+> **`call-qa-grader-v6`**. (5) **A MET identity criterion with a missing/empty/partial/duplicate
+> structured payload trips the malformed-response RETRY** rather than becoming a navigator
+> deduction. (6) **A protected-disclosure match now takes PRECEDENCE over a generic safe prefix**
+> inside a single clause ("Okay your labs are normal." is a disclosure). (7) **Raw validation
+> rejects non-string `evidence`/`note`** instead of coercing them to "". (8) **Historical
+> calibration resolves by the RECORDED rubric version**, with an explicit
+> (department, rubricVersion, promptVersion) compatibility matrix
+> (`callQaProvenanceCompatible`): a genuine OB/GYN v3 record graded under the shared `qa-rubric-v2`
+> validates its OLD closing ids under the shared rubric, while impossible tuples (v3 +
+> `qa-rubric-obgyn-v1`; a NEW OB/GYN run claiming the shared rubric) are rejected. The OB/GYN
+> rubric stays **`qa-rubric-obgyn-v1`** (no criterion/point/weight/applicability/auto-fail change);
+> only the model-visible prompt contract moved (v5 → v6). A new opt-in, non-production
+> `npm run qa:live-contract-smoke` runs ten synthetic transcripts through the real prompt/schema/
+> validator against the pinned grader model (no Firestore, no private bank) — it remains a
+> pre-merge/release gate and was NOT executed here (no non-production key available). **Correction
+> to the earlier doc claim:** the disclosure detector's failure mode is NOT only a lost criterion —
+> an UNDER-match (a phrasing it misses) can let a claimed MET survive, so it is a trust gate, not a
+> comprehensive PHI detector. Unit suite 2036 → **2077 across 82 files**; no Firestore migration,
+> no production write, no historical grade rewritten, no deploy. See docs/HISTORY.md 2026-07-22 and
+> docs/GRADING_INVARIANTS.md §0j. ·
+> **Prior update:** 2026-07-21 (**CORRECTION PASS #2 — Call QA verification integrity.** Still a
 > **DRAFT PR against `main`, NOT merged and NOT deployed.** A second independent review probed
-> the trust boundaries rather than the authored fixtures and found seven ways the pipeline could
+> the trust boundaries rather than the authored fixtures and found eight ways the pipeline could
 > be fooled or could mislead a supervisor. Each was reproduced with a failing test first
 > (`api/qaVerificationIntegrity.test.js`, 86 tests, 52 of which failed against the previous head)
 > and then fixed, with `api/qaVerificationPipeline.test.js` (20 tests) running the same
@@ -2674,7 +2714,7 @@ of this file on 2026-07-07 to cut per-session context cost (it was ~55% of the f
   (init → chat/voice turns → `/api/live` relay) for caller consistency. Scored Call QA deliberately
   does not: its caller receives no grading context, expected actions, critical misses, scoring notes,
   rule/workflow metadata, or hidden chart state. Final verification: `npm test` =
-  **2,036/2,036 across 80 files**; Firestore Rules emulator assertions = **76/76**
+  **2,077/2,077 across 82 files**; Firestore Rules emulator assertions = **76/76**
   (51 result authorization + 25 Call QA); production build
   includes the private-runtime bundle scan. GitHub Actions mirrors the
   normal local gate on `main` pushes and PRs: `npm ci` → `npm test` → `npm run build` (no deploy step).
@@ -2720,7 +2760,7 @@ of this file on 2026-07-07 to cut per-session context cost (it was ~55% of the f
   Pediatrics; their modules will follow once their SOPs land.
 - **Experimental / mockup:**
   - **Adult Medicine and Behavioural Health** are not assessed; **Pediatrics and OB/GYN** are live.
-- **Test coverage:** **2,036 unit tests across 80 files** and **76 Firestore Rules emulator
+- **Test coverage:** **2,077 unit tests across 82 files** and **76 Firestore Rules emulator
   assertions** (51 result authorization + 25 Call QA). The 2026-07-21 department-rubric-profile
   work added `api/obgynRubricProfile.test.js` (75 tests: profile architecture/fail-closed
   resolution, OB/GYN opening/verification/closing/empathy/listening/narration/documentation
@@ -2858,7 +2898,7 @@ of this file on 2026-07-07 to cut per-session context cost (it was ~55% of the f
   OB/GYN = **37** seed questions (offline fallback) + the **48-item MCQ v2 operating-model bank**
   (24 Pediatrics + 24 OB/GYN) that replaces the weak active bank via a marker-gated
   archive-and-replace migration (bank grows in Firestore per dept) · 4 departments (**Pediatrics
-  + OB/GYN live**, 2 mockup) · **2,036 unit tests across 80 files** + **76 assertions**
+  + OB/GYN live**, 2 mockup) · **2,077 unit tests across 82 files** + **76 assertions**
   across two committed Firestore Rules emulator suites (`npm run test:rules`; require Java, run in
   CI, not part of the unit-test count) ·
   **14** Firestore collections
@@ -3200,7 +3240,7 @@ npm run test:e2e     # run the Playwright browser tests (auto-builds + starts th
 - Heatmap intensity toggle (show % inside matrix cells).
 
 ### Technical Debt
-- **2,036 unit tests across 80 files** as of 2026-07-21 (plus **76 assertions** across two
+- **2,077 unit tests across 82 files** as of 2026-07-22 (plus **76 assertions** across two
   committed Firestore Rules emulator suites, `npm run test:rules`, run separately from the unit-test
   gate). **Role-app
   coverage** (`App`, `Start`,

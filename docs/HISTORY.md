@@ -1,5 +1,50 @@
 ﻿# Development History - Knowledge Check
 
+## 2026-07-22 — Call QA identity coherence and provenance (correction pass #3)
+
+**Status: still a draft PR against `main` (PR #41), not merged, not deployed.** No Firestore
+migration, no production write, no private-scenario provisioning, no historical grade rewritten,
+no rules change. The OB/GYN rubric stays `qa-rubric-obgyn-v1` (no criterion, point, weight,
+applicability, or auto-fail change); only the model-visible prompt contract moved (v5 → v6).
+
+A third independent review of head `c85c875` attacked the trust boundaries the second pass
+introduced and found eight more issues. Each was reproduced with a failing adversarial test first
+(`api/qaVerificationSubject.test.js`, plus additions to `api/qaVerificationPipeline.test.js` and
+`api/_qa-calibration.test.js`) and then fixed:
+
+1. **One patient identity.** `resolvePatientSubject` resolves the single patient from the whole
+   call; a name value must be a token of that patient's name, a DOB is attributed to the nearest
+   preceding name designation (a caller's own DOB can no longer pair with a different patient's
+   name), and two people named as the patient fails closed (`ambiguous-patient-subject`). `scoreQa`
+   evaluates ONE canonical identity array and feeds both verification criteria;
+   `validateQaResponse` rejects the two criteria carrying different arrays. A value-free `audit`
+   record accompanies the evaluation.
+2. **Stopword-and-context-aware name ownership.** Ordinary request/scheduling/clinical/weekday
+   words are removed; a full-person designation must be Title-cased (so "I am really scared" is not
+   a name); the bare "who is" alternative is gone; a provider-name question no longer establishes
+   patient identity.
+3. **One-word name answers verify** without weakening the two-word minimum elsewhere.
+4. **Caller-only identity contract** everywhere (schema `role` enum `['caller']`, evidence-role
+   rules, validation) → prompt `call-qa-grader-v6`.
+5. **A MET identity criterion with a missing/empty/partial/duplicate payload trips the retry**, not
+   a navigator deduction.
+6. **Protected-disclosure precedence** over a generic safe prefix within one clause. The doc claim
+   that the detector's only failure mode is a lost criterion is corrected: an under-match can leave
+   a claimed MET standing, so it is a trust gate, not a comprehensive PHI detector.
+7. **Raw validation rejects non-string `evidence`/`note`** instead of coercing to `""`.
+8. **Historical calibration resolves by the recorded rubric version** with an explicit
+   (department, rubricVersion, promptVersion) compatibility matrix (`callQaProvenanceCompatible`):
+   a genuine OB/GYN v3 record graded under the shared `qa-rubric-v2` validates its old closing ids
+   under the shared rubric; impossible tuples and unknown versions are rejected. Also corrected the
+   docs to state that an `operational-pilot` fixture is ungraded and carries no model/prompt/rubric
+   version.
+
+Added an opt-in, non-production `npm run qa:live-contract-smoke` (ten synthetic transcripts through
+the real prompt/schema/validator against the pinned grader model — no Firestore, no private bank,
+no full DOB printed) plus an offline coverage test. It skips cleanly with exit 0 when no key is
+configured and was NOT executed here (no non-production key available); a real-key run remains a
+pre-merge/release gate. Unit suite 2036 → **2077 across 82 files**.
+
 ## 2026-07-21 — Call QA verification integrity (correction pass #2)
 
 **Status: still a draft PR against `main`, not merged, not deployed.** No Firestore
@@ -7,7 +52,7 @@ migration, no production write, no private-scenario provisioning, no historical 
 rewritten, no rules change.
 
 A second independent review of head `a43ca7c` probed the actual trust boundaries rather
-than the authored happy-path fixtures and found seven ways the pipeline could be fooled or
+than the authored happy-path fixtures and found eight ways the pipeline could be fooled or
 could mislead a supervisor. Each was reproduced with a failing test before it was fixed —
 `api/qaVerificationIntegrity.test.js` (86 tests) was written first and failed 52/86 against
 the previous head. `api/qaVerificationPipeline.test.js` (20 tests) then runs the same

@@ -127,7 +127,7 @@
   "modelRun": {
     "model": "gemini-2.5-flash",
     "rubricVersion": "qa-rubric-obgyn-v1",
-    "promptVersion": "call-qa-grader-v5",
+    "promptVersion": "call-qa-grader-v6",
     "scenarioVersion": "synthetic-rehearsal-v1",
     "recommendation": "needs_review",
     "pass": true,

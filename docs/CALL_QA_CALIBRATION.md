@@ -134,19 +134,45 @@ one version population independently satisfies every gate.
 from `call-qa-grader-v3` to `call-qa-grader-v4`; the verification-integrity correction pass
 then changed the model-visible contract again (patient-identity ownership rules for name
 claims, explicit spoken-DOB guidance, and a requirement to answer every auto-fail id with a
-quote when triggered), moving it to **`call-qa-grader-v5`**.
+quote when triggered), moving it to `call-qa-grader-v5`; and the identity-coherence correction
+pass (2026-07-22) made the identity contract CALLER-ONLY (the schema no longer advertises a
+navigator role) and required the three identifiers to belong to ONE patient, moving it to
+**`call-qa-grader-v6`**.
+
+**Provenance compatibility (2026-07-22).** A GRADED fixture is validated against the rubric its
+RECORDED `modelRun.rubricVersion` maps to — never the current department profile — and its
+(department, rubricVersion, promptVersion) tuple must satisfy an explicit compatibility matrix
+(`callQaProvenanceCompatible` in `api/_qa-calibration.js`). A genuine pre-profile OB/GYN record
+graded under the shared `qa-rubric-v2` (with the old `close-survey` / `close-anything-thanks`
+closing ids) validates its criteria under that shared rubric and is accepted as historical
+human-pilot evidence. Impossible tuples are rejected: `obgyn` + `qa-rubric-obgyn-v1` under v3 (the
+OB/GYN profile did not exist before v4), and a NEW OB/GYN run claiming the shared rubric under v6.
+An unknown recorded rubric or prompt version fails closed. The compatibility policy:
+
+| Department | Rubric version | Legitimate prompt versions |
+|---|---|---|
+| `pediatrics` | `qa-rubric-v2` | any supported (v3–v6) |
+| `obgyn` | `qa-rubric-v2` (historical shared) | v3 only |
+| `obgyn` | `qa-rubric-obgyn-v1` | v4, v5, v6 |
 
 **Interpretable is not the same as producible (corrected 2026-07-21).**
 `SUPPORTED_CALL_QA_PROMPT_VERSIONS` lists every version this build can still INTERPRET in a
-stored record (v3, v4, v5). It previously read as though a fixture could simply declare any
+stored record (v3–v6). It previously read as though a fixture could simply declare any
 of them, while `validateModelRun` in fact required an exact match with the current version —
 a contradiction the second review flagged. The policy is now explicit and enforced:
 
 | Fixture kind | Accepted prompt versions |
 |---|---|
-| `human-pilot`, `operational-pilot` (genuine stored evidence) | any **supported stored** version |
+| `human-pilot` (genuine graded stored evidence) | any **supported stored** version |
 | `synthetic-example` (authored now) | the **current** version only |
+| `operational-pilot` (terminal capture/grade failure) | **no `modelRun` at all** — it is ungraded, so it carries no prompt/rubric/model version |
 | anything else | rejected — fails closed |
+
+**Correction (2026-07-22):** an `operational-pilot` fixture is a terminal abandoned /
+capture-incomplete / grade-failed attempt. It has NO `modelRun`, so it declares no prompt,
+rubric, or model version and it is never a "stored evidence" carrier of a historical version —
+it contributes only to capture-reliability and safety gates, never to grading-accuracy or
+version populations.
 
 A synthetic example may not claim to be output from a retired prompt, because that would
 manufacture a historical population that never existed. Genuine stored evidence records what

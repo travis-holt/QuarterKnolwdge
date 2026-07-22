@@ -230,7 +230,11 @@ export function validateCriterionBasis(verdict, basis, evidence) {
   return null;
 }
 
-const IDENTITY_CLAIM_ROLES = new Set(['navigator', 'caller', 'patient']);
+// Identity claims are CALLER-ONLY (v6): the navigator saying a name proves
+// nothing about verification, and the server always rejects a navigator-sourced
+// identifier — so a navigator role in the raw response is a contract violation,
+// not something to accept and silently drop later.
+const IDENTITY_CLAIM_ROLES = new Set(['caller', 'patient']);
 
 /**
  * Validate the SHAPE of a criterion's structured identity evidence.
@@ -256,6 +260,7 @@ function validateIdentityEvidenceShape(criterion, profile) {
     return 'identityEvidence is not permitted on a criterion without the identity-verification policy.';
   }
 
+  const seenFields = new Set();
   for (const [index, claim] of raw.entries()) {
     const at = `identityEvidence[${index}]`;
     if (!claim || typeof claim !== 'object' || Array.isArray(claim)) {
@@ -264,10 +269,29 @@ function validateIdentityEvidenceShape(criterion, profile) {
     if (!IDENTITY_FIELDS.includes(claim.field)) return `${at}.field is not a known identifier.`;
     if (typeof claim.value !== 'string' || !claim.value.trim()) return `${at}.value must be a non-empty string.`;
     if (typeof claim.quote !== 'string' || !claim.quote.trim()) return `${at}.quote must be a non-empty string.`;
-    if (!IDENTITY_CLAIM_ROLES.has(String(claim.role ?? '').toLowerCase())) return `${at}.role is invalid.`;
+    // Identity claims are caller-only (v6): a navigator role is rejected here so
+    // the malformed-response retry runs, rather than being accepted and dropped.
+    if (!IDENTITY_CLAIM_ROLES.has(String(claim.role ?? '').toLowerCase())) return `${at}.role must be "caller".`;
     if (!Number.isInteger(claim.turnIndex) || claim.turnIndex < 0) return `${at}.turnIndex must be a non-negative integer.`;
+    // No identifier may be claimed twice — otherwise a duplicate could paper over
+    // a missing one, or conflict silently.
+    if (seenFields.has(claim.field)) return `duplicate identity claim for "${claim.field}".`;
+    seenFields.add(claim.field);
   }
   return null;
+}
+
+/** Canonical form of an identity-evidence array for equality comparison. */
+function canonicalIdentityArray(raw) {
+  return (Array.isArray(raw) ? raw : [])
+    .map((claim) => ({
+      field: claim.field,
+      value: String(claim.value ?? ''),
+      role: String(claim.role ?? '').toLowerCase(),
+      turnIndex: claim.turnIndex,
+      quote: String(claim.quote ?? ''),
+    }))
+    .sort((a, b) => a.field.localeCompare(b.field));
 }
 
 /**
@@ -344,8 +368,13 @@ export function validateQaResponse(parsed, profile) {
     const verdict = String(c.verdict ?? '').toUpperCase();
     if (!VERDICTS.has(verdict)) return { error: `Criterion ${c.id}: unknown or missing verdict "${c.verdict}".` };
     const basis = String(c.basis ?? '').toUpperCase();
-    const evidence = typeof c.evidence === 'string' ? c.evidence : '';
-    const note = typeof c.note === 'string' ? c.note : '';
+    // Evidence and note are REQUIRED strings. Coercing a non-string (a number, an
+    // object) to "" would let a malformed ABSENCE response pass validation; reject
+    // it so the malformed-response retry runs instead (correction pass #3, B7).
+    if (typeof c.evidence !== 'string') return { error: `Criterion ${c.id}: evidence must be a string.` };
+    if (typeof c.note !== 'string') return { error: `Criterion ${c.id}: note must be a string.` };
+    const evidence = c.evidence;
+    const note = c.note;
     // Reject malformed verdict/basis/evidence combinations rather than silently
     // coercing them — this trips the endpoint's malformed-response retry.
     const basisError = validateCriterionBasis(verdict, basis, evidence);
@@ -363,6 +392,46 @@ export function validateQaResponse(parsed, profile) {
 
   const missing = active.criteria.filter((c) => !byId.has(c.id)).map((c) => c.id);
   if (missing.length > 0) return { error: `Missing verdicts for: ${missing.join(', ')}` };
+
+  // ── Identity contract (correction pass #3, B1 + B5) ─────────────────────────
+  //
+  // A MET identity criterion must carry a COMPLETE structured payload — exactly
+  // one claim per identifier (firstName, lastName, dob). A MET verdict with a
+  // missing/empty/partial array is a model contract failure, not evidence the
+  // navigator failed, so it must trip the malformed-response retry rather than
+  // silently degrading to a navigator deduction. And the two identity criteria
+  // may not submit DIFFERENT arrays — one canonical identity must feed both.
+  const identityIds = active.identityVerificationCriteria ?? [];
+  const nonEmptyIdentityArrays = [];
+  for (const id of identityIds) {
+    const criterion = byId.get(id);
+    if (!criterion) continue;
+    const arr = criterion.identityEvidence ?? [];
+    if (criterion.verdict === 'MET') {
+      const fields = arr.map((claim) => claim.field);
+      const missingIds = IDENTITY_FIELDS.filter((field) => !fields.includes(field));
+      if (missingIds.length > 0) {
+        return {
+          error: `Criterion ${id}: a MET identity criterion must prove all three identifiers `
+            + `(missing: ${missingIds.join(', ')}). Do not claim MET with an incomplete identityEvidence array.`,
+        };
+      }
+      if (fields.length !== IDENTITY_FIELDS.length) {
+        return { error: `Criterion ${id}: a MET identity criterion must carry exactly one claim per identifier.` };
+      }
+    }
+    if (arr.length > 0) nonEmptyIdentityArrays.push({ id, canonical: JSON.stringify(canonicalIdentityArray(arr)) });
+  }
+  if (nonEmptyIdentityArrays.length >= 2) {
+    const first = nonEmptyIdentityArrays[0];
+    const divergent = nonEmptyIdentityArrays.find((entry) => entry.canonical !== first.canonical);
+    if (divergent) {
+      return {
+        error: `Identity criteria ${first.id} and ${divergent.id} submitted DIFFERENT identity evidence; `
+          + 'both verification criteria must describe the same patient identity.',
+      };
+    }
+  }
 
   const autoFailsError = validateAutoFailShapes(parsed.autoFails, active);
   if (autoFailsError) return { error: autoFailsError };
@@ -1128,6 +1197,23 @@ export function scoreQa(verdicts, autoFails, transcript, profile, profileBinding
     );
   }
 
+  // ── ONE canonical identity evaluation feeds BOTH verification criteria (B1) ──
+  // The two identity criteria can never be credited from different identities:
+  // validation guarantees their arrays are identical when both are present, and
+  // here scoring evaluates a SINGLE canonical array once and feeds the result to
+  // whichever identity criteria are MET.
+  const identityDefs = [...defs.values()]
+    .filter((d) => d.evidencePolicy === QA_EVIDENCE_POLICIES.IDENTITY_VERIFICATION);
+  let canonicalIdentity = null;
+  let canonicalOrder = null;
+  if (identityDefs.length > 0) {
+    const canonicalArray = identityDefs
+      .map((d) => verdicts.find((v) => v.id === d.id)?.identityEvidence)
+      .find((arr) => Array.isArray(arr) && arr.length > 0) ?? [];
+    canonicalIdentity = evaluateIdentityEvidence(transcript, canonicalArray);
+    canonicalOrder = evaluateVerificationBeforeAccess(transcript, canonicalArray);
+  }
+
   const criteria = verdicts.map((v) => {
     const def = defs.get(v.id);
     // Use the raw model judgment preserved by the repair layer (before it mutated
@@ -1151,7 +1237,16 @@ export function scoreQa(verdicts, autoFails, transcript, profile, profileBinding
     // of policy, so caller wording can never substantiate an accusation.
     let evidenceCheck = null;
     if (verdict === 'MET') {
-      evidenceCheck = verifyCriterionEvidenceDetailed(transcript, v.evidence, def, v.identityEvidence);
+      if (def.evidencePolicy === QA_EVIDENCE_POLICIES.IDENTITY_VERIFICATION) {
+        // Consume the ONE canonical identity evaluation, so both verification
+        // criteria are decided from the same server-derived identity result.
+        const source = def.evidenceOrder === 'before-protected-disclosure'
+          ? { verified: canonicalOrder.satisfied, reason: canonicalOrder.satisfied ? null : canonicalOrder.reason, detail: canonicalOrder }
+          : { verified: canonicalIdentity.complete, reason: canonicalIdentity.complete ? null : 'identity-not-verified', detail: canonicalIdentity };
+        evidenceCheck = source;
+      } else {
+        evidenceCheck = verifyCriterionEvidenceDetailed(transcript, v.evidence, def, v.identityEvidence);
+      }
     }
     if (verdict === 'MET' && !evidenceCheck.verified) {
       // A MET whose evidence can't be verified loses the credit.

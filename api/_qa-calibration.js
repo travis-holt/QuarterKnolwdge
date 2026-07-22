@@ -13,7 +13,9 @@ import {
   QA_RUBRIC_PROFILES, getQaRubricProfile,
 } from '../src/data/qaRubricProfiles.js';
 import { CALL_QA_CAPTURE_VERSION } from './_call-qa-attempts.js';
-import { isSupportedStoredPromptVersion, isCurrentPromptVersion } from './_qa-grading-versions.js';
+import {
+  isSupportedStoredPromptVersion, isCurrentPromptVersion, SUPPORTED_CALL_QA_PROMPT_VERSIONS,
+} from './_qa-grading-versions.js';
 import {
   CALL_QA_CALIBRATION_GATES,
   CALL_QA_CALIBRATION_POLICY_VERSION,
@@ -40,6 +42,46 @@ export const CALIBRATION_GRADING_STATUSES = new Set([
 // silently checked against someone else's rubric.
 function profileForFixtureDepartment(department) {
   return getQaRubricProfile(department);
+}
+
+// ── Provenance compatibility (correction pass #3, B8) ────────────────────────
+//
+// A graded fixture must be validated against the rubric that ACTUALLY graded it,
+// resolved from the RECORDED rubric version — never the current department
+// profile. A genuine pre-profile OB/GYN call was graded under the historical
+// shared rubric (`qa-rubric-v2`) with the old closing ids, and it must validate
+// under THAT rubric. An impossible tuple (v3 + `qa-rubric-obgyn-v1`, or a NEW
+// OB/GYN run claiming the shared rubric) is rejected rather than accepted.
+//
+// department → rubricVersion → the prompt versions that legitimately produced it.
+const CALL_QA_PROVENANCE_COMPATIBILITY = Object.freeze({
+  pediatrics: {
+    // Pediatrics keeps the shared rubric across every prompt version.
+    'qa-rubric-v2': new Set(SUPPORTED_CALL_QA_PROMPT_VERSIONS),
+  },
+  obgyn: {
+    // OB/GYN was graded under the SHARED rubric ONLY in the pre-profile v3 era.
+    'qa-rubric-v2': new Set(['call-qa-grader-v3']),
+    // The dedicated OB/GYN profile was introduced with prompt v4 and is current.
+    'qa-rubric-obgyn-v1': new Set(['call-qa-grader-v4', 'call-qa-grader-v5', 'call-qa-grader-v6']),
+  },
+});
+
+/** Is (department, rubricVersion, promptVersion) a real historical/current tuple? */
+export function callQaProvenanceCompatible(department, rubricVersion, promptVersion) {
+  const allowed = CALL_QA_PROVENANCE_COMPATIBILITY[department]?.[rubricVersion];
+  return Boolean(allowed && allowed.has(promptVersion));
+}
+
+/**
+ * The rubric profile that ACTUALLY graded a fixture, resolved by the RECORDED
+ * rubric version (not the current department profile). Returns null for a
+ * missing/unknown recorded version.
+ */
+function gradingProfileForFixture(fixture) {
+  const version = String(fixture?.modelRun?.rubricVersion ?? '').trim();
+  if (!version) return null;
+  return Object.values(QA_RUBRIC_PROFILES).find((profile) => profile.rubricVersion === version) ?? null;
 }
 
 // Every rubric version any configured profile can legitimately produce.
@@ -227,14 +269,14 @@ function validateModelRun(fixture, errors, expectedScenarioVersion = null, profi
   for (const field of ['model', 'rubricVersion', 'promptVersion', 'scenarioVersion']) {
     if (!String(run[field] ?? '').trim()) addError(errors, `modelRun.${field}`, 'provenance is required');
   }
-  // A run must declare a rubric version this repo still knows how to interpret,
-  // AND it must be the version of the fixture's own department profile — an
-  // OB/GYN case graded under the Pediatrics rubric is a provenance error, not a
-  // comparable data point.
+  // A run must declare a rubric version this repo still knows how to interpret.
+  // The `profile` passed here is the rubric that ACTUALLY graded the record
+  // (resolved by the recorded version, not the current department profile), and
+  // the (department, rubricVersion, promptVersion) compatibility is enforced by
+  // the caller's provenance-matrix check — so a genuine historical OB/GYN record
+  // graded under the shared rubric is validated against that shared rubric.
   if (run.rubricVersion && !SUPPORTED_RUBRIC_VERSIONS.has(run.rubricVersion)) {
     addError(errors, 'modelRun.rubricVersion', 'unsupported rubric version');
-  } else if (run.rubricVersion && profile && run.rubricVersion !== profile.rubricVersion) {
-    addError(errors, 'modelRun.rubricVersion', 'does not match this department\'s rubric profile');
   }
   // Prompt-version policy (corrected 2026-07-21). `SUPPORTED_CALL_QA_PROMPT_VERSIONS`
   // declares which versions this repo can still INTERPRET; that is not the same
@@ -417,8 +459,22 @@ export function validateCalibrationFixture(fixture, { scenarios = SYNTHETIC_CALI
       addError(errors, 'modelRun', 'must be omitted for operational-pilot fixtures');
     }
   } else {
-    validateHumanReview(fixture, errors, profile);
-    validateModelRun(fixture, errors, scenario?.version ?? null, profile);
+    // Validate human + model criteria against the rubric that ACTUALLY graded the
+    // record — resolved by the recorded rubric version — and reject an impossible
+    // (department, rubricVersion, promptVersion) provenance tuple.
+    const gradingProfile = gradingProfileForFixture(fixture) ?? profile;
+    const recordedRubric = String(fixture?.modelRun?.rubricVersion ?? '').trim();
+    const recordedPrompt = String(fixture?.modelRun?.promptVersion ?? '').trim();
+    if (recordedRubric && recordedPrompt
+      && SUPPORTED_RUBRIC_VERSIONS.has(recordedRubric)
+      && isSupportedStoredPromptVersion(recordedPrompt)
+      && !callQaProvenanceCompatible(fixture.department, recordedRubric, recordedPrompt)) {
+      addError(errors, 'modelRun',
+        `incompatible provenance: ${fixture.department} + ${recordedRubric} + ${recordedPrompt} `
+        + 'is not a valid historical or current combination');
+    }
+    validateHumanReview(fixture, errors, gradingProfile);
+    validateModelRun(fixture, errors, scenario?.version ?? null, gradingProfile);
   }
   scanProhibited(fixture, 'fixture', errors);
   return { valid: errors.length === 0, errors };

@@ -299,6 +299,65 @@ export function looksLikePersonName(value) {
 
 const NAME_CAPTURE = "([\\p{L}][\\p{L}'’-]*(?:\\s+[\\p{L}][\\p{L}'’-]*){0,2})";
 
+// ── Name stopwords (correction pass #3) ──────────────────────────────────────
+//
+// A captured "name" span may contain ordinary English the broad 1–3-token
+// capture swept up ("This is about my refill" → "about my refill"). A real
+// patient name token is never one of these, so they are removed from every span
+// and a claimed identifier value that IS one is rejected outright. This is a
+// SAFETY NET, not the primary gate: the primary gate is that the value must sit
+// inside a genuine patient-designation span (see `patientNameSpans`).
+const NAME_STOPWORDS = new Set([
+  // articles / determiners
+  'a', 'an', 'the', 'this', 'that', 'these', 'those',
+  // pronouns / possessives
+  'i', 'me', 'my', 'mine', 'you', 'your', 'yours', 'he', 'him', 'his', 'she',
+  'her', 'hers', 'it', 'its', 'we', 'us', 'our', 'ours', 'they', 'them', 'their',
+  'theirs', 'who', 'whom', 'whose',
+  // prepositions / conjunctions
+  'for', 'of', 'to', 'on', 'in', 'at', 'with', 'about', 'from', 'by', 'and',
+  'but', 'or', 'so', 'as', 'is', 'am', 'are', 'was', 'were', 'be', 'been',
+  // request / action / workflow nouns
+  'refill', 'refills', 'prescription', 'prescriptions', 'medication', 'medications',
+  'med', 'meds', 'appointment', 'appointments', 'appt', 'visit', 'visits', 'call',
+  'calling', 'schedule', 'scheduling', 'reschedule', 'cancel', 'book', 'booking',
+  'question', 'questions', 'help', 'need', 'needs', 'want', 'wants', 'result',
+  'results', 'lab', 'labs', 'test', 'tests', 'referral', 'referrals', 'message',
+  'messages', 'portal', 'order', 'orders', 'ultrasound', 'sonogram', 'exam',
+  'chart', 'record', 'records', 'form', 'forms', 'insurance', 'pharmacy',
+  // weekdays / relative time
+  'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday',
+  'today', 'tomorrow', 'yesterday', 'next', 'last', 'morning', 'afternoon',
+  'evening', 'week', 'weeks', 'month', 'months', 'day', 'days',
+  // fillers / greetings
+  'yes', 'no', 'okay', 'ok', 'sure', 'hi', 'hello', 'hey', 'um', 'uh', 'please',
+  'thanks', 'thank', 'name', 'first', 'last', 'full', 'birth', 'date', 'dob',
+]);
+
+function isNameStopword(token) {
+  return NAME_STOPWORDS.has(String(token ?? '').toLowerCase());
+}
+
+// Keep only genuine name-shaped, non-stopword tokens from a captured span. An
+// empty result means the "span" was ordinary request language, not a name.
+function filterNameSpanTokens(span) {
+  return String(span ?? '')
+    .split(/\s+/)
+    .filter((token) => token && NAME_TOKEN.test(token) && !isNameStopword(token));
+}
+
+// A FULL-PERSON DESIGNATION ("this is Maria Alvarez", "my daughter, Jane
+// Alvarez") is a proper name, which is capitalized. The broad self-identification
+// capture would otherwise swallow ordinary lowercase phrases — "I am really
+// scared" → "really scared" — and treat them as a rival patient name, so a
+// designation token must be Title-cased. Deliberately fail-closed: a genuinely
+// lowercased name in a designation withholds credit and routes to review rather
+// than guessing. Single-FIELD answers to an explicit patient-name question are
+// NOT filtered this way — the navigator's question already grounds them.
+function properNameTokens(span) {
+  return filterNameSpanTokens(span).filter((token) => /^[\p{Lu}]/u.test(token));
+}
+
 // The patient is explicitly someone other than (or named apart from) the speaker.
 const THIRD_PARTY_PATIENT_PATTERNS = [
   new RegExp(`\\b(?:the\\s+)?(?:appointment|visit|call|referral)\\s+is\\s+for\\s+${NAME_CAPTURE}`, 'iu'),
@@ -332,18 +391,39 @@ const PATIENT_NAME_QUESTION_PATTERNS = [
   /\bfirst\s+and\s+last\s+name\b/i,
   // A comma list: "first name, last name, and date of birth".
   /\bfirst\s+name\b[^?.!]{0,40}\blast\s+name\b/i,
-  /\bwho\s+(?:is|am\s+i\s+speaking\s+(?:with|to)|is\s+the\s+patient)\b/i,
+  // A bare field question — "first name?", "and the last name?", "full name".
+  /\b(?:the\s+)?(?:first|last|full|legal|maiden)\s+name\b/i,
+  // Narrowed from a bare "who is" (which also swallowed "who is your provider").
+  /\bwho\s+(?:am\s+i\s+speaking\s+(?:with|to)|is\s+(?:the\s+patient|this))\b/i,
   // "Can I have ... name?" in any phrasing that reaches the word "name".
   /\b(?:can|could|may)\s+i\s+(?:have|get|ask\s+for)\b[^?.!]{0,60}\bname\b/i,
   /\bspell\s+(?:your|the|her|his|their)\s+(?:last\s+)?name\b/i,
   /\bname\s+on\s+the\s+(?:account|chart|file)\b/i,
 ];
 
+// A navigator question that asks for a PROVIDER / STAFF name, so the caller's
+// answer identifies a clinician — never the patient. This takes precedence over
+// the patient-name-question patterns (correction pass #3): "Can I have the
+// doctor's name?" contains "name" but is not a patient-identity exchange.
+const PROVIDER_NAME_QUESTION_PATTERNS = [
+  /\b(?:provider|doctor|physician|dr\.?|nurse|midwife|clinician|specialist|surgeon)(?:'s|’s)?\s+name\b/i,
+  /\bwho\s+is\s+(?:your|the|her|his|their)\s+(?:provider|doctor|physician|nurse|midwife|clinician|specialist|surgeon)\b/i,
+  /\bwhich\s+(?:provider|doctor|physician|specialist)\b/i,
+];
+
 // Titles that mark a name as a provider or staff member, never the patient.
 const PROVIDER_TITLE_BEFORE = /\b(?:dr|dr\.|doctor|nurse|midwife|np|pa|rn|md|provider|receptionist|pharmacist)\s+$/i;
 
+function isProviderNameQuestion(text) {
+  return PROVIDER_NAME_QUESTION_PATTERNS.some((pattern) => pattern.test(String(text ?? '')));
+}
+
 function isPatientNameQuestion(text) {
-  return PATIENT_NAME_QUESTION_PATTERNS.some((pattern) => pattern.test(String(text ?? '')));
+  const raw = String(text ?? '');
+  // A provider-name question is never a patient-name question, even though it
+  // reaches the word "name".
+  if (isProviderNameQuestion(raw)) return false;
+  return PATIENT_NAME_QUESTION_PATTERNS.some((pattern) => pattern.test(raw));
 }
 
 function collectSpans(text, patterns) {
@@ -362,19 +442,36 @@ function collectSpans(text, patterns) {
  * @param {string} precedingNavigatorText the navigator turn immediately before it
  * @returns {string[]} patient-owned name spans (possibly empty)
  */
-export function patientNameSpans(text, precedingNavigatorText = '') {
+/**
+ * Patient-name spans WITH their kind. `kind` distinguishes a full-person
+ * DESIGNATION (a self-identification or third-party designation — "Maria Smith")
+ * from a single-FIELD answer to a navigator question ("Maria." / "Alvarez.").
+ * Only designations can make an attempt ambiguous; two field answers are two
+ * fields of one patient (a first name in one turn, a hyphenated surname in the
+ * next), never two different people.
+ *
+ * @returns {{ text: string, kind: 'designation'|'field' }[]}
+ */
+export function classifyPatientNameSpans(text, precedingNavigatorText = '') {
   const raw = String(text ?? '');
   if (!raw.trim()) return [];
+
+  // Every candidate span is filtered to its genuine name tokens (stopwords and
+  // ordinary request words removed). A span that filters to nothing was request
+  // language the broad capture swept up, not a name, and is dropped.
+  const keep = (spans) => spans
+    .map((span) => properNameTokens(span).join(' '))
+    .filter((span) => span.length > 0);
 
   // Precedence 1 — an explicit third-party designation. When the caller names
   // the patient separately, a self-identification in the SAME turn is the
   // caller's own name, not the patient's.
-  const thirdParty = collectSpans(raw, THIRD_PARTY_PATIENT_PATTERNS);
-  if (thirdParty.length > 0) return thirdParty;
+  const thirdParty = keep(collectSpans(raw, THIRD_PARTY_PATIENT_PATTERNS));
+  if (thirdParty.length > 0) return thirdParty.map((span) => ({ text: span, kind: 'designation' }));
 
   // Precedence 2 — the caller identifies themselves as the patient.
-  const self = collectSpans(raw, SELF_IDENTIFICATION_PATTERNS);
-  if (self.length > 0) return self;
+  const self = keep(collectSpans(raw, SELF_IDENTIFICATION_PATTERNS));
+  if (self.length > 0) return self.map((span) => ({ text: span, kind: 'designation' }));
 
   // Precedence 3 — an answer to the navigator's patient-name question.
   //
@@ -382,7 +479,8 @@ export function patientNameSpans(text, precedingNavigatorText = '') {
   // and date of birth" replies "Sure, Liam Carter, March 2nd 2021." So take the
   // LEADING name span — the first run of name-shaped tokens after any filler,
   // stopping at a month name or anything containing a digit, because from there
-  // on the caller is answering the date-of-birth part of the same question.
+  // on the caller is answering the date-of-birth part of the same question. A
+  // one-word answer ("Maria.") is a valid span here.
   if (isPatientNameQuestion(precedingNavigatorText)) {
     const stripped = raw
       .replace(/\b(?:it\s+is|that\s+is|sure\s+it(?:'s|’s)|yes|yeah|yep|sure|okay|ok|hi|hello|um|uh|it(?:'s|’s)|that(?:'s|’s))\b/gi, ' ')
@@ -392,13 +490,25 @@ export function patientNameSpans(text, precedingNavigatorText = '') {
       const lower = token.toLowerCase();
       if (MONTHS[lower] !== undefined || /\p{N}/u.test(token)) break;
       if (!NAME_TOKEN.test(token)) break;
+      // A leading filler/stopword ("the", "a") is skipped rather than ending the
+      // span, but a real name token that is ALSO a stopword cannot occur, so this
+      // conservatively drops stopwords from the answer span.
+      if (isNameStopword(token)) {
+        if (span.length > 0) break;
+        continue;
+      }
       span.push(token);
       if (span.length === 3) break;
     }
-    if (span.length > 0) return [span.join(' ')];
+    if (span.length > 0) return [{ text: span.join(' '), kind: 'field' }];
   }
 
   return [];
+}
+
+/** Patient-name span TEXT only (kind discarded), for ownership checks. */
+export function patientNameSpans(text, precedingNavigatorText = '') {
+  return classifyPatientNameSpans(text, precedingNavigatorText).map((span) => span.text);
 }
 
 /**
@@ -428,8 +538,14 @@ function nameOwnershipFailure(turns, turnIndex, role, value) {
   const spans = patientNameSpans(text, preceding);
   if (spans.length === 0) return 'not-a-patient-identity-context';
 
-  const normalizedValue = normalizeForMatch(value);
-  const owned = spans.some((span) => normalizeForMatch(span).split(' ').includes(normalizedValue));
+  // A value may be multi-token after normalization (a hyphenated surname
+  // "Alvarez-Reyes" becomes "alvarez reyes"). Every value token must appear in
+  // one patient-designation span.
+  const valueTokens = normalizeForMatch(value).split(' ').filter(Boolean);
+  const owned = spans.some((span) => {
+    const spanTokens = normalizeForMatch(span).split(' ').filter(Boolean);
+    return valueTokens.length > 0 && valueTokens.every((token) => spanTokens.includes(token));
+  });
   return owned ? null : 'not-a-patient-identity-context';
 }
 
@@ -470,14 +586,29 @@ export function verifyIdentifierClaim(transcript, claim) {
   if (!turnRoleMatches(turn?.role, role)) return { ok: false, field, reason: 'role-mismatch' };
 
   const quote = normalizeForMatch(stripRoleLabel(claim?.quote));
-  if (quoteWords(quote).length < 2) return { ok: false, field, reason: 'quote-too-short' };
-  if (!normalizeForMatch(turn?.text).includes(quote)) {
-    return { ok: false, field, reason: 'quote-not-in-declared-turn' };
-  }
 
   const rawValue = String(claim?.value ?? '').trim();
   if (!rawValue) return { ok: false, field, reason: 'missing-value' };
   const value = normalizeForMatch(rawValue);
+
+  // A one-word quote is normally too weak to be evidence. But a genuine one-word
+  // name ANSWER — "First name?" / "Maria." — is a legitimate identity exchange
+  // (correction pass #3, B3). Allow a single-token quote ONLY when it is a
+  // caller-side NAME claim whose quote is essentially just the value, so the
+  // preceding patient-name question (checked in ownership below) does the
+  // grounding. Everything else still needs a two-word quote, and a DOB is never
+  // a single bare token here.
+  const singleTokenIdentity = field !== 'dob'
+    && CALLER_ROLE_ALIASES.has(role)
+    && quoteWords(quote).length === 1
+    && quote === value;
+  if (!singleTokenIdentity && quoteWords(quote).length < 2) {
+    return { ok: false, field, reason: 'quote-too-short' };
+  }
+  if (!normalizeForMatch(turn?.text).includes(quote)) {
+    return { ok: false, field, reason: 'quote-not-in-declared-turn' };
+  }
+
   if (!value || !quote.includes(value)) return { ok: false, field, reason: 'value-not-in-quote' };
 
   if (field === 'dob') {
@@ -491,6 +622,11 @@ export function verifyIdentifierClaim(transcript, claim) {
     }
   } else {
     if (!looksLikePersonName(rawValue)) return { ok: false, field, reason: 'value-is-not-a-name' };
+    // Ordinary request/scheduling words are never a name, even if a broad span
+    // captured them. Every token of the claimed value must be a real name token.
+    if (rawValue.split(/\s+/).some((token) => isNameStopword(token))) {
+      return { ok: false, field, reason: 'value-is-not-a-name' };
+    }
     const ownership = nameOwnershipFailure(turns, turnIndex, role, rawValue);
     if (ownership) return { ok: false, field, reason: ownership };
   }
@@ -498,26 +634,167 @@ export function verifyIdentifierClaim(transcript, claim) {
   return { ok: true, field, value, turnIndex, role, quote: rawValue };
 }
 
+// ── One patient subject (correction pass #3, B1) ─────────────────────────────
+//
+// The three identifiers must belong to ONE patient. The previous evaluation
+// accepted each field independently, so a caller's own DOB could pair with a
+// different patient's name, or first and last name could come from two different
+// people. `resolvePatientSubject` establishes the single patient's name tokens
+// from the whole call and reports when two different people were named as the
+// patient (ambiguous → fail closed).
+
+/**
+ * Resolve the ONE patient the call is about, as a set of normalized name tokens.
+ *
+ * @returns {{ tokens: Set<string>, ambiguous: boolean, spans: object[] }}
+ */
+export function resolvePatientSubject(transcript) {
+  const turns = Array.isArray(transcript) ? transcript : [];
+  const spans = [];
+  for (let index = 0; index < turns.length; index++) {
+    if (!CALLER_ROLE_ALIASES.has(turns[index]?.role)) continue;
+    let preceding = '';
+    for (let prior = index - 1; prior >= 0; prior--) {
+      if (turns[prior]?.role === 'navigator') { preceding = String(turns[prior].text ?? ''); break; }
+    }
+    for (const span of classifyPatientNameSpans(String(turns[index].text ?? ''), preceding)) {
+      const tokens = normalizeForMatch(span.text).split(' ').filter(Boolean);
+      if (tokens.length) spans.push({ tokens, turnIndex: index, kind: span.kind });
+    }
+  }
+  // Two FULL-PERSON DESIGNATIONS that share no tokens, where at least one is a
+  // multi-token full name, means two different people were designated as the
+  // patient — e.g. "calling for Maria Smith and my daughter Jane Alvarez". A
+  // single-FIELD answer ("Maria." then "Alvarez-Reyes.") is two fields of ONE
+  // patient across turns, never a conflict, so field spans never make an attempt
+  // ambiguous.
+  const designations = spans.filter((span) => span.kind === 'designation');
+  let ambiguous = false;
+  for (let a = 0; a < designations.length && !ambiguous; a++) {
+    for (let b = a + 1; b < designations.length; b++) {
+      const A = designations[a].tokens; const B = designations[b].tokens;
+      if (!A.some((token) => B.includes(token)) && (A.length >= 2 || B.length >= 2)) {
+        ambiguous = true; break;
+      }
+    }
+  }
+  return { tokens: new Set(spans.flatMap((span) => span.tokens)), ambiguous, spans };
+}
+
+// Name-designation spans in ONE turn WITH their character positions, so a DOB can
+// be attributed to the nearest preceding designation.
+function designationSpansWithPositions(text) {
+  const raw = String(text ?? '');
+  const out = [];
+  const scan = (patterns) => {
+    for (const pattern of patterns) {
+      const match = pattern.exec(raw);
+      if (!match?.[1]) continue;
+      const tokens = properNameTokens(match[1]).map((token) => normalizeForMatch(token)).filter(Boolean);
+      if (tokens.length === 0) continue;
+      const at = raw.indexOf(match[1], Math.max(0, match.index));
+      out.push({ tokens, start: at < 0 ? match.index : at });
+    }
+  };
+  scan(THIRD_PARTY_PATIENT_PATTERNS);
+  scan(SELF_IDENTIFICATION_PATTERNS);
+  return out;
+}
+
+/**
+ * Does the DOB in `dobTurnIndex` belong to the resolved patient? A DOB is
+ * rejected only when the NEAREST name designation before it in the same turn
+ * names someone OTHER than the patient — e.g. "My name is Sarah Jones, date of
+ * birth March 2 1991, but the appointment is for Maria Alvarez": the DOB is
+ * locally bound to Sarah, not to the patient Maria. A DOB with no competing
+ * designation (a bare answer, "Her DOB is …") is accepted.
+ *
+ * @returns {string|null} a reason when it does NOT belong to the patient, else null
+ */
+function dobOwnershipFailure(transcript, dobTurnIndex, subjectTokens) {
+  const text = String(transcript?.[dobTurnIndex]?.text ?? '');
+  const parsed = parseDateOfBirth(text);
+  if (!parsed) return null; // shape already validated; nothing to locate
+  const dobPos = text.toLowerCase().indexOf(String(parsed.text).toLowerCase());
+  if (dobPos < 0) return null;
+  const preceding = designationSpansWithPositions(text)
+    .filter((span) => span.start >= 0 && span.start < dobPos)
+    .sort((a, b) => a.start - b.start)
+    .at(-1);
+  if (!preceding) return null;
+  const belongsToPatient = subjectTokens.size > 0
+    && preceding.tokens.every((token) => subjectTokens.has(token));
+  return belongsToPatient ? null : 'dob-belongs-to-different-subject';
+}
+
+// A privacy-safe, VALUE-FREE audit record of what the server established.
+function buildIdentityAudit(verified, complete, subjectConsistent, completedAtIndex) {
+  const turnOf = (field) => (verified[field] ? verified[field].turnIndex : null);
+  return {
+    complete: complete === true,
+    subjectConsistent: subjectConsistent === true,
+    firstNameTurn: turnOf('firstName'),
+    lastNameTurn: turnOf('lastName'),
+    dobTurn: turnOf('dob'),
+    completedAtTurn: completedAtIndex ?? null,
+    ownershipBasis: complete ? 'verified-single-patient-identity' : null,
+  };
+}
+
 /**
  * Verify a whole structured identity-evidence array and decide whether the three
- * required identifiers were genuinely collected — and by which turn.
+ * required identifiers were genuinely collected — for ONE patient — and by which
+ * turn.
  *
  * Identifiers may be spread across any number of chronological turns, and a
  * single caller sentence may satisfy all three. `completedAtIndex` is the LAST
  * turn needed to complete the set, which is what "verification was complete by
- * turn N" means and what the before-disclosure ordering check consumes.
+ * turn N" means and what the before-disclosure ordering check consumes. Every
+ * identifier is bound to ONE resolved patient subject: a name value that is not a
+ * token of the patient's name, or a DOB that belongs to a different person, is
+ * rejected, and two people named as the patient fails closed.
  *
  * @returns {{ complete: boolean, completedAtIndex: number|null,
- *             verified: Record<string, object>, failures: object[] }}
+ *             verified: Record<string, object>, failures: object[],
+ *             subjectConsistent: boolean, audit: object }}
  */
 export function evaluateIdentityEvidence(transcript, identityEvidence) {
   const claims = Array.isArray(identityEvidence) ? identityEvidence : [];
   const verified = {};
   const failures = [];
+  const subject = resolvePatientSubject(transcript);
+
+  // Two different people were named as THE patient: the identity cannot be bound
+  // to one subject, so it fails closed to supervisor review regardless of the
+  // individual claims.
+  if (subject.ambiguous) {
+    failures.push({ ok: false, field: 'subject', reason: 'ambiguous-patient-subject' });
+    return {
+      complete: false, completedAtIndex: null, verified: {}, failures,
+      subjectConsistent: false,
+      audit: buildIdentityAudit({}, false, false, null),
+    };
+  }
 
   for (const claim of claims) {
     const result = verifyIdentifierClaim(transcript, claim);
     if (!result.ok) { failures.push(result); continue; }
+    // A NAME must be a token of the ONE resolved patient's name. When no patient
+    // subject could be resolved at all (size 0) the per-claim ownership check has
+    // already rejected non-patient names, so this only tightens, never loosens.
+    if (result.field === 'firstName' || result.field === 'lastName') {
+      const valueTokens = String(result.value).split(' ').filter(Boolean);
+      if (subject.tokens.size > 0 && !valueTokens.every((token) => subject.tokens.has(token))) {
+        failures.push({ ok: false, field: result.field, reason: 'name-not-patient-subject' });
+        continue;
+      }
+    }
+    // A DOB must belong to the same patient, not to a different person named in
+    // the same turn.
+    if (result.field === 'dob') {
+      const ownership = dobOwnershipFailure(transcript, result.turnIndex, subject.tokens);
+      if (ownership) { failures.push({ ok: false, field: 'dob', reason: ownership }); continue; }
+    }
     // Keep the EARLIEST verified turn per field: identity is established the
     // first time it is genuinely stated, not the last time it is repeated.
     const existing = verified[result.field];
@@ -537,8 +814,13 @@ export function evaluateIdentityEvidence(transcript, identityEvidence) {
   const completedAtIndex = complete
     ? Math.max(...IDENTITY_FIELDS.map((field) => verified[field].turnIndex))
     : null;
+  const subjectConsistent = complete;
 
-  return { complete, completedAtIndex, verified, failures };
+  return {
+    complete, completedAtIndex, verified, failures,
+    subjectConsistent,
+    audit: buildIdentityAudit(verified, complete, subjectConsistent, completedAtIndex),
+  };
 }
 
 // ── Protected-disclosure detection (centralized) ─────────────────────────────
@@ -546,9 +828,14 @@ export function evaluateIdentityEvidence(transcript, identityEvidence) {
 // ONE detector, used by the ordering check and by tests. It looks for a
 // NAVIGATOR turn that confirms or reveals something patient-specific.
 //
-// Conservative by construction: it can only REJECT a claimed MET, never create
-// one, so an over-match costs a criterion the supervisor still reviews, and an
-// under-match is handled by the explicit uncertainty path below.
+// It is a deterministic PATTERN SET, not a comprehensive PHI detector. An
+// OVER-match costs a `verify-before-access` criterion the supervisor still
+// reviews (the safe direction). An UNDER-match — a real disclosure phrased in a
+// way no pattern catches — does NOT fail closed: with no disclosure detected,
+// identifiers collected afterward can satisfy the criterion, so a claimed MET can
+// survive. This is a trust gate that RAISES the bar, not a guarantee that every
+// disclosure is caught. (Correction pass #3: an earlier note wrongly claimed the
+// only failure mode was a lost criterion.)
 
 export const PROTECTED_DISCLOSURE_CATEGORIES = Object.freeze({
   appointment: [
@@ -678,18 +965,22 @@ export function findProtectedDisclosureInTurn(text) {
   if (!raw.trim()) return null;
   const clauses = splitDisclosureClauses(raw);
 
-  // 1. Per clause. A safe clause vetoes ONLY itself.
+  // 1. Per clause — a PROTECTED-DISCLOSURE match takes PRECEDENCE over a generic
+  //    safe/benign prefix (correction pass #3). The previous order checked the
+  //    safe-prefix allowlist first, so a clause like "Okay your labs are normal."
+  //    or "Let me review your chart which shows you are 20 weeks." was treated as
+  //    entirely benign and its disclosure was never seen. A benign clause is only
+  //    a NON-match here — it never vouches for the rest of its own text.
   for (let index = 0; index < clauses.length; index++) {
     const clause = clauses[index];
-    if (isExplicitlyNotDisclosure(clause)) continue;
     const category = matchDisclosureCategory(clause);
     if (category) return { category, clauseIndex: index, clause };
   }
 
   // 2. Whole turn, as a safety net for a disclosure the split fragmented
-  //    ("your results, which came back normal"). Only when at least one clause
-  //    was not itself safe, so a wholly-benign turn can never match across a
-  //    boundary it does not really contain.
+  //    ("your results, which came back normal"). Only when at least one clause is
+  //    not a wholly-benign action, so punctuation across two safe clauses can
+  //    never manufacture a finding the turn does not really contain.
   const firstOpen = clauses.findIndex((clause) => !isExplicitlyNotDisclosure(clause));
   if (firstOpen === -1) return null;
   const category = matchDisclosureCategory(raw);

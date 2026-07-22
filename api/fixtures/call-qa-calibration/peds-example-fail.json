@@ -148,7 +148,7 @@
   "modelRun": {
     "model": "gemini-2.5-flash",
     "rubricVersion": "qa-rubric-v2",
-    "promptVersion": "call-qa-grader-v5",
+    "promptVersion": "call-qa-grader-v6",
     "scenarioVersion": "synthetic-rehearsal-v1",
     "recommendation": "fail",
     "pass": false,

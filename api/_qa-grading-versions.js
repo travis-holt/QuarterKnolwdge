@@ -25,7 +25,18 @@
 //          documented unsupported forms are named;
 //        * every auto-fail id must be returned exactly once, triggered or not;
 //        * a triggered auto-fail must carry its verbatim quote.
-export const CALL_QA_PROMPT_VERSION = 'call-qa-grader-v5';
+// v6 = identity-contract alignment correction pass (2026-07-21). The MODEL-VISIBLE
+//      contract changed again (the OB/GYN criteria, points and applicability are
+//      still untouched, so the rubric stays `qa-rubric-obgyn-v1`):
+//        * structured identity claims are now caller-ONLY. The response schema no
+//          longer advertises `role: "navigator"` for identityEvidence, and the
+//          evidence-role rules no longer say the grader "MAY cite navigator
+//          turns" for identity — the server always rejected a navigator-sourced
+//          identifier, so v5's schema/prompt contradicted the server;
+//        * the three identifiers must belong to ONE patient identity, and the
+//          prompt says so — a caller's own DOB cannot pair with a different
+//          patient's name, and first/last cannot come from two different people.
+export const CALL_QA_PROMPT_VERSION = 'call-qa-grader-v6';
 
 // Prompt versions this repository can still INTERPRET for stored records.
 // Historical attempts keep rendering under the version they recorded; this list
@@ -40,6 +51,7 @@ export const SUPPORTED_CALL_QA_PROMPT_VERSIONS = Object.freeze([
   'call-qa-grader-v3',
   'call-qa-grader-v4',
   'call-qa-grader-v5',
+  'call-qa-grader-v6',
 ]);
 
 const SUPPORTED = new Set(SUPPORTED_CALL_QA_PROMPT_VERSIONS);

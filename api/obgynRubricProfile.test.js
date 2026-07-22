@@ -338,8 +338,18 @@ describe('historical attempts keep their own rubric', () => {
 // ── Validation / scoring pairing ─────────────────────────────────────────────
 
 describe('validation and scoring cannot use different rubrics', () => {
+  // A MET identity criterion now requires a complete structured payload (v6), so
+  // the identity criteria carry a valid three-identifier caller array.
+  const ALL_MET_IDENTITY = [
+    { field: 'firstName', value: 'Maria', role: 'caller', turnIndex: 1, quote: 'this is Maria Alvarez' },
+    { field: 'lastName', value: 'Alvarez', role: 'caller', turnIndex: 1, quote: 'this is Maria Alvarez' },
+    { field: 'dob', value: 'March 2, 1991', role: 'caller', turnIndex: 1, quote: 'date of birth March 2, 1991' },
+  ];
   const obgynAllMet = () => OBGYN.criteria.map((c) => ({
     id: c.id, verdict: 'MET', basis: 'EVIDENCE', evidence: 'ok quote', note: '',
+    ...(c.evidencePolicy === QA_EVIDENCE_POLICIES.IDENTITY_VERIFICATION
+      ? { identityEvidence: ALL_MET_IDENTITY }
+      : {}),
   }));
   // The prompt contract asks for a verdict on EVERY auto-fail id, and validation
   // now enforces that, so a raw response must answer all of them.
@@ -362,7 +372,11 @@ describe('validation and scoring cannot use different rubrics', () => {
   it('rejects an OB/GYN-shaped response when the Pediatrics profile is active', () => {
     const obgynResponse = { criteria: obgynAllMet(), autoFails: noAutoFails(PEDS) };
     const result = validateQaResponse(obgynResponse, PEDS);
-    expect(result.error).toMatch(/unknown criterion "close-offer-help"/i);
+    // The OB/GYN response is rejected under the Pediatrics profile. The first
+    // violation is now the OB/GYN identity-verification array on a criterion the
+    // Pediatrics profile declares no identity policy for; the OB/GYN-only
+    // close-offer-help criterion is also unknown to Pediatrics.
+    expect(result.error).toMatch(/identityEvidence is not permitted|unknown criterion "close-offer-help"/i);
   });
 
   it('stamps the full profile binding onto the validated data', () => {
