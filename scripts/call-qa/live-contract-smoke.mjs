@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // ─────────────────────────────────────────────────────────────────────────────
 // qa:live-contract-smoke — an OPT-IN, NON-PRODUCTION live check that the pinned
-// scored Call QA grader model actually OBEYS the v6 structured contract.
+// scored Call QA grader model actually OBEYS the v7 structured contract.
 //
 // Unit and stubbed-pipeline tests prove the deterministic pipeline, but they
 // cannot prove the live Gemini model emits the caller-only `identityEvidence`
@@ -18,13 +18,12 @@
 //     unnecessary identifier value;
 //   * it is NOT calibration evidence and has NO readiness/automation authority;
 //   * it exits NONZERO when the model response is malformed or a required
-//     semantic outcome is wrong; it exits 0 when every case is satisfied, and
-//     exits 0 with a SKIPPED notice when no Gemini key is configured (the gate
-//     could not run — a real key run remains a pre-merge/release step).
+//     semantic outcome is wrong; it exits 0 only when every case is satisfied.
+//     Missing dedicated credentials are NOT_RUN/nonzero; `--allow-skip` is an
+//     explicit local convenience whose SKIPPED marker cannot satisfy the gate.
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { gradeCallQaTranscript, callQaGraderModel } from '../../api/grade-call-qa.js';
-import { getApiKeys } from '../../api/_gemini-client.js';
 
 const STATIC_SOP = [
   'SYNTHETIC NON-PRODUCTION SOP CONTEXT (contract smoke only).',
@@ -182,25 +181,34 @@ export const LIVE_CONTRACT_SMOKE_CASES = [
 
 const CASES = LIVE_CONTRACT_SMOKE_CASES;
 
-export async function main() {
-  const keys = getApiKeys();
-  const graderModel = callQaGraderModel();
+export function liveSmokeApiKeys(env = process.env) {
+  return String(env.CALL_QA_LIVE_SMOKE_API_KEYS ?? env.CALL_QA_LIVE_SMOKE_API_KEY ?? '')
+    .split(',').map((key) => key.trim()).filter(Boolean);
+}
+
+export async function runLiveContractSmoke({
+  env = process.env, args = process.argv.slice(2), grade = gradeCallQaTranscript, write = console.log,
+} = {}) {
+  const keys = liveSmokeApiKeys(env);
+  const graderModel = callQaGraderModel(env);
 
   if (!keys.length) {
-    console.log('LIVE_CONTRACT_SMOKE_SKIPPED — no Gemini API key configured.');
-    console.log('The live model-contract smoke could not run. This remains an explicit');
-    console.log('pre-merge/release gate: run it once with a non-production Gemini key.');
-    process.exit(0);
+    if (args.includes('--allow-skip')) {
+      write('LIVE_CONTRACT_SMOKE_SKIPPED - no dedicated smoke key configured.');
+      return 0;
+    }
+    write('LIVE_CONTRACT_SMOKE_NOT_RUN - set CALL_QA_LIVE_SMOKE_API_KEY or CALL_QA_LIVE_SMOKE_API_KEYS.');
+    return 2;
   }
 
-  console.log(`Running live Call QA contract smoke against pinned grader model: ${graderModel}`);
-  console.log(`${CASES.length} synthetic cases. No Firestore access, no private bank, synthetic identities only.\n`);
+  write(`Running live Call QA contract smoke against pinned grader model: ${graderModel}`);
+  write(`${CASES.length} synthetic cases. No Firestore access or private bank.`);
 
   const results = [];
   for (const testCase of CASES) {
     let outcome;
     try {
-      const { qa } = await gradeCallQaTranscript({
+      const { qa } = await grade({
         transcript: testCase.transcript,
         scenarioContext: scenarioContext(testCase.department),
         captureMetadata: { captureComplete: true },
@@ -221,18 +229,21 @@ export async function main() {
       outcome = { id: testCase.id, status: 'FAIL', detail: `unusable grader response: ${err?.error ?? err?.message ?? err}` };
     }
     results.push(outcome);
-    console.log(`  [${outcome.status}] ${outcome.id}${outcome.detail ? ` — ${outcome.detail}` : ''}`);
+    write(`  [${outcome.status}] ${outcome.id}${outcome.detail ? ` - ${outcome.detail}` : ''}`);
   }
 
   const failed = results.filter((r) => r.status === 'FAIL');
-  console.log('');
   if (failed.length > 0) {
-    console.log(`LIVE_CONTRACT_SMOKE_FAILED — ${failed.length}/${results.length} case(s) did not satisfy the v6 contract.`);
-    process.exit(1);
+    write(`LIVE_CONTRACT_SMOKE_FAILED - ${failed.length}/${results.length} case(s) did not satisfy the v7 contract.`);
+    return 1;
   }
-  console.log(`LIVE_CONTRACT_SMOKE_VERIFIED — ${results.length}/${results.length} cases satisfied the v6 contract.`);
-  console.log('This is NON-PRODUCTION and carries NO calibration or automation authority.');
-  process.exit(0);
+  write(`LIVE_CONTRACT_SMOKE_VERIFIED - ${results.length}/${results.length} cases satisfied the v7 contract.`);
+  write('This is NON-PRODUCTION and carries NO calibration or automation authority.');
+  return 0;
+}
+
+export async function main() {
+  process.exitCode = await runLiveContractSmoke();
 }
 
 // Run only when invoked directly (never on import, so tests can inspect the
@@ -240,7 +251,7 @@ export async function main() {
 const invokedDirectly = process.argv[1] && import.meta.url === new URL(`file://${process.argv[1].replace(/\\/g, '/')}`).href;
 if (invokedDirectly || process.argv[1]?.endsWith('live-contract-smoke.mjs')) {
   main().catch((err) => {
-    console.error('LIVE_CONTRACT_SMOKE_ERROR —', err?.message ?? err);
-    process.exit(1);
+    console.error('LIVE_CONTRACT_SMOKE_FAILED -', err?.message ?? err);
+    process.exitCode = 1;
   });
 }

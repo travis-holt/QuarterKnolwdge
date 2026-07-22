@@ -16,7 +16,59 @@
 > clause-level disclosure detection, patient-identity ownership for name claims,
 > server-derived identity evidence, real spoken/calendar DOB parsing, strict raw-response
 > validation, a truthful prompt-version policy, and metadata-less history resolving to the
-> historical shared rubric. Grader prompt version `call-qa-grader-v5`.)
+> historical shared rubric. Correction pass #4 is §0k; current grader prompt version
+> `call-qa-grader-v7`.)
+
+## 0k. Canonical identity chronology and live gate (2026-07-22, correction pass #4)
+
+1. **Identity is one candidate, never a union of people.** Full patient designations remain
+   discrete candidates even when they share a first name or surname. Exact repeated designations
+   are deduplicated; two different candidates, multiple children, or an unresolved patient switch
+   fails closed. Sequential field answers form one candidate only within a coherent uninterrupted
+   patient-verification sequence. The value-free audit retains structural metadata, never
+   identifier values in feedback or logs.
+2. **Name fields have semantics.** In a full-name designation the first token is the permitted
+   `firstName`; every remaining token is the `lastName`. This supports hyphenated and apostrophe
+   surnames plus the documented multi-token rule (`Maria de la Cruz` => `Maria` / `de la Cruz`).
+   A first-name question establishes only `firstName`, a last-name question only `lastName`, and a
+   full-name question establishes ordered components. Claims may not swap, overlap, or submit the
+   full name as either one field. Provider and caller-name questions establish neither field.
+3. **DOB ownership is transcript-level and claim-span based.** The server starts at the submitted
+   claim's verified turn, quote, value span and parsed DOB span; it does not reparse an entire turn
+   and accidentally short-circuit on a phone/address. Same-designation DOBs, explicit patient or
+   named-patient possessives, patient-specific questions, direct self-identification, and an
+   uninterrupted bound sequence can attach a DOB. `your DOB` after a different patient is named,
+   ambiguous pronouns, caller/patient competition, patient switches, and multiple candidates fail
+   closed.
+4. **One canonical chronology drives all privacy decisions.** `verify-three`,
+   `verify-before-access`, and `af-hipaa` consume the same identity evaluation and disclosure
+   chronology. A model-triggered `af-hipaa` verifies only when its navigator quote exists, that
+   quoted span is itself a detected protected disclosure, and identity was incomplete then. A real
+   quote after verification or a non-disclosure quote never proves the auto-fail.
+5. **A deterministic model conflict requires critical review, not speculative zeroing.** When the
+   model reports `af-hipaa: false` but the bounded detector proves an auditable protected navigator
+   disclosure before canonical identity completion, the server records a
+   `deterministic-privacy-conflict` and requires supervisor review. It does not auto-zero: the
+   detector is deliberately incomplete, and uncertain or contradictory evidence also routes to
+   review. This prevents model suppression without treating a broad regex as conclusive.
+6. **Negative auto-fails are exactly empty.** Before normalization, every `triggered: false`
+   entry requires whitespace-only `evidence` and `note`; every `triggered: true` entry requires a
+   non-empty navigator quote and a string note. Unknown, duplicate, or missing ids and non-string
+   fields are malformed and receive one retry; two malformed responses make the grader unusable.
+   Because this is model-visible, the prompt is **`call-qa-grader-v7`**. The rubric remains
+   **`qa-rubric-obgyn-v1`** and historical grades are immutable.
+7. **The live contract smoke cannot borrow production credentials or pass by skipping.** It reads
+   only `CALL_QA_LIVE_SMOKE_API_KEY` or `CALL_QA_LIVE_SMOKE_API_KEYS`, uses the pinned grader and ten
+   synthetic cases, and has no Firestore/private-bank dependency or calibration authority.
+   Verified = exit 0 + `LIVE_CONTRACT_SMOKE_VERIFIED`; failure = nonzero +
+   `LIVE_CONTRACT_SMOKE_FAILED`; missing key = distinct nonzero + `LIVE_CONTRACT_SMOKE_NOT_RUN`.
+   `--allow-skip` is local convenience only (exit 0 + `LIVE_CONTRACT_SMOKE_SKIPPED`) and never
+   satisfies a merge/release gate.
+
+**Known boundary.** Deterministic language patterns cannot establish every disclosure or pronoun
+relationship; uncertainty and contradictions remain review-only. Numeric rubric weighting still
+awaits owner sign-off, and calibration remains `INSUFFICIENT_DATA` until genuine adjudicated human
+evidence exists.
 
 ## 0j. Identity coherence and provenance (2026-07-22, correction pass #3)
 
@@ -75,11 +127,9 @@ coverage in [`api/qaVerificationPipeline.test.js`](../api/qaVerificationPipeline
    `pediatrics` + `qa-rubric-v2` under any supported prompt; `obgyn` + `qa-rubric-v2` under v3 only
    (pre-profile); `obgyn` + `qa-rubric-obgyn-v1` under v4/v5/v6.
 
-**Live model-contract gate.** `npm run qa:live-contract-smoke` runs ten synthetic transcripts
-through the real prompt/schema/validator against the pinned grader model (no Firestore, no private
-bank, synthetic identities, no full DOB printed). It is opt-in, is NOT calibration evidence, exits
-nonzero on a malformed or semantically wrong response, and exits 0 with a SKIPPED notice when no key
-is configured. A real-key run is a pre-merge/release step.
+**Live model-contract gate (superseded by §0k).** The ten-case shape remains, but missing dedicated
+credentials no longer skip successfully; only the exact VERIFIED contract in §0k satisfies the
+pre-merge/release step.
 
 ## 0i. Verification integrity (2026-07-21, correction pass #2)
 

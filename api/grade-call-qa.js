@@ -386,7 +386,8 @@ triggered or not — omitting one, repeating one, or inventing an id is a malfor
 "triggered": true ONLY if the transcript contains an explicit violation, and then you MUST quote \
 the offending navigator line verbatim in "evidence"; a triggered auto-fail with no quote is \
 rejected. For an auto-fail that did not occur, set "triggered": false. When in doubt, triggered \
-is false.
+is false. For triggered:false, both "evidence" and "note" MUST be empty strings; contradictory \
+allegations are malformed and rejected.
 
 RUBRIC CRITERIA:
 ${rubricText}

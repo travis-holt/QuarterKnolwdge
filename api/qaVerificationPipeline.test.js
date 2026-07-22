@@ -341,6 +341,242 @@ describe('E2E · malformed first response triggers the retry, second response sc
     const malformed = modelResponse({ identityEvidence: [] });
     await expect(runPipeline(BASE_TRANSCRIPT, [malformed, malformed])).rejects.toThrow(/unusable/i);
   });
+
+  it('retries after an untriggered auto-fail carries evidence', async () => {
+    const malformed = modelResponse({
+      autoFails: OBGYN.autoFails.map((a) => ({
+        id: a.id, triggered: false,
+        evidence: a.id === 'af-hipaa' ? 'Your appointment is Tuesday' : '', note: '',
+      })),
+    });
+    const { qa, upstreamCalls } = await runPipeline(BASE_TRANSCRIPT, [malformed, modelResponse()]);
+    expect(upstreamCalls).toBe(2);
+    expect(qa.autoFails).toHaveLength(0);
+  });
+
+  const malformedAutoFailCases = [
+    ['false plus an accusation in note', (good) => ({
+      ...good,
+      autoFails: good.autoFails.map((a) => a.id === 'af-hipaa'
+        ? { ...a, note: 'The navigator disclosed protected information.' } : a),
+    })],
+    ['true plus empty evidence', (good) => ({
+      ...good,
+      autoFails: good.autoFails.map((a) => a.id === 'af-hipaa'
+        ? { ...a, triggered: true, evidence: '' } : a),
+    })],
+    ['a non-string auto-fail field', (good) => ({
+      ...good,
+      autoFails: good.autoFails.map((a) => a.id === 'af-hipaa'
+        ? { ...a, evidence: 42 } : a),
+    })],
+    ['a duplicate auto-fail id', (good) => ({ ...good, autoFails: [...good.autoFails, good.autoFails[0]] })],
+    ['a missing auto-fail id', (good) => ({ ...good, autoFails: good.autoFails.slice(1) })],
+  ];
+
+  for (const [label, makeMalformed] of malformedAutoFailCases) {
+    it(`retries after ${label}`, async () => {
+      const good = modelResponse();
+      const { qa, upstreamCalls } = await runPipeline(BASE_TRANSCRIPT, [makeMalformed(good), good]);
+      expect(upstreamCalls).toBe(2);
+      expect(qa.autoFails).toHaveLength(0);
+    });
+  }
+});
+
+describe('E2E · af-hipaa uses canonical identity and disclosure chronology', () => {
+  it('does not verify a model-triggered HIPAA fail for disclosure after complete identity', async () => {
+    const response = modelResponse({
+      autoFails: OBGYN.autoFails.map((a) => a.id === 'af-hipaa'
+        ? { id: a.id, triggered: true, evidence: 'You are all set for Tuesday the 14th at 9:00 at our Main Street office', note: '' }
+        : { id: a.id, triggered: false, evidence: '', note: '' }),
+    });
+    const { qa } = await runPipeline(BASE_TRANSCRIPT, response);
+    expect(qa.autoFails.find((a) => a.id === 'af-hipaa')).toBeUndefined();
+    expect(qa.score).toBeGreaterThan(0);
+  });
+
+  it('does not let a model suppress a protected disclosure before any identity', async () => {
+    const transcript = [
+      nav('Thank you for calling Aizer Women\'s Health, this is Dana. How can I help?'),
+      nav('Your appointment is Tuesday at 2:15.'),
+      caller('This is Maria Alvarez, date of birth March 2nd 1991.'),
+      nav('Is there anything else I can help you with?'),
+    ];
+    const identity = [
+      { field: 'firstName', value: 'Maria', role: 'caller', turnIndex: 2, quote: 'This is Maria Alvarez' },
+      { field: 'lastName', value: 'Alvarez', role: 'caller', turnIndex: 2, quote: 'This is Maria Alvarez' },
+      { field: 'dob', value: 'March 2nd 1991', role: 'caller', turnIndex: 2, quote: 'date of birth March 2nd 1991' },
+    ];
+    const { qa } = await runPipeline(transcript, modelResponse({ identityEvidence: identity }));
+    expect(qa.review.recommendation).toBe('needs_review');
+    expect(qa.review.reviewFlags.map((flag) => flag.id)).toContain('deterministic-privacy-conflict');
+  });
+
+  it('surfaces partial identity followed by chart disclosure', async () => {
+    const transcript = [
+      nav('Patient first name?'), caller('Maria.'),
+      nav('Your chart shows an ultrasound order.'),
+      nav('Patient last name?'), caller('Alvarez.'),
+      nav('Patient DOB?'), caller('March 2, 1991.'),
+    ];
+    const identity = [
+      { field: 'firstName', value: 'Maria', role: 'caller', turnIndex: 1, quote: 'Maria' },
+      { field: 'lastName', value: 'Alvarez', role: 'caller', turnIndex: 4, quote: 'Alvarez' },
+      { field: 'dob', value: 'March 2, 1991', role: 'caller', turnIndex: 6, quote: 'March 2, 1991' },
+    ];
+    const { qa } = await runPipeline(transcript, modelResponse({ identityEvidence: identity }));
+    expect(qa.review.reviewFlags.map((flag) => flag.id)).toContain('deterministic-privacy-conflict');
+  });
+
+  it('does not verify af-hipaa from a real navigator quote that is not protected disclosure', async () => {
+    const response = modelResponse({
+      autoFails: OBGYN.autoFails.map((a) => a.id === 'af-hipaa'
+        ? { id: a.id, triggered: true, evidence: 'Is there anything else I can help you with', note: '' }
+        : { id: a.id, triggered: false, evidence: '', note: '' }),
+    });
+    const { qa } = await runPipeline(BASE_TRANSCRIPT, response);
+    expect(qa.autoFails.find((a) => a.id === 'af-hipaa')).toBeUndefined();
+  });
+
+  it('routes an uncertain model-triggered disclosure to review without auto-failing', async () => {
+    const transcript = [
+      nav('Thank you for calling Aizer Women\'s Health. How can I help?'),
+      nav('I can see something here that we should discuss.'),
+      caller('This is Maria Alvarez, date of birth March 2nd 1991.'),
+    ];
+    const identity = [
+      { field: 'firstName', value: 'Maria', role: 'caller', turnIndex: 2, quote: 'This is Maria Alvarez' },
+      { field: 'lastName', value: 'Alvarez', role: 'caller', turnIndex: 2, quote: 'This is Maria Alvarez' },
+      { field: 'dob', value: 'March 2nd 1991', role: 'caller', turnIndex: 2, quote: 'date of birth March 2nd 1991' },
+    ];
+    const autoFails = OBGYN.autoFails.map((a) => a.id === 'af-hipaa'
+      ? { id: a.id, triggered: true, evidence: 'I can see something here that we should discuss', note: '' }
+      : { id: a.id, triggered: false, evidence: '', note: '' });
+    const { qa } = await runPipeline(transcript, modelResponse({ identityEvidence: identity, autoFails }));
+    expect(qa.autoFails.find((a) => a.id === 'af-hipaa')).toBeUndefined();
+    expect(qa.review.recommendation).toBe('needs_review');
+  });
+});
+
+describe('E2E · canonical patient candidates, field semantics, and DOB ownership', () => {
+  const cases = [
+    {
+      name: 'swapped first and last claims fail',
+      transcript: [nav('Patient full name and DOB?'), caller('Maria Alvarez, March 2, 1991.')],
+      identity: [
+        { field: 'firstName', value: 'Alvarez', role: 'caller', turnIndex: 1, quote: 'Maria Alvarez' },
+        { field: 'lastName', value: 'Maria', role: 'caller', turnIndex: 1, quote: 'Maria Alvarez' },
+        { field: 'dob', value: 'March 2, 1991', role: 'caller', turnIndex: 1, quote: 'March 2, 1991' },
+      ], valid: false,
+    },
+    {
+      name: 'a full name submitted as firstName fails',
+      transcript: [nav('Patient full name and DOB?'), caller('Maria Alvarez, March 2, 1991.')],
+      identity: [
+        { field: 'firstName', value: 'Maria Alvarez', role: 'caller', turnIndex: 1, quote: 'Maria Alvarez' },
+        { field: 'lastName', value: 'Alvarez', role: 'caller', turnIndex: 1, quote: 'Maria Alvarez' },
+        { field: 'dob', value: 'March 2, 1991', role: 'caller', turnIndex: 1, quote: 'March 2, 1991' },
+      ], valid: false,
+    },
+    {
+      name: 'two patients sharing a first name remain ambiguous',
+      transcript: [nav('Which patient?'), caller('Maria Smith and Maria Alvarez.'), nav('Patient DOB?'), caller('March 2, 1991.')],
+      identity: [
+        { field: 'firstName', value: 'Maria', role: 'caller', turnIndex: 1, quote: 'Maria Smith' },
+        { field: 'lastName', value: 'Alvarez', role: 'caller', turnIndex: 1, quote: 'Maria Alvarez' },
+        { field: 'dob', value: 'March 2, 1991', role: 'caller', turnIndex: 3, quote: 'March 2, 1991' },
+      ], valid: false,
+    },
+    {
+      name: 'two patients sharing a surname remain ambiguous',
+      transcript: [nav('Which patient?'), caller('Maria Smith and Jane Smith.'), nav('Patient DOB?'), caller('March 2, 1991.')],
+      identity: [
+        { field: 'firstName', value: 'Maria', role: 'caller', turnIndex: 1, quote: 'Maria Smith' },
+        { field: 'lastName', value: 'Smith', role: 'caller', turnIndex: 1, quote: 'Maria Smith' },
+        { field: 'dob', value: 'March 2, 1991', role: 'caller', turnIndex: 3, quote: 'March 2, 1991' },
+      ], valid: false,
+    },
+    {
+      name: 'first and last claims cannot be combined across patients',
+      transcript: [nav('Which patient?'), caller('Maria Smith and Jane Alvarez.'), nav('Patient DOB?'), caller('March 2, 1991.')],
+      identity: [
+        { field: 'firstName', value: 'Maria', role: 'caller', turnIndex: 1, quote: 'Maria Smith' },
+        { field: 'lastName', value: 'Alvarez', role: 'caller', turnIndex: 1, quote: 'Jane Alvarez' },
+        { field: 'dob', value: 'March 2, 1991', role: 'caller', turnIndex: 3, quote: 'March 2, 1991' },
+      ], valid: false,
+    },
+    {
+      name: 'third-party patient followed by your DOB fails closed',
+      transcript: [caller('I am Elena calling for my daughter Maria Alvarez.'), nav('And your DOB?'), caller('March 2, 1991.')],
+      identity: [
+        { field: 'firstName', value: 'Maria', role: 'caller', turnIndex: 0, quote: 'Maria Alvarez' },
+        { field: 'lastName', value: 'Alvarez', role: 'caller', turnIndex: 0, quote: 'Maria Alvarez' },
+        { field: 'dob', value: 'March 2, 1991', role: 'caller', turnIndex: 2, quote: 'March 2, 1991' },
+      ], valid: false,
+    },
+    {
+      name: 'explicitly patient-linked DOB on a third-party call passes',
+      transcript: [caller('I am calling for my daughter Maria Alvarez.'), nav('What is her DOB?'), caller('March 2, 1991.')],
+      identity: [
+        { field: 'firstName', value: 'Maria', role: 'caller', turnIndex: 0, quote: 'Maria Alvarez' },
+        { field: 'lastName', value: 'Alvarez', role: 'caller', turnIndex: 0, quote: 'Maria Alvarez' },
+        { field: 'dob', value: 'March 2, 1991', role: 'caller', turnIndex: 2, quote: 'March 2, 1991' },
+      ], valid: true,
+    },
+    {
+      name: 'phone number beside a patient-linked DOB does not bypass ownership',
+      transcript: [caller('I am calling for my daughter Maria Alvarez.'), nav('What is her DOB and phone number?'), caller('Her DOB is March 2, 1991 and phone is 555-0100.')],
+      identity: [
+        { field: 'firstName', value: 'Maria', role: 'caller', turnIndex: 0, quote: 'Maria Alvarez' },
+        { field: 'lastName', value: 'Alvarez', role: 'caller', turnIndex: 0, quote: 'Maria Alvarez' },
+        { field: 'dob', value: 'March 2, 1991', role: 'caller', turnIndex: 2, quote: 'Her DOB is March 2, 1991' },
+      ], valid: true,
+    },
+    {
+      name: 'address beside a patient-linked DOB does not bypass ownership',
+      transcript: [caller('I am calling for my daughter Maria Alvarez.'), nav('What is her DOB and address?'), caller('Her DOB is March 2, 1991 and address is 10 Oak Street.')],
+      identity: [
+        { field: 'firstName', value: 'Maria', role: 'caller', turnIndex: 0, quote: 'Maria Alvarez' },
+        { field: 'lastName', value: 'Alvarez', role: 'caller', turnIndex: 0, quote: 'Maria Alvarez' },
+        { field: 'dob', value: 'March 2, 1991', role: 'caller', turnIndex: 2, quote: 'Her DOB is March 2, 1991' },
+      ], valid: true,
+    },
+    {
+      name: 'sequential direct-patient one-word answers pass',
+      transcript: [nav('Patient first name?'), caller('Maria.'), nav('Patient last name?'), caller('Alvarez.'), nav('Your DOB?'), caller('March 2, 1991.')],
+      identity: [
+        { field: 'firstName', value: 'Maria', role: 'caller', turnIndex: 1, quote: 'Maria' },
+        { field: 'lastName', value: 'Alvarez', role: 'caller', turnIndex: 3, quote: 'Alvarez' },
+        { field: 'dob', value: 'March 2, 1991', role: 'caller', turnIndex: 5, quote: 'March 2, 1991' },
+      ], valid: true,
+    },
+    {
+      name: 'multiple children fail closed',
+      transcript: [caller('I am calling for my children Maria Alvarez and Jane Alvarez.'), nav('Patient DOB?'), caller('March 2, 1991.')],
+      identity: [
+        { field: 'firstName', value: 'Maria', role: 'caller', turnIndex: 0, quote: 'Maria Alvarez' },
+        { field: 'lastName', value: 'Alvarez', role: 'caller', turnIndex: 0, quote: 'Maria Alvarez' },
+        { field: 'dob', value: 'March 2, 1991', role: 'caller', turnIndex: 2, quote: 'March 2, 1991' },
+      ], valid: false,
+    },
+    {
+      name: 'repeated designation of the same patient is not ambiguous',
+      transcript: [caller('I am calling for Maria Alvarez.'), nav('Please confirm the patient.'), caller('The patient is Maria Alvarez, DOB March 2, 1991.')],
+      identity: [
+        { field: 'firstName', value: 'Maria', role: 'caller', turnIndex: 2, quote: 'Maria Alvarez' },
+        { field: 'lastName', value: 'Alvarez', role: 'caller', turnIndex: 2, quote: 'Maria Alvarez' },
+        { field: 'dob', value: 'March 2, 1991', role: 'caller', turnIndex: 2, quote: 'DOB March 2, 1991' },
+      ], valid: true,
+    },
+  ];
+
+  for (const fixture of cases) {
+    it(fixture.name, async () => {
+      const { qa } = await runPipeline(fixture.transcript, modelResponse({ identityEvidence: fixture.identity }));
+      expect(criterion(qa, 'verify-three').verdict).toBe(fixture.valid ? 'MET' : 'NOT_MET');
+    });
+  }
 });
 
 describe('E2E · historical rendering', () => {
@@ -392,7 +628,7 @@ describe('E2E · prompt contract matches what the server enforces', () => {
   );
 
   it('is stamped with the current prompt version', () => {
-    expect(CALL_QA_PROMPT_VERSION).toBe('call-qa-grader-v6');
+    expect(CALL_QA_PROMPT_VERSION).toBe('call-qa-grader-v7');
   });
 
   it('tells the model the navigator\'s own name is not the patient\'s', () => {

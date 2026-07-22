@@ -263,7 +263,7 @@ describe('B4 · the identity contract is caller-only everywhere', () => {
   });
 
   it('the prompt version moved past v5', () => {
-    expect(CALL_QA_PROMPT_VERSION).toBe('call-qa-grader-v6');
+    expect(CALL_QA_PROMPT_VERSION).toBe('call-qa-grader-v7');
   });
 
   it('validation rejects a navigator-role identity claim', () => {
@@ -377,5 +377,160 @@ describe('B7 · malformed criterion field types are rejected, not coerced', () =
 
   it('rejects object note', () => {
     expect(validateQaResponse(build({ note: {} }), OBGYN).error).toBeTruthy();
+  });
+});
+
+describe('B8 · first and last name claims have field semantics', () => {
+  const fullNameTranscript = [
+    nav('May I have the patient full name?'),
+    caller('Maria Alvarez.'),
+    nav('And the patient date of birth?'),
+    caller('March 2, 1991.'),
+  ];
+  const dob = claim('dob', 'March 2, 1991', 'caller', 3, 'March 2, 1991');
+
+  it.each([
+    ['swapped fields', [claim('firstName', 'Alvarez', 'caller', 1, 'Maria Alvarez'), claim('lastName', 'Maria', 'caller', 1, 'Maria Alvarez'), dob]],
+    ['full name as firstName', [claim('firstName', 'Maria Alvarez', 'caller', 1, 'Maria Alvarez'), claim('lastName', 'Alvarez', 'caller', 1, 'Maria Alvarez'), dob]],
+    ['full name as lastName', [claim('firstName', 'Maria', 'caller', 1, 'Maria Alvarez'), claim('lastName', 'Maria Alvarez', 'caller', 1, 'Maria Alvarez'), dob]],
+  ])('rejects %s', (_label, evidence) => {
+    expect(evaluateIdentityEvidence(fullNameTranscript, evidence).complete).toBe(false);
+  });
+
+  it.each([
+    ['Maria Alvarez', 'Alvarez'],
+    ['Maria Alvarez-Reyes', 'Alvarez-Reyes'],
+    ['Maria O’Connor', 'O’Connor'],
+    ['Maria de la Cruz', 'de la Cruz'],
+  ])('accepts ordered full name %s', (full, surname) => {
+    const transcript = [nav('May I have the patient full name?'), caller(`${full}.`), nav('And the patient DOB?'), caller('March 2, 1991.')];
+    const result = evaluateIdentityEvidence(transcript, [
+      claim('firstName', 'Maria', 'caller', 1, full),
+      claim('lastName', surname, 'caller', 1, full),
+      claim('dob', 'March 2, 1991', 'caller', 3, 'March 2, 1991'),
+    ]);
+    expect(result.complete).toBe(true);
+  });
+
+  it('rejects typed first-name answer submitted as lastName', () => {
+    const transcript = [nav('Patient first name?'), caller('Maria.'), nav('Patient last name?'), caller('Alvarez.'), nav('Patient DOB?'), caller('March 2, 1991.')];
+    const result = evaluateIdentityEvidence(transcript, [
+      claim('firstName', 'Alvarez', 'caller', 3, 'Alvarez'),
+      claim('lastName', 'Maria', 'caller', 1, 'Maria'),
+      claim('dob', 'March 2, 1991', 'caller', 5, 'March 2, 1991'),
+    ]);
+    expect(result.complete).toBe(false);
+  });
+});
+
+describe('B9 · patient candidates stay discrete', () => {
+  const assess = (patientLines, evidence) => evaluateIdentityEvidence([
+    nav('May I have the patient full name and DOB?'),
+    ...patientLines.map(caller),
+  ], evidence);
+
+  it.each([
+    ['shared first name', ['Maria Smith.', 'Maria Alvarez, March 2, 1991.']],
+    ['shared surname', ['Maria Smith.', 'Jane Smith, March 2, 1991.']],
+    ['different names', ['Maria Smith.', 'Jane Alvarez, March 2, 1991.']],
+    ['multiple children', ['My daughter Maria Smith needs an appointment.', 'My daughter Jane Smith also needs an appointment. March 2, 1991.']],
+  ])('fails closed for %s', (_label, lines) => {
+    const result = assess(lines, [
+      claim('firstName', 'Maria', 'caller', 1, lines[0]),
+      claim('lastName', 'Smith', 'caller', 2, lines[1]),
+      claim('dob', 'March 2, 1991', 'caller', 2, lines[1]),
+    ]);
+    expect(result.complete).toBe(false);
+  });
+
+  it('does not treat repeated identical designation as ambiguity', () => {
+    const transcript = [nav('Patient full name?'), caller('Maria Alvarez.'), nav('Please repeat the patient full name and DOB.'), caller('Maria Alvarez, March 2, 1991.')];
+    const result = evaluateIdentityEvidence(transcript, [
+      claim('firstName', 'Maria', 'caller', 3, 'Maria Alvarez'),
+      claim('lastName', 'Alvarez', 'caller', 3, 'Maria Alvarez'),
+      claim('dob', 'March 2, 1991', 'caller', 3, 'March 2, 1991'),
+    ]);
+    expect(result.complete).toBe(true);
+  });
+
+  it('fails closed when a patient designation is corrected to a different name', () => {
+    const transcript = [nav('Patient full name?'), caller('Maria Smith.'), caller('Correction, the patient is Maria Alvarez, DOB March 2, 1991.')];
+    const result = evaluateIdentityEvidence(transcript, [
+      claim('firstName', 'Maria', 'caller', 2, 'Maria Alvarez'),
+      claim('lastName', 'Alvarez', 'caller', 2, 'Maria Alvarez'),
+      claim('dob', 'March 2, 1991', 'caller', 2, 'DOB March 2, 1991'),
+    ]);
+    expect(result.complete).toBe(false);
+  });
+
+  it('fails closed when a typed field sequence changes patients', () => {
+    const transcript = [nav('Patient first name?'), caller('Maria.'), nav('Patient first name?'), caller('Jane.'), nav('Patient last name?'), caller('Alvarez.'), nav('Patient DOB?'), caller('March 2, 1991.')];
+    const result = evaluateIdentityEvidence(transcript, [
+      claim('firstName', 'Jane', 'caller', 3, 'Jane'),
+      claim('lastName', 'Alvarez', 'caller', 5, 'Alvarez'),
+      claim('dob', 'March 2, 1991', 'caller', 7, 'March 2, 1991'),
+    ]);
+    expect(result.complete).toBe(false);
+  });
+});
+
+describe('B10 · DOB ownership follows transcript-level patient context', () => {
+  const thirdParty = [
+    caller("I'm calling for my daughter, Maria Alvarez."),
+    nav('And your date of birth?'),
+    caller('March 2, 1991.'),
+  ];
+  const evidence = [
+    claim('firstName', 'Maria', 'caller', 0, 'my daughter, Maria Alvarez'),
+    claim('lastName', 'Alvarez', 'caller', 0, 'my daughter, Maria Alvarez'),
+    claim('dob', 'March 2, 1991', 'caller', 2, 'March 2, 1991'),
+  ];
+
+  it('rejects third-party patient followed by "your DOB"', () => {
+    expect(evaluateIdentityEvidence(thirdParty, evidence).complete).toBe(false);
+  });
+
+  it('accepts third-party patient followed by patient-linked DOB', () => {
+    const transcript = [thirdParty[0], nav('And her date of birth?'), thirdParty[2]];
+    expect(evaluateIdentityEvidence(transcript, evidence).complete).toBe(true);
+  });
+
+  it('fails closed on an ambiguous DOB pronoun', () => {
+    const transcript = [thirdParty[0], nav('And their date of birth?'), thirdParty[2]];
+    expect(evaluateIdentityEvidence(transcript, evidence).complete).toBe(false);
+  });
+
+  it.each([
+    'Her DOB is March 2, 1991 and the phone number is 555-010-1212.',
+    'Her DOB is March 2, 1991 and the address is 12 Main Street.',
+  ])('still evaluates DOB ownership when the same turn also contains another identifier', (text) => {
+    const transcript = [thirdParty[0], nav('What is the patient DOB?'), caller(text)];
+    const claims = [...evidence.slice(0, 2), claim('dob', 'March 2, 1991', 'caller', 2, 'Her DOB is March 2, 1991')];
+    expect(evaluateIdentityEvidence(transcript, claims).complete).toBe(true);
+  });
+
+  it('rejects same-turn caller DOB followed by a different patient designation', () => {
+    const transcript = [caller('My DOB is March 2, 1991, and I am calling for Maria Alvarez.')];
+    const claims = [
+      claim('firstName', 'Maria', 'caller', 0, 'calling for Maria Alvarez'),
+      claim('lastName', 'Alvarez', 'caller', 0, 'calling for Maria Alvarez'),
+      claim('dob', 'March 2, 1991', 'caller', 0, 'My DOB is March 2, 1991'),
+    ];
+    expect(evaluateIdentityEvidence(transcript, claims).complete).toBe(false);
+  });
+});
+
+describe('B11 · untriggered auto-fails are strictly empty', () => {
+  const response = (autoFail) => ({
+    criteria: OBGYN.criteria.map((c) => ({ id: c.id, verdict: 'NA', basis: 'ABSENCE', evidence: '', note: '', identityEvidence: [] })),
+    autoFails: OBGYN.autoFails.map((a) => a.id === autoFail.id ? autoFail : ({ id: a.id, triggered: false, evidence: '', note: '' })),
+  });
+
+  it('rejects false plus evidence', () => {
+    expect(validateQaResponse(response({ id: 'af-hipaa', triggered: false, evidence: 'Your appointment is Tuesday', note: '' }), OBGYN).error).toBeTruthy();
+  });
+
+  it('rejects false plus an accusation in note', () => {
+    expect(validateQaResponse(response({ id: 'af-hipaa', triggered: false, evidence: '', note: 'Navigator disclosed the appointment early.' }), OBGYN).error).toBeTruthy();
   });
 });

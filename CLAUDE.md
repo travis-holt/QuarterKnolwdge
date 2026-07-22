@@ -11,7 +11,33 @@
 > [§8 Current System State](#8-current-system-state) and [§15 Current Priorities](#15-current-priorities)
 > accurate at all times.
 >
-> **Last updated:** 2026-07-22 (**CORRECTION PASS #3 — identity coherence + provenance.** Still a
+> **Last updated:** 2026-07-22 (**CORRECTION PASS #4 — canonical identity + HIPAA chronology.**
+> Draft PR #41 remains **NOT merged, NOT deployed, and NOT ready**. Against independently reviewed
+> head `fe54788`, 16 focused adversarial tests failed before implementation changes. The correction
+> replaces unioned person tokens with discrete patient candidates (exact repeats deduplicate;
+> shared names/multiple children/switches fail closed), enforces first/last field semantics and the
+> explicit multi-token-surname rule (first token = given name; remainder = surname), and binds DOB
+> ownership through transcript-level patient state starting from the verified claim span. Thus
+> `your DOB` after naming another patient fails while an explicit patient-linked DOB or coherent
+> direct-patient sequence can pass; phone/address text cannot bypass ownership. ONE canonical
+> identity/disclosure chronology drives `verify-three`, `verify-before-access`, and `af-hipaa`.
+> A triggered HIPAA fail verifies only when its navigator quote is itself a detected protected
+> disclosure before identity completion. A deterministic early-disclosure conflict that the model
+> reports false forces critical supervisor review but does not automatically zero the call, because
+> the bounded phrase detector is not comprehensive; uncertain language also remains review-only.
+> Raw validation now requires `triggered: false` auto-fails to carry empty evidence AND note before
+> normalization. This response requirement is model-visible, so prompt v6 →
+> **`call-qa-grader-v7`**; the OB/GYN rubric remains **`qa-rubric-obgyn-v1`** (100 points, 85 pass,
+> unchanged criteria/weights/applicability/auto-fail definitions), Pediatrics is unchanged, and
+> historical grades remain immutable/separate by provenance. The live contract smoke reads ONLY
+> `CALL_QA_LIVE_SMOKE_API_KEY(S)`: VERIFIED is exit 0 + exact marker; FAILED and NOT_RUN are
+> nonzero; `--allow-skip` prints SKIPPED but never satisfies a merge/release gate. It remains ten
+> synthetic cases, pinned model, no Firestore/private bank, and no calibration authority.
+> Calibration remains `INSUFFICIENT_DATA` until real adjudicated human evidence exists; numeric
+> weighting still awaits owner sign-off. No migration, production write, private provisioning,
+> historical rewrite, merge, deploy, or ready-state change. See docs/HISTORY.md and
+> docs/GRADING_INVARIANTS.md §0k. Final unit gate: **2,128 tests across 82 files**. ·
+> **Prior update:** 2026-07-22 (**CORRECTION PASS #3 — identity coherence + provenance.** Still a
 > **DRAFT PR against `main`, NOT merged and NOT deployed** (PR #41). A third independent review
 > attacked the trust boundaries the second pass introduced and found eight more issues; each was
 > reproduced with a failing adversarial test first (`api/qaVerificationSubject.test.js` +
@@ -2520,6 +2546,16 @@ of this file on 2026-07-07 to cut per-session context cost (it was ~55% of the f
 
 ## 8. Current System State
 
+- **PR #41 correction pass #4 (2026-07-22, DRAFT — not merged/deployed/ready):** identity is now
+  one discrete patient candidate or one uninterrupted field-answer sequence, not a union of name
+  tokens. Ordered first/last semantics, transcript-level DOB ownership from verified claim spans,
+  and one canonical identity/disclosure chronology are server-enforced. `af-hipaa` needs a quoted
+  protected disclosure before completion; a deterministically established model-false conflict
+  forces critical review without speculative auto-zeroing. Negative auto-fails require empty
+  evidence/note. The prompt is `call-qa-grader-v7`; rubric versions, points, the 85 threshold,
+  Pediatrics, and stored results are unchanged. The live contract gate accepts only dedicated
+  `CALL_QA_LIVE_SMOKE_API_KEY(S)` credentials and only the exact VERIFIED marker counts.
+
 - **Department-based Call QA rubric profiles (2026-07-21, DRAFT PR — not merged, not deployed):**
   the scored Call QA rubric now resolves per department through the single
   `getQaRubricProfile(department)` entry point in
@@ -2609,7 +2645,7 @@ of this file on 2026-07-07 to cut per-session context cost (it was ~55% of the f
 - **Call QA calibration/readiness (2026-07-16):** F27 adds a fail-closed, offline calibration
   instrument over sanitized local fixtures. It measures final-outcome confusion, criterion and
   safety-critical agreement, auto-fail errors, capture reliability, Wilson confidence intervals,
-  version populations, and department/scenario/workflow coverage. The committed 3 fixtures are
+  version populations, and department/scenario/workflow coverage. The committed 7 fixtures are
   synthetic examples only; no human pilot fixtures exist, so the reproducible readiness state is
   `INSUFFICIENT_DATA`. Optional live grading requires explicit environment + CLI confirmation and
   never accesses Firestore. Shadow clean-pass assessment is pure/non-final; automatic
@@ -3524,10 +3560,10 @@ npm run test:e2e     # run the Playwright browser tests (auto-builds + starts th
    - **Known limitation to watch:** the protected-disclosure detector behind
      `verify-before-access` is a deterministic pattern set (nine categories: appointments,
      prior visits, chart contents, orders, provider notes, results, medication, account,
-     clinical detail), now applied CLAUSE BY CLAUSE. It can only *reject* a MET (never create
-     one), so its failure mode is a
-     lost criterion the supervisor still reviews — but it will not catch every possible
-     phrasing. It is a trust gate, not a comprehensive PHI detector.
+     clinical detail), now applied CLAUSE BY CLAUSE. It can reject a claimed MET and can create a
+     mandatory review conflict when auditable chronology contradicts a model-false HIPAA result;
+     it never auto-zeroes a call by itself. Under-matches remain possible, so it is a trust gate,
+     not a comprehensive PHI detector.
    - **Second known limitation:** name-ownership detection is likewise a deterministic pattern
      set. A verification exchange phrased in a way it does not recognise withholds the criterion
      and routes to supervisor review rather than guessing — a lost criterion, never a false pass.
@@ -3540,17 +3576,23 @@ npm run test:e2e     # run the Playwright browser tests (auto-builds + starts th
      safety-critical misses prevent a confident pass and force `needs_review`; a verified HIPAA
      auto-fail still zeroes the score. Re-weighting was explicitly out of scope for both
      correction passes and needs owner sign-off.
-   - **Prompt version `call-qa-grader-v5`** (v3 → v4 → v5). v4 added profile-rendered evidence
+   - **Prompt version `call-qa-grader-v7`** (v3 → v4 → v5 → v6 → v7). v4 added profile-rendered evidence
      role rules, `[n]`-indexed transcript turns and the structured `identityEvidence` array; v5
      added the patient-identity ownership rules for name claims, explicit spoken-DOB guidance,
-     and the requirement to answer every auto-fail id (with a quote when triggered). Each is a
+     and the requirement to answer every auto-fail id (with a quote when triggered); v6 made
+     identity caller-only; v7 requires an untriggered auto-fail to carry empty evidence and note.
+     Each is a
      real model-visible contract change, so **evidence gathered under v3 or v4 is a separate
-     calibration population from v5** and the two can never be pooled. The rubric itself stays
+     calibration population from v7** and populations can never be pooled. The rubric itself stays
      `qa-rubric-obgyn-v1` — no criterion, point, weight, applicability or auto-fail changed.
    - **The live smoke must now also confirm the model populates identity claims correctly.**
      Prompt-contract tests assert prompt TEXT; they cannot prove how Gemini fills the structured
-     `identityEvidence` array under v5. A grader that omits it, or that submits a navigator or
+     `identityEvidence` array under v7. A grader that omits it, or that submits a navigator or
      provider name, will correctly but unhelpfully lose verification credit.
+   - **The non-production live contract gate requires a dedicated key and exact marker.** Use
+     `CALL_QA_LIVE_SMOKE_API_KEY` or its plural form; generic application Gemini keys are ignored.
+     `NOT_RUN`, `FAILED`, and `SKIPPED` are not successful pre-merge evidence. The gate must show
+     `LIVE_CONTRACT_SMOKE_VERIFIED` from a real pinned-model run; stubbed tests do not qualify.
 1b. **POST-DEPLOY WATCH — the capability redesign is LIVE (merged `01a7f27`, 2026-07-21).**
    PR #40 is merged and Railway has auto-deployed it, so the following are now live-system items,
    not pre-merge questions:

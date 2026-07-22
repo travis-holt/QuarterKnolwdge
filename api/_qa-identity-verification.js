@@ -265,7 +265,7 @@ const NAME_TOKEN = /^[\p{L}][\p{L}'’-]*$/u;
 
 export function looksLikePersonName(value) {
   const tokens = String(value ?? '').trim().split(/\s+/).filter(Boolean);
-  if (tokens.length < 1 || tokens.length > 3) return false;
+  if (tokens.length < 1 || tokens.length > 4) return false;
   return tokens.every((token) => NAME_TOKEN.test(token));
 }
 
@@ -297,7 +297,7 @@ export function looksLikePersonName(value) {
 // This can only WITHHOLD credit. It never creates verification, so its failure
 // mode is a criterion the supervisor still reviews.
 
-const NAME_CAPTURE = "([\\p{L}][\\p{L}'’-]*(?:\\s+[\\p{L}][\\p{L}'’-]*){0,2})";
+const NAME_CAPTURE = "([\\p{L}][\\p{L}'’-]*(?:\\s+[\\p{L}][\\p{L}'’-]*){0,3})";
 
 // ── Name stopwords (correction pass #3) ──────────────────────────────────────
 //
@@ -332,6 +332,7 @@ const NAME_STOPWORDS = new Set([
   // fillers / greetings
   'yes', 'no', 'okay', 'ok', 'sure', 'hi', 'hello', 'hey', 'um', 'uh', 'please',
   'thanks', 'thank', 'name', 'first', 'last', 'full', 'birth', 'date', 'dob',
+  'also',
 ]);
 
 function isNameStopword(token) {
@@ -429,10 +430,33 @@ function isPatientNameQuestion(text) {
 function collectSpans(text, patterns) {
   const spans = [];
   for (const pattern of patterns) {
-    const match = pattern.exec(text);
-    if (match?.[1]) spans.push(match[1]);
+    const flags = pattern.flags.includes('g') ? pattern.flags : `${pattern.flags}g`;
+    const scanner = new RegExp(pattern.source, flags);
+    let match;
+    while ((match = scanner.exec(text)) !== null) {
+      if (match[1]) spans.push(match[1]);
+      if (match[0] === '') scanner.lastIndex += 1;
+    }
   }
   return spans;
+}
+
+function patientNameQuestionField(text) {
+  const raw = String(text ?? '');
+  if (isProviderNameQuestion(raw)) return null;
+  if (/\bfirst\s+and\s+last\s+name\b/i.test(raw)) return 'fullName';
+  const first = /\bfirst\s+name\b/i.test(raw);
+  const last = /\blast\s+name\b/i.test(raw);
+  if (/\b(?:full|legal)\s+name\b/i.test(raw) || (first && last)) return 'fullName';
+  if (first) return 'firstName';
+  if (last) return 'lastName';
+  return isPatientNameQuestion(raw) ? 'fullName' : null;
+}
+
+function nameComponents(text) {
+  const tokens = filterNameSpanTokens(text);
+  if (tokens.length < 2) return null;
+  return { firstName: [tokens[0]], lastName: tokens.slice(1) };
 }
 
 /**
@@ -467,11 +491,18 @@ export function classifyPatientNameSpans(text, precedingNavigatorText = '') {
   // the patient separately, a self-identification in the SAME turn is the
   // caller's own name, not the patient's.
   const thirdParty = keep(collectSpans(raw, THIRD_PARTY_PATIENT_PATTERNS));
-  if (thirdParty.length > 0) return thirdParty.map((span) => ({ text: span, kind: 'designation' }));
+  if (thirdParty.length > 0) return thirdParty.map((span) => ({ text: span, kind: 'designation', subject: 'thirdParty' }));
 
   // Precedence 2 — the caller identifies themselves as the patient.
   const self = keep(collectSpans(raw, SELF_IDENTIFICATION_PATTERNS));
-  if (self.length > 0) return self.map((span) => ({ text: span, kind: 'designation' }));
+  if (self.length > 0) {
+    const askedField = patientNameQuestionField(precedingNavigatorText);
+    const selfField = askedField ?? (/\bmy\s+first\s+name\b/i.test(raw) ? 'firstName'
+      : /\bmy\s+last\s+name\b/i.test(raw) ? 'lastName' : null);
+    return self.map((span) => selfField
+      ? { text: span, kind: 'field', field: selfField, subject: 'self' }
+      : { text: span, kind: 'designation', subject: 'self' });
+  }
 
   // Precedence 3 — an answer to the navigator's patient-name question.
   //
@@ -481,7 +512,8 @@ export function classifyPatientNameSpans(text, precedingNavigatorText = '') {
   // stopping at a month name or anything containing a digit, because from there
   // on the caller is answering the date-of-birth part of the same question. A
   // one-word answer ("Maria.") is a valid span here.
-  if (isPatientNameQuestion(precedingNavigatorText)) {
+  const questionField = patientNameQuestionField(precedingNavigatorText);
+  if (questionField) {
     const stripped = raw
       .replace(/\b(?:it\s+is|that\s+is|sure\s+it(?:'s|’s)|yes|yeah|yep|sure|okay|ok|hi|hello|um|uh|it(?:'s|’s)|that(?:'s|’s))\b/gi, ' ')
       .replace(/[^\p{L}\p{N}\s'’-]/gu, ' ');
@@ -498,9 +530,9 @@ export function classifyPatientNameSpans(text, precedingNavigatorText = '') {
         continue;
       }
       span.push(token);
-      if (span.length === 3) break;
+      if (span.length === 4) break;
     }
-    if (span.length > 0) return [{ text: span.join(' '), kind: 'field' }];
+    if (span.length > 0) return [{ text: span.join(' '), kind: 'field', field: questionField }];
   }
 
   return [];
@@ -516,7 +548,7 @@ export function patientNameSpans(text, precedingNavigatorText = '') {
  *
  * Returns a reason string when it is NOT, or null when it is.
  */
-function nameOwnershipFailure(turns, turnIndex, role, value) {
+function nameOwnershipFailure(turns, turnIndex, role, field, value) {
   // (a) Identifiers must be supplied by the caller side.
   if (!CALLER_ROLE_ALIASES.has(role)) return 'not-a-patient-identity-context';
 
@@ -535,7 +567,7 @@ function nameOwnershipFailure(turns, turnIndex, role, value) {
     if (turns[index]?.role === 'navigator') { preceding = String(turns[index].text ?? ''); break; }
   }
 
-  const spans = patientNameSpans(text, preceding);
+  const spans = classifyPatientNameSpans(text, preceding);
   if (spans.length === 0) return 'not-a-patient-identity-context';
 
   // A value may be multi-token after normalization (a hyphenated surname
@@ -543,10 +575,21 @@ function nameOwnershipFailure(turns, turnIndex, role, value) {
   // one patient-designation span.
   const valueTokens = normalizeForMatch(value).split(' ').filter(Boolean);
   const owned = spans.some((span) => {
-    const spanTokens = normalizeForMatch(span).split(' ').filter(Boolean);
-    return valueTokens.length > 0 && valueTokens.every((token) => spanTokens.includes(token));
+    const spanTokens = normalizeForMatch(span.text).split(' ').filter(Boolean);
+    if (span.kind === 'field') {
+      if (span.field !== 'fullName') {
+        return span.field === field && valueTokens.join(' ') === spanTokens.join(' ');
+      }
+      const components = nameComponents(span.text);
+      const expected = components?.[field]?.map((token) => normalizeForMatch(token));
+      return expected && valueTokens.join(' ') === expected.join(' ');
+    }
+    const components = nameComponents(span.text);
+    if (!components) return false;
+    const expected = components[field]?.map((token) => normalizeForMatch(token));
+    return expected && valueTokens.join(' ') === expected.join(' ');
   });
-  return owned ? null : 'not-a-patient-identity-context';
+  return owned ? null : 'name-field-does-not-match-patient-component';
 }
 
 // ── Per-claim verification ───────────────────────────────────────────────────
@@ -627,7 +670,7 @@ export function verifyIdentifierClaim(transcript, claim) {
     if (rawValue.split(/\s+/).some((token) => isNameStopword(token))) {
       return { ok: false, field, reason: 'value-is-not-a-name' };
     }
-    const ownership = nameOwnershipFailure(turns, turnIndex, role, rawValue);
+    const ownership = nameOwnershipFailure(turns, turnIndex, role, field, rawValue);
     if (ownership) return { ok: false, field, reason: ownership };
   }
 
@@ -659,7 +702,7 @@ export function resolvePatientSubject(transcript) {
     }
     for (const span of classifyPatientNameSpans(String(turns[index].text ?? ''), preceding)) {
       const tokens = normalizeForMatch(span.text).split(' ').filter(Boolean);
-      if (tokens.length) spans.push({ tokens, turnIndex: index, kind: span.kind });
+      if (tokens.length) spans.push({ tokens, turnIndex: index, kind: span.kind, field: span.field ?? null, subject: span.subject ?? null });
     }
   }
   // Two FULL-PERSON DESIGNATIONS that share no tokens, where at least one is a
@@ -668,17 +711,28 @@ export function resolvePatientSubject(transcript) {
   // single-FIELD answer ("Maria." then "Alvarez-Reyes.") is two fields of ONE
   // patient across turns, never a conflict, so field spans never make an attempt
   // ambiguous.
-  const designations = spans.filter((span) => span.kind === 'designation');
-  let ambiguous = false;
-  for (let a = 0; a < designations.length && !ambiguous; a++) {
-    for (let b = a + 1; b < designations.length; b++) {
-      const A = designations[a].tokens; const B = designations[b].tokens;
-      if (!A.some((token) => B.includes(token)) && (A.length >= 2 || B.length >= 2)) {
-        ambiguous = true; break;
-      }
-    }
+  const designations = spans.filter((span) => span.kind === 'designation' || span.field === 'fullName');
+  const uniqueDesignations = [...new Map(designations.map((span) => [span.tokens.join(' '), span])).values()];
+  const sequenceFields = spans.filter((span) => span.kind === 'field' && span.field !== 'fullName');
+  const fieldValues = new Map();
+  for (const span of sequenceFields) {
+    const values = fieldValues.get(span.field) ?? new Set();
+    values.add(span.tokens.join(' '));
+    fieldValues.set(span.field, values);
   }
-  return { tokens: new Set(spans.flatMap((span) => span.tokens)), ambiguous, spans };
+  // Policy for corrections/switches: exact repeats are harmless; two different
+  // values for the same typed field, or two different full designations, are an
+  // unresolved subject switch and fail closed. No shared token joins candidates.
+  const ambiguous = uniqueDesignations.length > 1
+    || [...fieldValues.values()].some((values) => values.size > 1);
+  const canonicalTokens = ambiguous ? []
+    : uniqueDesignations.length === 1
+      ? uniqueDesignations[0].tokens
+      : sequenceFields.flatMap((span) => span.tokens);
+  return {
+    tokens: new Set(canonicalTokens), ambiguous, spans,
+    candidates: uniqueDesignations.map((span) => ({ designationTurn: span.turnIndex, kind: span.kind })),
+  };
 }
 
 // Name-designation spans in ONE turn WITH their character positions, so a DOB can
@@ -711,20 +765,37 @@ function designationSpansWithPositions(text) {
  *
  * @returns {string|null} a reason when it does NOT belong to the patient, else null
  */
-function dobOwnershipFailure(transcript, dobTurnIndex, subjectTokens) {
+function dobOwnershipFailure(transcript, dobClaim, subject) {
+  const dobTurnIndex = dobClaim.turnIndex;
   const text = String(transcript?.[dobTurnIndex]?.text ?? '');
-  const parsed = parseDateOfBirth(text);
-  if (!parsed) return null; // shape already validated; nothing to locate
-  const dobPos = text.toLowerCase().indexOf(String(parsed.text).toLowerCase());
-  if (dobPos < 0) return null;
+  const quote = String(dobClaim.quote ?? dobClaim.value ?? '');
+  const dobPos = text.toLowerCase().indexOf(quote.toLowerCase());
+  if (dobPos < 0) return 'dob-claim-span-not-found';
   const preceding = designationSpansWithPositions(text)
     .filter((span) => span.start >= 0 && span.start < dobPos)
     .sort((a, b) => a.start - b.start)
     .at(-1);
-  if (!preceding) return null;
-  const belongsToPatient = subjectTokens.size > 0
-    && preceding.tokens.every((token) => subjectTokens.has(token));
-  return belongsToPatient ? null : 'dob-belongs-to-different-subject';
+  if (preceding) {
+    const belongsToPatient = subject.tokens.size > 0
+      && preceding.tokens.every((token) => subject.tokens.has(token));
+    if (!belongsToPatient) return 'dob-belongs-to-different-subject';
+  }
+
+  const priorThirdParty = subject.spans.some((span) => span.subject === 'thirdParty' && span.turnIndex <= dobTurnIndex);
+  let question = '';
+  for (let index = dobTurnIndex - 1; index >= 0; index--) {
+    if (transcript[index]?.role === 'navigator') { question = String(transcript[index].text ?? ''); break; }
+  }
+  const patientLinked = /\b(?:the\s+patient(?:'s|’s)?|his|her|the\s+child(?:'s|’s)?)\s+(?:date\s+of\s+birth|dob)\b/i.test(`${question} ${quote}`)
+    || /\b[\p{L}'’-]+(?:'s|’s)\s+(?:date\s+of\s+birth|dob)\b/iu.test(`${question} ${quote}`);
+  if (priorThirdParty && /\byour\s+(?:date\s+of\s+birth|dob)\b/i.test(question) && !patientLinked) {
+    return 'dob-ownership-ambiguous-third-party-caller';
+  }
+  if (priorThirdParty && !preceding && !patientLinked
+      && !/\bpatient\s+(?:date\s+of\s+birth|dob)\b/i.test(question)) {
+    return 'dob-ownership-not-patient-linked';
+  }
+  return null;
 }
 
 // A privacy-safe, VALUE-FREE audit record of what the server established.
@@ -764,6 +835,12 @@ export function evaluateIdentityEvidence(transcript, identityEvidence) {
   const failures = [];
   const subject = resolvePatientSubject(transcript);
 
+  const rawFirst = claims.find((claim) => claim?.field === 'firstName');
+  const rawLast = claims.find((claim) => claim?.field === 'lastName');
+  if (rawFirst && rawLast && normalizeForMatch(rawFirst.value) === normalizeForMatch(rawLast.value)) {
+    failures.push({ ok: false, field: 'lastName', reason: 'last-name-duplicates-first-name' });
+  }
+
   // Two different people were named as THE patient: the identity cannot be bound
   // to one subject, so it fails closed to supervisor review regardless of the
   // individual claims.
@@ -777,6 +854,7 @@ export function evaluateIdentityEvidence(transcript, identityEvidence) {
   }
 
   for (const claim of claims) {
+    if (claim === rawLast && failures.some((failure) => failure.reason === 'last-name-duplicates-first-name')) continue;
     const result = verifyIdentifierClaim(transcript, claim);
     if (!result.ok) { failures.push(result); continue; }
     // A NAME must be a token of the ONE resolved patient's name. When no patient
@@ -792,7 +870,7 @@ export function evaluateIdentityEvidence(transcript, identityEvidence) {
     // A DOB must belong to the same patient, not to a different person named in
     // the same turn.
     if (result.field === 'dob') {
-      const ownership = dobOwnershipFailure(transcript, result.turnIndex, subject.tokens);
+      const ownership = dobOwnershipFailure(transcript, result, subject);
       if (ownership) { failures.push({ ok: false, field: 'dob', reason: ownership }); continue; }
     }
     // Keep the EARLIEST verified turn per field: identity is established the

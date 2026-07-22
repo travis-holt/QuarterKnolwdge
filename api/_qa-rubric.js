@@ -38,6 +38,7 @@ import {
   IDENTITY_FIELDS,
   evaluateIdentityEvidence,
   evaluateVerificationBeforeAccess,
+  findProtectedDisclosureInTurn,
 } from './_qa-identity-verification.js';
 import { normalizeForMatch, quoteWords, stripRoleLabel } from './_qa-text-normalize.js';
 import { detectObgynContradictions, isObgynProhibitedActionNegated } from '../src/lib/contentGuards.js';
@@ -322,6 +323,12 @@ function validateAutoFailShapes(autoFails, profile) {
     // one is definitionally unverifiable.
     if (a.triggered === true && !String(a.evidence ?? '').trim()) {
       return `Auto-fail ${a.id}: a triggered auto-fail requires a verbatim evidence quote.`;
+    }
+    if (a.triggered === false && String(a.evidence ?? '').trim()) {
+      return `Auto-fail ${a.id}: an untriggered auto-fail must have empty evidence.`;
+    }
+    if (a.triggered === false && String(a.note ?? '').trim()) {
+      return `Auto-fail ${a.id}: an untriggered auto-fail must have an empty note.`;
     }
   }
   const missing = [...profile.autoFailIds].filter((id) => !seen.has(id));
@@ -1320,7 +1327,35 @@ export function scoreQa(verdicts, autoFails, transcript, profile, profileBinding
   const unverifiedAutoFails = [];
   for (const a of autoFails) {
     // An auto-fail is a navigator behavior: only a navigator turn can verify it.
-    (verifyNavigatorEvidence(transcript, a.evidence) ? verifiedAutoFails : unverifiedAutoFails).push(withText(a));
+    let verified = verifyNavigatorEvidence(transcript, a.evidence);
+    if (verified && a.id === 'af-hipaa' && identityDefs.length > 0) {
+      const quote = normalizeForMatch(a.evidence);
+      const turnIndex = (transcript ?? []).findIndex((turn) => turn?.role === 'navigator'
+        && normalizeForMatch(turn.text).includes(quote));
+      const disclosure = findProtectedDisclosureInTurn(a.evidence);
+      verified = Boolean(disclosure)
+        && turnIndex >= 0
+        && (!canonicalIdentity.complete || canonicalIdentity.completedAtIndex >= turnIndex);
+    }
+    const decorated = a.id === 'af-hipaa' && !verified
+      && canonicalOrder?.disclosureIndex >= 0 && !canonicalOrder.satisfied
+      ? { ...a, privacyConflict: true }
+      : a;
+    (verified ? verifiedAutoFails : unverifiedAutoFails).push(withText(decorated));
+  }
+
+  // Safe policy for a deterministic/model disagreement: the pattern detector
+  // can establish an auditable privacy conflict but is not a comprehensive PHI
+  // classifier, so it forces critical supervisor review instead of silently
+  // zeroing the navigator. A model cannot suppress the conflict by returning
+  // af-hipaa=false.
+  if (identityDefs.length > 0 && canonicalOrder?.disclosureIndex >= 0 && !canonicalOrder.satisfied
+      && !autoFails.some((a) => a.id === 'af-hipaa')) {
+    unverifiedAutoFails.push(withText({
+      id: 'af-hipaa', evidence: '',
+      note: 'Deterministic protected-disclosure chronology conflicts with the model response.',
+      privacyConflict: true,
+    }));
   }
 
   const autoFailed = verifiedAutoFails.length > 0;
@@ -1414,6 +1449,13 @@ export function assessQa(qa, transcript, { correctedTurns = 0, repairs = [], det
       id: 'possible-unsafe-behavior',
       label: 'Possible unsafe behavior — unconfirmed',
       detail: `The grader reported a possible violation (${qa.unverifiedAutoFails.map((a) => a.text).join(' ')}) but its quote could not be verified, so it did NOT fail the test. Review the transcript before accepting this result.`,
+    });
+  }
+  if (qa.unverifiedAutoFails?.some((a) => a.privacyConflict)) {
+    flags.push({
+      id: 'deterministic-privacy-conflict',
+      label: 'Deterministic privacy chronology conflict',
+      detail: 'A protected navigator disclosure appears before complete canonical patient verification while the model reported no HIPAA auto-fail. Supervisor review is required; the detector did not automatically zero the call.',
     });
   }
 

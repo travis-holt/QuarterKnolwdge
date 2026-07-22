@@ -95,7 +95,7 @@ function calibrationFixture({
     modelRun: modelRun === null ? null : {
       model: modelName,
       rubricVersion: getQaRubricProfile(scenario.department).rubricVersion,
-      promptVersion: 'call-qa-grader-v6',
+      promptVersion: 'call-qa-grader-v7',
       scenarioVersion: SYNTHETIC_SCENARIO_VERSION,
       recommendation: model,
       pass: model !== 'fail',
@@ -185,9 +185,9 @@ describe('validateCalibrationFixture · historical provenance resolves by record
     expect(result.errors.join(' ')).toMatch(/incompatible provenance|unknown rubric criterion/i);
   });
 
-  it('rejects a NEW OB/GYN run that claims the shared rubric under v6', () => {
+  it('rejects a NEW OB/GYN run that claims the shared rubric under v7', () => {
     const fixture = historicalObgyn();
-    fixture.modelRun.promptVersion = 'call-qa-grader-v6';
+    fixture.modelRun.promptVersion = 'call-qa-grader-v7';
     const result = validateCalibrationFixture(fixture);
     expect(result.valid).toBe(false);
     expect(result.errors.join(' ')).toMatch(/incompatible provenance/i);

@@ -1,5 +1,43 @@
 ﻿# Development History - Knowledge Check
 
+## 2026-07-22 — Call QA canonical identity and HIPAA chronology (correction pass #4)
+
+**Status: Draft PR #41 remains unmerged, undeployed, and not ready.** No Firestore migration or
+production write, no private-scenario provisioning, and no historical result was rewritten.
+Against independently reviewed head `fe54788`, 16/77 focused adversarial tests failed before the
+implementation changed. They reproduced field-swapped/overlapping names, shared-token patient
+collisions, third-party DOB ownership errors, contradictory negative auto-fails, and HIPAA triggers
+that were not bound to disclosure chronology.
+
+The server now represents full patient designations as discrete candidates (exact repeats
+deduplicate; shared first/surnames never merge), enforces ordered first/last field semantics, and
+documents the multi-token surname rule as first token = given name and remaining tokens = surname.
+DOB ownership starts from the verified claim span and uses transcript-level patient state, so
+`your DOB` after a third-party designation fails closed while explicit patient-linked ownership and
+coherent direct-patient sequences pass. One canonical identity/disclosure chronology now drives
+`verify-three`, `verify-before-access`, and `af-hipaa` consistency.
+
+A model-triggered `af-hipaa` requires a real navigator quote that is itself a protected disclosure
+before identity completion. If the bounded deterministic detector instead proves an early
+disclosure while the model reports false, the attempt receives a mandatory critical supervisor
+review conflict, not an automatic zero; uncertain language also stays review-only. Negative
+auto-fails now require empty evidence and note before normalization, with malformed responses using
+the existing one-retry/unusable-grader path.
+
+Because the stricter negative auto-fail response is model-visible, the prompt moves v6 →
+**`call-qa-grader-v7`**. The OB/GYN rubric remains **`qa-rubric-obgyn-v1`**: 100 points, 85 pass,
+unchanged criteria/weights/applicability/auto-fail definitions. Pediatrics and immutable historical
+populations remain unchanged and provenance keeps v3–v7 populations separate.
+
+The live contract smoke now reads only `CALL_QA_LIVE_SMOKE_API_KEY(S)`. Missing credentials return
+distinct nonzero `LIVE_CONTRACT_SMOKE_NOT_RUN`; `--allow-skip` prints
+`LIVE_CONTRACT_SMOKE_SKIPPED` but cannot satisfy the gate; only exit 0 with
+`LIVE_CONTRACT_SMOKE_VERIFIED` counts. It remains synthetic, pinned-model, non-production,
+Firestore/private-bank-free, and has no calibration authority. Calibration is still
+`INSUFFICIENT_DATA`; numeric weighting still awaits owner sign-off. The final unit gate contains
+**2,128 tests across 82 files**, including 47 end-to-end adversarial grading-pipeline cases and
+dedicated smoke-marker/credential tests.
+
 ## 2026-07-22 — Call QA identity coherence and provenance (correction pass #3)
 
 **Status: still a draft PR against `main` (PR #41), not merged, not deployed.** No Firestore

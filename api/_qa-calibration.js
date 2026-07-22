@@ -63,7 +63,7 @@ const CALL_QA_PROVENANCE_COMPATIBILITY = Object.freeze({
     // OB/GYN was graded under the SHARED rubric ONLY in the pre-profile v3 era.
     'qa-rubric-v2': new Set(['call-qa-grader-v3']),
     // The dedicated OB/GYN profile was introduced with prompt v4 and is current.
-    'qa-rubric-obgyn-v1': new Set(['call-qa-grader-v4', 'call-qa-grader-v5', 'call-qa-grader-v6']),
+    'qa-rubric-obgyn-v1': new Set(['call-qa-grader-v4', 'call-qa-grader-v5', 'call-qa-grader-v6', 'call-qa-grader-v7']),
   },
 });
 

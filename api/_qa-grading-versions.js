@@ -36,7 +36,9 @@
 //        * the three identifiers must belong to ONE patient identity, and the
 //          prompt says so — a caller's own DOB cannot pair with a different
 //          patient's name, and first/last cannot come from two different people.
-export const CALL_QA_PROMPT_VERSION = 'call-qa-grader-v6';
+// v7 = strict auto-fail response contract (2026-07-22): untriggered entries
+//      must carry empty evidence and note; contradictory allegations retry.
+export const CALL_QA_PROMPT_VERSION = 'call-qa-grader-v7';
 
 // Prompt versions this repository can still INTERPRET for stored records.
 // Historical attempts keep rendering under the version they recorded; this list
@@ -52,6 +54,7 @@ export const SUPPORTED_CALL_QA_PROMPT_VERSIONS = Object.freeze([
   'call-qa-grader-v4',
   'call-qa-grader-v5',
   'call-qa-grader-v6',
+  'call-qa-grader-v7',
 ]);
 
 const SUPPORTED = new Set(SUPPORTED_CALL_QA_PROMPT_VERSIONS);

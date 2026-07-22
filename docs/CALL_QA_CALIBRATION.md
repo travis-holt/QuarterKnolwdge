@@ -137,7 +137,10 @@ claims, explicit spoken-DOB guidance, and a requirement to answer every auto-fai
 quote when triggered), moving it to `call-qa-grader-v5`; and the identity-coherence correction
 pass (2026-07-22) made the identity contract CALLER-ONLY (the schema no longer advertises a
 navigator role) and required the three identifiers to belong to ONE patient, moving it to
-**`call-qa-grader-v6`**.
+`call-qa-grader-v6`; correction pass #4 then made the negative auto-fail contract explicit
+(`triggered: false` requires empty evidence and note), moving it to
+**`call-qa-grader-v7`**. The server-only candidate, name-field, DOB-ownership, and HIPAA chronology
+checks do not independently require a prompt bump.
 
 **Provenance compatibility (2026-07-22).** A GRADED fixture is validated against the rubric its
 RECORDED `modelRun.rubricVersion` maps to — never the current department profile — and its
@@ -146,18 +149,18 @@ RECORDED `modelRun.rubricVersion` maps to — never the current department profi
 graded under the shared `qa-rubric-v2` (with the old `close-survey` / `close-anything-thanks`
 closing ids) validates its criteria under that shared rubric and is accepted as historical
 human-pilot evidence. Impossible tuples are rejected: `obgyn` + `qa-rubric-obgyn-v1` under v3 (the
-OB/GYN profile did not exist before v4), and a NEW OB/GYN run claiming the shared rubric under v6.
+OB/GYN profile did not exist before v4), and a NEW OB/GYN run claiming the shared rubric under v7.
 An unknown recorded rubric or prompt version fails closed. The compatibility policy:
 
 | Department | Rubric version | Legitimate prompt versions |
 |---|---|---|
-| `pediatrics` | `qa-rubric-v2` | any supported (v3–v6) |
+| `pediatrics` | `qa-rubric-v2` | any supported (v3–v7) |
 | `obgyn` | `qa-rubric-v2` (historical shared) | v3 only |
-| `obgyn` | `qa-rubric-obgyn-v1` | v4, v5, v6 |
+| `obgyn` | `qa-rubric-obgyn-v1` | v4, v5, v6, v7 |
 
 **Interpretable is not the same as producible (corrected 2026-07-21).**
 `SUPPORTED_CALL_QA_PROMPT_VERSIONS` lists every version this build can still INTERPRET in a
-stored record (v3–v6). It previously read as though a fixture could simply declare any
+stored record (v3–v7). It previously read as though a fixture could simply declare any
 of them, while `validateModelRun` in fact required an exact match with the current version —
 a contradiction the second review flagged. The policy is now explicit and enforced:
 
@@ -182,9 +185,9 @@ breaks down prompt version, a multi-version population displays
 every gate on its own (`requireSinglePromptVersion`). Two helpers express the split —
 `isSupportedStoredPromptVersion()` and `isCurrentPromptVersion()`.
 
-**Re-baselining.** `call-qa-grader-v5` (like the v4 move before it, and like
+**Re-baselining.** `call-qa-grader-v7` (like the v4/v5/v6 moves before it, and like
 `qa-rubric-obgyn-v1`) re-baselines OB/GYN calibration: evidence gathered under an earlier
-prompt is a separate population and cannot be pooled with v5 evidence. This has no effect
+prompt is a separate population and cannot be pooled with v7 evidence. This has no effect
 on current readiness, because there are still zero human-pilot fixtures.
 
 **Rubric version is department-scoped (2026-07-21).** Each department carries its
@@ -303,7 +306,7 @@ fixtures and requires each grading fixture to embed a sanitized
 Firestore bank.
 
 The production grader prompt version has one source of truth:
-`api/_qa-grading-versions.js` (`call-qa-grader-v3`), re-exported by
+`api/_qa-grading-versions.js` (`call-qa-grader-v7`), re-exported by
 `api/grade-call-qa.js` and validated against fixture `modelRun.promptVersion`.
 
 Private provisioning is a separate deliberate operator action:
@@ -329,6 +332,29 @@ calibration readiness state or approved version population and can never unlock
 shadow eligibility or automatic finalization. The production automation gate
 remains the separate policy-v2 requirement for at least 200 independently
 human-reviewed, adjudicated calls with all outcome and coverage minimums met.
+
+## Non-production live contract smoke
+
+```bash
+CALL_QA_LIVE_SMOKE_API_KEY=dedicated-non-production-key npm run qa:live-contract-smoke
+```
+
+The plural `CALL_QA_LIVE_SMOKE_API_KEYS` is also supported. This command deliberately does **not**
+read the application's `GEMINI_API_KEY(S)` pool. It runs the same ten synthetic semantic cases
+against the pinned scored grader model with static SOP context, no Firestore or private-bank
+access, no provisioning, and no patient identifiers in output. It is contract evidence only: it
+has no calibration, release-automation, or scoring-authority effect.
+
+The merge/release gate requires **both** exit 0 and the exact marker
+`LIVE_CONTRACT_SMOKE_VERIFIED`. A malformed or semantically wrong run exits nonzero and prints
+`LIVE_CONTRACT_SMOKE_FAILED`. A missing dedicated key exits with distinct nonzero status and
+prints `LIVE_CONTRACT_SMOKE_NOT_RUN`. Developers may use `--allow-skip`, which exits 0 and prints
+`LIVE_CONTRACT_SMOKE_SKIPPED`, but that marker can never satisfy the gate. Stubbed transport tests
+verify orchestration only and must never be reported as a successful live model run.
+
+The current committed calibration population still contains no qualifying human-pilot evidence,
+so readiness remains `INSUFFICIENT_DATA`. Numeric weighting remains an owner decision; this pass
+does not change criteria, points, category weights, the 85 threshold, or auto-fail definitions.
 
 ## Optional live calibration
 
