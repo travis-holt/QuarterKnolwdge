@@ -356,16 +356,35 @@ function filterNameSpanTokens(span) {
 // than guessing. Single-FIELD answers to an explicit patient-name question are
 // NOT filtered this way — the navigator's question already grounds them.
 function properNameTokens(span) {
-  return filterNameSpanTokens(span).filter((token) => /^[\p{Lu}]/u.test(token));
+  const tokens = filterNameSpanTokens(span);
+  return tokens.filter((token, index) => {
+    if (/^[\p{Lu}]/u.test(token)) return true;
+    // Preserve a recognized lowercase surname particle ("de", "la", "van") ONLY
+    // when it sits inside a real proper-name structure — flanked by Title-cased
+    // proper-name tokens (correction pass #6, B5) — so "Maria de la Cruz" keeps
+    // its particles for splitPersonName while ordinary lowercase prose
+    // ("really scared") is still dropped.
+    if (SURNAME_PARTICLE_WORDS.has(token.toLowerCase())) {
+      const properBefore = tokens.slice(0, index).some((t) => /^[\p{Lu}]/u.test(t));
+      const properAfter = tokens.slice(index + 1).some((t) => /^[\p{Lu}]/u.test(t));
+      return properBefore && properAfter;
+    }
+    return false;
+  });
 }
+
+// An optional adjective between the possessive and the family relation.
+const RELATION_ADJECTIVE = '(?:other\\s+|second\\s+|third\\s+|eldest\\s+|oldest\\s+|youngest\\s+|older\\s+|younger\\s+|little\\s+|baby\\s+|new\\s+)?';
 
 // The patient is explicitly someone other than (or named apart from) the speaker.
 const THIRD_PARTY_PATIENT_PATTERNS = [
   new RegExp(`\\b(?:the\\s+)?(?:appointment|visit|call|referral)\\s+is\\s+for\\s+${NAME_CAPTURE}`, 'iu'),
   new RegExp(`\\bcalling\\s+(?:in\\s+)?(?:for|about|on\\s+behalf\\s+of)\\s+(?:my\\s+[\\p{L}]+\\s*,?\\s*)?${NAME_CAPTURE}`, 'iu'),
   new RegExp(`\\b(?:the\\s+)?patient(?:'s|’s)?(?:\\s+name)?\\s+is\\s+${NAME_CAPTURE}`, 'iu'),
-  new RegExp(`\\bfor\\s+my\\s+(?:daughter|son|child|wife|husband|mother|father|partner|sister|brother)\\s*,?\\s*${NAME_CAPTURE}`, 'iu'),
-  new RegExp(`\\bmy\\s+(?:daughter|son|child|wife|husband|mother|father|partner|sister|brother)(?:'s|’s)?\\s*,?\\s*(?:name\\s+is\\s+)?${NAME_CAPTURE}`, 'iu'),
+  // An optional relation adjective ("my OTHER daughter", "my second son") is
+  // allowed so a switched-to patient is still captured (correction pass #6, B3).
+  new RegExp(`\\bfor\\s+my\\s+${RELATION_ADJECTIVE}(?:daughter|son|child|kid|wife|husband|mother|father|partner|sister|brother)\\s*,?\\s*${NAME_CAPTURE}`, 'iu'),
+  new RegExp(`\\bmy\\s+${RELATION_ADJECTIVE}(?:daughter|son|child|kid|wife|husband|mother|father|partner|sister|brother)(?:'s|’s)?\\s*,?\\s*(?:name\\s+is\\s+)?${NAME_CAPTURE}`, 'iu'),
 ];
 
 // Qualifiers that may sit between the possessive and the word "name":
@@ -408,14 +427,20 @@ const PATIENT_NAME_QUESTION_PATTERNS = [
 // doctor's name?" contains "name" but is not a patient-identity exchange.
 // One clinician/staff term alternation, reused across the patterns. "ob/gyn"
 // must precede "ob" in the alternation so the longer form matches first.
-const PROVIDER_TERM = "(?:provider|doctor|physician|dr\\.?|nurse|midwife|np|pa|clinician|specialist|surgeon|ob\\/?gyn|ob|gyn|gynecologist)";
+// The OB/GYN spellings ("ob-gyn", "ob gyn", "ob/gyn", "obgyn") must be matched
+// before bare "ob", so the alternation lists the compound forms first.
+const PROVIDER_TERM = "(?:provider|doctor|physician|dr\\.?|nurse|midwife|np|pa|clinician|specialist|surgeon|obstetrician|gynecologist|ob[\\s./-]?gyn|obgyn|ob|gyn)";
 // Optional FIELD qualifiers that may sit between the clinician term and "name":
 // "first", "last", "first and last", "full", "legal", "maiden". Without these a
 // provider FULL-NAME question ("your OB's last name", "the doctor's first and
 // last name") slipped past the detector and was treated as a patient question.
 const CLINICIAN_NAME_QUALIFIER = "(?:first\\s+and\\s+last\\s+|first\\s+|last\\s+|full\\s+|legal\\s+|maiden\\s+)*";
 const PROVIDER_NAME_QUESTION_PATTERNS = [
+  // Provider term BEFORE "name": "the doctor's first and last name".
   new RegExp(`\\b${PROVIDER_TERM}(?:'s|’s)?\\s+${CLINICIAN_NAME_QUALIFIER}name\\b`, 'i'),
+  // "name" BEFORE the provider term: "first and last name of your doctor",
+  // "full name of the provider", "name of the midwife" (correction pass #6, B6).
+  new RegExp(`\\b${CLINICIAN_NAME_QUALIFIER}name\\s+of\\s+(?:your|the|her|his|their|our)\\s+${PROVIDER_TERM}\\b`, 'i'),
   new RegExp(`\\bwho\\s+is\\s+(?:your|the|her|his|their)\\s+${PROVIDER_TERM}\\b`, 'i'),
   new RegExp(`\\bwhich\\s+${PROVIDER_TERM}\\b`, 'i'),
   new RegExp(`\\bspell\\s+(?:your|the|her|his|their)\\s+${PROVIDER_TERM}(?:'s|’s)?\\s+${CLINICIAN_NAME_QUALIFIER}name\\b`, 'i'),
@@ -489,6 +514,12 @@ const SURNAME_PARTICLE_SEQUENCES = [
   ['van'], ['von'], ['der'], ['den'], ['la'], ['le'], ['el'], ['al'],
   ['bin'], ['ibn'], ['mac'], ['mc'], ['saint'], ['st'],
 ].sort((a, b) => b.length - a.length);
+
+// The same particle tokens as a flat set, used by `properNameTokens` to keep a
+// legitimately-lowercase particle inside a proper-name structure. Referenced
+// before its declaration only inside function bodies, which run after the module
+// is fully initialized.
+const SURNAME_PARTICLE_WORDS = new Set(SURNAME_PARTICLE_SEQUENCES.flat());
 
 /**
  * Split a person name into first-name and surname token arrays, conservatively.
@@ -811,7 +842,14 @@ export function resolvePatientSubject(transcript) {
   // multi-token full name, means two different people were designated as the
   // patient — e.g. "calling for Maria Smith and my daughter Jane Alvarez".
   const designations = spans.filter((span) => span.kind === 'designation' || span.field === 'fullName');
-  const uniqueDesignations = [...new Map(designations.map((span) => [span.tokens.join(' '), span])).values()];
+  // Distinguish a THIRD-PARTY designation from a self/patient designation with
+  // the SAME name tokens: a caller and a patient who happen to share a name are
+  // two different people, so "My name is Maria Alvarez" + "calling for my
+  // daughter Maria Alvarez" is an ambiguous subject, not one patient
+  // (correction pass #6, B3). A self-identification and a full-name answer with
+  // the same tokens remain one candidate.
+  const designationKey = (span) => `${span.subject === 'thirdParty' ? 'thirdParty' : 'patient'}|${span.tokens.join(' ')}`;
+  const uniqueDesignations = [...new Map(designations.map((span) => [designationKey(span), span])).values()];
 
   // Typed field answers are grouped by their candidate SEQUENCE. A single field
   // answered with two different values inside ONE candidate is a mid-sequence
@@ -846,6 +884,123 @@ export function resolvePatientSubject(transcript) {
   };
 }
 
+// ── Discrete identity candidates (correction pass #6, B3) ────────────────────
+//
+// A single global Set of patient tokens cannot bind the three identifiers to ONE
+// person: a first name from patient A's designation and a last name from patient
+// B's field answer both live in the shared Set. Candidates fix this — every
+// identity claim binds to ONE discrete candidate (a designation, or a coherent
+// typed-field sequence), and a complete identity requires all three from the
+// SAME candidate. Metadata is deliberately VALUE-FREE except the name tokens the
+// server must compare against; nothing here is persisted or logged.
+//
+// @returns {{ candidates: object[] }}
+export function resolveIdentityCandidates(transcript) {
+  const turns = Array.isArray(transcript) ? transcript : [];
+  const candidates = [];
+  let sequenceId = 0;
+  let activeCandidate = null;
+
+  for (let index = 0; index < turns.length; index++) {
+    if (hasSubjectSwitchCue(turns[index]?.text)) { sequenceId += 1; activeCandidate = null; }
+    if (!CALLER_ROLE_ALIASES.has(turns[index]?.role)) continue;
+    let preceding = '';
+    for (let prior = index - 1; prior >= 0; prior--) {
+      if (turns[prior]?.role === 'navigator') { preceding = String(turns[prior].text ?? ''); break; }
+    }
+    const spans = classifyPatientNameSpans(String(turns[index].text ?? ''), preceding);
+    for (const span of spans) {
+      const normTokens = normalizeForMatch(span.text).split(' ').filter(Boolean);
+      if (!normTokens.length) continue;
+      if (span.kind === 'designation' || span.field === 'fullName') {
+        const subjectType = span.subject ?? 'unknown';
+        const key = `${sequenceId}|${subjectType === 'thirdParty' ? 'thirdParty' : 'patient'}|${normTokens.join(' ')}`;
+        let cand = candidates.find((c) => c.key === key);
+        if (!cand) {
+          const comps = splitPersonName(span.text);
+          cand = {
+            id: candidates.length, key, sequenceId, subjectType,
+            designationTurn: index, anchored: true,
+            firstNameTokens: comps ? comps.firstName.map((t) => normalizeForMatch(t)) : null,
+            lastNameTokens: comps ? comps.lastName.map((t) => normalizeForMatch(t)) : null,
+            firstNameTurn: comps ? index : null,
+            lastNameTurn: comps ? index : null,
+            dobTurn: null,
+            turns: new Set([index]),
+          };
+          candidates.push(cand);
+        } else cand.turns.add(index);
+        activeCandidate = cand;
+      } else {
+        if (!activeCandidate || activeCandidate.sequenceId !== sequenceId) {
+          activeCandidate = {
+            id: candidates.length, key: `${sequenceId}|field|${candidates.length}`,
+            sequenceId, subjectType: 'unknown', designationTurn: null, anchored: false,
+            firstNameTokens: null, lastNameTokens: null, firstNameTurn: null, lastNameTurn: null,
+            dobTurn: null, turns: new Set(),
+          };
+          candidates.push(activeCandidate);
+        }
+        activeCandidate.turns.add(index);
+        if (span.field === 'firstName') {
+          activeCandidate.firstNameTokens = normTokens;
+          if (activeCandidate.firstNameTurn == null) activeCandidate.firstNameTurn = index;
+        } else if (span.field === 'lastName') {
+          activeCandidate.lastNameTokens = normTokens;
+          if (activeCandidate.lastNameTurn == null) activeCandidate.lastNameTurn = index;
+        }
+      }
+    }
+    // Independent DOB detection (no model claim), attributed to the candidate
+    // active in this turn. Used to establish an EARLIEST identity chronology the
+    // model cannot skew (B1).
+    if (activeCandidate && activeCandidate.dobTurn == null && parseDateOfBirth(turns[index].text)) {
+      activeCandidate.dobTurn = index;
+      activeCandidate.turns.add(index);
+    }
+  }
+  return { candidates };
+}
+
+/** The candidate a verified identity claim binds to, or null. */
+function candidateForClaim(candidates, result) {
+  if (!result) return null;
+  const value = String(result.value ?? '').trim();
+  if (result.field === 'firstName') {
+    return candidates.find((c) => c.turns.has(result.turnIndex) && c.firstNameTokens?.join(' ') === value)
+      ?? candidates.find((c) => c.firstNameTokens?.join(' ') === value && c.firstNameTurn === result.turnIndex)
+      ?? null;
+  }
+  if (result.field === 'lastName') {
+    return candidates.find((c) => c.turns.has(result.turnIndex) && c.lastNameTokens?.join(' ') === value)
+      ?? candidates.find((c) => c.lastNameTokens?.join(' ') === value && c.lastNameTurn === result.turnIndex)
+      ?? null;
+  }
+  return candidates.find((c) => c.dobTurn === result.turnIndex)
+    ?? candidates.find((c) => c.turns.has(result.turnIndex))
+    ?? null;
+}
+
+/**
+ * The EARLIEST turn by which a complete, coherent, single-patient identity is
+ * INDEPENDENTLY derivable from the transcript — never from the model's selected
+ * claims (correction pass #6, B1). This is what the af-hipaa auto-zero and the
+ * verify-before-access chronology must consult, so a model that submits only a
+ * LATER repetition of an identity cannot make the server believe verification
+ * happened after a disclosure when it actually happened before.
+ *
+ * @returns {{ earliestIndex: number|null, ambiguous: boolean }}
+ */
+export function earliestCompleteIdentity(transcript) {
+  const subject = resolvePatientSubject(transcript);
+  const { candidates } = resolveIdentityCandidates(transcript);
+  const complete = candidates
+    .filter((c) => c.firstNameTokens?.length && c.lastNameTokens?.length && c.dobTurn != null)
+    .map((c) => Math.max(c.firstNameTurn ?? 0, c.lastNameTurn ?? 0, c.dobTurn));
+  if (complete.length === 0) return { earliestIndex: null, ambiguous: subject.ambiguous };
+  return { earliestIndex: Math.min(...complete), ambiguous: subject.ambiguous };
+}
+
 // Name-designation spans in ONE turn WITH their character positions, so a DOB can
 // be attributed to the nearest preceding designation.
 function designationSpansWithPositions(text) {
@@ -876,17 +1031,51 @@ function designationSpansWithPositions(text) {
  *
  * @returns {string|null} a reason when it does NOT belong to the patient, else null
  */
+// Every 0-based index at which `needle` occurs in `haystack` (case-insensitive).
+function allIndexesOf(haystack, needle) {
+  const out = [];
+  if (!needle) return out;
+  const hay = String(haystack).toLowerCase();
+  const nee = String(needle).toLowerCase();
+  let from = 0;
+  for (;;) {
+    const at = hay.indexOf(nee, from);
+    if (at < 0) break;
+    out.push(at);
+    from = at + 1;
+  }
+  return out;
+}
+
 function dobOwnershipFailure(transcript, dobClaim, subject) {
   const dobTurnIndex = dobClaim.turnIndex;
   const text = String(transcript?.[dobTurnIndex]?.text ?? '');
-  // The DOB VALUE locates the date inside the turn (to compare against name
-  // designations by position); the verified caller QUOTE carries any ownership
-  // language. Using the value for the position and the full quote for ownership
-  // means a phone/address elsewhere in the same turn can never short-circuit the
-  // ownership check (correction pass #5, B2).
+  // Locate the DOB by the EXACT occurrence contained in the verified caller
+  // QUOTE, not the first identical date anywhere in the turn (correction pass #6,
+  // B4). A turn may hold two identical dates ("my DOB is March 2, 1991 … her DOB
+  // is March 2, 1991"); the quote disambiguates which one was claimed. The value
+  // still positions the date (so a phone/address elsewhere cannot short-circuit
+  // ownership) and the full quote carries the ownership language.
   const valueText = String(dobClaim.rawValue ?? dobClaim.value ?? '');
   const ownershipQuote = String(dobClaim.quote ?? valueText);
-  const dobPos = text.toLowerCase().indexOf(valueText.toLowerCase());
+  const quoteOccurrences = allIndexesOf(text, ownershipQuote);
+  let dobPos;
+  if (ownershipQuote && quoteOccurrences.length === 1) {
+    const valueInQuote = ownershipQuote.toLowerCase().indexOf(valueText.toLowerCase());
+    if (valueInQuote < 0) return 'dob-value-not-in-quote';
+    dobPos = quoteOccurrences[0] + valueInQuote;
+  } else if (ownershipQuote && quoteOccurrences.length > 1) {
+    // The quote itself appears more than once: it cannot be mapped to a unique
+    // occurrence, so fail closed to review rather than guessing.
+    return 'dob-claim-quote-ambiguous';
+  } else {
+    // No usable quote occurrence — fall back to the value's unique occurrence,
+    // and fail closed if the value itself is ambiguous in the turn.
+    const valueOccurrences = allIndexesOf(text, valueText);
+    if (valueOccurrences.length === 0) return 'dob-claim-span-not-found';
+    if (valueOccurrences.length > 1) return 'dob-claim-quote-ambiguous';
+    dobPos = valueOccurrences[0];
+  }
   if (dobPos < 0) return 'dob-claim-span-not-found';
   const preceding = designationSpansWithPositions(text)
     .filter((span) => span.start >= 0 && span.start < dobPos)
@@ -1008,7 +1197,26 @@ export function evaluateIdentityEvidence(transcript, identityEvidence) {
     delete verified.lastName;
   }
 
-  const complete = IDENTITY_FIELDS.every((field) => Boolean(verified[field]));
+  let complete = IDENTITY_FIELDS.every((field) => Boolean(verified[field]));
+
+  // ── One-candidate binding (correction pass #6, B3) ──────────────────────────
+  // The three identifiers must belong to ONE discrete candidate, not merely share
+  // tokens in the resolved subject. When all three resolve to candidates and they
+  // are NOT the same one, the identity crosses a candidate/sequence boundary and
+  // fails closed. If a candidate cannot be resolved for a claim, the existing
+  // subject-token checks above stand (this only ever tightens, never loosens).
+  if (complete) {
+    const { candidates } = resolveIdentityCandidates(transcript);
+    const fnCand = candidateForClaim(candidates, verified.firstName);
+    const lnCand = candidateForClaim(candidates, verified.lastName);
+    const dobCand = candidateForClaim(candidates, verified.dob);
+    if (fnCand && lnCand && dobCand
+      && !(fnCand.id === lnCand.id && fnCand.id === dobCand.id)) {
+      failures.push({ ok: false, field: 'subject', reason: 'identifiers-cross-candidate' });
+      complete = false;
+    }
+  }
+
   const completedAtIndex = complete
     ? Math.max(...IDENTITY_FIELDS.map((field) => verified[field].turnIndex))
     : null;
@@ -1105,6 +1313,34 @@ function isExplicitlyNotDisclosure(text) {
   return NOT_DISCLOSURE.some((pattern) => pattern.test(String(text ?? '')));
 }
 
+// A navigator REFUSAL / verification-deferral that GOVERNS a protected
+// proposition ("I cannot confirm whether your appointment is Tuesday until I
+// verify you"). When a refusal appears at or before the disclosure keyword in
+// the SAME clause, it is a privacy-PRESERVING statement, not a disclosure
+// (correction pass #6, B2). Clause boundaries (comma / "but" / sentence) already
+// separate "I cannot confirm anything, but your appointment is Tuesday" into two
+// clauses, so a refusal only suppresses the proposition it actually governs.
+const DISCLOSURE_REFUSAL = [
+  /\b(?:can(?:'?t|not)|could\s*n(?:'|o)?t|cannot|unable\s+to|not\s+able\s+to|won'?t|will\s+not|do(?:n'?t| not))\s+(?:confirm|tell|say|share|disclose|discuss|access|give|provide|verify|see|read|release|reveal|look\s+up|pull\s+up|go\s+into|get\s+into)\b/i,
+  /\bdo(?:n'?t| not)\s+have\s+access\b/i,
+  /\b(?:need|have|going)\s+to\s+verify\b/i,
+  /\bmust\s+verify\b/i,
+  /\bafter\s+i\s+(?:verify|confirm)\b/i,
+  /\bonce\s+i\s+(?:confirm|verify)\b/i,
+  /\bbefore\s+i\s+(?:can\s+)?(?:confirm|verify|share|discuss|access|tell|say|look|release)\b/i,
+];
+
+// The earliest character index of a disclosure refusal in `clause`, or -1.
+function clauseRefusalIndex(clause) {
+  const text = String(clause ?? '');
+  let best = -1;
+  for (const pattern of DISCLOSURE_REFUSAL) {
+    const m = pattern.exec(text);
+    if (m && (best === -1 || m.index < best)) best = m.index;
+  }
+  return best;
+}
+
 /**
  * Split a navigator turn into clauses for independent classification.
  *
@@ -1140,17 +1376,54 @@ const CLAUSE_BOUNDARY = new RegExp(
 );
 
 export function splitDisclosureClauses(text) {
-  return String(text ?? '')
-    .split(CLAUSE_BOUNDARY)
-    .map((clause) => String(clause ?? '').trim())
-    .filter((clause) => clause.length > 0);
+  return clauseSpans(text).map((span) => span.clause);
+}
+
+// Offset-aware clause splitting: each clause with its char range in the source,
+// so a quote can be mapped to the clause that actually contains it
+// (correction pass #6, B2). Kept consistent with `splitDisclosureClauses`.
+export function clauseSpans(text) {
+  const raw = String(text ?? '');
+  const boundary = new RegExp(CLAUSE_BOUNDARY.source, `${CLAUSE_BOUNDARY.flags.includes('g') ? '' : 'g'}${CLAUSE_BOUNDARY.flags}`);
+  const spans = [];
+  let start = 0;
+  let match;
+  while ((match = boundary.exec(raw)) !== null) {
+    const end = match.index;
+    const clause = raw.slice(start, end).trim();
+    if (clause.length > 0) spans.push({ clause, start: raw.indexOf(clause, start), end });
+    start = boundary.lastIndex;
+    if (boundary.lastIndex === match.index) boundary.lastIndex += 1;
+  }
+  const tail = raw.slice(start).trim();
+  if (tail.length > 0) spans.push({ clause: tail, start: raw.indexOf(tail, start), end: raw.length });
+  return spans;
+}
+
+// The earliest disclosure match in `text` as { category, index }, or null.
+function disclosureCategoryMatch(text) {
+  let best = null;
+  for (const [category, patterns] of Object.entries(PROTECTED_DISCLOSURE_CATEGORIES)) {
+    for (const pattern of patterns) {
+      const m = pattern.exec(text);
+      if (m && (best === null || m.index < best.index)) best = { category, index: m.index };
+    }
+  }
+  return best;
 }
 
 function matchDisclosureCategory(text) {
-  for (const [category, patterns] of Object.entries(PROTECTED_DISCLOSURE_CATEGORIES)) {
-    if (patterns.some((pattern) => pattern.test(text))) return category;
-  }
-  return null;
+  return disclosureCategoryMatch(text)?.category ?? null;
+}
+
+// A clause is a genuine disclosure only when it matches a protected category AND
+// is NOT governed by a refusal that precedes (or coincides with) the match.
+function clauseDisclosure(clause) {
+  const disc = disclosureCategoryMatch(clause);
+  if (!disc) return null;
+  const refusalIdx = clauseRefusalIndex(clause);
+  if (refusalIdx >= 0 && refusalIdx <= disc.index) return null; // privacy-preserving refusal
+  return disc;
 }
 
 /**
@@ -1164,25 +1437,72 @@ export function findProtectedDisclosureInTurn(text) {
   const clauses = splitDisclosureClauses(raw);
 
   // 1. Per clause — a PROTECTED-DISCLOSURE match takes PRECEDENCE over a generic
-  //    safe/benign prefix (correction pass #3). The previous order checked the
-  //    safe-prefix allowlist first, so a clause like "Okay your labs are normal."
-  //    or "Let me review your chart which shows you are 20 weeks." was treated as
-  //    entirely benign and its disclosure was never seen. A benign clause is only
-  //    a NON-match here — it never vouches for the rest of its own text.
+  //    safe/benign prefix (correction pass #3), BUT a refusal that governs the
+  //    protected proposition in the SAME clause is a privacy-preserving statement,
+  //    not a disclosure (correction pass #6, B2).
   for (let index = 0; index < clauses.length; index++) {
-    const clause = clauses[index];
-    const category = matchDisclosureCategory(clause);
-    if (category) return { category, clauseIndex: index, clause };
+    if (clauseDisclosure(clauses[index])) {
+      return { category: clauseDisclosure(clauses[index]).category, clauseIndex: index, clause: clauses[index] };
+    }
   }
 
   // 2. Whole turn, as a safety net for a disclosure the split fragmented
   //    ("your results, which came back normal"). Only when at least one clause is
-  //    not a wholly-benign action, so punctuation across two safe clauses can
-  //    never manufacture a finding the turn does not really contain.
+  //    not a wholly-benign action, and only when the raw disclosure is not itself
+  //    governed by a refusal — so a governed refusal spanning the whole turn is
+  //    never turned into a finding by the safety net.
   const firstOpen = clauses.findIndex((clause) => !isExplicitlyNotDisclosure(clause));
   if (firstOpen === -1) return null;
-  const category = matchDisclosureCategory(raw);
-  return category ? { category, clauseIndex: firstOpen, clause: clauses[firstOpen] } : null;
+  const disc = clauseDisclosure(raw);
+  return disc ? { category: disc.category, clauseIndex: firstOpen, clause: clauses[firstOpen] } : null;
+}
+
+/**
+ * Map an af-hipaa evidence quote to the disclosure it actually substantiates.
+ *
+ * A verified automatic HIPAA fail must classify the FULL navigator clause that
+ * CONTAINS the quote — not the detached quote fragment — and require the quote to
+ * overlap the detected disclosure span. A quote that maps to no unique navigator
+ * turn/clause, sits inside a privacy-preserving refusal, or does not overlap the
+ * disclosure keyword never verifies the auto-fail (correction pass #6, B2).
+ *
+ * @returns {{ verified: boolean, ambiguous: boolean, turnIndex: number,
+ *             category: string|null }}
+ */
+export function classifyAfHipaaEvidence(transcript, quote) {
+  const turns = Array.isArray(transcript) ? transcript : [];
+  const nq = normalizeForMatch(stripRoleLabel(quote));
+  if (!nq) return { verified: false, ambiguous: false, turnIndex: -1, category: null };
+
+  const navTurns = [];
+  for (let index = 0; index < turns.length; index++) {
+    if (turns[index]?.role === 'navigator' && normalizeForMatch(turns[index].text).includes(nq)) {
+      navTurns.push(index);
+    }
+  }
+  // The quote must map to exactly ONE navigator turn — otherwise it cannot be
+  // uniquely attributed, so fail closed to review.
+  if (navTurns.length !== 1) return { verified: false, ambiguous: true, turnIndex: navTurns[0] ?? -1, category: null };
+
+  const turnIndex = navTurns[0];
+  const rawTurn = String(turns[turnIndex].text ?? '');
+  const spans = clauseSpans(rawTurn);
+  const containing = spans.filter((span) => normalizeForMatch(span.clause).includes(nq));
+  // The quote must sit inside exactly ONE clause; spanning/mapping several clauses
+  // is ambiguous.
+  if (containing.length !== 1) return { verified: false, ambiguous: true, turnIndex, category: null };
+
+  const clause = containing[0].clause;
+  const disc = clauseDisclosure(clause);
+  if (!disc) return { verified: false, ambiguous: false, turnIndex, category: null };
+
+  // Overlap: the quote itself must carry the disclosure content, not merely sit
+  // in the same clause as one. A quote that is a benign fragment of a disclosure
+  // clause ("with Dr. Reyes" from "your appointment is Tuesday with Dr. Reyes")
+  // does not, on its own, match a protected pattern, so it does not verify the
+  // auto-fail. (Checked in normalized space so trailing punctuation never matters.)
+  const overlaps = disclosureCategoryMatch(nq) !== null;
+  return { verified: overlaps, ambiguous: false, turnIndex, category: disc.category };
 }
 
 /**

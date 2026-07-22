@@ -133,15 +133,22 @@ describe('B1 · af-hipaa never verifies from an incomplete canonical identity', 
     expect(scored.autoFails.map((a) => a.id)).toContain('af-hipaa');
   });
 
-  it('4 · no usable identity array + disclosure + af-hipaa -> critical review, not zero', () => {
+  it('4 · omitted arrays on a verified-before-disclosure call -> no zero, review, no false privacy conflict', () => {
+    // Superseded by correction pass #6: the server now derives the identity
+    // chronology INDEPENDENTLY of the model, so it proves this call verified
+    // BEFORE the disclosure. The model-triggered af-hipaa is therefore a plain
+    // false positive (surfaced, no zero), NOT a deterministic privacy conflict.
     const scored = scoreQa(verdicts({
       'verify-three': { verdict: 'NOT_MET', basis: 'ABSENCE', evidence: '', identityEvidence: [] },
       'verify-before-access': { verdict: 'NOT_MET', basis: 'ABSENCE', evidence: '', identityEvidence: [] },
     }), afHipaa('Your appointment is Tuesday at 2:15 with Dr. Reyes.'), verifiedThenDisclose, OBGYN);
     expect(scored.score).not.toBe(0);
-    expect(scored.unverifiedAutoFails.some((a) => a.id === 'af-hipaa' && a.privacyConflict)).toBe(true);
+    expect(scored.autoFails.map((a) => a.id)).not.toContain('af-hipaa');
+    expect(scored.unverifiedAutoFails.some((a) => a.id === 'af-hipaa')).toBe(true);
+    expect(scored.unverifiedAutoFails.some((a) => a.id === 'af-hipaa' && a.privacyConflict)).toBe(false);
     const review = assessQa(scored, verifiedThenDisclose, { profile: OBGYN });
-    expect(review.reviewFlags.some((f) => f.id === 'deterministic-privacy-conflict')).toBe(true);
+    expect(review.recommendation).toBe('needs_review');
+    expect(review.reviewFlags.some((f) => f.id === 'deterministic-privacy-conflict')).toBe(false);
   });
 
   it('6 · a NON-disclosure quote never verifies af-hipaa', () => {

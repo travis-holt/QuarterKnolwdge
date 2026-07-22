@@ -1,5 +1,46 @@
 ﻿# Development History - Knowledge Check
 
+## 2026-07-22 — Call QA independent identity chronology, refusal-aware disclosure, candidate binding, exact DOB span, surname particles, provider grammar, bidirectional consistency, privacy-gated smoke (correction pass #6)
+
+**Status: Draft PR #41 remains unmerged, undeployed, and not ready.** No Firestore migration or
+production write, no private-scenario provisioning, no historical result rewritten, and **no
+model-visible contract change** — the prompt text and response schema are untouched, so the prompt
+stays `call-qa-grader-v7` and the OB/GYN rubric stays `qa-rubric-obgyn-v1` (100 points, 85 pass;
+criteria, weights, applicability, and auto-fail definitions unchanged). Against independently
+reviewed head `9c2da51`, 20 focused adversarial tests reproduced the blockers before the fix
+([`api/qaCorrectionPass6.test.js`](../api/qaCorrectionPass6.test.js)).
+
+The sixth independent review attacked the enforcement correction pass #5 introduced:
+
+1. **af-hipaa still trusted the MODEL-SELECTED identity occurrence.** A new independent, transcript-wide
+   `earliestCompleteIdentity()` derives the earliest turn a complete single-patient identity exists,
+   so a model that submits only a LATER repetition can no longer make the server believe verification
+   happened after a disclosure. af-hipaa verifies only when that independent earliest identity is
+   unambiguous and at/after the first disclosure; proven-before → no zero; ambiguous → critical review.
+2. **af-hipaa/disclosure could be verified from NEGATED or detached wording.** Disclosure detection is
+   now refusal- and clause-aware; the af-hipaa quote must map to exactly one navigator turn and clause,
+   the containing clause is classified (a governing refusal vetoes it), and the quote must itself carry
+   the disclosure content — a detached benign fragment does not verify; a non-unique mapping fails closed.
+3. **Identity claims were bound via one global token Set.** `resolveIdentityCandidates()` now binds each
+   claim to ONE discrete candidate; a first name from patient A and a last name from an
+   explicitly-switched patient B fail closed, and a caller and patient who merely share a name are an
+   ambiguous subject.
+4. **DOB ownership used the first identical date in the turn.** It now uses the exact occurrence inside
+   the verified caller quote, and fails closed on a duplicate quote.
+5. **Lowercase surname particles were dropped from designations** before `splitPersonName` ran; they are
+   now preserved inside a proper-name structure ("Maria de la Cruz" keeps "de la Cruz").
+6. **Provider-name detection missed OB-GYN / obstetrician and the "name of the <provider>" direction**;
+   both are now covered.
+7. **Only one identity contradiction was rejected.** A NOT_MET identity/order criterion the server proves
+   satisfied is now credited, marked unresolved, and routed to mandatory review (never a silent
+   deduction); the impossible `verify-before-access` MET + `verify-three` NOT_MET pair is still a retry.
+8. **The live smoke accepted a generic fail for early-disclosure cases.** Each early-disclosure case is
+   now gated on a privacy-specific result (a verified af-hipaa or a critical deterministic-privacy-conflict
+   review), and the set grew to 20 synthetic cases.
+
+See [docs/GRADING_INVARIANTS.md](GRADING_INVARIANTS.md) §0m. Final unit gate: **2,193 tests across
+84 files** (2,163 → 2,193; one new file). No merge, deploy, ready-state change, or auto-merge.
+
 ## 2026-07-22 — Call QA af-hipaa trust, DOB ownership, sequences, name components, provider detection, verdict consistency, live smoke (correction pass #5)
 
 **Status: Draft PR #41 remains unmerged, undeployed, and not ready.** No Firestore migration or

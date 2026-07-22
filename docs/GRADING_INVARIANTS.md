@@ -8,7 +8,14 @@
 > [`api/_qa-grading-corpus.test.js`](../api/_qa-grading-corpus.test.js) — if one of
 > those tests fails after your change, re-read this document before "fixing" the test.
 >
-> Last updated: 2026-07-22 (correction pass #5 — §0l — supersedes the parts of §0k it amends:
+> Last updated: 2026-07-22 (correction pass #6 — §0m — supersedes the parts of §0k/§0l it amends:
+> af-hipaa is driven by an INDEPENDENT transcript-wide earliest-identity chronology (not the
+> model-selected claims); disclosure detection is refusal/clause-aware with unique quote mapping and
+> overlap; identity claims bind to ONE discrete candidate; DOB ownership uses the exact quoted
+> occurrence; lowercase surname particles survive; provider detection covers more terms and both
+> grammatical directions; identity-verdict contradictions are reconciled (never a silent deduction);
+> and the live smoke gates early-disclosure cases on a privacy-specific result. Earlier — correction
+> pass #5 — §0l — supersedes the parts of §0k it amends:
 > af-hipaa never verifies from an incomplete/omitted canonical identity, conservative name-component
 > splitting, one-patient typed-answer sequences, provider full-name detection, and cross-criterion
 > verdict consistency. Earlier: department-based Call QA rubric profiles; OB/GYN is the first
@@ -136,6 +143,67 @@ enforcement or smoke/docs; there is **no model-visible contract change**, so the
    cases were added (15 cases total). The dedicated-key resolver parses the plural env var first and
    falls back to the singular only when the plural yields no usable key (a set-but-empty plural no
    longer masks a populated singular), trimming, de-duplicating, and never printing values.
+
+## 0m. Independent identity chronology, refusal-aware disclosure, candidate binding, live-smoke privacy gates (2026-07-22, correction pass #6)
+
+The sixth independent review attacked the enforcement §0l introduced. Each invariant below has an
+adversarial reproduction test in [`api/qaCorrectionPass6.test.js`](../api/qaCorrectionPass6.test.js).
+All fixes are pure server-side enforcement or smoke/docs; there is **no model-visible contract
+change** (the prompt text and response schema are untouched), so the prompt stays
+`call-qa-grader-v7` and the OB/GYN rubric stays `qa-rubric-obgyn-v1`. This section supersedes the
+parts of §0k/§0l it amends.
+
+1. **af-hipaa is driven by an INDEPENDENT earliest-identity chronology, never the model's selected
+   claims** (amends §0l.1). `earliestCompleteIdentity(transcript)` derives, from the whole
+   transcript and independently of the model, the earliest turn a complete single-patient identity
+   exists. A model that submits only a LATER repetition of an identity can no longer make the server
+   believe verification happened after a disclosure. af-hipaa verifies (zeroes) ONLY when that
+   independent earliest identity is unambiguous and lands AT OR AFTER the first protected disclosure;
+   identity independently proven BEFORE the disclosure → no zero (a model-triggered af-hipaa is then a
+   surfaced false positive); ambiguous / unprovable chronology → a critical `deterministic-privacy-conflict`
+   review, never an automatic zero. The SAME chronology reconciles verify-before-access (invariant 7).
+2. **Disclosure detection is refusal- and clause-aware, and the af-hipaa quote must map uniquely and
+   overlap** (amends §0k/§0l.2). A navigator REFUSAL that governs a protected proposition in the same
+   clause ("I cannot confirm whether your appointment is Tuesday until I verify you") is
+   privacy-preserving, not a disclosure; clause boundaries still separate "I cannot confirm anything,
+   but your appointment is Tuesday" so a later genuine disclosure is still caught. An af-hipaa quote
+   must map to exactly ONE navigator turn and ONE clause; that clause is classified (a governing
+   refusal vetoes it); and the quote must itself carry the disclosure content — a detached benign
+   fragment of a disclosure clause does not verify. A quote mapping to several turns/clauses fails
+   closed to review.
+3. **Every identity claim binds to ONE discrete candidate** (amends §0j/§0l). `resolveIdentityCandidates()`
+   groups claims into candidates — a designation, or a coherent typed-field sequence bounded by
+   subject-switch cues. A complete identity requires firstName, lastName, and DOB from the SAME
+   candidate; a claim crossing a candidate/sequence boundary fails closed. A THIRD-PARTY designation
+   and a self/patient designation with the SAME name tokens are an ambiguous subject (a caller and a
+   patient who merely share a name are two people). Candidate metadata is value-free.
+4. **DOB ownership uses the exact quoted occurrence.** The verified caller quote (not the first
+   identical date in the turn) locates the DOB; the value is located inside that quote occurrence; a
+   quote that occurs more than once in the turn fails closed. A phone/address elsewhere in the turn
+   still cannot short-circuit ownership.
+5. **Lowercase surname particles survive in designations** (amends §0l.6). A recognized bounded
+   surname particle ("de", "la", "van") is preserved when flanked by proper-name tokens, so
+   "Maria de la Cruz" keeps "de la Cruz" for `splitPersonName`; ordinary lowercase prose is still
+   dropped, and ambiguous multi-token names still fail closed.
+6. **Provider-name detection covers more clinician terms and both grammatical directions** (amends
+   §0l.5). It recognizes OB-GYN / OB GYN / obstetrician / gynecologist (etc.) and both "the doctor's
+   first and last name" and "the first and last name of your doctor". Any answer to such a question
+   establishes zero patient-name fields.
+7. **Identity-verdict contradictions are reconciled, never silently deducted** (amends §0l.7,
+   B7 A/B/C). A NOT_MET ordered-identity criterion the server proves satisfied (independently, or by
+   the model's own canonical order — e.g. no disclosure occurred), and a NOT_MET base-identity
+   criterion whose own submitted array server-verifies as a complete valid identity, are CREDITED,
+   marked unresolved, recorded as a `contradictionFindings` entry, and force supervisor review — never
+   a silent safety-critical deduction and never a silent pass. A `verify-before-access` MET while
+   `verify-three` NOT_MET remains a malformed response (retry). A verified af-hipaa is incompatible
+   with a proven "verified before access".
+8. **The live smoke gates every early-disclosure case on a PRIVACY-SPECIFIC result** (amends §0l.7).
+   A pre-verification disclosure case passes only via a verified af-hipaa (with a non-pass
+   recommendation) OR a `deterministic-privacy-conflict` that is a mandatory `needs_review` with
+   `safetyRisk: 'critical'` — never a generic fail from an unrelated criterion. The set is now **20
+   synthetic cases**, still keyed to `CALL_QA_LIVE_SMOKE_API_KEY(S)` only, no Firestore/private bank,
+   no identifier values printed, and no calibration authority. `NOT_RUN`/`SKIPPED` never satisfy the
+   gate.
 
 ## 0j. Identity coherence and provenance (2026-07-22, correction pass #3)
 

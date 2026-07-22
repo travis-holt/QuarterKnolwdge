@@ -150,6 +150,13 @@ export {
   verifyIdentifierClaim, evaluateIdentityEvidence,
   classifyProtectedDisclosure, findProtectedDisclosureIndex,
   evaluateVerificationBeforeAccess, PROTECTED_DISCLOSURE_CATEGORIES,
+  classifyAfHipaaEvidence, earliestCompleteIdentity, findProtectedDisclosure,
+} from './_qa-identity-verification.js';
+
+import {
+  classifyAfHipaaEvidence as classifyAfHipaaEvidenceFn,
+  earliestCompleteIdentity as earliestCompleteIdentityFn,
+  findProtectedDisclosure as findProtectedDisclosureFn,
 } from './_qa-identity-verification.js';
 
 /**
@@ -466,6 +473,11 @@ export function validateQaResponse(parsed, profile) {
           + 'proves they were collected.',
       };
     }
+    // Correction pass #6, B7 case A is handled at SCORING time, not here: a
+    // NOT_MET base identity criterion is contradictory only when its array
+    // SERVER-VERIFIES as a complete valid identity. Shape-completeness alone is
+    // legitimate (e.g. a "dob" that is really a phone number is a valid NOT_MET),
+    // so validation must not reject it — `scoreQa` reconciles the real case.
   }
 
   const autoFailsError = validateAutoFailShapes(parsed.autoFails, active);
@@ -1249,6 +1261,26 @@ export function scoreQa(verdicts, autoFails, transcript, profile, profileBinding
     canonicalOrder = evaluateVerificationBeforeAccess(transcript, canonicalArray);
   }
 
+  // ── Independent, model-agnostic identity chronology (correction pass #6) ─────
+  // Derived from the whole transcript, NEVER from the model's selected claims, so
+  // a model that submits only a LATER repetition of an identity cannot make the
+  // server believe verification happened after a disclosure when it actually
+  // happened before. This drives the af-hipaa auto-zero (B1) and reconciles a
+  // contradictory verify-before-access verdict (B7).
+  const serverChrono = identityDefs.length > 0 ? earliestCompleteIdentityFn(transcript) : null;
+  const firstDisclosure = identityDefs.length > 0 ? findProtectedDisclosureFn(transcript) : null;
+  // "Verified before access" is PROVEN only when the independent earliest complete
+  // identity is unambiguous and strictly before the first protected disclosure
+  // (or there was no disclosure at all).
+  const orderProvenBefore = Boolean(serverChrono
+    && serverChrono.earliestIndex !== null && !serverChrono.ambiguous
+    && (firstDisclosure === null || serverChrono.earliestIndex < firstDisclosure.turnIndex));
+  // A disclosure happened but identity-before-disclosure is NOT proven: an
+  // unresolved privacy situation → critical review, never an automatic zero
+  // unless the auto-fail itself positively verifies.
+  const disclosureBeforeIdentityUnresolved = Boolean(firstDisclosure) && !orderProvenBefore;
+  const contradictionFindings = [];
+
   const criteria = verdicts.map((v) => {
     const def = defs.get(v.id);
     // Use the raw model judgment preserved by the repair layer (before it mutated
@@ -1310,6 +1342,38 @@ export function scoreQa(verdicts, autoFails, transcript, profile, profileBinding
     }
     if (verdict === 'NA' && def.core) { verdict = 'NOT_MET'; basis = 'ABSENCE'; }
 
+    // ── Identity-verdict contradiction reconciliation (B7 cases A/B/C) ──────────
+    // Do NOT silently deduct safety-critical points from a criterion the server
+    // proves satisfied. Credit it, mark it unresolved, and record a contradiction
+    // so the review layer forces supervisor review (never a silent pass).
+    //   * ORDERED (verify-before-access) NOT_MET, but the order is satisfied —
+    //     either independently proven before the disclosure (B1/C) or satisfied by
+    //     the model's own canonical array, e.g. no disclosure occurred (B case B).
+    //   * BASE (verify-three) NOT_MET, but the model's OWN submitted identity
+    //     array SERVER-VERIFIES as a complete valid identity (B case A).
+    if (def.evidencePolicy === QA_EVIDENCE_POLICIES.IDENTITY_VERIFICATION && verdict === 'NOT_MET') {
+      const isOrdered = def.evidenceOrder === 'before-protected-disclosure';
+      const serverSatisfied = isOrdered
+        ? (orderProvenBefore || canonicalOrder?.satisfied === true)
+        : (canonicalIdentity?.complete === true);
+      if (serverSatisfied) {
+        verdict = 'MET';
+        basis = 'EVIDENCE';
+        unverified = false;
+        unresolved = true;
+        unresolvedReason = isOrdered
+          ? 'order-proven-satisfied-model-contradiction'
+          : 'identity-proven-model-contradiction';
+        contradictionFindings.push({
+          id: def.id,
+          type: isOrdered ? 'verify-before-access-contradiction' : 'verify-three-contradiction',
+          detail: isOrdered
+            ? 'The independent transcript chronology / canonical order proves identity completed before the first protected disclosure, contradicting the model NOT_MET verdict.'
+            : 'The model\'s own identity evidence server-verifies as a complete valid identity, contradicting the model NOT_MET verdict.',
+        });
+      }
+    }
+
     // An identity criterion's displayed evidence is SERVER-DERIVED, never the
     // model's free text. Scoring already ignores that free text (it uses the
     // structured claims), so persisting it would let a fabricated quote reach
@@ -1358,41 +1422,40 @@ export function scoreQa(verdicts, autoFails, transcript, profile, profileBinding
     let verified = verifyNavigatorEvidence(transcript, a.evidence);
     if (verified && a.id === 'af-hipaa' && identityDefs.length > 0) {
       // A verified automatic HIPAA fail zeroes the call, so it demands POSITIVE,
-      // server-verifiable chronology — never a model Boolean and never a mere
-      // ABSENCE of structured identity evidence. An incomplete / missing /
-      // unprovable canonical identity is UNCERTAINTY, not proof that identity was
-      // absent (correction pass #5, B1): the model may simply have omitted the
-      // arrays on a genuinely verified call. So af-hipaa verifies ONLY when the
-      // server can prove BOTH (a) the quoted navigator span is a protected
-      // disclosure that exists in an identified navigator turn AND (b) canonical
-      // identity is COMPLETE and completed AT OR AFTER that disclosure. Identity
-      // complete strictly BEFORE the disclosure means no violation; identity
-      // incomplete means the uncertain case handled below as a review conflict.
-      const quote = normalizeForMatch(a.evidence);
-      const turnIndex = (transcript ?? []).findIndex((turn) => turn?.role === 'navigator'
-        && normalizeForMatch(turn.text).includes(quote));
-      const disclosure = findProtectedDisclosureInTurn(a.evidence);
-      verified = Boolean(disclosure)
-        && turnIndex >= 0
-        && canonicalIdentity.complete === true
-        && canonicalIdentity.completedAtIndex >= turnIndex
-        // Never verify an af-hipaa that contradicts a proven "verified before
-        // access": the two are mutually exclusive by definition.
-        && !(canonicalOrder?.satisfied === true);
+      // server-verifiable chronology from an INDEPENDENT, model-agnostic identity
+      // timeline (correction pass #6, B1) — never the model's selected claims, and
+      // never a mere ABSENCE of structured identity evidence. It verifies ONLY
+      // when:
+      //   (a) the quoted line is a genuine, uniquely-mapped, non-refusal
+      //       disclosure that OVERLAPS the detected disclosure span (B2), AND
+      //   (b) the INDEPENDENT earliest complete identity is unambiguous and lands
+      //       AT OR AFTER the first protected disclosure — i.e. identity was NOT
+      //       established before the disclosure.
+      // Identity independently proven BEFORE the disclosure => no violation.
+      // Ambiguous / unprovable chronology => the review conflict below, never a
+      // zero.
+      const ev = classifyAfHipaaEvidenceFn(transcript, a.evidence);
+      verified = ev.verified === true && ev.ambiguous === false
+        && Boolean(firstDisclosure)
+        && serverChrono?.earliestIndex !== null && serverChrono?.ambiguous === false
+        && serverChrono.earliestIndex >= firstDisclosure.turnIndex;
     }
-    const decorated = a.id === 'af-hipaa' && !verified
-      && canonicalOrder?.disclosureIndex >= 0 && !canonicalOrder.satisfied
+    // A NOT-verified af-hipaa is a critical review conflict ONLY when a disclosure
+    // happened and identity-before-disclosure is not proven. When identity IS
+    // proven before the disclosure the call is clean and a model-triggered
+    // af-hipaa is merely an unverified false positive (still surfaced, no zero).
+    const decorated = a.id === 'af-hipaa' && !verified && disclosureBeforeIdentityUnresolved
       ? { ...a, privacyConflict: true }
       : a;
     (verified ? verifiedAutoFails : unverifiedAutoFails).push(withText(decorated));
   }
 
-  // Safe policy for a deterministic/model disagreement: the pattern detector
-  // can establish an auditable privacy conflict but is not a comprehensive PHI
+  // Safe policy for a deterministic/model disagreement: the independent detector
+  // establishes an auditable privacy conflict but is not a comprehensive PHI
   // classifier, so it forces critical supervisor review instead of silently
   // zeroing the navigator. A model cannot suppress the conflict by returning
   // af-hipaa=false.
-  if (identityDefs.length > 0 && canonicalOrder?.disclosureIndex >= 0 && !canonicalOrder.satisfied
+  if (identityDefs.length > 0 && disclosureBeforeIdentityUnresolved
       && !autoFails.some((a) => a.id === 'af-hipaa')) {
     unverifiedAutoFails.push(withText({
       id: 'af-hipaa', evidence: '',
@@ -1414,6 +1477,10 @@ export function scoreQa(verdicts, autoFails, transcript, profile, profileBinding
     // navigator (anti-hallucination), but it must ALSO never vanish silently —
     // the review layer surfaces it as a supervisor flag.
     unverifiedAutoFails,
+    // Cross-criterion contradictions the server reconciled (B7): a NOT_MET
+    // ordered-identity verdict the independent chronology proved satisfied. These
+    // force supervisor review so a reconciled credit is never a silent pass.
+    ...(contradictionFindings.length > 0 ? { contradictionFindings } : {}),
   };
 }
 
@@ -1572,6 +1639,13 @@ export function assessQa(qa, transcript, { correctedTurns = 0, repairs = [], det
   if (deterministicFindings.some((finding) => finding.type === 'safety')) {
     flags.push({ id: 'deterministic-safety-conflict', label: 'Deterministic unsafe-language signal detected', detail: 'Deterministic checks found unsafe language in the navigator transcript. Supervisor review is required.' });
   }
+  // A reconciled verify-before-access contradiction (B7): the independent
+  // chronology proved the ordered-identity criterion satisfied while the model
+  // returned NOT_MET. The credited criterion must never be a silent pass.
+  const identityContradiction = (qa.contradictionFindings ?? []).length > 0;
+  if (identityContradiction) {
+    flags.push({ id: 'identity-verdict-contradiction', label: 'Identity verdict contradicts server chronology', detail: 'The model returned a NOT_MET identity/order verdict that the independent transcript chronology proves satisfied. Supervisor review is required.' });
+  }
 
   const confidenceHits = flags.filter((f) =>
     ['low-transcript-confidence', 'unverified-evidence', 'possible-unsafe-behavior', 'thin-coverage'].includes(f.id)).length;
@@ -1591,6 +1665,7 @@ export function assessQa(qa, transcript, { correctedTurns = 0, repairs = [], det
   else if (qa.pass && safetyMissed.length > 0) recommendation = 'needs_review'; // never an unreviewed pass over a safety miss
   else if (repairFlippedOutcome) recommendation = 'needs_review'; // repairs are decision support, not the final word
   else if (deterministicFindings.length > 0 && qa.pass) recommendation = 'needs_review';
+  else if (identityContradiction) recommendation = 'needs_review'; // reconciled contradiction is never a silent pass
   else recommendation = qa.pass ? 'pass' : 'fail';
 
   return { recommendation, confidence, safetyRisk, reviewFlags: flags };

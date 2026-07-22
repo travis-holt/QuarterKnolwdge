@@ -9,7 +9,7 @@ import {
 } from '../scripts/call-qa/live-contract-smoke.mjs';
 
 describe('qa:live-contract-smoke case coverage', () => {
-  it('covers all fifteen required contract scenarios in order', () => {
+  it('covers all twenty required contract scenarios in order', () => {
     const ids = LIVE_CONTRACT_SMOKE_CASES.map((c) => c.id);
     expect(ids).toEqual([
       '1-volunteered-one-turn',
@@ -22,11 +22,16 @@ describe('qa:live-contract-smoke case coverage', () => {
       '8-explicit-help-close',
       '9-thanks-only-close',
       '10-routine-empathy-na',
-      '11-identity-before-disclosure-clean',
-      '12-disclosure-before-identity',
-      '13-partial-identity-then-disclosure',
-      '14-non-disclosure-safe-call',
-      '15-post-verification-disclosure-conformance',
+      '11-identity-before-repeated-after',
+      '12-safe-refusal-not-a-disclosure',
+      '13-safe-line-then-genuine-disclosure',
+      '14-full-identity-before-disclosure-clean',
+      '15-partial-identity-before-disclosure',
+      '16-no-identity-before-disclosure',
+      '17-model-false-positive-after-verification',
+      '18-model-false-negative-before-verification',
+      '19-provider-name-ambiguity',
+      '20-third-party-dob-ownership',
     ]);
   });
 
@@ -61,23 +66,37 @@ function qaFor(id) {
     'verify-three': 'MET', 'verify-before-access': 'MET', 'close-offer-help': 'MET',
     'comm-empathy': 'NA', 'control-narrate': 'NA', ...over,
   });
-  const build = (v, { autoFails = [], unverifiedAutoFails = [], reviewFlags = [], recommendation = 'pass', pass = true } = {}) => ({
+  const build = (v, { autoFails = [], unverifiedAutoFails = [], reviewFlags = [], recommendation = 'pass', safetyRisk = 'none', pass = true } = {}) => ({
     criteria: Object.entries(v).map(([cid, verdict]) => ({ id: cid, verdict })),
-    autoFails, unverifiedAutoFails, review: { recommendation, reviewFlags }, pass,
+    autoFails, unverifiedAutoFails, review: { recommendation, safetyRisk, reviewFlags }, pass,
+  });
+  // A verified-af-hipaa fail (one way to satisfy privacyGated).
+  const afHipaaFail = (over = {}) => build(verds({ 'verify-before-access': 'NOT_MET', ...over }),
+    { autoFails: [{ id: 'af-hipaa' }], recommendation: 'fail', safetyRisk: 'critical', pass: false });
+  // A deterministic privacy-conflict critical review (the other way).
+  const privacyConflict = (over = {}) => build(verds({ 'verify-before-access': 'NOT_MET', ...over }), {
+    unverifiedAutoFails: [{ id: 'af-hipaa', privacyConflict: true }],
+    reviewFlags: [{ id: 'deterministic-privacy-conflict' }],
+    recommendation: 'needs_review', safetyRisk: 'critical', pass: false,
   });
   switch (id) {
     case '4-callers-own-dob-different-patient':
     case '5-names-from-two-patients':
     case '6-missing-dob':
     case '7-provider-name-near-patient':
+    case '19-provider-name-ambiguity':
       return build(verds({ 'verify-three': 'NOT_MET', 'verify-before-access': 'NOT_MET' }), { recommendation: 'needs_review', pass: false });
     case '9-thanks-only-close':
       return build(verds({ 'close-offer-help': 'NOT_MET' }), { recommendation: 'needs_review', pass: false });
-    case '12-disclosure-before-identity':
-      return build(verds({ 'verify-before-access': 'NOT_MET' }), { autoFails: [{ id: 'af-hipaa' }], recommendation: 'fail', pass: false });
-    case '13-partial-identity-then-disclosure':
-      return build(verds({ 'verify-three': 'NOT_MET', 'verify-before-access': 'NOT_MET' }), { recommendation: 'needs_review', pass: false });
+    case '13-safe-line-then-genuine-disclosure':
+    case '18-model-false-negative-before-verification':
+      return afHipaaFail();
+    case '16-no-identity-before-disclosure':
+      return privacyConflict({ 'verify-three': 'NOT_MET' });
+    case '15-partial-identity-before-disclosure':
+      return privacyConflict({ 'verify-three': 'NOT_MET' });
     default:
+      // 1,2,3,8,10,11,12,14,17,20 — clean, correct-model scorecards.
       return build(verds());
   }
 }

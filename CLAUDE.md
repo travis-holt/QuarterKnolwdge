@@ -11,7 +11,43 @@
 > [§8 Current System State](#8-current-system-state) and [§15 Current Priorities](#15-current-priorities)
 > accurate at all times.
 >
-> **Last updated:** 2026-07-22 (**CORRECTION PASS #5 — af-hipaa trust, DOB ownership quote,
+> **Last updated:** 2026-07-22 (**CORRECTION PASS #6 — independent identity chronology, refusal-aware
+> disclosure, candidate binding, exact DOB span, surname particles, provider grammar, bidirectional
+> consistency, privacy-gated smoke.**
+> Draft PR #41 remains **NOT merged, NOT deployed, and NOT ready**. Against independently reviewed
+> head `9c2da51`, 20 focused adversarial tests reproduced the blockers before the fix
+> (`api/qaCorrectionPass6.test.js`). All fixes are pure SERVER-SIDE enforcement or smoke/docs — **no
+> model-visible contract change** (the prompt text and response schema are untouched), so the prompt
+> stays **`call-qa-grader-v7`** and the OB/GYN rubric stays **`qa-rubric-obgyn-v1`** (100 points, 85
+> pass, criteria/weights/applicability/auto-fail definitions unchanged); Pediatrics and historical
+> grades are unchanged/immutable. (1) **af-hipaa no longer trusts the model-selected identity
+> occurrence.** A new INDEPENDENT, transcript-wide `earliestCompleteIdentity()` derives the earliest
+> turn a complete single-patient identity exists — never the model's selected claims — so a model
+> that submits only a LATER repetition can no longer make the server believe verification happened
+> after a disclosure. af-hipaa verifies (zeroes) ONLY when the independent earliest identity is
+> unambiguous and lands at/after the first disclosure; identity provably before → no zero; ambiguous
+> / unprovable → critical review. (2) **Disclosure detection is refusal- and clause-aware.** A
+> privacy-preserving refusal ("I cannot confirm whether your appointment is Tuesday until I verify
+> you") is no longer a disclosure; the af-hipaa quote must map to exactly ONE navigator turn and ONE
+> clause, that clause is classified (a governing refusal vetoes it), and the quote must itself carry
+> the disclosure content — a detached benign fragment does not verify. (3) **Identity claims bind to
+> ONE discrete candidate.** `resolveIdentityCandidates()` groups claims into candidates (designation
+> or coherent field sequence); a first name from candidate A and a last name from an
+> explicitly-switched candidate B fail closed, and a caller and patient who merely share a name are an
+> ambiguous subject. (4) **DOB ownership uses the exact quoted occurrence** (the verified caller
+> quote), not the first identical date in the turn; a duplicate quote fails closed. (5) **Lowercase
+> surname particles survive in designations** ("Maria de la Cruz" keeps "de la Cruz") while ordinary
+> lowercase prose is still dropped. (6) **Provider-name detection covers OB-GYN/obstetrician and the
+> "name of the <provider>" direction.** (7) **Identity-verdict contradictions are reconciled, never
+> silently deducted** — a NOT_MET identity/order criterion the server proves satisfied is credited and
+> routed to mandatory review (a `verify-before-access` MET while `verify-three` NOT_MET is still a
+> malformed retry). (8) **The live smoke gates every early-disclosure case on a PRIVACY-SPECIFIC
+> result** (a verified af-hipaa or a critical deterministic-privacy-conflict review, never a generic
+> fail) and now runs **20 synthetic cases**. Numeric weighting still awaits owner sign-off;
+> calibration remains `INSUFFICIENT_DATA`. No migration, production write, private provisioning,
+> historical rewrite, merge, deploy, or ready-state change. See docs/HISTORY.md and
+> docs/GRADING_INVARIANTS.md §0m. Final unit gate: **2,193 tests across 84 files**. ·
+> **Prior update:** 2026-07-22 (**CORRECTION PASS #5 — af-hipaa trust, DOB ownership quote,
 > patient sequences, name components, provider detection, verdict consistency, live smoke.**
 > Draft PR #41 remains **NOT merged, NOT deployed, and NOT ready**. Against independently reviewed
 > head `da26baa`, 20 focused adversarial tests failed before implementation changes
@@ -2787,7 +2823,7 @@ of this file on 2026-07-07 to cut per-session context cost (it was ~55% of the f
   (init → chat/voice turns → `/api/live` relay) for caller consistency. Scored Call QA deliberately
   does not: its caller receives no grading context, expected actions, critical misses, scoring notes,
   rule/workflow metadata, or hidden chart state. Final verification: `npm test` =
-  **2,163/2,163 across 83 files**; Firestore Rules emulator assertions = **76/76**
+  **2,193/2,193 across 84 files**; Firestore Rules emulator assertions = **76/76**
   (51 result authorization + 25 Call QA); production build
   includes the private-runtime bundle scan. GitHub Actions mirrors the
   normal local gate on `main` pushes and PRs: `npm ci` → `npm test` → `npm run build` (no deploy step).
@@ -2833,7 +2869,7 @@ of this file on 2026-07-07 to cut per-session context cost (it was ~55% of the f
   Pediatrics; their modules will follow once their SOPs land.
 - **Experimental / mockup:**
   - **Adult Medicine and Behavioural Health** are not assessed; **Pediatrics and OB/GYN** are live.
-- **Test coverage:** **2,163 unit tests across 83 files** and **76 Firestore Rules emulator
+- **Test coverage:** **2,193 unit tests across 84 files** and **76 Firestore Rules emulator
   assertions** (51 result authorization + 25 Call QA). The 2026-07-21 department-rubric-profile
   work added `api/obgynRubricProfile.test.js` (75 tests: profile architecture/fail-closed
   resolution, OB/GYN opening/verification/closing/empathy/listening/narration/documentation
@@ -2971,7 +3007,7 @@ of this file on 2026-07-07 to cut per-session context cost (it was ~55% of the f
   OB/GYN = **37** seed questions (offline fallback) + the **48-item MCQ v2 operating-model bank**
   (24 Pediatrics + 24 OB/GYN) that replaces the weak active bank via a marker-gated
   archive-and-replace migration (bank grows in Firestore per dept) · 4 departments (**Pediatrics
-  + OB/GYN live**, 2 mockup) · **2,163 unit tests across 83 files** + **76 assertions**
+  + OB/GYN live**, 2 mockup) · **2,193 unit tests across 84 files** + **76 assertions**
   across two committed Firestore Rules emulator suites (`npm run test:rules`; require Java, run in
   CI, not part of the unit-test count) ·
   **14** Firestore collections
@@ -3313,7 +3349,7 @@ npm run test:e2e     # run the Playwright browser tests (auto-builds + starts th
 - Heatmap intensity toggle (show % inside matrix cells).
 
 ### Technical Debt
-- **2,163 unit tests across 83 files** as of 2026-07-22 (plus **76 assertions** across two
+- **2,193 unit tests across 84 files** as of 2026-07-22 (plus **76 assertions** across two
   committed Firestore Rules emulator suites, `npm run test:rules`, run separately from the unit-test
   gate). **Role-app
   coverage** (`App`, `Start`,

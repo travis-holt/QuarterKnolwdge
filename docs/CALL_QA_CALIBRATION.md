@@ -348,14 +348,17 @@ CALL_QA_LIVE_SMOKE_API_KEY=dedicated-non-production-key npm run qa:live-contract
 The plural `CALL_QA_LIVE_SMOKE_API_KEYS` is also supported and takes precedence when it holds at
 least one usable key; a set-but-empty plural variable falls back to the singular (correction pass
 #5 — the earlier nullish-coalescing resolver masked a populated singular key). This command
-deliberately does **not** read the application's `GEMINI_API_KEY(S)` pool. It runs 15 synthetic
-semantic cases (including five explicit HIPAA/chronology cases) against the pinned scored grader
-model with static SOP context, no Firestore or private-bank access, no provisioning, and no patient
-identifiers in output. Each case asserts the complete privacy-relevant scorecard state — verdicts
-plus, where applicable, `qa.autoFails`, `qa.unverifiedAutoFails`, the `deterministic-privacy-conflict`
-flag, and `qa.review.recommendation` — so a case can never report PASS while the scorecard hides a
-false auto-fail or a needed critical review. It is contract evidence only: it has no calibration,
-release-automation, or scoring-authority effect.
+deliberately does **not** read the application's `GEMINI_API_KEY(S)` pool. It runs 20 synthetic
+semantic cases (correction pass #6 — ten explicit HIPAA/chronology cases) against the pinned scored
+grader model with static SOP context, no Firestore or private-bank access, no provisioning, and no
+patient identifiers in output. Each case asserts the complete privacy-relevant scorecard state —
+verdicts plus, where applicable, `qa.autoFails`, `qa.unverifiedAutoFails`, the
+`deterministic-privacy-conflict` flag, `qa.review.recommendation`, and `qa.review.safetyRisk`. Every
+EARLY-DISCLOSURE case is gated on a PRIVACY-SPECIFIC result — a verified af-hipaa with a non-pass
+recommendation, or a `deterministic-privacy-conflict` that is a mandatory `needs_review` with
+`safetyRisk: 'critical'` — never a generic fail from an unrelated criterion, so a case can never
+report PASS while the scorecard hides a false auto-fail or a needed critical review. It is contract
+evidence only: it has no calibration, release-automation, or scoring-authority effect.
 
 The merge/release gate requires **both** exit 0 and the exact marker
 `LIVE_CONTRACT_SMOKE_VERIFIED`. A malformed or semantically wrong run exits nonzero and prints

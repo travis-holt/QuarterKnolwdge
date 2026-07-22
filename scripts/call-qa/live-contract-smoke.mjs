@@ -62,6 +62,16 @@ const verifiedAutoFail = (qa, id) => (qa.autoFails ?? []).some((a) => a.id === i
 const unverifiedAutoFail = (qa, id) => (qa.unverifiedAutoFails ?? []).some((a) => a.id === id);
 const reviewFlag = (qa, id) => (qa.review?.reviewFlags ?? []).some((f) => f.id === id);
 const recommendationOf = (qa) => qa.review?.recommendation;
+const safetyRiskOf = (qa) => qa.review?.safetyRisk;
+
+// A pre-verification disclosure must produce a PRIVACY-SPECIFIC result — never a
+// generic fail caused by an unrelated criterion (correction pass #6, B8): either
+// a correctly verified af-hipaa (with a non-pass recommendation) OR a
+// deterministic privacy-conflict that is a mandatory CRITICAL review. Never a
+// clean pass.
+const privacyGated = (qa) =>
+  (verifiedAutoFail(qa, 'af-hipaa') && recommendationOf(qa) !== 'pass')
+  || (reviewFlag(qa, 'deterministic-privacy-conflict') && recommendationOf(qa) === 'needs_review' && safetyRiskOf(qa) === 'critical');
 
 // Return the first failing rule's message, or true when every rule holds.
 function checkAll(...rules) {
@@ -204,12 +214,58 @@ export const LIVE_CONTRACT_SMOKE_CASES = [
       || 'a routine call with no emotional cue and no hold should leave comm-empathy and control-narrate NA',
   },
 
-  // ── HIPAA / chronology cases (correction pass #5, B7) ───────────────────────
-  // These assert the COMPLETE privacy-relevant state, not just one verdict, so a
-  // case can never report PASS while the returned scorecard hides a false auto-
-  // fail, an unverified allegation, or a needed critical review.
+  // ── HIPAA / chronology cases (correction pass #6, B8) ───────────────────────
+  // Each early-disclosure case asserts a PRIVACY-SPECIFIC result (a verified
+  // af-hipaa or a mandatory critical privacy-conflict review) — never a generic
+  // fail from an unrelated criterion — and each clean case asserts NO af-hipaa
+  // and NO privacy conflict.
   {
-    id: '11-identity-before-disclosure-clean',
+    id: '11-identity-before-repeated-after',
+    department: 'obgyn',
+    transcript: [
+      GREET,
+      caller('Hi, this is Maria Alvarez, date of birth March 2nd 1991. Can you check my appointment?'),
+      DISCLOSE_APPT,
+      caller('Thanks. Just to confirm, this is Maria Alvarez, date of birth March 2nd 1991.'),
+      CLOSE_OFFER,
+    ],
+    check: (qa) => checkAll(
+      [verdictOf(qa, 'verify-before-access') === 'MET', 'identity was completed BEFORE the disclosure, so verify-before-access should be MET'],
+      [!verifiedAutoFail(qa, 'af-hipaa'), 'a call verified before the disclosure must never be zeroed'],
+    ),
+  },
+  {
+    id: '12-safe-refusal-not-a-disclosure',
+    department: 'obgyn',
+    transcript: [
+      GREET,
+      caller('Can you tell me my appointment time?'),
+      nav('I cannot confirm whether your appointment is Tuesday until I verify you.'),
+      caller('Sure, this is Maria Alvarez, date of birth March 2nd 1991.'),
+      nav('Thank you. Your appointment is Tuesday at 2:15.'),
+      CLOSE_OFFER,
+    ],
+    check: (qa) => checkAll(
+      [!verifiedAutoFail(qa, 'af-hipaa'), 'a privacy-preserving refusal is not a disclosure and must not zero the call'],
+      [!unverifiedAutoFail(qa, 'af-hipaa'), 'no af-hipaa should be reported for a refusal followed by verification'],
+      [!reviewFlag(qa, 'deterministic-privacy-conflict'), 'no privacy conflict when the only pre-verification line is a refusal'],
+    ),
+  },
+  {
+    id: '13-safe-line-then-genuine-disclosure',
+    department: 'obgyn',
+    transcript: [
+      GREET,
+      nav('I cannot confirm anything yet, but your appointment is Tuesday at 2:15.'),
+      caller('Oh — this is Maria Alvarez, date of birth March 2nd 1991.'),
+      CLOSE_OFFER,
+    ],
+    // The second clause genuinely discloses the appointment BEFORE identity.
+    check: (qa) => privacyGated(qa)
+      || 'a genuine disclosure before identity must be a verified af-hipaa or a mandatory critical privacy review',
+  },
+  {
+    id: '14-full-identity-before-disclosure-clean',
     department: 'obgyn',
     transcript: [
       GREET,
@@ -220,32 +276,13 @@ export const LIVE_CONTRACT_SMOKE_CASES = [
     ],
     check: (qa) => checkAll(
       [verdictOf(qa, 'verify-three') === 'MET', 'verify-three should be MET before the disclosure'],
-      [verdictOf(qa, 'verify-before-access') === 'MET', 'verify-before-access should be MET — identity completed before the appointment was disclosed'],
-      [!verifiedAutoFail(qa, 'af-hipaa'), 'no verified af-hipaa when identity completed before the disclosure'],
-      [!unverifiedAutoFail(qa, 'af-hipaa'), 'no af-hipaa should be reported on this clean call'],
+      [verdictOf(qa, 'verify-before-access') === 'MET', 'verify-before-access should be MET — identity completed before the disclosure'],
+      [!verifiedAutoFail(qa, 'af-hipaa'), 'no verified af-hipaa on a clean verified-before-access call'],
       [!reviewFlag(qa, 'deterministic-privacy-conflict'), 'no deterministic privacy conflict on a clean call'],
     ),
   },
   {
-    id: '12-disclosure-before-identity',
-    department: 'obgyn',
-    transcript: [
-      GREET,
-      DISCLOSE_APPT,
-      caller('Oh, thank you. This is Maria Alvarez, date of birth March 2nd 1991.'),
-      CLOSE_OFFER,
-    ],
-    // Must NOT be a clean pass: either a correctly verified af-hipaa or a
-    // mandatory critical review, per the safe server policy.
-    check: (qa) => checkAll(
-      [verdictOf(qa, 'verify-before-access') === 'NOT_MET', 'verify-before-access must NOT verify when a disclosure precedes identity'],
-      [recommendationOf(qa) !== 'pass', 'a call that disclosed before verifying must never be a clean automatic pass'],
-      [verifiedAutoFail(qa, 'af-hipaa') || reviewFlag(qa, 'deterministic-privacy-conflict') || recommendationOf(qa) === 'needs_review' || recommendationOf(qa) === 'fail',
-        'a pre-verification disclosure must produce a verified af-hipaa or a mandatory critical review'],
-    ),
-  },
-  {
-    id: '13-partial-identity-then-disclosure',
+    id: '15-partial-identity-before-disclosure',
     department: 'obgyn',
     transcript: [
       GREET,
@@ -255,26 +292,23 @@ export const LIVE_CONTRACT_SMOKE_CASES = [
     ],
     check: (qa) => checkAll(
       [verdictOf(qa, 'verify-three') === 'NOT_MET', 'verify-three must NOT verify with only a partial identity'],
-      [recommendationOf(qa) !== 'pass', 'a partially-verified call that disclosed a protected detail must not be a clean pass'],
+      [privacyGated(qa), 'a partial identity followed by a protected disclosure must be a verified af-hipaa or a critical privacy review'],
     ),
   },
   {
-    id: '14-non-disclosure-safe-call',
+    id: '16-no-identity-before-disclosure',
     department: 'obgyn',
     transcript: [
       GREET,
-      caller('Hi, this is Maria Alvarez, date of birth March 2nd 1991. I would like to book an annual visit.'),
-      nav('Of course. I can book you an appointment for Tuesday at 2:15 with Dr. Reyes.'),
+      caller('Can you look up my appointment?'),
+      DISCLOSE_APPT,
       CLOSE_OFFER,
     ],
-    check: (qa) => checkAll(
-      [!verifiedAutoFail(qa, 'af-hipaa'), 'no verified af-hipaa when nothing protected was disclosed'],
-      [!unverifiedAutoFail(qa, 'af-hipaa'), 'no af-hipaa should be reported when nothing protected was disclosed'],
-      [!reviewFlag(qa, 'deterministic-privacy-conflict'), 'no privacy conflict when nothing protected was disclosed'],
-    ),
+    check: (qa) => privacyGated(qa)
+      || 'a disclosure with no prior identity must be a verified af-hipaa or a mandatory critical privacy review',
   },
   {
-    id: '15-post-verification-disclosure-conformance',
+    id: '17-model-false-positive-after-verification',
     department: 'obgyn',
     transcript: [
       GREET,
@@ -283,12 +317,54 @@ export const LIVE_CONTRACT_SMOKE_CASES = [
       nav('You are all set.'),
       CLOSE_OFFER,
     ],
-    // A correct model must NOT trigger af-hipaa on a POST-verification disclosure.
-    // If it does, the server prevents the zero, but this gate must still fail the
-    // model-conformance check.
+    // The server must never zero a verified-before-access call; a correct model
+    // must also NOT trigger af-hipaa on a post-verification disclosure.
     check: (qa) => checkAll(
       [!verifiedAutoFail(qa, 'af-hipaa'), 'the server must never zero a call that verified before disclosing'],
       [!unverifiedAutoFail(qa, 'af-hipaa'), 'a correct model must NOT trigger af-hipaa on a post-verification disclosure'],
+    ),
+  },
+  {
+    id: '18-model-false-negative-before-verification',
+    department: 'obgyn',
+    transcript: [
+      GREET,
+      DISCLOSE_APPT,
+      caller('Oh thanks, this is Maria Alvarez, date of birth March 2nd 1991.'),
+      CLOSE_OFFER,
+    ],
+    // Whether or not the model flags it, the server must gate this on privacy.
+    check: (qa) => privacyGated(qa)
+      || 'a pre-verification disclosure must be a verified af-hipaa or a mandatory critical privacy review even if the model omits it',
+  },
+  {
+    id: '19-provider-name-ambiguity',
+    department: 'obgyn',
+    transcript: [
+      GREET,
+      caller('I would like to schedule an appointment.'),
+      nav('Sure. What is the last name of your OB-GYN?'),
+      caller('Reyes.'),
+      nav('And your date of birth?'),
+      caller('March 2nd 1991.'),
+      CLOSE_OFFER,
+    ],
+    // A provider surname is not the patient's name, so identity is incomplete.
+    check: (qa) => verdictOf(qa, 'verify-three') !== 'MET'
+      || 'a provider surname must never complete patient identity',
+  },
+  {
+    id: '20-third-party-dob-ownership',
+    department: 'obgyn',
+    transcript: [
+      GREET,
+      caller('I am calling for my daughter, Maria Alvarez. Her date of birth is March 2nd 2021.'),
+      nav('Thank you, I can help with that.'),
+      CLOSE_OFFER,
+    ],
+    check: (qa) => checkAll(
+      [verdictOf(qa, 'verify-three') === 'MET', 'an authorized third-party caller who supplies the patient name + DOB should verify'],
+      [!verifiedAutoFail(qa, 'af-hipaa'), 'no af-hipaa on a verified third-party call'],
     ),
   },
 ];
