@@ -11,7 +11,23 @@
 > [§8 Current System State](#8-current-system-state) and [§15 Current Priorities](#15-current-priorities)
 > accurate at all times.
 >
-> **Last updated:** 2026-07-23 (**CORRECTION PASS #7 — non-null candidate binding, caller-owned DOB
+> **Last updated:** 2026-07-23 (**CORRECTION PASS #7 FOLLOW-UP — auxiliary-led information questions.**
+> Draft PR #41 remains **NOT merged, NOT deployed, and NOT ready**. Against independently reviewed
+> head `c2ef411`, the focused pass-7 file ran 24 tests with **5 failures / 19 passes** before the
+> correction: `is/was/can/do` information questions were misclassified as disclosures and an
+> `af-hipaa` allegation on the pre-verification question could false-zero the call. One narrow,
+> deterministic `isInformationRequestInterrogative()` helper now excludes clauses that BEGIN with
+> `what/when/where/who/why/how` or the auxiliary set
+> `is/are/was/were/do/does/did/can/could/would/have/has/may`. It does not use a trailing `?` and does
+> not exempt disclosures that state a protected fact before a confirmation tag (`Your appointment
+> is Tuesday, correct?`, `Your results were normal, right?`, `You are scheduled with Dr. Reyes,
+> okay?`). The final focused file is 25/25 and the full unit gate is **2,218 tests across 85 files**.
+> This is server-only detector enforcement: prompt remains `call-qa-grader-v7`; OB/GYN rubric remains
+> `qa-rubric-obgyn-v1`; Pediatrics and historical grades remain unchanged. Calibration remains
+> `INSUFFICIENT_DATA` and a real dedicated-key live smoke remains required. No migration, production
+> write, private provisioning, historical rewrite, merge, deploy, auto-merge, or ready-state change.
+> See docs/HISTORY.md and docs/GRADING_INVARIANTS.md §0n. ·
+> **Prior update:** 2026-07-23 (**CORRECTION PASS #7 — non-null candidate binding, caller-owned DOB
 > rejection, quoted-disclosure chronology.**
 > Draft PR #41 remains **NOT merged, NOT deployed, and NOT ready**. Against independently reviewed
 > head `6b876d2`, the initial 13 focused regressions reproduced all three remaining blockers before

@@ -1,5 +1,25 @@
 ﻿# Development History - Knowledge Check
 
+## 2026-07-23 — Call QA auxiliary-led information-question exclusion (correction pass #7 follow-up)
+
+**Status: Draft PR #41 remains unmerged, undeployed, and not ready.** No migration, production
+write, private-scenario provisioning, historical rewrite, prompt/schema/rubric change, auto-merge,
+or ready-state change. Against independently reviewed head `c2ef411`, the focused pass-7 file ran
+24 tests with **5 failures / 19 passes** before implementation changed: four auxiliary-led
+information questions were treated as disclosures and the end-to-end case false-zeroed.
+
+One narrow `isInformationRequestInterrogative()` helper now excludes clauses beginning with
+`what/when/where/who/why/how` or
+`is/are/was/were/do/does/did/can/could/would/have/has/may`. The rule is structural and does not
+depend on a trailing question mark. Confirmation-tag statements remain protected disclosures:
+`Your appointment is Tuesday, correct?`, `Your results were normal, right?`, and
+`You are scheduled with Dr. Reyes, okay?`. Refusal handling, unique quote/clause mapping,
+disclosure overlap, and quoted-turn chronology are unchanged.
+
+Final focused gate: **25/25**. Final unit gate: **2,218 tests across 85 files** (2,208 → 2,218).
+Prompt remains `call-qa-grader-v7`; OB/GYN rubric remains `qa-rubric-obgyn-v1`. See
+[docs/GRADING_INVARIANTS.md](GRADING_INVARIANTS.md) §0n.
+
 ## 2026-07-23 — Call QA non-null candidate binding, caller-owned DOB rejection, quoted-disclosure chronology (correction pass #7)
 
 **Status: Draft PR #41 remains unmerged, undeployed, and not ready.** No Firestore migration or

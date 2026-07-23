@@ -1454,10 +1454,16 @@ function matchDisclosureCategory(text) {
   return disclosureCategoryMatch(text)?.category ?? null;
 }
 
+const INFORMATION_REQUEST_START = /^\s*(?:what|when|where|who|why|how|is|are|was|were|do|does|did|can|could|would|have|has|may)\b/i;
+
+function isInformationRequestInterrogative(clause) {
+  return INFORMATION_REQUEST_START.test(String(clause ?? ''));
+}
+
 // A clause is a genuine disclosure only when it matches a protected category AND
 // is NOT governed by a refusal that precedes (or coincides with) the match.
 function clauseDisclosure(clause) {
-  if (/^\s*(?:what|when|where|who|why|how)\b/i.test(String(clause ?? ''))) return null;
+  if (isInformationRequestInterrogative(clause)) return null;
   const disc = disclosureCategoryMatch(clause);
   if (!disc) return null;
   const refusalIdx = clauseRefusalIndex(clause);

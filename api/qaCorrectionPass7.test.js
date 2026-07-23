@@ -159,3 +159,78 @@ describe('correction pass 7 · af-hipaa uses its quoted disclosure', () => {
     expect(scored.autoFails.some((autoFail) => autoFail.id === 'af-hipaa')).toBe(true);
   });
 });
+
+describe('correction pass 7 follow-up · information questions are not disclosures', () => {
+  const afHipaa = (evidence) => [{ id: 'af-hipaa', evidence, note: 'shared before verification' }];
+
+  it('1 · "Is your appointment for an ultrasound?" is neither disclosure nor verified af-hipaa', () => {
+    const question = 'Is your appointment for an ultrasound?';
+    expect(classifyProtectedDisclosure(question)).toBeNull();
+    expect(classifyAfHipaaEvidence([GREET, nav(question)], question).verified).toBe(false);
+  });
+
+  it('2 · "Was your last visit with Dr. Reyes?" is not a disclosure', () => {
+    expect(classifyProtectedDisclosure('Was your last visit with Dr. Reyes?')).toBeNull();
+  });
+
+  it('3 · "Can you tell me what your appointment is for?" is not a disclosure', () => {
+    expect(classifyProtectedDisclosure('Can you tell me what your appointment is for?')).toBeNull();
+  });
+
+  it('4 · "Do you know whether your results are back?" is not a disclosure', () => {
+    expect(classifyProtectedDisclosure('Do you know whether your results are back?')).toBeNull();
+  });
+
+  it.each([
+    ['Your appointment is Tuesday, correct?', 'appointment'],
+    ['Your results were normal, right?', 'results'],
+    ['You are scheduled with Dr. Reyes, okay?', 'appointment'],
+  ])('%s remains a protected disclosure', (text, category) => {
+    expect(classifyProtectedDisclosure(text)).toBe(category);
+  });
+
+  it('7 · a genuine quoted disclosure before identity still verifies af-hipaa', () => {
+    const transcript = [
+      GREET,
+      nav('Your appointment is Tuesday.'),
+      caller('This is Maria Alvarez. My DOB is March 2nd 1991.'),
+    ];
+    const scored = scoreQa(verdicts({
+      'verify-three': { verdict: 'MET', basis: 'EVIDENCE', evidence: 'x', identityEvidence: identity(2, 'My DOB is March 2nd 1991') },
+      'verify-before-access': { verdict: 'NOT_MET', basis: 'ABSENCE', evidence: '', identityEvidence: [] },
+    }), afHipaa('Your appointment is Tuesday.'), transcript, OBGYN);
+    expect(scored.score).toBe(0);
+    expect(scored.autoFails.some((autoFail) => autoFail.id === 'af-hipaa')).toBe(true);
+  });
+
+  it('8 · a genuine quoted disclosure after identity does not verify af-hipaa', () => {
+    const transcript = [
+      GREET,
+      caller('This is Maria Alvarez. My DOB is March 2nd 1991.'),
+      nav('Your appointment is Tuesday.'),
+    ];
+    const scored = scoreQa(verdicts({
+      'verify-three': { verdict: 'MET', basis: 'EVIDENCE', evidence: 'x', identityEvidence: identity(1, 'My DOB is March 2nd 1991') },
+      'verify-before-access': { verdict: 'MET', basis: 'EVIDENCE', evidence: 'x', identityEvidence: identity(1, 'My DOB is March 2nd 1991') },
+    }), afHipaa('Your appointment is Tuesday.'), transcript, OBGYN);
+    expect(scored.score).not.toBe(0);
+    expect(scored.autoFails.some((autoFail) => autoFail.id === 'af-hipaa')).toBe(false);
+  });
+
+  it('9 · an auxiliary-led appointment question cannot create an end-to-end false zero', () => {
+    const question = 'Is your appointment for an ultrasound?';
+    const transcript = [
+      GREET,
+      nav(question),
+      caller('This is Maria Alvarez. My DOB is March 2nd 1991.'),
+    ];
+    const scored = scoreQa(verdicts({
+      'verify-three': { verdict: 'MET', basis: 'EVIDENCE', evidence: 'x', identityEvidence: identity(2, 'My DOB is March 2nd 1991') },
+      'verify-before-access': { verdict: 'MET', basis: 'EVIDENCE', evidence: 'x', identityEvidence: identity(2, 'My DOB is March 2nd 1991') },
+    }), afHipaa(question), transcript, OBGYN);
+    expect(scored.score).not.toBe(0);
+    expect(scored.autoFails.some((autoFail) => autoFail.id === 'af-hipaa')).toBe(false);
+    expect(scored.unverifiedAutoFails.some((autoFail) => autoFail.id === 'af-hipaa')).toBe(true);
+    expect(assessQa(scored, transcript, { profile: OBGYN }).recommendation).toBe('needs_review');
+  });
+});
