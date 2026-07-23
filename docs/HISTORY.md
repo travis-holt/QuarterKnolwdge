@@ -1,5 +1,24 @@
 ﻿# Development History - Knowledge Check
 
+## 2026-07-23 — Call QA auxiliary confirmation structure (correction pass #7 follow-up 2)
+
+**Status: Draft PR #41 remains unmerged, undeployed, and not ready.** No migration, production
+write, private-scenario provisioning, historical rewrite, prompt/schema/rubric change, auto-merge,
+or ready-state change. Against independently reviewed head `e6fd39d`, the focused pass-7 file ran
+31 tests with **5 failures / 26 passes** before implementation changed: four auxiliary-led
+confirmation disclosures were suppressed, and the end-to-end pre-identity confirmation could not
+verify `af-hipaa`.
+
+`isInformationRequestInterrogative()` now uses clause structure rather than the first auxiliary
+alone. Genuine requests for the caller to supply information remain non-disclosures. First-person
+`confirm`/`verify` clauses that reveal a protected fact and auxiliary/declarative confirmation tags
+remain disclosures. Refusal handling, identity candidates, DOB ownership, chronology, quote
+mapping, prompt/schema, rubric, historical scoring, and calibration logic are unchanged.
+
+Prompt remains `call-qa-grader-v7`; OB/GYN rubric remains `qa-rubric-obgyn-v1`. See
+[docs/GRADING_INVARIANTS.md](GRADING_INVARIANTS.md) §0n. Final focused gate: **33/33**.
+Final unit gate: **2,226 tests across 85 files** (2,218 → 2,226).
+
 ## 2026-07-23 — Call QA auxiliary-led information-question exclusion (correction pass #7 follow-up)
 
 **Status: Draft PR #41 remains unmerged, undeployed, and not ready.** No migration, production

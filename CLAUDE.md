@@ -11,7 +11,21 @@
 > [§8 Current System State](#8-current-system-state) and [§15 Current Priorities](#15-current-priorities)
 > accurate at all times.
 >
-> **Last updated:** 2026-07-23 (**CORRECTION PASS #7 FOLLOW-UP — auxiliary-led information questions.**
+> **Last updated:** 2026-07-23 (**CORRECTION PASS #7 FOLLOW-UP 2 — auxiliary confirmation structure.**
+> Draft PR #41 remains **NOT merged, NOT deployed, and NOT ready**. Against independently reviewed
+> head `e6fd39d`, the focused pass-7 file ran 31 tests with **5 failures / 26 passes** before the
+> correction: four auxiliary-led confirmation disclosures were suppressed and the end-to-end
+> pre-identity confirmation could not verify `af-hipaa`. `isInformationRequestInterrogative()` now
+> distinguishes clause structure rather than exempting every auxiliary-led clause: genuine requests
+> for the caller to supply information remain non-disclosures, while first-person `confirm`/`verify`
+> clauses that reveal protected facts and auxiliary/declarative confirmation tags remain
+> disclosures. Identity candidates, DOB ownership, chronology, refusal handling, quote mapping,
+> prompt/schema, rubric, historical scoring, and calibration logic are unchanged. Prompt remains
+> `call-qa-grader-v7`; OB/GYN rubric remains `qa-rubric-obgyn-v1`. Final focused gate: **33/33**;
+> final unit gate: **2,226 tests across 85 files**. No migration, production write,
+> private provisioning, historical rewrite, merge, deploy, auto-merge, or ready-state change. See
+> docs/HISTORY.md and docs/GRADING_INVARIANTS.md §0n. ·
+> **Prior update:** 2026-07-23 (**CORRECTION PASS #7 FOLLOW-UP — auxiliary-led information questions.**
 > Draft PR #41 remains **NOT merged, NOT deployed, and NOT ready**. Against independently reviewed
 > head `c2ef411`, the focused pass-7 file ran 24 tests with **5 failures / 19 passes** before the
 > correction: `is/was/can/do` information questions were misclassified as disclosures and an

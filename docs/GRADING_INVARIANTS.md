@@ -8,10 +8,10 @@
 > [`api/_qa-grading-corpus.test.js`](../api/_qa-grading-corpus.test.js) — if one of
 > those tests fails after your change, re-read this document before "fixing" the test.
 >
-> Last updated: 2026-07-23 (correction pass #7 follow-up — §0n — auxiliary-led information
-> questions are non-disclosures while confirmation-tag statements remain disclosures. §0n
-> supersedes the candidate, DOB ownership,
-> and af-hipaa chronology portions of §0m. Earlier: correction pass #6 — §0m:
+> Last updated: 2026-07-23 (correction pass #7 follow-up 2 — §0n — genuine caller-information
+> requests are non-disclosures while auxiliary-led confirmations that reveal protected facts remain
+> disclosures. §0n supersedes the candidate, DOB ownership, and af-hipaa chronology portions of §0m.
+> Earlier: correction pass #6 — §0m:
 > af-hipaa is driven by an INDEPENDENT transcript-wide earliest-identity chronology (not the
 > model-selected claims); disclosure detection is refusal/clause-aware with unique quote mapping and
 > overlap; identity claims bind to ONE discrete candidate; DOB ownership uses the exact quoted
@@ -231,13 +231,15 @@ enforcement changes only: the prompt remains `call-qa-grader-v7`, the OB/GYN rub
    hit may create review conflict but never lends automatic-fail authority to the model quote.
    Information-request questions are not disclosures; genuine pre-verification disclosures still
    verify, post-verification disclosures do not, and ambiguous mappings remain review-only.
-4. **Information requests are recognized by clause structure, not punctuation.** A clause beginning
-   with a WH interrogative or `is/are/was/were/do/does/did/can/could/would/have/has/may` requests the
-   protected fact from the caller and cannot verify a disclosure or `af-hipaa`; no trailing question
-   mark is required. A clause that first states the protected fact and then adds a confirmation tag
-   remains a disclosure (`Your appointment is Tuesday, correct?`, `Your results were normal, right?`,
-   `You are scheduled with Dr. Reyes, okay?`). This correction does not weaken refusal handling,
-   unique quote/clause mapping, disclosure overlap, or quoted-turn chronology.
+4. **Information requests are recognized by clause structure, not punctuation or their first word.**
+   A genuine request for the caller to supply the protected fact remains a non-disclosure
+   (`Can you tell me what your appointment is for?`, `Do you know whether your results are back?`).
+   An auxiliary-led first-person confirmation that reveals the fact remains a disclosure
+   (`Can I confirm that your appointment is Tuesday?`, `Could I confirm your results were normal?`,
+   `May I confirm your prescription was sent?`), as does an auxiliary or declarative confirmation
+   tag (`Is your appointment Tuesday, correct?`, `Your results were normal, right?`). No trailing
+   question mark is required. This correction does not weaken refusal handling, unique quote/clause
+   mapping, disclosure overlap, or quoted-turn chronology.
 
 ## 0j. Identity coherence and provenance (2026-07-22, correction pass #3)
 

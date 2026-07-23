@@ -1284,6 +1284,7 @@ export function evaluateIdentityEvidence(transcript, identityEvidence) {
 export const PROTECTED_DISCLOSURE_CATEGORIES = Object.freeze({
   appointment: [
     /\byour (?:appointment|appt|visit|follow[- ]?up)\b[^.?!]*\b(?:is|was|on|at|with|for)\b/i,
+    /^\s*(?:is|was)\s+your (?:appointment|appt|visit|follow[- ]?up)\b[^.?!]*,\s*(?:correct|right|okay)\b/i,
     /\byou(?:['’]re| are)\s+(?:scheduled|booked|set up|all set)\b/i,
     /\bi (?:have|see|show)\s+(?:you|her|him|them)\s+(?:down\s+)?(?:for|scheduled|booked)\b/i,
     /\byour (?:next|last|upcoming|previous|recent)\s+(?:appointment|appt|visit)\b/i,
@@ -1313,6 +1314,7 @@ export const PROTECTED_DISCLOSURE_CATEGORIES = Object.freeze({
   ],
   results: [
     /\byour (?:results?|labs?|lab work|blood work|test results?|imaging|ultrasound|sonogram|biopsy|culture|screening)\b[^.?!]*\b(?:show|showed|shows|came|are|is|were|was|look|looked)\b/i,
+    /^\s*(?:are|were|is|was)\s+your (?:results?|labs?|lab work|blood work|test results?)\b[^.?!]*,\s*(?:correct|right|okay)\b/i,
     /\b(?:results?|labs?) (?:came back|are back|are in)\b/i,
     /\b(?:everything|they|it) (?:looks?|looked|came back)\s+(?:normal|fine|okay|ok|clear|good|abnormal|elevated)\b/i,
   ],
@@ -1455,9 +1457,14 @@ function matchDisclosureCategory(text) {
 }
 
 const INFORMATION_REQUEST_START = /^\s*(?:what|when|where|who|why|how|is|are|was|were|do|does|did|can|could|would|have|has|may)\b/i;
+const FIRST_PERSON_CONFIRMATION_START = /^\s*(?:can|could|would|may)\s+i\s+(?:confirm|verify)\b/i;
+const CONFIRMATION_TAG = /,\s*(?:correct|right|okay)\b/i;
 
 function isInformationRequestInterrogative(clause) {
-  return INFORMATION_REQUEST_START.test(String(clause ?? ''));
+  const text = String(clause ?? '');
+  return INFORMATION_REQUEST_START.test(text)
+    && !FIRST_PERSON_CONFIRMATION_START.test(text)
+    && !CONFIRMATION_TAG.test(text);
 }
 
 // A clause is a genuine disclosure only when it matches a protected category AND

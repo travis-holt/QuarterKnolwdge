@@ -163,6 +163,15 @@ describe('correction pass 7 · af-hipaa uses its quoted disclosure', () => {
 describe('correction pass 7 follow-up · information questions are not disclosures', () => {
   const afHipaa = (evidence) => [{ id: 'af-hipaa', evidence, note: 'shared before verification' }];
 
+  it.each([
+    ['Can I confirm that your appointment is Tuesday?', 'appointment'],
+    ['Could I confirm your results were normal?', 'results'],
+    ['May I confirm your prescription was sent?', 'medication'],
+    ['Can I verify that you are scheduled with Dr. Reyes?', 'appointment'],
+  ])('%s is a protected disclosure', (text, category) => {
+    expect(classifyProtectedDisclosure(text)).toBe(category);
+  });
+
   it('1 · "Is your appointment for an ultrasound?" is neither disclosure nor verified af-hipaa', () => {
     const question = 'Is your appointment for an ultrasound?';
     expect(classifyProtectedDisclosure(question)).toBeNull();
@@ -185,6 +194,8 @@ describe('correction pass 7 follow-up · information questions are not disclosur
     ['Your appointment is Tuesday, correct?', 'appointment'],
     ['Your results were normal, right?', 'results'],
     ['You are scheduled with Dr. Reyes, okay?', 'appointment'],
+    ['Is your appointment Tuesday, correct?', 'appointment'],
+    ['Were your results normal, right?', 'results'],
   ])('%s remains a protected disclosure', (text, category) => {
     expect(classifyProtectedDisclosure(text)).toBe(category);
   });
@@ -228,6 +239,44 @@ describe('correction pass 7 follow-up · information questions are not disclosur
       'verify-three': { verdict: 'MET', basis: 'EVIDENCE', evidence: 'x', identityEvidence: identity(2, 'My DOB is March 2nd 1991') },
       'verify-before-access': { verdict: 'MET', basis: 'EVIDENCE', evidence: 'x', identityEvidence: identity(2, 'My DOB is March 2nd 1991') },
     }), afHipaa(question), transcript, OBGYN);
+    expect(scored.score).not.toBe(0);
+    expect(scored.autoFails.some((autoFail) => autoFail.id === 'af-hipaa')).toBe(false);
+    expect(scored.unverifiedAutoFails.some((autoFail) => autoFail.id === 'af-hipaa')).toBe(true);
+    expect(assessQa(scored, transcript, { profile: OBGYN }).recommendation).toBe('needs_review');
+  });
+
+  it('10 · an auxiliary-led confirmation before identity verifies af-hipaa using its quoted turn', () => {
+    const confirmation = 'Can I confirm that your appointment is Tuesday?';
+    const transcript = [
+      GREET,
+      nav(confirmation),
+      caller('This is Maria Alvarez. My DOB is March 2nd 1991.'),
+    ];
+    const scored = scoreQa(verdicts({
+      'verify-three': { verdict: 'MET', basis: 'EVIDENCE', evidence: 'x', identityEvidence: identity(2, 'My DOB is March 2nd 1991') },
+      'verify-before-access': { verdict: 'NOT_MET', basis: 'ABSENCE', evidence: '', identityEvidence: [] },
+    }), afHipaa(confirmation), transcript, OBGYN);
+    expect(classifyAfHipaaEvidence(transcript, confirmation)).toMatchObject({
+      verified: true,
+      turnIndex: 1,
+      category: 'appointment',
+    });
+    expect(scored.score).toBe(0);
+    expect(scored.autoFails.some((autoFail) => autoFail.id === 'af-hipaa')).toBe(true);
+  });
+
+  it('11 · a caller-information request before identity remains review-only when alleged as af-hipaa', () => {
+    const question = 'Can you tell me what your appointment is for?';
+    const transcript = [
+      GREET,
+      nav(question),
+      caller('This is Maria Alvarez. My DOB is March 2nd 1991.'),
+    ];
+    const scored = scoreQa(verdicts({
+      'verify-three': { verdict: 'MET', basis: 'EVIDENCE', evidence: 'x', identityEvidence: identity(2, 'My DOB is March 2nd 1991') },
+      'verify-before-access': { verdict: 'MET', basis: 'EVIDENCE', evidence: 'x', identityEvidence: identity(2, 'My DOB is March 2nd 1991') },
+    }), afHipaa(question), transcript, OBGYN);
+    expect(classifyAfHipaaEvidence(transcript, question).verified).toBe(false);
     expect(scored.score).not.toBe(0);
     expect(scored.autoFails.some((autoFail) => autoFail.id === 'af-hipaa')).toBe(false);
     expect(scored.unverifiedAutoFails.some((autoFail) => autoFail.id === 'af-hipaa')).toBe(true);
