@@ -25,10 +25,12 @@ import { correctTranscriptWithStats, glossaryPromptBlock } from './_qa-glossary.
 import { getApiKeys, geminiWithRotation, rotationFailure, MODEL } from './_gemini-client.js';
 import { validateSecret } from './_auth.js';
 import {
-  QA_RUBRIC, QA_AUTO_FAILS, QA_RUBRIC_VERSION, rubricCriteria,
   validateQaResponse, repairQaVerdictsForScenario, scoreQa, assessQa, buildGradeProjection,
   evaluateQaDeterministicFindings,
 } from './_qa-rubric.js';
+import {
+  getQaRubricProfile, requireQaRubricProfile, UnsupportedQaDepartmentError,
+} from '../src/data/qaRubricProfiles.js';
 import { qaDomainScoreSummary } from '../src/lib/qaDomainScoring.js';
 import { readFirebaseIdentity } from './_auth.js';
 import { FirebaseAdminConfigError, getFirebaseAdmin } from './_firebase-admin.js';
@@ -122,7 +124,7 @@ export function buildTrustedGradingScenario(scenario) {
   return lines.join('\n');
 }
 
-const RESPONSE_SCHEMA = {
+export const RESPONSE_SCHEMA = {
   type: 'OBJECT',
   properties: {
     criteria: {
@@ -135,6 +137,29 @@ const RESPONSE_SCHEMA = {
           basis:    { type: 'STRING', enum: ['EVIDENCE', 'ABSENCE'] },
           evidence: { type: 'STRING' },
           note:     { type: 'STRING' },
+          // Structured, transcript-grounded identifier evidence. Required in
+          // practice only for criteria whose profile declares the identity
+          // policy; every other criterion sends an empty array. Optional in the
+          // schema so departments without an identity policy are unaffected.
+          //
+          // CALLER-ONLY (v6): identity is proven by what the CALLER supplied. The
+          // navigator saying a name proves nothing about verification, and the
+          // server always rejects a navigator-sourced identifier — so the schema
+          // must not advertise a `role` the server will always throw away.
+          identityEvidence: {
+            type: 'ARRAY',
+            items: {
+              type: 'OBJECT',
+              properties: {
+                field:     { type: 'STRING', enum: ['firstName', 'lastName', 'dob'] },
+                value:     { type: 'STRING' },
+                role:      { type: 'STRING', enum: ['caller'] },
+                turnIndex: { type: 'INTEGER' },
+                quote:     { type: 'STRING' },
+              },
+              required: ['field', 'value', 'role', 'turnIndex', 'quote'],
+            },
+          },
         },
         required: ['id', 'verdict', 'basis', 'evidence', 'note'],
       },
@@ -156,44 +181,164 @@ const RESPONSE_SCHEMA = {
   required: ['criteria', 'autoFails'],
 };
 
-export function buildMessages(scenario, transcript, department, sopContext = sopContextFor(department)) {
+/**
+ * Render the EVIDENCE ROLE RULES block from the resolved profile.
+ *
+ * This exists because a single global "never quote a caller line" sentence
+ * directly contradicts a department policy that lets a caller volunteer her own
+ * identifiers. The rules are therefore derived from the profile: navigator-only
+ * is the default for every criterion, and the narrow identity exception is
+ * spelled out ONLY when the active profile actually declares it.
+ */
+export function evidenceRoleRules(profile) {
+  const identityIds = profile.identityVerificationCriteria ?? [];
+  const lines = [
+    'EVIDENCE ROLE RULES (which speaker may be quoted):',
+    '- DEFAULT — NAVIGATOR ONLY: for every criterion except those listed below, a MET quote must'
+      + ' come from a SINGLE NAVIGATOR turn. A caller line never earns a navigator-performance'
+      + ' criterion.',
+    '- Every NOT_MET with basis EVIDENCE must quote a NAVIGATOR line. A caller line can never'
+      + ' substantiate an accusation that the navigator did something wrong or unsafe.',
+    '- Every auto-fail must quote a NAVIGATOR line. Auto-fails accuse the navigator of an explicit'
+      + ' unsafe statement, so caller wording is never sufficient.',
+  ];
+
+  if (identityIds.length === 0) {
+    lines.push('- There is NO identity exception in this rubric: identity criteria also follow the'
+      + ' navigator-only default above.');
+    return lines.join('\n');
+  }
+
+  lines.push(
+    `- IDENTITY EXCEPTION — ${identityIds.map((id) => `[${id}]`).join(' and ')} ONLY: identity is`
+      + ' established BY THE CALLER ("Hi, this is Maria Alvarez, date of birth March 2nd 1991").'
+      + ' For these criteria — and ONLY these — you cite CALLER turns, so the navigator loses'
+      + ' nothing for not re-asking for something the caller already volunteered. Identifiers may'
+      + ' be collected across several turns. You still NEVER cite a navigator turn for identity: the'
+      + ' navigator saying a name proves nothing about what the caller supplied, and the server'
+      + ' rejects any navigator-sourced identifier.',
+    '- The identity exception is limited to establishing WHICH identifiers were collected and'
+      + ' WHETHER they were collected before protected information was shared. It never allows'
+      + ' caller wording to earn any other criterion.',
+    '',
+    'STRUCTURED IDENTITY EVIDENCE (required for the identity criteria above):',
+    `For ${identityIds.map((id) => `[${id}]`).join(' and ')} you MUST also fill the`
+      + ' "identityEvidence" array with ONE entry per identifier you claim was collected. When both'
+      + ' identity criteria are MET, submit the SAME array for both:',
+    '  { "field": "firstName" | "lastName" | "dob", "value": "<the identifier itself>",',
+    '    "role": "caller", "turnIndex": <the [n] index of the CALLER turn>,',
+    '    "quote": "<verbatim contiguous quote from THAT caller turn containing the value>" }',
+    'Rules for this array (the server re-checks every one of them, so a guess will be rejected):',
+    '  * The "role" is always "caller". A navigator turn is never valid identity evidence.',
+    '  * "value" must be the identifier ALONE — the actual first name, the actual last name, or the'
+      + ' actual date of birth. Not a label, not a question, not a sentence.',
+    '  * "quote" must appear verbatim in the turn you name in "turnIndex", and must CONTAIN "value".',
+    '  * "turnIndex" is the number shown in square brackets at the start of each transcript line.',
+    '  * A question the caller never answered ("What is your date of birth?") proves NOTHING. Only'
+      + ' quote a turn where the identifier was actually STATED.',
+    '  * A phone number or a home address is NEVER a date of birth. Do not submit one as "dob".',
+    '  * The first name and the last name must be DIFFERENT values.',
+    '  * If a MET verdict is given for an identity criterion, the array MUST prove all THREE'
+      + ' identifiers (firstName, lastName, dob) — exactly one entry per field, no duplicates. A'
+      + ' MET verdict with a missing or incomplete array is a malformed response.',
+    '  * If an identifier was never collected, mark the criterion NOT_MET rather than inventing it.',
+    '',
+    'ONE PATIENT (the server enforces this — mixed identities are rejected):',
+    '  * All three identifiers must belong to the SAME patient. Do NOT combine one patient\'s DOB'
+      + ' with a different patient\'s name, and do NOT take the first name from one person and the'
+      + ' last name from another.',
+    '  * When the caller names BOTH herself and a different patient ("My name is Sarah, date of'
+      + ' birth …, but the appointment is for Maria Alvarez"), the PATIENT is Maria Alvarez — submit'
+      + ' Maria\'s name AND Maria\'s date of birth, never Sarah\'s DOB.',
+    '',
+    'WHOSE NAME COUNTS (the server enforces this — a name that is not the PATIENT\'S is rejected):',
+    '  * The NAVIGATOR\'S OWN NAME is never the patient\'s name. "Thank you for calling, this is'
+      + ' Dana" identifies the navigator — Dana is not a firstName.',
+    '  * A PROVIDER or STAFF name is never the patient\'s name. "I need Dr. Reyes", "your'
+      + ' appointment is with Dr. Reyes", a nurse or a pharmacist — none of these is a lastName.'
+      + ' The answer to "Who is your provider?" is a clinician, not the patient.',
+    '  * Ordinary request words are never a name. "This is about my refill", "an appointment", or'
+      + ' "next Tuesday" contain no patient name.',
+    '  * A name merely MENTIONED in passing is not identity. "I spoke with Maria yesterday" does'
+      + ' not establish that the patient is Maria.',
+    '  * The name must be stated as the patient\'s: the caller identifying herself ("this is Maria'
+      + ' Alvarez", "my name is Maria Alvarez"), naming the patient explicitly ("the patient is'
+      + ' Maria Alvarez", "I\'m calling for my daughter, Maria Alvarez", "the appointment is for'
+      + ' Maria Alvarez"), or ANSWERING the navigator\'s question for the patient\'s name (a'
+      + ' one-word answer such as "Maria." to "First name?" is fine).',
+    '  * An authorized third party may supply the patient\'s identifiers — a parent calling about a'
+      + ' child is normal and correct.',
+    '',
+    'DATES OF BIRTH: a spoken date is perfectly acceptable and is NOT a transcription problem —'
+      + ' "March second nineteen ninety-one", "the second of March nineteen ninety-one",'
+      + ' "March 2, 1991" and "03/02/1991" are all valid. Submit whatever the caller actually said.'
+      + ' The date must be a REAL calendar date; a two-digit year, a digit-by-digit reading, or a'
+      + ' month and day with no year cannot be verified.',
+    'If the array does not independently prove all three identifiers, the identity criteria lose'
+      + ' credit regardless of the verdict you return. Do not claim MET and leave this array empty.',
+    'For a MET identity criterion, "evidence" MUST still contain one non-empty verbatim CALLER'
+      + ' quote (use the same caller quote as an identity claim) to satisfy the response contract.'
+      + ' The server ignores this free-text field for identity credit and derives identity only from'
+      + ' the structured array.',
+  );
+  return lines.join('\n');
+}
+
+/**
+ * Build the grader prompt for ONE resolved department rubric profile. The
+ * criteria enumerated in the prompt, the auto-fail list, the evidence role
+ * rules, the department grading rules, and the criterion-count assertion all
+ * come from that same profile, so the model can never be asked about a rubric
+ * different from the one that will score its verdicts.
+ */
+export function buildMessages(
+  scenario, transcript, department, sopContext = sopContextFor(department),
+  profile = requireQaRubricProfile(department),
+) {
   // Both 'patient' and 'caller' are caller-side roles; only 'navigator' is the
   // navigator. Never serialize a caller-side turn as "Navigator".
+  // Turn indices are part of the prompt contract: structured identity evidence
+  // references them, and the server re-checks the referenced turn. The index is
+  // the position in the BOUNDED transcript the server will grade, so a model
+  // index always maps to the same turn the server verifies against.
   const callText = transcript
     .slice(0, MAX_TURNS)
-    .map((t) => `${t.role === 'navigator' ? 'Navigator' : 'Caller'}: ${String(t.text ?? '').slice(0, MAX_TURN_CHARS)}`)
+    .map((t, index) => `[${index}] ${t.role === 'navigator' ? 'Navigator' : 'Caller'}: ${String(t.text ?? '').slice(0, MAX_TURN_CHARS)}`)
     .join('\n');
 
-  const rubricText = QA_RUBRIC
+  const rubricText = profile.rubric
     .map((cat) => `${cat.name}:\n${cat.criteria.map((c) => `  - [${c.id}] ${c.text}`).join('\n')}`)
     .join('\n');
-  const autoFailText = QA_AUTO_FAILS.map((a) => `  - [${a.id}] ${a.text}`).join('\n');
+  const autoFailText = profile.autoFails.map((a) => `  - [${a.id}] ${a.text}`).join('\n');
 
   const systemInstruction =
 `You are a strict QA auditor at a medical contact centre, scoring a patient navigator's call \
 against a fixed quality rubric. You do NOT assign scores. For EACH rubric criterion you return \
 exactly one verdict AND one basis:
 
-  MET      (basis "EVIDENCE")  — the transcript clearly shows the NAVIGATOR doing the behavior. \
-You MUST put ONE contiguous verbatim quote from a SINGLE NAVIGATOR turn in "evidence" — copied \
-character-for-character, no role label, no ellipses, no stitching lines together, never a caller \
-line. For behaviors shown across the whole call, quote the single best navigator example line.
+  MET      (basis "EVIDENCE")  — the transcript clearly shows the behavior. You MUST put ONE \
+contiguous verbatim quote in "evidence" — copied character-for-character, no role label, no \
+ellipses, no stitching lines together. For behaviors shown across the whole call, quote the \
+single best example line. WHOSE line may be quoted is governed by the EVIDENCE ROLE RULES below.
   NOT_MET  (basis "EVIDENCE") — the navigator did the WRONG or UNSAFE thing and it is OBSERVABLE. \
 Use this whenever the miss is an observed action: wrong routing destination, clinical/medication \
 advice, an unsafe promise, sarcasm/profanity, an incorrect scheduling instruction, reading or \
 interpreting a result, or sharing information before verification. You MUST quote the offending \
 NAVIGATOR line verbatim in "evidence" and name the rule broken in "note".
   NOT_MET  (basis "ABSENCE")  — the navigator simply NEVER did the expected behavior (e.g. never \
-stated their name, never offered the survey, never confirmed callback info, never gathered a \
-required detail). Put the reason in "note" and leave "evidence" EMPTY — there is nothing to quote.
-  NA       (basis "ABSENCE")  — the criterion genuinely cannot apply to this scenario (e.g., no \
-appointment was needed, so no recap was possible). Leave "evidence" EMPTY. Use sparingly; \
-greeting, verification, tone, listening, and closing criteria apply to EVERY call.
+stated their own name, never confirmed callback info, never gathered a required detail). Put the \
+reason in "note" and leave "evidence" EMPTY — there is nothing to quote.
+  NA       (basis "ABSENCE")  — the criterion genuinely cannot apply to this call. Leave \
+"evidence" EMPTY. Several criteria in this rubric are explicitly CONDITIONAL and are MEANT to be \
+NA when their trigger did not occur — read each criterion's own text and follow it. Do not assume \
+a criterion applies to every call unless its text says so.
 
-BASIS RULES (strict — a mismatch is rejected): MET always uses EVIDENCE with a real navigator \
-quote. An OBSERVED wrong/unsafe behavior is NOT_MET with basis EVIDENCE and a quoted navigator \
-line — never call an observed violation an absence. A behavior that never happened is NOT_MET (or \
-NA) with basis ABSENCE and empty evidence. Never put substantive evidence on an ABSENCE.
+BASIS RULES (strict — a mismatch is rejected): MET always uses EVIDENCE with a real quote. An \
+OBSERVED wrong/unsafe behavior is NOT_MET with basis EVIDENCE and a quoted NAVIGATOR line — never \
+call an observed violation an absence. A behavior that never happened is NOT_MET (or NA) with \
+basis ABSENCE and empty evidence. Never put substantive evidence on an ABSENCE.
+
+${evidenceRoleRules(profile)}
 
 Grading rules — this is a hard test, apply them strictly:
 - Judge only CALLER-OBSERVABLE communication in the transcript. Do not infer that a silent internal action happened, and do not penalize or review solely because an internal click, label, queue, channel, or staff assignment was not spoken.
@@ -232,19 +377,19 @@ above so a navigator is never failed for something they actually did right:
 proper nouns (organization, locations, provider or queue names) or numbers. Judge whether the \
 navigator conveyed the CORRECT entity or rule — never fail a criterion only because a name, \
 place, or term looks mis-transcribed or was said as a valid synonym (see the vocabulary below).
-- Natural closings count: for the closing pleasantry criteria, a courteous natural wrap-up is \
-enough. If the caller has already said thanks or goodbye and the navigator responds in kind, or \
-the navigator gives any polite sign-off, treat the closing pleasantry as MET even without the \
-exact scripted phrase. Do not require rote wording.
-- WORKFLOW FAIRNESS RULES: For a standard medication refill, do not require PE / Physical Exam / physical status verification unless the scenario makes it the governing issue. Require medication name, preferred pharmacy, callback details when needed, out-of-medication urgency, a correct message/routing step, no promised approval, and no medication advice. Do not fail Knowledge solely because PE was not asked.
 - System-visible facts: do not penalize a navigator for not asking about facts normally checked in the ECW/system/chart unless the scenario requires caller confirmation. Do not invent a missing caller question as a failure.
-- Natural routing wording: exact TE or Telephone Encounter wording is not required. "send the request," "send a message," "send this over," "route this," "put in a note," or sending it to the nurse, provider, refill team, or clinical team counts when the workflow and destination are correct.
-- Still strict: these fairness rules never excuse a wrong queue/destination, no next step, missing medication/pharmacy/callback details when required, missed urgency, promised approval or unsupported same-day completion, medication/dosing or clinical advice, result interpretation, or privacy/verification failure.
+- Still strict: these fairness rules never excuse a wrong queue/destination, no next step, missing required caller details, missed urgency, promised approval or unsupported same-day completion, medication/dosing or clinical advice, result interpretation, or privacy/verification failure.
 Fairness rules never weaken verification, privacy/scope, routing, scheduling, or real SOP-knowledge failures.
 
-Separately, check the auto-fail conditions. Set "triggered": true ONLY if the transcript \
-contains an explicit violation, and quote the offending navigator line verbatim in "evidence". \
-When in doubt, triggered is false.
+${profile.graderInstructions}
+
+Separately, check the auto-fail conditions. Return an entry for EVERY auto-fail id listed below, \
+triggered or not — omitting one, repeating one, or inventing an id is a malformed response. Set \
+"triggered": true ONLY if the transcript contains an explicit violation, and then you MUST quote \
+the offending navigator line verbatim in "evidence"; a triggered auto-fail with no quote is \
+rejected. For an auto-fail that did not occur, set "triggered": false. When in doubt, triggered \
+is false. For triggered:false, both "evidence" and "note" MUST be empty strings; contradictory \
+allegations are malformed and rejected.
 
 RUBRIC CRITERIA:
 ${rubricText}
@@ -266,7 +411,7 @@ ${scenario}
 Full call transcript:
 ${callText}
 
-Return a verdict object for ALL ${rubricCriteria().length} criteria ids and all ${QA_AUTO_FAILS.length} auto-fail ids.`;
+Return a verdict object for ALL ${profile.criteria.length} criteria ids and all ${profile.autoFails.length} auto-fail ids.`;
 
   return { systemInstruction, userMessage };
 }
@@ -283,8 +428,14 @@ function buildBody(systemInstruction, userMessage) {
   };
 }
 
-export function finalizeQaResult(scored, transcript, correctedTurns = 0, repairs = [], metadataIntegrity = { verified: true, status: 'verified' }, forcedReviewReasons = [], deterministicFindings = [], gradingMetadata = null, captureIntegrity = { complete: true }, transcriptMetadata = null) {
-  const review = assessQa(scored, transcript, { correctedTurns, repairs, deterministicFindings });
+export function finalizeQaResult(scored, transcript, correctedTurns = 0, repairs = [], metadataIntegrity = { verified: true, status: 'verified' }, forcedReviewReasons = [], deterministicFindings = [], gradingMetadata = null, captureIntegrity = { complete: true }, transcriptMetadata = null, profile = undefined) {
+  // The profile that scored this attempt also owns its safety-critical set and
+  // its domain/competency projections. Prefer an explicit profile; otherwise
+  // recover the one `scoreQa` stamped onto the scorecard.
+  const activeProfile = profile ?? getQaRubricProfile(scored?.rubricDepartment) ?? undefined;
+  const review = assessQa(scored, transcript, {
+    correctedTurns, repairs, deterministicFindings, profile: activeProfile,
+  });
   // assessQa owns deterministic review flags and recommendation changes. Keep
   // that logic in one place so each finding category is surfaced exactly once.
   if (forcedReviewReasons.includes('routing-policy-review-only')) {
@@ -325,7 +476,9 @@ export function finalizeQaResult(scored, transcript, correctedTurns = 0, repairs
   }
   const qa = {
     ...scored,
-    ...qaDomainScoreSummary(scored),
+    // Projected with the SAME profile that graded the attempt — never the
+    // globally imported rubric.
+    ...qaDomainScoreSummary(scored, activeProfile),
     domainScoreVersion: '2026-07-09-v1',
     review,
     correctedTurns,
@@ -370,7 +523,10 @@ function storedScenarioIntegrity(attempt, snapshot) {
 
 export function buildScenarioContextFromAttempt(attempt) {
   const snapshot = attempt.scenarioSnapshot ?? {};
-  const department = attempt.department ?? 'pediatrics';
+  // The department comes ONLY from the server-owned attempt. There is no
+  // default: an attempt with no stored department cannot be matched to a rubric
+  // profile, and `gradeCallQaTranscript` fails closed rather than guessing one.
+  const department = attempt.department ?? null;
   const status = storedScenarioIntegrity(attempt, attempt.scenarioSnapshot);
   const privateContext = snapshot.gradingContext ?? snapshot.scenario ?? '';
   const gradingScenario = buildTrustedGradingScenario({
@@ -426,6 +582,13 @@ class GradingServiceError extends Error {
   }
 }
 
+function validationFailureKind(error) {
+  const message = String(error ?? '');
+  if (/MET requires a non-empty evidence quote/i.test(message)) return 'met-evidence-empty';
+  if (/identityEvidence|identity criterion|Identity criteria/i.test(message)) return 'identity-contract';
+  return 'response-contract';
+}
+
 /**
  * Reusable Call QA grading service. Given a transcript + a TRUSTED scenario
  * context (both server-owned), it runs the pinned grader, all deterministic
@@ -443,6 +606,25 @@ export async function gradeCallQaTranscript({ transcript: rawTranscript, scenari
   const sopFresh = deps.sopContextForFresh ?? sopContextForFresh;
   const configEnv = deps.env ?? process.env;
   const graderModel = deps.graderModel ?? callQaGraderModel(configEnv);
+
+  // ── THE department rubric profile resolution point ────────────────────────
+  // Resolved ONCE from the server-authoritative department stored on the
+  // attempt (never a browser-supplied value), then threaded through prompt
+  // construction, validation, repairs, scoring, deterministic findings, review,
+  // and the domain/competency projections. An unsupported department FAILS
+  // CLOSED here — it must never silently inherit another department's rubric.
+  let profile;
+  try {
+    profile = requireQaRubricProfile(scenarioContext.department);
+  } catch (err) {
+    if (err instanceof UnsupportedQaDepartmentError) {
+      throw new GradingServiceError(
+        422,
+        'Scored Call QA is not configured for this department. A supervisor must review this attempt manually.',
+      );
+    }
+    throw err;
+  }
   const attemptTimeoutMs = callQaGeminiAttemptTimeoutMs(configEnv);
   const maxAttempts = callQaGeminiMaxAttempts(configEnv);
   const totalDeadlineMs = callQaGeminiTotalDeadlineMs(configEnv);
@@ -457,12 +639,14 @@ export async function gradeCallQaTranscript({ transcript: rawTranscript, scenari
     transcript,
     scenarioContext.department,
     await sopFresh(scenarioContext.department),
+    profile,
   );
   const body = buildBody(systemInstruction, userMessage);
 
   // Scored Call QA uses ONE pinned, auditable model — key rotation only, NO
   // model fallback. A malformed-output retry reuses the SAME pinned model.
   let validated = null;
+  let validationError = null;
   let usedModel = graderModel;
   let attemptsUsed = 0;
   const gradingStartedAt = Date.now();
@@ -491,27 +675,47 @@ export async function gradeCallQaTranscript({ transcript: rawTranscript, scenari
     } catch {
       continue;
     }
-    const check = validateQaResponse(parsed);
+    const check = validateQaResponse(parsed, profile);
     if (check.data) validated = check.data;
-    else console.warn(`grade-call-qa: upstream response invalid model=${usedModel} attempt=${attemptsUsed} elapsedMs=${Date.now() - gradingStartedAt}`);
+    else {
+      validationError = check.error;
+      console.warn(`grade-call-qa: upstream response invalid model=${usedModel} attempt=${attemptsUsed} elapsedMs=${Date.now() - gradingStartedAt}`);
+    }
   }
   if (!validated) {
-    throw new GradingServiceError(502, 'The grader returned an unusable review. Try again.');
+    const error = new GradingServiceError(502, 'The grader returned an unusable review. Try again.');
+    error.contractFailureKind = validationFailureKind(validationError);
+    throw error;
   }
 
   const boundedTranscript = transcript
     .slice(0, MAX_TURNS)
     .map((t) => ({ role: t.role, text: String(t.text ?? '').slice(0, MAX_TURN_CHARS) }));
+  // One profile object flows into repairs, scoring, and findings, so the prompt
+  // rules, the deterministic scoring, and the auto-fail logic cannot diverge.
+  const repairContext = { ...scenarioContext.repairContext, profile };
   const repaired = scenarioContext.verified
-    ? repairQaVerdictsForScenario(validated, boundedTranscript, scenarioContext.repairContext)
-    : { criteria: validated.criteria, autoFails: validated.autoFails, repairs: [], reviewReasons: [] };
-  const scored = scoreQa(repaired.criteria, repaired.autoFails, boundedTranscript);
+    ? repairQaVerdictsForScenario(validated, boundedTranscript, repairContext)
+    : {
+      criteria: validated.criteria, autoFails: validated.autoFails, repairs: [], reviewReasons: [],
+      // Even when repairs are disabled the binding must reach scoring intact.
+      profileBinding: validated.profileBinding,
+    };
+  // The binding is re-checked here: validation, repair and scoring must provably
+  // be the same rubric profile, not merely the same criterion ids.
+  const scored = scoreQa(
+    repaired.criteria, repaired.autoFails, boundedTranscript, profile, repaired.profileBinding,
+  );
   const deterministicFindings = evaluateQaDeterministicFindings(
-    scored.criteria, boundedTranscript, scenarioContext.repairContext,
+    scored.criteria, boundedTranscript, repairContext,
   );
   const gradingMetadata = {
     model: usedModel,
-    rubricVersion: QA_RUBRIC_VERSION,
+    // Which department rubric graded this attempt, and which version of it.
+    // Stored so a historical result is always rendered/calibrated under the
+    // rubric it was actually graded with.
+    rubricDepartment: profile.department,
+    rubricVersion: profile.rubricVersion,
     promptVersion: CALL_QA_PROMPT_VERSION,
     scenarioVersion: scenarioContext.scenarioVersion ?? null,
     sourceSopVersion: scenarioContext.sourceSopVersion ?? null,
@@ -534,6 +738,7 @@ export async function gradeCallQaTranscript({ transcript: rawTranscript, scenari
   const { qa, grade } = finalizeQaResult(
     scored, boundedTranscript, correctedTurns, repaired.repairs, scenarioContext,
     repaired.reviewReasons, deterministicFindings, gradingMetadata, captureIntegrity, transcriptMetadata,
+    profile,
   );
   return { qa, grade };
 }

@@ -448,3 +448,74 @@ describe('NavigatorDetail — QA history badge is never an unreviewed bare verdi
     expect(await screen.findByText('QA TEST · FINAL PASS')).toBeInTheDocument();
   });
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Rubric interpretability is resolved at RENDER time (correction pass #2).
+//
+// The previous build trusted a persisted `qa.scoringUnavailable` boolean. That
+// flag is written by whichever build GRADED the attempt, so a record produced by
+// a future/unknown rubric carries its own stored `domainScores` and no flag at
+// all — and the projection rendered anyway, presenting scores this build cannot
+// interpret. These tests drive the real component.
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('NavigatorDetail — unknown rubric versions withhold the domain projection', () => {
+  const unknownVersionSession = (extra = {}) => qaSession({
+    qa: {
+      pass: true,
+      score: 92,
+      passThreshold: 85,
+      review: { recommendation: 'pass', confidence: 'high', safetyRisk: 'none', reviewFlags: [] },
+      gradingMetadata: { rubricVersion: 'qa-rubric-obgyn-v99', rubricDepartment: 'obgyn' },
+      // Stale projections written by the build that graded it.
+      domainScores: { intake: { score: 95, possible: 10, earned: 9.5, criteria: [] } },
+      ...extra,
+    },
+  });
+
+  it('withholds stale stored domainScores under an unknown recorded version', async () => {
+    renderDetail(unknownVersionSession());
+    fireEvent.click(await screen.findByText('Jordan'));
+    expect(await screen.findByText(/Unavailable/)).toBeInTheDocument();
+    expect(screen.getByText('qa-rubric-obgyn-v99')).toBeInTheDocument();
+    expect(screen.queryByText(/95%/)).not.toBeInTheDocument();
+  });
+
+  it('ignores a stored scoringUnavailable:false on an unknown version', async () => {
+    renderDetail(unknownVersionSession({ scoringUnavailable: false }));
+    fireEvent.click(await screen.findByText('Jordan'));
+    expect(await screen.findByText(/Unavailable/)).toBeInTheDocument();
+    expect(screen.queryByText(/95%/)).not.toBeInTheDocument();
+  });
+
+  it('still renders the projection for a KNOWN rubric version', async () => {
+    renderDetail(qaSession({
+      qa: {
+        pass: true,
+        score: 92,
+        passThreshold: 85,
+        review: { recommendation: 'pass', confidence: 'high', safetyRisk: 'none', reviewFlags: [] },
+        gradingMetadata: { rubricVersion: 'qa-rubric-obgyn-v1', rubricDepartment: 'obgyn' },
+        domainScores: { intake: { score: 95, possible: 10, earned: 9.5, criteria: [] } },
+      },
+    }));
+    fireEvent.click(await screen.findByText('Jordan'));
+    expect(await screen.findByText('QA-only domain signal')).toBeInTheDocument();
+    expect(screen.queryByText(/Unavailable/)).not.toBeInTheDocument();
+  });
+
+  it('renders a metadata-less legacy attempt without crashing', async () => {
+    renderDetail(qaSession({
+      qa: {
+        pass: true,
+        score: 92,
+        passThreshold: 85,
+        review: { recommendation: 'pass', confidence: 'high', safetyRisk: 'none', reviewFlags: [] },
+        domainScores: { intake: { score: 95, possible: 10, earned: 9.5, criteria: [] } },
+      },
+    }));
+    fireEvent.click(await screen.findByText('Jordan'));
+    expect(await screen.findByText('QA-only domain signal')).toBeInTheDocument();
+    expect(screen.queryByText(/Unavailable/)).not.toBeInTheDocument();
+  });
+});

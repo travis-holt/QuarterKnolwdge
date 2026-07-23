@@ -1,5 +1,693 @@
 ﻿# Development History - Knowledge Check
 
+## 2026-07-23 — Call QA live-contract evidence correction (prompt v8)
+
+**Status: Draft PR #41 remains unmerged, undeployed, and not ready.** A real non-production
+live-contract run against the pinned grader reproduced malformed model responses: `MET` criteria
+with empty `evidence` failed server validation. The root cause was a prompt contradiction: global
+response rules required a non-empty quote for every `MET`, while identity guidance told the grader
+not to populate free-text identity evidence. Prompt `call-qa-grader-v8` now requires a contiguous
+caller quote for every MET identity response solely to satisfy the response shape; only the
+structured `identityEvidence` array establishes identity credit. The rubric remains
+`qa-rubric-obgyn-v1` (100 points, 85 pass); identity parsing, DOB ownership, disclosure detection,
+calibration thresholds, and scoring are unchanged.
+
+The live smoke now emits a privacy-safe response-contract category for malformed responses, never
+raw model output or identifier values. The v8 targeted live cases for separate one-word answers and
+authorized third-party callers both passed. A full v8 run then passed 18/20 cases, but cases 15 and
+20 exhausted the dedicated pool with upstream HTTP 429; it emitted
+`LIVE_CONTRACT_SMOKE_FAILED`, not verified evidence. Because this is model-visible, v8 is a
+distinct calibration population; no human evidence was fabricated and current readiness remains
+`INSUFFICIENT_DATA`.
+
+## 2026-07-23 — Call QA auxiliary confirmation structure (correction pass #7 follow-up 2)
+
+**Status: Draft PR #41 remains unmerged, undeployed, and not ready.** No migration, production
+write, private-scenario provisioning, historical rewrite, prompt/schema/rubric change, auto-merge,
+or ready-state change. Against independently reviewed head `e6fd39d`, the focused pass-7 file ran
+31 tests with **5 failures / 26 passes** before implementation changed: four auxiliary-led
+confirmation disclosures were suppressed, and the end-to-end pre-identity confirmation could not
+verify `af-hipaa`.
+
+`isInformationRequestInterrogative()` now uses clause structure rather than the first auxiliary
+alone. Genuine requests for the caller to supply information remain non-disclosures. First-person
+`confirm`/`verify` clauses that reveal a protected fact and auxiliary/declarative confirmation tags
+remain disclosures. Refusal handling, identity candidates, DOB ownership, chronology, quote
+mapping, prompt/schema, rubric, historical scoring, and calibration logic are unchanged.
+
+Prompt remains `call-qa-grader-v7`; OB/GYN rubric remains `qa-rubric-obgyn-v1`. See
+[docs/GRADING_INVARIANTS.md](GRADING_INVARIANTS.md) §0n. Final focused gate: **33/33**.
+Final unit gate: **2,226 tests across 85 files** (2,218 → 2,226).
+
+## 2026-07-23 — Call QA auxiliary-led information-question exclusion (correction pass #7 follow-up)
+
+**Status: Draft PR #41 remains unmerged, undeployed, and not ready.** No migration, production
+write, private-scenario provisioning, historical rewrite, prompt/schema/rubric change, auto-merge,
+or ready-state change. Against independently reviewed head `c2ef411`, the focused pass-7 file ran
+24 tests with **5 failures / 19 passes** before implementation changed: four auxiliary-led
+information questions were treated as disclosures and the end-to-end case false-zeroed.
+
+One narrow `isInformationRequestInterrogative()` helper now excludes clauses beginning with
+`what/when/where/who/why/how` or
+`is/are/was/were/do/does/did/can/could/would/have/has/may`. The rule is structural and does not
+depend on a trailing question mark. Confirmation-tag statements remain protected disclosures:
+`Your appointment is Tuesday, correct?`, `Your results were normal, right?`, and
+`You are scheduled with Dr. Reyes, okay?`. Refusal handling, unique quote/clause mapping,
+disclosure overlap, and quoted-turn chronology are unchanged.
+
+Final focused gate: **25/25**. Final unit gate: **2,218 tests across 85 files** (2,208 → 2,218).
+Prompt remains `call-qa-grader-v7`; OB/GYN rubric remains `qa-rubric-obgyn-v1`. See
+[docs/GRADING_INVARIANTS.md](GRADING_INVARIANTS.md) §0n.
+
+## 2026-07-23 — Call QA non-null candidate binding, caller-owned DOB rejection, quoted-disclosure chronology (correction pass #7)
+
+**Status: Draft PR #41 remains unmerged, undeployed, and not ready.** No Firestore migration or
+production write, no private-scenario provisioning, no historical result rewritten, and **no
+model-visible contract change** — the prompt stays `call-qa-grader-v7` and the OB/GYN rubric stays
+`qa-rubric-obgyn-v1`. Against independently reviewed head `6b876d2`, the initial 13 focused tests
+reproduced all three blockers before implementation changed: **7 failed and 6 preservation cases
+passed**; two caller-ownership variants were then added to the final 15-test file
+([`api/qaCorrectionPass7.test.js`](../api/qaCorrectionPass7.test.js)).
+
+1. A complete identity now requires firstName, lastName, and DOB each to resolve to the same
+   non-null candidate. An unresolved claim after a patient switch fails closed.
+2. One deterministic DOB-ownership decision now drives both model-submitted evidence and
+   `earliestCompleteIdentity()`. Explicit caller ownership cannot satisfy a third-party patient;
+   patient-linked wording remains valid, and only the patient-linked occurrence binds when both
+   caller and patient dates appear.
+3. `classifyAfHipaaEvidence()` returns its unique mapped turn and clause. A model-triggered
+   `af-hipaa` compares identity completion to that quoted disclosure turn, never an unrelated
+   detector hit; information-request questions are not disclosures.
+
+See [docs/GRADING_INVARIANTS.md](GRADING_INVARIANTS.md) §0n. Final unit gate: **2,208 tests across
+85 files** (2,193 → 2,208; one new focused file). No merge, deploy, ready-state change, or
+auto-merge.
+
+## 2026-07-22 — Call QA independent identity chronology, refusal-aware disclosure, candidate binding, exact DOB span, surname particles, provider grammar, bidirectional consistency, privacy-gated smoke (correction pass #6)
+
+**Status: Draft PR #41 remains unmerged, undeployed, and not ready.** No Firestore migration or
+production write, no private-scenario provisioning, no historical result rewritten, and **no
+model-visible contract change** — the prompt text and response schema are untouched, so the prompt
+stays `call-qa-grader-v7` and the OB/GYN rubric stays `qa-rubric-obgyn-v1` (100 points, 85 pass;
+criteria, weights, applicability, and auto-fail definitions unchanged). Against independently
+reviewed head `9c2da51`, 20 focused adversarial tests reproduced the blockers before the fix
+([`api/qaCorrectionPass6.test.js`](../api/qaCorrectionPass6.test.js)).
+
+The sixth independent review attacked the enforcement correction pass #5 introduced:
+
+1. **af-hipaa still trusted the MODEL-SELECTED identity occurrence.** A new independent, transcript-wide
+   `earliestCompleteIdentity()` derives the earliest turn a complete single-patient identity exists,
+   so a model that submits only a LATER repetition can no longer make the server believe verification
+   happened after a disclosure. af-hipaa verifies only when that independent earliest identity is
+   unambiguous and at/after the first disclosure; proven-before → no zero; ambiguous → critical review.
+2. **af-hipaa/disclosure could be verified from NEGATED or detached wording.** Disclosure detection is
+   now refusal- and clause-aware; the af-hipaa quote must map to exactly one navigator turn and clause,
+   the containing clause is classified (a governing refusal vetoes it), and the quote must itself carry
+   the disclosure content — a detached benign fragment does not verify; a non-unique mapping fails closed.
+3. **Identity claims were bound via one global token Set.** `resolveIdentityCandidates()` now binds each
+   claim to ONE discrete candidate; a first name from patient A and a last name from an
+   explicitly-switched patient B fail closed, and a caller and patient who merely share a name are an
+   ambiguous subject.
+4. **DOB ownership used the first identical date in the turn.** It now uses the exact occurrence inside
+   the verified caller quote, and fails closed on a duplicate quote.
+5. **Lowercase surname particles were dropped from designations** before `splitPersonName` ran; they are
+   now preserved inside a proper-name structure ("Maria de la Cruz" keeps "de la Cruz").
+6. **Provider-name detection missed OB-GYN / obstetrician and the "name of the <provider>" direction**;
+   both are now covered.
+7. **Only one identity contradiction was rejected.** A NOT_MET identity/order criterion the server proves
+   satisfied is now credited, marked unresolved, and routed to mandatory review (never a silent
+   deduction); the impossible `verify-before-access` MET + `verify-three` NOT_MET pair is still a retry.
+8. **The live smoke accepted a generic fail for early-disclosure cases.** Each early-disclosure case is
+   now gated on a privacy-specific result (a verified af-hipaa or a critical deterministic-privacy-conflict
+   review), and the set grew to 20 synthetic cases.
+
+See [docs/GRADING_INVARIANTS.md](GRADING_INVARIANTS.md) §0m. Final unit gate: **2,193 tests across
+84 files** (2,163 → 2,193; one new file). No merge, deploy, ready-state change, or auto-merge.
+
+## 2026-07-22 — Call QA af-hipaa trust, DOB ownership, sequences, name components, provider detection, verdict consistency, live smoke (correction pass #5)
+
+**Status: Draft PR #41 remains unmerged, undeployed, and not ready.** No Firestore migration or
+production write, no private-scenario provisioning, no historical result rewritten, and **no
+model-visible contract change** — the prompt stays `call-qa-grader-v7` and the OB/GYN rubric stays
+`qa-rubric-obgyn-v1` (100 points, 85 pass; criteria, weights, applicability, and auto-fail
+definitions unchanged). Against independently reviewed head `da26baa`, 20 focused adversarial tests
+failed before the implementation changed ([`api/qaCorrectionPass5.test.js`](../api/qaCorrectionPass5.test.js)).
+
+The fifth independent review attacked the enforcement correction pass #4 introduced:
+
+1. **A model OMISSION could still create a false verified `af-hipaa`.** The server derived canonical
+   identity only from the model's structured `identityEvidence` arrays, and treated an incomplete
+   canonical identity as PROOF that identity was absent. So a fully-verified call graded with both
+   identity criteria wrongly returned NOT_MET/empty and an `af-hipaa` triggered on a
+   post-verification appointment quote would ZERO a genuinely verified call. `af-hipaa` now verifies
+   only with positive server-verifiable chronology (a detected protected disclosure in an identified
+   navigator turn AND canonical identity COMPLETE and completed at or after that disclosure AND not
+   contradicting a proven "verified before access"). Incomplete/missing/unprovable identity is
+   uncertainty: it forces a `deterministic-privacy-conflict` critical review, never an automatic zero.
+2. **`verifyIdentifierClaim` discarded the verified caller quote** (it returned the bare value), so a
+   multi-turn third-party DOB whose ownership language lived in the caller's own answer was rejected.
+   The original caller quote is now preserved; ownership uses the value for position and the quote
+   for ownership language, so `Her DOB is …` / `the patient's DOB is …` / `Maria's date of birth is
+   …` are credited while a phone/address elsewhere in the turn cannot bypass ownership.
+3. **Typed field answers were flattened across the whole transcript**, combining a first name from
+   patient A with a last name from an explicitly-announced second patient B. Field answers are now
+   grouped into discrete candidate sequences with deterministic subject-switch cues; answers spanning
+   more than one candidate fail closed.
+4. **Every token after the first was treated as the surname** (`Maria Elena Alvarez` → surname
+   `Elena Alvarez`). Splitting is now conservative: two tokens → first/last; a bounded documented
+   surname-particle list handles `de la Cruz` / `del Rio`; an ambiguous 3+-token name fails closed.
+5. **Provider full-name questions bypassed the provider detector** (`your OB's last name`, `the
+   doctor's first and last name`). Provider patterns now accept field qualifiers and an expanded
+   clinician-term list and take precedence, so a clinician name never becomes patient identity.
+6. **Verification verdicts could contradict one another** (`verify-before-access` MET while
+   `verify-three` NOT_MET). That impossible pair now trips the malformed-response retry.
+7. **The live contract smoke** now asserts the complete privacy-relevant scorecard state per case,
+   adds five explicit HIPAA/chronology cases (15 total), and the dedicated-key resolver no longer
+   masks a populated singular key when the plural env var is set-but-empty.
+
+See [docs/GRADING_INVARIANTS.md](GRADING_INVARIANTS.md) §0l. Final unit gate: **2,163 tests across
+83 files** (2,128 → 2,163; one new file). No merge, deploy, ready-state change, or auto-merge.
+
+## 2026-07-22 — Call QA canonical identity and HIPAA chronology (correction pass #4)
+
+**Status: Draft PR #41 remains unmerged, undeployed, and not ready.** No Firestore migration or
+production write, no private-scenario provisioning, and no historical result was rewritten.
+Against independently reviewed head `fe54788`, 16/77 focused adversarial tests failed before the
+implementation changed. They reproduced field-swapped/overlapping names, shared-token patient
+collisions, third-party DOB ownership errors, contradictory negative auto-fails, and HIPAA triggers
+that were not bound to disclosure chronology.
+
+The server now represents full patient designations as discrete candidates (exact repeats
+deduplicate; shared first/surnames never merge), enforces ordered first/last field semantics, and
+documents the multi-token surname rule as first token = given name and remaining tokens = surname.
+DOB ownership starts from the verified claim span and uses transcript-level patient state, so
+`your DOB` after a third-party designation fails closed while explicit patient-linked ownership and
+coherent direct-patient sequences pass. One canonical identity/disclosure chronology now drives
+`verify-three`, `verify-before-access`, and `af-hipaa` consistency.
+
+A model-triggered `af-hipaa` requires a real navigator quote that is itself a protected disclosure
+before identity completion. If the bounded deterministic detector instead proves an early
+disclosure while the model reports false, the attempt receives a mandatory critical supervisor
+review conflict, not an automatic zero; uncertain language also stays review-only. Negative
+auto-fails now require empty evidence and note before normalization, with malformed responses using
+the existing one-retry/unusable-grader path.
+
+Because the stricter negative auto-fail response is model-visible, the prompt moves v6 →
+**`call-qa-grader-v7`**. The OB/GYN rubric remains **`qa-rubric-obgyn-v1`**: 100 points, 85 pass,
+unchanged criteria/weights/applicability/auto-fail definitions. Pediatrics and immutable historical
+populations remain unchanged and provenance keeps v3–v7 populations separate.
+
+The live contract smoke now reads only `CALL_QA_LIVE_SMOKE_API_KEY(S)`. Missing credentials return
+distinct nonzero `LIVE_CONTRACT_SMOKE_NOT_RUN`; `--allow-skip` prints
+`LIVE_CONTRACT_SMOKE_SKIPPED` but cannot satisfy the gate; only exit 0 with
+`LIVE_CONTRACT_SMOKE_VERIFIED` counts. It remains synthetic, pinned-model, non-production,
+Firestore/private-bank-free, and has no calibration authority. Calibration is still
+`INSUFFICIENT_DATA`; numeric weighting still awaits owner sign-off. The final unit gate contains
+**2,128 tests across 82 files**, including 47 end-to-end adversarial grading-pipeline cases and
+dedicated smoke-marker/credential tests.
+
+## 2026-07-22 — Call QA identity coherence and provenance (correction pass #3)
+
+**Status: still a draft PR against `main` (PR #41), not merged, not deployed.** No Firestore
+migration, no production write, no private-scenario provisioning, no historical grade rewritten,
+no rules change. The OB/GYN rubric stays `qa-rubric-obgyn-v1` (no criterion, point, weight,
+applicability, or auto-fail change); only the model-visible prompt contract moved (v5 → v6).
+
+A third independent review of head `c85c875` attacked the trust boundaries the second pass
+introduced and found eight more issues. Each was reproduced with a failing adversarial test first
+(`api/qaVerificationSubject.test.js`, plus additions to `api/qaVerificationPipeline.test.js` and
+`api/_qa-calibration.test.js`) and then fixed:
+
+1. **One patient identity.** `resolvePatientSubject` resolves the single patient from the whole
+   call; a name value must be a token of that patient's name, a DOB is attributed to the nearest
+   preceding name designation (a caller's own DOB can no longer pair with a different patient's
+   name), and two people named as the patient fails closed (`ambiguous-patient-subject`). `scoreQa`
+   evaluates ONE canonical identity array and feeds both verification criteria;
+   `validateQaResponse` rejects the two criteria carrying different arrays. A value-free `audit`
+   record accompanies the evaluation.
+2. **Stopword-and-context-aware name ownership.** Ordinary request/scheduling/clinical/weekday
+   words are removed; a full-person designation must be Title-cased (so "I am really scared" is not
+   a name); the bare "who is" alternative is gone; a provider-name question no longer establishes
+   patient identity.
+3. **One-word name answers verify** without weakening the two-word minimum elsewhere.
+4. **Caller-only identity contract** everywhere (schema `role` enum `['caller']`, evidence-role
+   rules, validation) → prompt `call-qa-grader-v6`.
+5. **A MET identity criterion with a missing/empty/partial/duplicate payload trips the retry**, not
+   a navigator deduction.
+6. **Protected-disclosure precedence** over a generic safe prefix within one clause. The doc claim
+   that the detector's only failure mode is a lost criterion is corrected: an under-match can leave
+   a claimed MET standing, so it is a trust gate, not a comprehensive PHI detector.
+7. **Raw validation rejects non-string `evidence`/`note`** instead of coercing to `""`.
+8. **Historical calibration resolves by the recorded rubric version** with an explicit
+   (department, rubricVersion, promptVersion) compatibility matrix (`callQaProvenanceCompatible`):
+   a genuine OB/GYN v3 record graded under the shared `qa-rubric-v2` validates its old closing ids
+   under the shared rubric; impossible tuples and unknown versions are rejected. Also corrected the
+   docs to state that an `operational-pilot` fixture is ungraded and carries no model/prompt/rubric
+   version.
+
+Added an opt-in, non-production `npm run qa:live-contract-smoke` (ten synthetic transcripts through
+the real prompt/schema/validator against the pinned grader model — no Firestore, no private bank,
+no full DOB printed) plus an offline coverage test. It skips cleanly with exit 0 when no key is
+configured and was NOT executed here (no non-production key available); a real-key run remains a
+pre-merge/release gate. Unit suite 2036 → **2077 across 82 files**.
+
+## 2026-07-21 — Call QA verification integrity (correction pass #2)
+
+**Status: still a draft PR against `main`, not merged, not deployed.** No Firestore
+migration, no production write, no private-scenario provisioning, no historical grade
+rewritten, no rules change.
+
+A second independent review of head `a43ca7c` probed the actual trust boundaries rather
+than the authored happy-path fixtures and found eight ways the pipeline could be fooled or
+could mislead a supervisor. Each was reproduced with a failing test before it was fixed —
+`api/qaVerificationIntegrity.test.js` (86 tests) was written first and failed 52/86 against
+the previous head. `api/qaVerificationPipeline.test.js` (20 tests) then runs the same
+adversarial cases end to end through the real `gradeCallQaTranscript` pipeline with a
+stubbed transport, so prompt construction, validation, the malformed-response retry,
+repairs, scoring, review and the projections all execute for real.
+
+### 1. A generic opening clause suppressed a real disclosure later in the same turn
+
+`classifyProtectedDisclosure()` tested the whole navigator turn against the
+non-disclosure allowlist first, so a turn that merely *began* safely was classified safe:
+
+> "Let me open your chart. **I can see Dr. Smith ordered an ultrasound.**"
+
+The `^let me open` pattern matched, and the order disclosure was never examined —
+so identifiers collected afterwards could satisfy `verify-before-access` despite a real
+earlier disclosure.
+
+Navigator turns are now split into clauses and each clause is classified independently; a
+safe clause vetoes only itself. Splitting is conservative (sentence punctuation, semicolons,
+commas, and a coordinating conjunction only when a new clause actually follows), and
+abbreviations, initials and decimals do not end a clause — `Dr. Smith ordered an
+ultrasound` is not shredded into `Dr` / `Smith ordered an ultrasound`. The whole turn is
+re-checked afterwards as a safety net for a disclosure a split fragmented, but only when at
+least one clause was not itself safe, so punctuation alone cannot manufacture a finding.
+`findProtectedDisclosure()` now returns the turn index, clause index, clause text and
+category, and order is preserved: the first disclosure is the earliest matching clause in
+the earliest navigator turn. The `order` category also learned "I can see an ultrasound
+order", which the previous pattern set missed.
+
+*Documented granularity decision:* identity is located to a TURN, a disclosure to a CLAUSE.
+When both fall in the same turn they are not comparable, so `verify-before-access` requires
+identity to complete **strictly before** the disclosure turn and otherwise fails closed to
+supervisor review.
+
+### 2. A name-shaped token was accepted without proving it was the PATIENT'S name
+
+`verifyIdentifierClaim()` proved only that a name-shaped string appeared in the declared
+turn. The review demonstrated a fabricated identity that satisfied all three identifiers
+while the patient's name was never collected:
+
+| field | value | source |
+|---|---|---|
+| `firstName` | Dana | the NAVIGATOR's greeting "this is Dana" |
+| `lastName` | Reyes | the caller saying "I need **Dr.** Reyes" |
+| `dob` | March 2, 1991 | the caller |
+
+Name claims are now bound to a patient-identity context. Two rules do the work: identifiers
+must come from a **caller-side turn** (the navigator saying a name proves nothing about what
+the caller supplied), and within that turn the value must sit inside a span that designates
+the patient — a self-identification, an explicit third-party designation, or a direct answer
+to the navigator's patient-name question. A provider/staff title immediately before the
+value disqualifies it outright.
+
+Precedence matters: when a turn contains BOTH a self-identification and an explicit
+third-party designation ("My name is Sarah, but the appointment is for Maria Alvarez"), the
+designation wins — Sarah is the caller, Maria Alvarez is the patient.
+
+Authorized third parties are fully supported, including the common case a first pass missed:
+a parent asked "Can I have **his** first name, last name, and date of birth?" answering
+"Sure, Liam Carter, March 2nd 2021." Third-person possessives, comma-list phrasing, and an
+answer that carries the DOB in the same breath are all handled — the leading name span is
+taken and the date part ignored.
+
+### 3. A fabricated free-text quote could be shown as observed evidence
+
+Scoring an identity criterion uses the structured array and ignores the model's free-text
+`evidence` — but `scoreQa` still persisted that free text, and `buildGradeProjection`
+displayed it whenever the criterion was MET. So a grader could submit valid structured
+claims plus an invented sentence ("The patient was fully verified.") and that sentence
+reached the supervisor panel as a quotation.
+
+Identity criteria now carry a **server-derived summary** built only from what the server
+re-verified, tagged `evidenceSource: 'server-derived'` and rendered as a statement rather
+than a quotation. The summary is deliberately privacy-safe — it names which identifiers
+verified and in which turn, never the values — so a patient's name and date of birth are
+not repeated back into navigator-facing feedback. The raw model claim is retained on
+`modelJudgment` for audit only. Non-identity criteria keep their existing verified-quote
+behavior unchanged.
+
+### 4. Spoken dates of birth lost credit; impossible dates were accepted
+
+`extractDateOfBirth` required a numeric four-digit year, so a real transcription of "March
+second nineteen ninety-one" produced a verification failure for a navigator who did nothing
+wrong — directly against the transcription-tolerance goal. It also accepted February 31 and
+`02/31/1991` while documenting a "real calendar date".
+
+`parseDateOfBirth` is now a deterministic parser with bounded spoken-number support
+(month names and abbreviations, numeric and ordinal days, spoken ordinals, spoken years
+including "two thousand four" and "nineteen oh five") and full calendar validation: February
+29 only in a real leap year, no February 30/31, no April 31, no month 13, no day 0. Phone
+numbers, addresses, bare years and bare month/day still fail. Unsupported forms are named in
+the module rather than left to chance: two-digit years, digit-by-digit dictation, and
+relative wording all fall through to "not a date of birth", which withholds credit and routes
+to review instead of guessing. The birth-year range is unchanged (1800–2099) — no new age
+policy was invented. Table-driven tests cover 11 accepted and 15 rejected forms.
+
+### 5. Malformed model output was normalized instead of rejected
+
+`validateQaResponse` inserted criteria into a `Map` while skipping malformed entries, then
+rebuilt the array from the profile. A duplicate id silently overwrote the earlier verdict;
+unknown and extra ids vanished; unknown auto-fail ids were filtered away. The exact-set check
+downstream only ever saw the cleaned array, so a model that broke its contract looked
+compliant and the malformed-response retry never ran.
+
+Validation is now strict on the RAW response: non-object entries, missing/non-string ids,
+unknown ids, duplicates, invalid verdicts, illegal basis/evidence combinations, malformed
+`identityEvidence`, and `identityEvidence` on a criterion whose profile does not declare the
+identity policy. Auto-fails must answer every configured id exactly once, and a triggered
+auto-fail must carry its verbatim quote. Every rejection trips the existing same-model retry.
+The corpus and review-fixture simulators were made faithful to that contract (they emitted
+only triggered auto-fails), and the captured-response fixture was updated to match.
+
+### 6. v3 was declared supported while calibration rejected it
+
+`SUPPORTED_CALL_QA_PROMPT_VERSIONS` listed v3 and v4 and said the list existed so prior
+populations stay interpretable, but `validateModelRun` required an exact match with the
+current version — so every v3 fixture was rejected. The declaration and the behavior
+disagreed.
+
+Being *interpretable* and being *producible* are now separate, with two helpers
+(`isSupportedStoredPromptVersion` / `isCurrentPromptVersion`) and an enforced policy: genuine
+stored evidence (`human-pilot` / `operational-pilot`) may carry any supported stored version;
+an authored `synthetic-example` must carry the current one, so a fixture cannot manufacture a
+historical population that never existed; unknown versions fail closed. Populations still
+never blend — the report breaks down prompt version and readiness requires a single one.
+
+### 7. Metadata-less OB/GYN history was reinterpreted under the NEW rubric
+
+The docs said a genuinely pre-versioning result uses the historical shared rubric, but
+`profileForGradedAttempt({}, 'obgyn')` returned `qa-rubric-obgyn-v1` — and a test explicitly
+required that. Before this PR, an OB/GYN result without rubric metadata was necessarily
+graded under the shared rubric, including the old `close-survey` / `close-anything-thanks`
+closing ids. Resolving it to the new profile would summarize it against `close-offer-help`, a
+criterion it was never scored on, and drop its real closing evidence.
+
+Resolution is now: a recorded known version → that profile (department cross-checked); a
+recorded unknown version → `null`; **no version at all → the historical shared rubric**,
+regardless of stored department. The stored department describes the CALL, not the rubric.
+The live scored path is unaffected because every newly graded attempt records its metadata.
+
+### 8. The "unavailable" UI state trusted a stored boolean
+
+`NavigatorDetail` checked the persisted `session.qa.scoringUnavailable` flag. That flag is
+written during grading, when the rubric is necessarily known — so a record produced by a
+future or unknown rubric would carry its own stored `domainScores` and no flag at all, and
+the projection rendered anyway.
+
+One reusable selector, `resolveQaScoringState(qa, profile?)`, now derives
+`{ profile, scoringUnavailable, reason, recordedRubricVersion }` at read time from the
+attempt's own grading metadata and the profiles this build configures. The stored boolean is
+not consulted in either direction: `scoringUnavailable: false` cannot force a projection
+under an unknown version, and a stored `true` cannot suppress a resolvable one. The recorded
+score and criteria still render with a provenance warning, and absent metadata does not
+crash. `qaDomainScoreSummary`, `resolveScoringProfile` and `scoringUnavailableReason` are now
+thin wrappers over it, so every consumer shares one policy. Four jsdom tests drive the real
+component.
+
+### Versioning decision
+
+- **Rubric version: unchanged — `qa-rubric-obgyn-v1`.** No OB/GYN criterion, point value,
+  category weight, `core` applicability or auto-fail definition changed. The total is still
+  100 and the pass mark still 85.
+- **Prompt version: bumped to `call-qa-grader-v5`.** This was required, and the honest reason
+  is that the MODEL-VISIBLE contract changed again, not merely the server's strictness: the
+  prompt now tells the grader that name claims must be the patient's (a grader following v4
+  guidance in good faith would submit a navigator or provider name and silently lose
+  verification credit), that spoken dates of birth are acceptable, and that every auto-fail id
+  must be answered with a quote when triggered. Strict validation of the already-documented v4
+  schema would not by itself have required a bump. `SUPPORTED_CALL_QA_PROMPT_VERSIONS` now
+  lists v3, v4 and v5 so stored records stay interpretable.
+- **Calibration format version: unchanged.** The fixture schema did not change; only the
+  prompt-version acceptance policy did.
+- **No `identitySubject` field was added to the model schema.** It was considered — the review
+  suggested it — and rejected: the server must independently establish ownership regardless of
+  what the model declares, so the field would add contract surface without adding trust. The
+  ownership rules are enforced server-side and explained to the model in prose instead.
+
+### Verification
+
+Unit suite **1923 → 2036 across 78 → 80 files**, all green. New files:
+`api/qaVerificationIntegrity.test.js` (86), `api/qaVerificationPipeline.test.js` (20); plus
+4 render-time UI tests in `navigatorDetail.override.test.jsx` and 3 cross-profile invariants
+in `gradingInvariants.test.js`. Full local gate results are recorded in the PR description.
+
+### Known limits (unchanged or newly written down)
+
+- The disclosure detector is a deterministic pattern set, not a PHI classifier. It can only
+  *reject* a claimed MET, so its failure mode is a lost criterion the supervisor still
+  reviews — but it will not catch every phrasing.
+- Name-ownership detection is likewise pattern-based and deliberately conservative. A
+  verification exchange phrased in a way it does not recognise withholds the criterion and
+  routes to review rather than guessing; that is a lost criterion, not a false pass.
+- Requiring identifiers to come from a caller turn means a navigator reading a name back for
+  confirmation ("your last name is Alvarez, correct?" / "Yes.") does not by itself establish
+  identity. This is intentional fail-closed behavior.
+- Numeric weighting is still unchanged and still a standing product decision: verification is
+  10 of 100 points, so a call that fails all identity verification can still score above 85
+  numerically. Both verification criteria are safety-critical, so the review layer refuses a
+  confident pass and routes to a supervisor.
+- No live Gemini grading was performed. Prompt-contract tests assert prompt TEXT; they cannot
+  prove how the model will populate the structured identity array in practice. **A live OB/GYN
+  Call QA smoke after deploy is still required**, now also to confirm the model supplies
+  patient-owned name claims under v5.
+
+## 2026-07-21 — Department-based Call QA rubric profiles; OB/GYN is the first dedicated profile
+
+**Status: draft PR against `main`, not merged, not deployed.** No Firestore migration, no
+production write, no private-scenario provisioning, and no historical grade rewritten.
+
+### The problem
+
+One shared rubric was treated as correct for every department. Three consequences on the
+OB/GYN floor:
+
+1. **The rubric asked for the wrong things.** It required a patient survey prompt OB/GYN does
+   not run, allowed "any polite sign-off" to satisfy closing, accepted a phone number or home
+   address in place of date of birth, and used Pediatrics-only documentation examples
+   (`Shots PE UTD`, `GS` newborns).
+2. **It was rigid where the floor is not.** Empathy and hold-narration were always-required
+   (`core: true`), so a navigator lost points for not performing scripted empathy on a routine
+   scheduling call, or for not narrating a two-second chart lookup — a thing a text transcript
+   cannot even establish.
+3. **There was nowhere to put a department difference.** The only tool available was another
+   `department === 'obgyn'` branch inside the grading pipeline, which is exactly how prompt
+   rules, deterministic scoring, and auto-fail logic drift apart.
+
+### The architecture
+
+`src/data/qaRubricProfiles.js` introduces **one authoritative resolution point** —
+`getQaRubricProfile(department)`. A profile carries everything needed to grade one department:
+department id, rubric version, categories/criteria, auto-fail definitions, criterion
+applicability (`core`), safety-critical + repairable sets, per-criterion evidence policies, and
+the department-specific grader instructions. Department behavior is **data, not branches**.
+
+`gradeCallQaTranscript` resolves the profile ONCE from the server-authoritative department on
+the stored attempt (never a browser value) and threads that single object through prompt
+construction, response validation, fairness repairs, scoring, category totals, core/NA handling,
+auto-fail evaluation, deterministic findings, the review layer, and the QA domain/competency
+projections. Two guards make drift impossible rather than merely discouraged:
+`validateQaResponse` stamps the validating profile's version onto its output, and `scoreQa`
+**throws** if handed a verdict for a criterion its profile does not define.
+
+- `pediatrics` reuses the historical shared rubric **verbatim** (`qa-rubric-v2`), so no
+  non-OB/GYN verdict, point, prompt line, or version string changes.
+- `obgyn` is the new `qa-rubric-obgyn-v1`.
+- An unsupported department resolves to `null` and the scored runtime **fails closed** (422,
+  grader never called). There is no `?? 'pediatrics'` fallback left in the scored path —
+  `buildScenarioContextFromAttempt` now returns `department: null` rather than defaulting.
+
+### The OB/GYN rubric — still 100 points, still passes at 85
+
+Category weights are **unchanged**: Opening 10 · Verification 10 · Call Control 10 ·
+Documentation Reason 10 · Communication 15 · Active Listening 10 · Knowledge 15 · Scheduling 15
+· Closing 5.
+
+| Area | Before (shared) | After (OB/GYN) |
+|---|---|---|
+| Opening | greeting 4 + own name 3 + org 3 | same points; greeting must also **offer assistance**; org accepts "Aizer Health" **or** "Aizer Women's Health"; navigator-name requirement **unchanged** |
+| Verification | 3 identifiers incl. "**or** home address / phone number" | exactly **first name + last name + DOB**; phone/address **never** substitute; volunteered identifiers count; multi-turn collection counts |
+| Empathy | `core: true` — always required | **conditional**: NA when the caller expressed no emotional/sensitive cue; MET on natural acknowledgment; NOT_MET only when a cue existed and went unacknowledged |
+| Active listening | "explicitly acknowledged … *I understand*, *I hear you*" | natural recognition of the request counts; scripted empathy not required. `listen-gather` stays strict |
+| Hold narration | `core: true` — narrate every system action | **conditional**: NA with no hold/meaningful wait; MET when an explained hold; NOT_MET only for an **explicit** unexplained hold. Dead air/delay may never be inferred from text |
+| Documentation | Pediatrics examples (`Shots PE UTD`, `GS`) | department-neutral / OB/GYN wording. Underlying standard unchanged |
+| Closing | `close-survey` 3 + `close-anything-thanks` 2 | ONE criterion **`close-offer-help`** at **5**: an explicit offer of further assistance. Thanks / goodbye / mutual close / survey-alone earn **0** |
+
+**Survey wording is score-neutral** for OB/GYN: no points, no deduction, does not satisfy the
+closing criterion, and survey + a valid offer still earns exactly 5. The grader instruction that
+let "any polite sign-off" satisfy closing is **removed** for OB/GYN and retained for Pediatrics.
+
+The new criterion uses a **new id** rather than reusing `close-survey`, which would have been
+actively misleading in stored results. Its domain/competency tags are the **union** of the two
+removed criteria (`documentation` + `intake`; `communication` + `customerHandling`), so closing
+evidence is not silently dropped from QA domain/competency summaries — asserted by test.
+
+`af-hipaa` for OB/GYN is rendered from the **same** `OBGYN_VERIFICATION_IDENTIFIERS` constant as
+`verify-three` / `verify-before-access`, so the regular criterion and the privacy auto-fail
+cannot accept different definitions.
+
+### The `identity-verification` evidence policy
+
+Callers routinely volunteer "this is Maria Alvarez, date of birth March 2nd 1991". Under the
+navigator-only evidence rule the only quotable proof of complete verification sits in a *caller*
+turn, so a correct call looked unverified. A narrow, explicitly named per-criterion policy now
+lets `verify-three` / `verify-before-access` verify a contiguous quote from ONE turn of either
+role. Scope limits, all tested:
+
+- **MET credit only** — an evidence-based negative stays navigator-only, so a caller's words can
+  never substantiate an accusation against the navigator.
+- **Opt-in per criterion** — caller wording cannot earn an unrelated navigator-performance
+  criterion (asserted against `comm-empathy` and `close-offer-help`).
+- **Auto-fails are never covered**, including `af-hipaa`.
+- **Order is preserved** — `verify-before-access` declares
+  `evidenceOrder: 'before-protected-disclosure'` and only accepts evidence from a turn strictly
+  before the first deterministically detected protected disclosure, so identifiers collected
+  afterwards can never retroactively satisfy it. The disclosure detector is deliberately narrow
+  and can only *reject* a MET, never create one.
+
+### Versioning, provenance, and history
+
+`qa.gradingMetadata` now records `rubricDepartment` alongside `rubricVersion`.
+`profileForGradedAttempt()` resolves a stored result by its **recorded version first** and
+returns `null` — never a guess — for an unrecognised version. QA domain/competency summaries,
+the shadow-automation completeness check, and the supervisor UI all use it, so a historical
+attempt keeps rendering under the rubric that graded it. The supervisor session panel now shows
+"Graded with: *<department>* rubric (*version*)". `CALL_QA_PROMPT_VERSION` is **unchanged** —
+the prompt *contract* (EVIDENCE/ABSENCE shapes, criterion ids, response schema) did not change;
+only per-department rubric content did, which the rubric version already records.
+
+### Tooling made department-aware
+
+- **Calibration** validates each fixture against its own department's profile; a criterion or
+  auto-fail id from another department now fails validation, as does a `rubricVersion` that is
+  not that department's. Criterion metrics run over the union of profiles (each recording which
+  `departments` define it); per-department coverage uses that department's own criteria.
+- **Rubric drift is now measured within a department.** Two departments reporting two rubric
+  versions is department identity, not drift, so the `requireSingleRubricVersion` gate checks
+  `mixedRubricVersionWithinADepartment()` instead of a flat count. Grader model and prompt
+  version remain global.
+- **Shadow automation** measures "complete rubric output" against the profile that actually
+  graded the attempt; an unrecognised rubric version is never complete (fails closed).
+- **Pilot smoke** retargets its rehearsal fixtures onto the target department's rubric, carrying
+  a replaced criterion's label onto its replacement so the rehearsed outcome is preserved.
+- **The deterministic corpus** resolves a profile per case exactly as the real pipeline does, and
+  gains three OB/GYN cases covering the fix direction and both abuse directions (conditional
+  criteria NA on a routine call; a sign-off-only close failing; a worried caller's unacknowledged
+  concern still costing its 5 points — "conditional" must never degrade into "never scored").
+
+### Manual-review fixtures
+
+`api/_qa-obgyn-review-fixtures.js` adds eight synthetic, non-production OB/GYN calls — strong
+routine call, thanks-and-goodbye close, worried caller handled well, worried caller
+unacknowledged, phone-instead-of-DOB, disclosure-before-DOB, quick silent chart check,
+unexplained hold — each executed through the real pipeline by `api/obgynRubricProfile.test.js`.
+Nothing is derived from or comparable to the private runtime bank, and none of it is calibration
+evidence.
+
+One fixture documents a genuine, pre-existing property worth naming: a call that fails **all**
+identity verification still scores 88 numerically, because verification is only 10 of 100 points.
+Both verification criteria are safety-critical, so the review layer refuses to call it a
+confident pass and routes it to a supervisor. Numeric pass + non-final `needs_review` is the
+designed behavior, not a gap — but it is now written down and asserted.
+
+### Correction pass, same day (independent review of PR #41)
+
+An independent review found that several of the guarantees above were asserted but not
+enforced. Ten blockers, all fixed on the same branch:
+
+1. **The grader prompt contradicted its own identity policy.** The generic instructions
+   still told the model every MET must quote a navigator turn and "never a caller line" —
+   directly opposite to letting a caller volunteer her identifiers. Evidence ROLE rules are
+   now RENDERED FROM THE PROFILE (`evidenceRoleRules`): navigator-only default,
+   navigator-only for negatives and auto-fails, and the identity exception named explicitly
+   only for the criteria the active profile declares. A profile with no identity policy is
+   told so. The generic "never offered the survey" example and the claim that closing
+   criteria apply identically to every call are gone; conditional criteria are described as
+   legitimately NA. Pediatrics keeps its survey and natural-closing guidance verbatim.
+2. **The prompt version had not moved.** `CALL_QA_PROMPT_VERSION` is now
+   **`call-qa-grader-v4`**, with `SUPPORTED_CALL_QA_PROMPT_VERSIONS` listing v3 and v4 so
+   stored v3 records stay interpretable as a separate population. Fixtures, calibration
+   expectations, pilot-smoke, automation provenance, tests and docs updated. No stored
+   record was rewritten.
+3. **Identity verification did not verify identity.** The old check confirmed only that a
+   two-word quote appeared in some turn — it could not tell a first name from a phone
+   number and could not aggregate across turns. Replaced with a structured contract in the
+   new `api/_qa-identity-verification.js`: the grader submits
+   `{ field, value, role, turnIndex, quote }` per identifier against `[n]`-indexed
+   transcript turns, and the SERVER re-derives every claim (turn exists, role matches,
+   quote verbatim in that turn, value inside the quote, value shaped like its identifier).
+   `extractDateOfBirth` requires a real date with a 4-digit year and explicitly rejects
+   phone- and address-shaped values. All three identifiers are required and must be
+   distinct, so a lone first or last name can never satisfy full-name verification. A model
+   Boolean is never trusted.
+4. **Ordering was not actually chronological.** One centralized detector
+   (`classifyProtectedDisclosure`) now covers appointments, prior visits, chart contents,
+   orders, provider notes, lab/imaging results, prescriptions, balances and patient-specific
+   clinical details, while explicitly excluding generic wording and verification questions.
+   `verify-before-access` is satisfied only when identity completes STRICTLY BEFORE the
+   first disclosure. When identity cannot be verified the order is unknowable, so the
+   criterion is withheld and marked `verification-order-unverified` — fail closed to
+   supervisor review rather than a silent award.
+5. **The validate/score binding was cosmetic.** The old version stamp was dropped before
+   scoring and `scoreQa` only rejected unknown ids. Profiles now carry a deterministic
+   `signature` over department, version, threshold, category shape, and every criterion's
+   points, `core`, tags and evidence policy plus every auto-fail — so **criterion IDs are
+   explicitly not identity**. `validateQaResponse` emits `profileBinding`, the repair layer
+   throws on a mismatch and passes it through untouched, and `scoreQa` re-checks it and
+   enforces exact criterion-set integrity (no unknown, missing, duplicate or extra ids).
+6. **Unknown historical versions could become Pediatrics.** Three cases are now separate:
+   no metadata at all → historical shared rubric (the only legacy fallback); a known
+   version → that profile (a disagreeing recorded department is corrupt → null); a recorded
+   version we do not know → `null`, never a current profile. An unknown version yields an
+   explicit `scoringUnavailable` summary, a "rubric version unavailable" panel in the
+   supervisor UI (no throw, recorded score still shown), shadow ineligibility, and
+   calibration rejection.
+7. **A global repair set was still consulted.** The OB/GYN branch read the module-level
+   `REPAIRABLE_CRITERIA`; it now uses the resolved profile's set. The remaining global
+   exports are labelled legacy-compatibility only and are absent from the scored path; two
+   dead `rubricCriteria` imports were removed.
+8. **Pilot smoke could hide the closing change.** It mapped an old
+   `close-anything-thanks` / `close-survey` verdict straight onto `close-offer-help` —
+   non-equivalent criteria, since a polite goodbye passed the old rule and must fail the
+   new one. Cross-department retargeting now THROWS, and there are real per-department
+   fixtures (`obgyn-example-{pass,fail,review}.json`, `peds-example-fail.json`) whose
+   transcripts genuinely contain or genuinely lack an offer of further help.
+9. **Empathy applicability was too broad.** "Sensitive pregnancy / Women's Health
+   information" as a standalone trigger is removed. Empathy now keys on what the CALLER
+   EXPRESSED, or a clearly adverse/emotionally sensitive event; pregnancy, a New OB
+   appointment, contraception, an annual GYN visit and routine test scheduling are named as
+   routine subjects that leave it NA.
+10. **Tests were self-confirming.** Added adversarial coverage that tries to break the
+    implementation — and two of these caught real bugs during development (a DOB pattern
+    that rejected "March 2, 1991", and a mis-targeted turn assertion).
+
+**Point weights were deliberately NOT changed.** Missing verification can still produce a
+numeric score above 85; safety-critical misses still prevent a confident pass and route to
+`needs_review`; a verified HIPAA auto-fail still zeroes the score. Re-weighting is a product
+decision and is explicitly out of scope for this correction.
+
+### Verification
+
+`npm test` 1735 → **1923** across 77 → 78 files (all green). Build clean including the
+private-runtime bundle scan; 12/12 safe Playwright E2E; encoding guard clean;
+`qa:pilot-smoke` `PILOT_SMOKE_VERIFIED`. `qa:calibrate` and `qa:coverage` still report
+`INSUFFICIENT_DATA` with 0 human-pilot fixtures — **that is the correct, expected state, not a
+passing calibration result.** Firestore Rules could not be run locally (no JDK in this
+environment); the branch does not modify `firestore.rules` or either rules suite, and CI runs
+them.
+
 ## 2026-07-21 — PR #40 MERGED to `main` (`01a7f27`) and auto-deployed
 
 The one-official-status capability redesign is live.

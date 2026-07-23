@@ -8,6 +8,7 @@ import {
 } from './_qa-calibration.js';
 import { SYNTHETIC_CALIBRATION_SCENARIOS as CALL_QA_SCENARIOS, SYNTHETIC_SCENARIO_VERSION } from './_qa-calibration-scenarios.js';
 import { rubricCriteria } from '../src/data/qaRubric.js';
+import { getQaRubricProfile } from '../src/data/qaRubricProfiles.js';
 
 const example = JSON.parse(readFileSync(
   new URL('./fixtures/call-qa-calibration/example-pass.json', import.meta.url),
@@ -18,8 +19,15 @@ const RUBRIC_IDS = rubricCriteria().map((criterion) => criterion.id);
 // exercise the gates themselves rather than the missing-evidence reason.
 const PRIVATE_EVIDENCE = { scenarios: CALL_QA_SCENARIOS, scenarioEvidence: 'private-manifest' };
 
-function completeCriteria(overrides = {}, fallback = 'NA') {
-  return Object.fromEntries(RUBRIC_IDS.map((id) => [id, overrides[id] ?? fallback]));
+// A fixture must label the rubric of ITS OWN department. Passing the department
+// keeps OB/GYN fixtures on the OB/GYN criterion set (close-offer-help, no
+// survey criterion) and Pediatrics fixtures on the historical shared set.
+function criterionIdsFor(department = 'pediatrics') {
+  return [...(getQaRubricProfile(department)?.criterionIds ?? RUBRIC_IDS)];
+}
+
+function completeCriteria(overrides = {}, fallback = 'NA', department = 'pediatrics') {
+  return Object.fromEntries(criterionIdsFor(department).map((id) => [id, overrides[id] ?? fallback]));
 }
 
 function calibrationFixture({
@@ -37,8 +45,8 @@ function calibrationFixture({
   modelRun = {},
 } = {}) {
   const reviewRequired = human === 'needs_review';
-  const humanLabels = completeCriteria(humanCriteria);
-  const modelLabels = completeCriteria(modelCriteria ?? humanCriteria);
+  const humanLabels = completeCriteria(humanCriteria, 'NA', scenario.department);
+  const modelLabels = completeCriteria(modelCriteria ?? humanCriteria, 'NA', scenario.department);
   const reviewer = (id) => ({
     reviewerId: id,
     criteria: humanLabels,
@@ -86,8 +94,8 @@ function calibrationFixture({
     },
     modelRun: modelRun === null ? null : {
       model: modelName,
-      rubricVersion: 'qa-rubric-v2',
-      promptVersion: 'call-qa-grader-v3',
+      rubricVersion: getQaRubricProfile(scenario.department).rubricVersion,
+      promptVersion: 'call-qa-grader-v7',
       scenarioVersion: SYNTHETIC_SCENARIO_VERSION,
       recommendation: model,
       pass: model !== 'fail',
@@ -136,6 +144,73 @@ function invalid(mutator) {
   mutator(fixture);
   return validateCalibrationFixture(fixture);
 }
+
+describe('validateCalibrationFixture · historical provenance resolves by recorded rubric (B8)', () => {
+  const obgynScenario = CALL_QA_SCENARIOS.find((s) => s.department === 'obgyn');
+  const SHARED_IDS = [...getQaRubricProfile('pediatrics').criterionIds];
+  const sharedCriteria = () => {
+    const criteria = Object.fromEntries(SHARED_IDS.map((id) => [id, 'NA']));
+    criteria['open-greet'] = 'MET';
+    criteria['know-rule'] = 'MET';
+    return criteria;
+  };
+
+  // A genuine pre-profile OB/GYN record: department obgyn, but graded under the
+  // HISTORICAL SHARED rubric (qa-rubric-v2, old closing ids) with prompt v3.
+  function historicalObgyn(overrides = {}) {
+    const base = structuredClone(calibrationFixture({ scenario: obgynScenario, source: 'human-pilot' }));
+    const criteria = sharedCriteria();
+    base.humanReview.reviewers.forEach((reviewer) => { reviewer.criteria = criteria; });
+    base.humanReview.adjudicated.criteria = criteria;
+    base.modelRun.criteria = Object.entries(criteria).map(([id, verdict]) => ({ id, verdict }));
+    base.modelRun.rubricVersion = 'qa-rubric-v2';
+    base.modelRun.promptVersion = 'call-qa-grader-v3';
+    return { ...base, ...overrides };
+  }
+
+  it('recognizes the OLD closing ids in the shared rubric', () => {
+    expect(SHARED_IDS).toContain('close-survey');
+    expect(SHARED_IDS).toContain('close-anything-thanks');
+  });
+
+  it('accepts a genuine OB/GYN v3 record graded under the shared rubric', () => {
+    expect(validateCalibrationFixture(historicalObgyn())).toEqual({ valid: true, errors: [] });
+  });
+
+  it('rejects an impossible v3 + current OB/GYN rubric tuple', () => {
+    const fixture = historicalObgyn();
+    fixture.modelRun.rubricVersion = 'qa-rubric-obgyn-v1';
+    const result = validateCalibrationFixture(fixture);
+    expect(result.valid).toBe(false);
+    expect(result.errors.join(' ')).toMatch(/incompatible provenance|unknown rubric criterion/i);
+  });
+
+  it('rejects a NEW OB/GYN run that claims the shared rubric under v7', () => {
+    const fixture = historicalObgyn();
+    fixture.modelRun.promptVersion = 'call-qa-grader-v7';
+    const result = validateCalibrationFixture(fixture);
+    expect(result.valid).toBe(false);
+    expect(result.errors.join(' ')).toMatch(/incompatible provenance/i);
+  });
+
+  it('rejects a synthetic example that claims a retired prompt version', () => {
+    const fixture = historicalObgyn({
+      source: 'synthetic-example', nonProduction: true,
+      calibrationAuthority: 'none', evidenceUse: 'synthetic-rehearsal-only',
+    });
+    const result = validateCalibrationFixture(fixture);
+    expect(result.valid).toBe(false);
+    expect(result.errors.join(' ')).toMatch(/synthetic example must use the current prompt/i);
+  });
+
+  it('rejects an unknown recorded rubric version', () => {
+    const fixture = historicalObgyn();
+    fixture.modelRun.rubricVersion = 'qa-rubric-does-not-exist';
+    const result = validateCalibrationFixture(fixture);
+    expect(result.valid).toBe(false);
+    expect(result.errors.join(' ')).toMatch(/unsupported rubric version/i);
+  });
+});
 
 describe('validateCalibrationFixture', () => {
   it('accepts grading fixtures and terminal operational-pilot failures', () => {

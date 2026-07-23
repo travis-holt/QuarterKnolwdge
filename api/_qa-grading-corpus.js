@@ -27,7 +27,8 @@
 // The leading `_` keeps Express from ever treating this module as a route.
 // ─────────────────────────────────────────────────────────────────────────────
 
-import { rubricCriteria } from '../src/data/qaRubric.js';
+import { QA_RUBRIC_PROFILES, requireQaRubricProfile } from '../src/data/qaRubricProfiles.js';
+import { extractDateOfBirth } from './_qa-identity-verification.js';
 
 export const nav = (text) => ({ role: 'navigator', text });
 export const pat = (text) => ({ role: 'patient', text });
@@ -81,12 +82,48 @@ const REFILL_METADATA = { qaScenarioId: 'qa-peds-refill-001', workflowType: 'pre
  *           metEvidence?: Record<string,string>,
  *           autoFails?: {id:string, evidence:string, note?:string}[] }} profile
  */
-export function simulateGrader(transcript, profile = {}) {
+/**
+ * Derive the structured identity evidence a COMPETENT grader would report for a
+ * synthetic corpus transcript: the first caller turn that states a full name and
+ * a recognizable date of birth.
+ *
+ * This is test-harness convenience for authored fixtures — the SERVER still
+ * re-verifies every claim independently, so a derivation that guessed wrong
+ * would fail the pipeline rather than sneak a pass through.
+ */
+export function deriveIdentityEvidence(transcript) {
+  const turns = Array.isArray(transcript) ? transcript : [];
+  for (let turnIndex = 0; turnIndex < turns.length; turnIndex++) {
+    const turn = turns[turnIndex];
+    if (turn?.role === 'navigator') continue;
+    const text = String(turn?.text ?? '');
+    const dob = extractDateOfBirth(text);
+    if (!dob) continue;
+    const name = /\b([A-Z][a-z]+)\s+([A-Z][a-z]+)\b/.exec(text.replace(dob, ''));
+    if (!name) continue;
+    const quote = text.replace(/^[^A-Za-z]*/, '').replace(/\s+$/, '');
+    return [
+      { field: 'firstName', value: name[1], role: 'caller', turnIndex, quote },
+      { field: 'lastName', value: name[2], role: 'caller', turnIndex, quote },
+      { field: 'dob', value: dob, role: 'caller', turnIndex, quote },
+    ];
+  }
+  return [];
+}
+
+export function simulateGrader(transcript, profile = {}, rubricProfile = QA_RUBRIC_PROFILES.pediatrics) {
   const { notMet = {}, na = [], metEvidence = {}, autoFails = [] } = profile;
   const navLines = transcript.filter((t) => t.role === 'navigator').map((t) => t.text);
   const defaultQuote = navLines.reduce((a, b) => (b.length > a.length ? b : a), navLines[0] ?? '');
-  const criteria = rubricCriteria().map((c) => {
-    if (na.includes(c.id)) return { id: c.id, verdict: 'NA', basis: 'ABSENCE', evidence: '', note: 'Not applicable to this scenario.' };
+  // Identity criteria (if this profile has any) carry structured claims; every
+  // other criterion sends an empty array, matching the prompt contract.
+  const identityIds = new Set(rubricProfile.identityVerificationCriteria ?? []);
+  const identityEvidence = profile.identityEvidence ?? (identityIds.size ? deriveIdentityEvidence(transcript) : []);
+  // Simulate against the DEPARTMENT rubric the case belongs to, so a corpus run
+  // exercises exactly the criterion set the real pipeline would validate.
+  const criteria = rubricProfile.criteria.map((c) => {
+    const identity = identityIds.has(c.id) ? identityEvidence : [];
+    if (na.includes(c.id)) return { id: c.id, verdict: 'NA', basis: 'ABSENCE', evidence: '', note: 'Not applicable to this scenario.', identityEvidence: [] };
     if (c.id in notMet) {
       const entry = notMet[c.id];
       const note = typeof entry === 'string' ? entry : entry.note;
@@ -94,11 +131,28 @@ export function simulateGrader(transcript, profile = {}) {
       // A quoted offending line is an OBSERVED (EVIDENCE) miss; a note-only miss
       // is an ABSENCE. This mirrors how a real grader must report each shape.
       const basis = evidence ? 'EVIDENCE' : 'ABSENCE';
-      return { id: c.id, verdict: 'NOT_MET', basis, evidence, note };
+      return { id: c.id, verdict: 'NOT_MET', basis, evidence, note, identityEvidence: identity };
     }
-    return { id: c.id, verdict: 'MET', basis: 'EVIDENCE', evidence: metEvidence[c.id] ?? defaultQuote, note: '' };
+    return { id: c.id, verdict: 'MET', basis: 'EVIDENCE', evidence: metEvidence[c.id] ?? defaultQuote, note: '', identityEvidence: identity };
   });
-  return { criteria, autoFails: autoFails.map((a) => ({ triggered: true, note: '', ...a })) };
+  return { criteria, autoFails: simulateAutoFails(autoFails, rubricProfile) };
+}
+
+/**
+ * Emit EVERY auto-fail id, triggered or not.
+ *
+ * The prompt asks the model for a verdict on all auto-fail ids, and validation
+ * now enforces that, so a simulator that emitted only the triggered ones was
+ * modelling a contract the real grader is not held to.
+ */
+export function simulateAutoFails(triggered, rubricProfile) {
+  const byId = new Map(triggered.map((a) => [a.id, a]));
+  return rubricProfile.autoFails.map((def) => {
+    const hit = byId.get(def.id);
+    return hit
+      ? { triggered: true, note: '', ...hit }
+      : { id: def.id, triggered: false, evidence: '', note: '' };
+  });
 }
 
 // Literalist grader notes — the exact style of false negative seen in pilots.
@@ -1027,6 +1081,127 @@ export const QA_GRADING_CORPUS = [
     },
     expect: {
       accurate: { pass: false, recommendation: 'fail', repairRules: [] },
+    },
+  },
+
+  // ═══ OB/GYN DEPARTMENT RUBRIC (2026-07-21) ════════════════════════════════
+  // Fix direction AND abuse direction for the three OB/GYN rule changes:
+  // conditional empathy, conditional hold narration, and the explicit
+  // offer-of-help closing.
+  {
+    id: 'obgyn-routine-conditional-criteria-na',
+    category: 'natural-phrasing',
+    truth: 'pass',
+    description:
+      'OB/GYN routine scheduling: no emotional cue and no hold, so empathy and narration are NA. '
+      + 'The navigator must not lose points for skipping forced empathy or narrating a quick lookup. '
+      + 'FIX DIRECTION for the conditional-criteria change.',
+    department: 'obgyn',
+    scenario: 'A patient calls to book a routine annual GYN visit. No clinical concern is raised and no hold occurs.',
+    metadata: { qaScenarioId: 'qa-obgyn-annual-001', workflowType: 'annual_vs_gyn_ov', difficulty: 'easy' },
+    transcript: [
+      ...OPENING,
+      pat('Hi, this is Maria Alvarez, date of birth March 2nd 1991. I would like to book my annual GYN visit.'),
+      nav('Thank you Maria. Sure, I can help you schedule that annual visit.'),
+      pat('An afternoon would be best.'),
+      nav('I can book you with Dr. Reyes on Tuesday the 14th at 2:15 in the afternoon at the Main Street office. Please arrive fifteen minutes early.'),
+      pat('That works.'),
+      nav('You are booked for an annual GYN visit, Tuesday the 14th at 2:15 at Main Street.'),
+      ...CLOSE_NO_SURVEY,
+    ],
+    graders: {
+      accurate: {
+        na: ['comm-empathy', 'control-narrate', 'doc-te'],
+        metEvidence: {
+          'verify-three': 'this is Maria Alvarez, date of birth March 2nd 1991',
+          'verify-before-access': 'this is Maria Alvarez, date of birth March 2nd 1991',
+          'close-offer-help': 'Is there anything else I can help you with today?',
+        },
+      },
+    },
+    expect: {
+      accurate: { pass: true, recommendation: 'pass', repairRules: [] },
+    },
+  },
+  {
+    id: 'obgyn-closing-signoff-only',
+    category: 'incomplete',
+    truth: 'fail',
+    description:
+      'OB/GYN closing: a polite mutual goodbye with NO offer of further help must lose the closing '
+      + 'points. ABUSE DIRECTION — the old "any polite sign-off counts" allowance must not resurface.',
+    department: 'obgyn',
+    scenario: 'A patient calls to book a routine annual GYN visit. The call ends with thanks and a goodbye only.',
+    metadata: { qaScenarioId: 'qa-obgyn-annual-002', workflowType: 'annual_vs_gyn_ov', difficulty: 'easy' },
+    transcript: [
+      ...OPENING,
+      pat('Hi, this is Maria Alvarez, date of birth March 2nd 1991. I need my annual GYN visit.'),
+      nav('Thank you Maria. Sure, I can help you schedule that annual visit.'),
+      pat('Any afternoon is fine.'),
+      nav('I can book you with Dr. Reyes on Tuesday the 14th at 2:15 in the afternoon at the Main Street office.'),
+      pat('Perfect, thank you so much.'),
+      nav('Thank you as well. Have a good day, goodbye.'),
+    ],
+    graders: {
+      accurate: {
+        na: ['comm-empathy', 'control-narrate', 'doc-te', 'sched-recap', 'doc-reason', 'know-details'],
+        notMet: {
+          'close-offer-help': 'The call ended with a mutual goodbye and no offer of further assistance.',
+          'listen-gather': 'The navigator booked without confirming the visit type against the chart.',
+          'know-rule': 'The annual eligibility rule was never applied before booking.',
+        },
+        metEvidence: {
+          'verify-three': 'this is Maria Alvarez, date of birth March 2nd 1991',
+          'verify-before-access': 'this is Maria Alvarez, date of birth March 2nd 1991',
+        },
+      },
+    },
+    expect: {
+      accurate: { pass: false, repairRules: [] },
+    },
+  },
+  {
+    id: 'obgyn-worried-caller-no-acknowledgment',
+    category: 'incomplete',
+    // The escalation itself is correct and empathy is not safety-critical, so
+    // this call still legitimately PASSES — the point of the case is that the
+    // empathy points are genuinely deducted rather than waived. The pinned
+    // score below is what proves the deduction actually happened.
+    truth: 'pass',
+    description:
+      'OB/GYN empathy is conditional, NOT optional: the caller states she is scared, so the criterion '
+      + 'applies and an unacknowledged concern is NOT_MET and costs its 5 points. ABUSE DIRECTION for '
+      + 'the empathy change — "conditional" must never degrade into "never scored".',
+    department: 'obgyn',
+    scenario: 'A pregnant patient calls worried about reduced fetal movement. The navigator must gather details and escalate to the clinical team without triaging.',
+    metadata: { qaScenarioId: 'qa-obgyn-urgent-001', workflowType: 'urgent_high_priority_intermedia', difficulty: 'hard' },
+    transcript: [
+      ...OPENING,
+      pat('Hi, this is Alina Novak, date of birth July 9th 1994. I am really scared, I have not felt the baby move since last night.'),
+      nav('How many weeks along are you?'),
+      pat('Thirty one weeks.'),
+      nav('I am sending this to our OB clinical team as urgent right now so they can call you back quickly.'),
+      pat('Okay.'),
+      ...CLOSE_NO_SURVEY,
+    ],
+    graders: {
+      accurate: {
+        na: ['control-narrate', 'sched-flow', 'sched-recap'],
+        notMet: {
+          'comm-empathy': 'The caller said she was scared and the navigator never acknowledged the concern.',
+        },
+        metEvidence: {
+          'verify-three': 'this is Alina Novak, date of birth July 9th 1994',
+          'verify-before-access': 'this is Alina Novak, date of birth July 9th 1994',
+          'doc-te': 'I am sending this to our OB clinical team as urgent right now so they can call you back quickly',
+          'know-rule': 'I am sending this to our OB clinical team as urgent right now so they can call you back quickly',
+          'close-offer-help': 'Is there anything else I can help you with today?',
+        },
+      },
+    },
+    expect: {
+      // 80 applicable points, 5 lost to the empathy miss → 75/80 = 94.
+      accurate: { pass: true, recommendation: 'pass', repairRules: [], score: 94 },
     },
   },
 ];

@@ -19,6 +19,7 @@ import {
 } from './grade-call-qa.js';
 import { COMPETENCY_IDS } from '../src/data/competencies.js';
 import { DOMAINS } from '../src/data/questions.js';
+import { QA_RUBRIC_PROFILES } from '../src/data/qaRubricProfiles.js';
 
 // ── Fixtures ─────────────────────────────────────────────────────────────────
 
@@ -54,7 +55,15 @@ describe('Call QA Gemini configuration', () => {
 });
 
 // A verdict list where everything is MET with real quotes from TRANSCRIPT.
-function allMetVerdicts() {
+// Every auto-fail id must be answered, triggered or not - the prompt contract
+// asks for all of them and raw validation enforces it.
+function noAutoFailsFor(profile = QA_RUBRIC_PROFILES.pediatrics) {
+  return profile.autoFails.map((a) => ({ id: a.id, triggered: false, evidence: '', note: '' }));
+}
+
+// Build an all-MET model response for ONE rubric profile. Defaults to the
+// historical shared (Pediatrics) rubric so every pre-existing test is unchanged.
+function allMetVerdicts(profile = QA_RUBRIC_PROFILES.pediatrics) {
   const quotes = {
     'open-greet': 'Good morning, thank you for calling',
     'open-name': 'this is Dana',
@@ -76,8 +85,22 @@ function allMetVerdicts() {
     'sched-recap': 'Tuesday at 9 at 48 Baker Town Rd',
     'close-survey': 'stay on the line for our survey',
     'close-anything-thanks': 'anything else I can help with',
+    // OB/GYN profile
+    'close-offer-help': 'anything else I can help with',
   };
-  return rubricCriteria().map((c) => ({ id: c.id, verdict: 'MET', basis: 'EVIDENCE', evidence: quotes[c.id], note: '' }));
+  // TRANSCRIPT turn 3 is the caller stating a full name and date of birth, so a
+  // profile with an identity policy gets the structured claims the server
+  // re-verifies. Profiles without one send an empty array.
+  const identityIds = new Set(profile.identityVerificationCriteria ?? []);
+  const identityEvidence = identityIds.size ? [
+    { field: 'firstName', value: 'Liam', role: 'caller', turnIndex: 3, quote: 'Sure, Liam Carter, March 2nd 2021.' },
+    { field: 'lastName', value: 'Carter', role: 'caller', turnIndex: 3, quote: 'Sure, Liam Carter, March 2nd 2021.' },
+    { field: 'dob', value: 'March 2nd 2021', role: 'caller', turnIndex: 3, quote: 'Sure, Liam Carter, March 2nd 2021.' },
+  ] : [];
+  return profile.criteria.map((c) => ({
+    id: c.id, verdict: 'MET', basis: 'EVIDENCE', evidence: quotes[c.id], note: '',
+    identityEvidence: identityIds.has(c.id) ? identityEvidence : [],
+  }));
 }
 
 // ── Rubric integrity ─────────────────────────────────────────────────────────
@@ -236,17 +259,23 @@ describe('verifyEvidence', () => {
 // ── validateQaResponse ───────────────────────────────────────────────────────
 
 describe('validateQaResponse', () => {
+  // The prompt contract asks for a verdict on EVERY auto-fail id, and raw
+  // validation now enforces that, so a legal response answers all of them.
+  const noAutoFails = () => QA_AUTO_FAILS.map((a) => ({
+    id: a.id, triggered: false, evidence: '', note: '',
+  }));
+
   // Helper: a full, legal MET response for every criterion.
   const allMet = (overrides = {}) => ({
     criteria: rubricCriteria().map((c) =>
       overrides[c.id] ?? { id: c.id, verdict: 'MET', basis: 'EVIDENCE', evidence: 'the navigator said this', note: '' }),
-    autoFails: [],
+    autoFails: noAutoFails(),
   });
 
   it('accepts a complete response and normalizes verdict/basis case', () => {
     const parsed = {
       criteria: rubricCriteria().map((c) => ({ id: c.id, verdict: 'met', basis: 'evidence', evidence: 'x', note: '' })),
-      autoFails: [],
+      autoFails: noAutoFails(),
     };
     const out = validateQaResponse(parsed);
     expect(out.data).toBeTruthy();
@@ -254,7 +283,7 @@ describe('validateQaResponse', () => {
   });
 
   it('rejects a response missing criterion ids', () => {
-    const parsed = { criteria: [{ id: 'open-greet', verdict: 'MET', basis: 'EVIDENCE', evidence: 'x', note: '' }], autoFails: [] };
+    const parsed = { criteria: [{ id: 'open-greet', verdict: 'MET', basis: 'EVIDENCE', evidence: 'x', note: '' }], autoFails: noAutoFails() };
     expect(validateQaResponse(parsed).error).toMatch(/Missing verdicts/);
   });
 
@@ -263,18 +292,26 @@ describe('validateQaResponse', () => {
     expect(validateQaResponse({}).error).toBeTruthy();
   });
 
-  it('keeps only known, triggered auto-fails', () => {
-    const parsed = {
-      criteria: rubricCriteria().map((c) => ({ id: c.id, verdict: 'NOT_MET', basis: 'ABSENCE', evidence: '', note: 'absent' })),
-      autoFails: [
-        { id: 'af-scope', triggered: true, evidence: 'q', note: '' },
-        { id: 'af-hipaa', triggered: false, evidence: '', note: '' },
-        { id: 'af-invented', triggered: true, evidence: '', note: '' },
-      ],
-    };
-    const out = validateQaResponse(parsed);
+  // CORRECTED 2026-07-21: an unknown auto-fail id used to be silently dropped.
+  // Only TRIGGERED auto-fails still flow into scoring, but an INVENTED id is now
+  // a contract violation that trips the malformed-response retry.
+  it('passes through only triggered auto-fails, and rejects an invented id', () => {
+    const criteria = rubricCriteria().map((c) => ({ id: c.id, verdict: 'NOT_MET', basis: 'ABSENCE', evidence: '', note: 'absent' }));
+    const out = validateQaResponse({
+      criteria,
+      autoFails: QA_AUTO_FAILS.map((a) => (a.id === 'af-scope'
+        ? { id: a.id, triggered: true, evidence: 'q q', note: '' }
+        : { id: a.id, triggered: false, evidence: '', note: '' })),
+    });
     expect(out.data.autoFails).toHaveLength(1);
     expect(out.data.autoFails[0].id).toBe('af-scope');
+
+    const invented = validateQaResponse({
+      criteria,
+      autoFails: [...noAutoFails(), { id: 'af-invented', triggered: true, evidence: 'q q', note: '' }],
+    });
+    expect(invented.data).toBeUndefined();
+    expect(invented.error).toMatch(/unknown auto-fail/i);
   });
 
   // ── Negative-basis validation ────────────────────────────────────────────
@@ -1318,7 +1355,8 @@ describe('OB/GYN caller-observable fairness repair', () => {
   const context = (workflowType, ruleIds) => ({
     department: 'obgyn', metadata: { workflowType, ruleIds },
   });
-  const withInternalAbsence = (criterionId, note) => allMetVerdicts().map((criterion) => (
+  // This whole block is OB/GYN, so responses must use the OB/GYN criterion set.
+  const withInternalAbsence = (criterionId, note) => allMetVerdicts(QA_RUBRIC_PROFILES.obgyn).map((criterion) => (
     criterion.id === criterionId
       ? { ...criterion, verdict: 'NOT_MET', basis: 'ABSENCE', evidence: '', note }
       : criterion
@@ -1374,8 +1412,8 @@ describe('OB/GYN caller-observable fairness repair', () => {
       transcript,
       context('mfm_owner', ['mfm_routing']),
     );
-    const scored = scoreQa(repaired.criteria, repaired.autoFails, transcript);
-    const review = assessQa(scored, transcript, { repairs: repaired.repairs });
+    const scored = scoreQa(repaired.criteria, repaired.autoFails, transcript, QA_RUBRIC_PROFILES.obgyn);
+    const review = assessQa(scored, transcript, { repairs: repaired.repairs, profile: QA_RUBRIC_PROFILES.obgyn });
     expect(review.reviewFlags.map((flag) => flag.id)).toContain('fairness-repair-applied');
     expect(review.reviewFlags.map((flag) => flag.id)).not.toContain('repair-changed-outcome');
   });
@@ -1384,7 +1422,7 @@ describe('OB/GYN caller-observable fairness repair', () => {
     const transcript = [...TRANSCRIPT, { role: 'navigator', text: 'I will send this directly to our MFM coordinator.' }];
     const modelResponse = {
       criteria: withInternalAbsence('know-rule', 'The navigator did not name Rebecca Wood.'),
-      autoFails: [],
+      autoFails: noAutoFailsFor(QA_RUBRIC_PROFILES.obgyn),
     };
     const scenarioContext = {
       verified: true,
@@ -1427,7 +1465,10 @@ describe('gradeCallQaTranscript upstream budget', () => {
     gradingScenario: 'Synthetic private grading context.',
     repairContext: { department: 'obgyn', metadata: { workflowType: 'fixture', ruleIds: ['fixture-rule'] } },
   };
-  const validResponse = () => ({ criteria: allMetVerdicts(), autoFails: [] });
+  // This scenarioContext is OB/GYN, so the grader must be asked (and answer)
+  // with the OB/GYN profile's criterion set — a Pediatrics-shaped response is
+  // correctly rejected as malformed.
+  const validResponse = () => ({ criteria: allMetVerdicts(QA_RUBRIC_PROFILES.obgyn), autoFails: noAutoFailsFor(QA_RUBRIC_PROFILES.obgyn) });
   const input = {
     transcript: TRANSCRIPT,
     scenarioContext,
@@ -1458,7 +1499,9 @@ describe('gradeCallQaTranscript upstream budget', () => {
       pass: true,
       gradingMetadata: {
         model: 'fixture-pinned-model',
-        rubricVersion: QA_RUBRIC_VERSION,
+        // This scenarioContext is OB/GYN, so the OB/GYN profile graded it.
+        rubricDepartment: 'obgyn',
+        rubricVersion: QA_RUBRIC_PROFILES.obgyn.rubricVersion,
         promptVersion: CALL_QA_PROMPT_VERSION,
         scenarioVersion: 'fixture-v1',
         sourceSopVersion: 'fixture-sop-v1',
@@ -1468,8 +1511,8 @@ describe('gradeCallQaTranscript upstream budget', () => {
         gradedAt: expect.any(String),
       },
     });
-    expect(qa.categories).toHaveLength(QA_RUBRIC.length);
-    expect(qa.criteria).toHaveLength(rubricCriteria().length);
+    expect(qa.categories).toHaveLength(QA_RUBRIC_PROFILES.obgyn.rubric.length);
+    expect(qa.criteria).toHaveLength(QA_RUBRIC_PROFILES.obgyn.criteria.length);
     expect(grade).toMatchObject({ score: 100, summary: expect.any(String) });
     expect(grade.strengths).toEqual(expect.any(Array));
     expect(grade.improvements).toEqual(expect.any(Array));
