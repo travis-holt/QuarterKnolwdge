@@ -1429,16 +1429,15 @@ export function scoreQa(verdicts, autoFails, transcript, profile, profileBinding
       //   (a) the quoted line is a genuine, uniquely-mapped, non-refusal
       //       disclosure that OVERLAPS the detected disclosure span (B2), AND
       //   (b) the INDEPENDENT earliest complete identity is unambiguous and lands
-      //       AT OR AFTER the first protected disclosure — i.e. identity was NOT
-      //       established before the disclosure.
+      //       AT OR AFTER THIS QUOTED disclosure — i.e. identity was NOT
+      //       established before the model's evidence.
       // Identity independently proven BEFORE the disclosure => no violation.
       // Ambiguous / unprovable chronology => the review conflict below, never a
       // zero.
       const ev = classifyAfHipaaEvidenceFn(transcript, a.evidence);
       verified = ev.verified === true && ev.ambiguous === false
-        && Boolean(firstDisclosure)
         && serverChrono?.earliestIndex !== null && serverChrono?.ambiguous === false
-        && serverChrono.earliestIndex >= firstDisclosure.turnIndex;
+        && serverChrono.earliestIndex >= ev.turnIndex;
     }
     // A NOT-verified af-hipaa is a critical review conflict ONLY when a disclosure
     // happened and identity-before-disclosure is not proven. When identity IS

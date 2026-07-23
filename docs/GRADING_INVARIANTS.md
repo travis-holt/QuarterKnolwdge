@@ -8,7 +8,8 @@
 > [`api/_qa-grading-corpus.test.js`](../api/_qa-grading-corpus.test.js) — if one of
 > those tests fails after your change, re-read this document before "fixing" the test.
 >
-> Last updated: 2026-07-22 (correction pass #6 — §0m — supersedes the parts of §0k/§0l it amends:
+> Last updated: 2026-07-23 (correction pass #7 — §0n — supersedes the candidate, DOB ownership,
+> and af-hipaa chronology portions of §0m. Earlier: correction pass #6 — §0m:
 > af-hipaa is driven by an INDEPENDENT transcript-wide earliest-identity chronology (not the
 > model-selected claims); disclosure detection is refusal/clause-aware with unique quote mapping and
 > overlap; identity claims bind to ONE discrete candidate; DOB ownership uses the exact quoted
@@ -204,6 +205,30 @@ parts of §0k/§0l it amends.
    synthetic cases**, still keyed to `CALL_QA_LIVE_SMOKE_API_KEY(S)` only, no Firestore/private bank,
    no identifier values printed, and no calibration authority. `NOT_RUN`/`SKIPPED` never satisfy the
    gate.
+
+## 0n. Non-null candidate binding, caller-owned DOB rejection, quoted-disclosure chronology (2026-07-23, correction pass #7)
+
+The seventh independent review attacked three remaining implementation gaps in §0m. All have
+failing-before regressions against exact head `6b876d2` in
+[`api/qaCorrectionPass7.test.js`](../api/qaCorrectionPass7.test.js). These are server-side
+enforcement changes only: the prompt remains `call-qa-grader-v7`, the OB/GYN rubric remains
+`qa-rubric-obgyn-v1`, and Pediatrics/historical grades are unchanged.
+
+1. **Every identifier resolves to the same non-null candidate.** A complete identity requires
+   firstName, lastName, and DOB each to resolve to a candidate and all three candidate IDs to match.
+   A null candidate is incompleteness, not permission to skip the binding check. Valid direct-patient
+   and uninterrupted single-third-party sequences remain valid.
+2. **DOB ownership is one shared deterministic decision.** Both model-evidence evaluation and
+   independent transcript chronology reject explicit caller ownership (`my DOB`, `my date of birth`,
+   `I was born`) for a third-party patient. Patient-linked wording (`her/his DOB`, `the patient's
+   DOB`, a named-patient possessive) remains valid. When caller and patient DOBs both occur, exact
+   occurrences are evaluated independently and only the patient-linked occurrence may bind.
+3. **af-hipaa authority belongs to its quoted disclosure.** `classifyAfHipaaEvidence()` returns the
+   uniquely mapped navigator turn, clause index, and clause. A model-triggered automatic fail may
+   zero only when identity was incomplete at that quoted disclosure turn. An unrelated deterministic
+   hit may create review conflict but never lends automatic-fail authority to the model quote.
+   Information-request questions are not disclosures; genuine pre-verification disclosures still
+   verify, post-verification disclosures do not, and ambiguous mappings remain review-only.
 
 ## 0j. Identity coherence and provenance (2026-07-22, correction pass #3)
 

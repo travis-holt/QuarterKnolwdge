@@ -11,7 +11,25 @@
 > [§8 Current System State](#8-current-system-state) and [§15 Current Priorities](#15-current-priorities)
 > accurate at all times.
 >
-> **Last updated:** 2026-07-22 (**CORRECTION PASS #6 — independent identity chronology, refusal-aware
+> **Last updated:** 2026-07-23 (**CORRECTION PASS #7 — non-null candidate binding, caller-owned DOB
+> rejection, quoted-disclosure chronology.**
+> Draft PR #41 remains **NOT merged, NOT deployed, and NOT ready**. Against independently reviewed
+> head `6b876d2`, the initial 13 focused regressions reproduced all three remaining blockers before
+> the fix (`api/qaCorrectionPass7.test.js`: 7 failed / 6 preservation cases passed); two caller-
+> ownership variants were then added to the final 15-test file. All fixes are pure
+> SERVER-SIDE enforcement/docs — **no model-visible prompt or schema change** — so the prompt stays
+> `call-qa-grader-v7` and the OB/GYN rubric stays `qa-rubric-obgyn-v1` (100 points, 85 pass;
+> criteria/weights/applicability/auto-fail definitions unchanged). A complete identity now requires
+> firstName, lastName, and DOB to resolve to the SAME non-null candidate. One shared deterministic
+> DOB-ownership decision drives model evidence and independent chronology: explicit caller ownership
+> cannot satisfy a third-party patient, while patient-linked wording remains valid.
+> `classifyAfHipaaEvidence()` returns the unique mapped turn/clause, and auto-zero authority compares
+> identity completion to THAT quote, never another detector hit; information-request questions are
+> not disclosures. Numeric weighting still awaits owner sign-off; calibration remains
+> `INSUFFICIENT_DATA`; a real dedicated-key live smoke remains required. No migration, production
+> write, private provisioning, historical rewrite, merge, deploy, or ready-state change. See
+> docs/HISTORY.md and docs/GRADING_INVARIANTS.md §0n. Final unit gate: **2,208 tests across 85 files**. ·
+> **Prior update:** 2026-07-22 (**CORRECTION PASS #6 — independent identity chronology, refusal-aware
 > disclosure, candidate binding, exact DOB span, surname particles, provider grammar, bidirectional
 > consistency, privacy-gated smoke.**
 > Draft PR #41 remains **NOT merged, NOT deployed, and NOT ready**. Against independently reviewed

@@ -1,5 +1,29 @@
 ﻿# Development History - Knowledge Check
 
+## 2026-07-23 — Call QA non-null candidate binding, caller-owned DOB rejection, quoted-disclosure chronology (correction pass #7)
+
+**Status: Draft PR #41 remains unmerged, undeployed, and not ready.** No Firestore migration or
+production write, no private-scenario provisioning, no historical result rewritten, and **no
+model-visible contract change** — the prompt stays `call-qa-grader-v7` and the OB/GYN rubric stays
+`qa-rubric-obgyn-v1`. Against independently reviewed head `6b876d2`, the initial 13 focused tests
+reproduced all three blockers before implementation changed: **7 failed and 6 preservation cases
+passed**; two caller-ownership variants were then added to the final 15-test file
+([`api/qaCorrectionPass7.test.js`](../api/qaCorrectionPass7.test.js)).
+
+1. A complete identity now requires firstName, lastName, and DOB each to resolve to the same
+   non-null candidate. An unresolved claim after a patient switch fails closed.
+2. One deterministic DOB-ownership decision now drives both model-submitted evidence and
+   `earliestCompleteIdentity()`. Explicit caller ownership cannot satisfy a third-party patient;
+   patient-linked wording remains valid, and only the patient-linked occurrence binds when both
+   caller and patient dates appear.
+3. `classifyAfHipaaEvidence()` returns its unique mapped turn and clause. A model-triggered
+   `af-hipaa` compares identity completion to that quoted disclosure turn, never an unrelated
+   detector hit; information-request questions are not disclosures.
+
+See [docs/GRADING_INVARIANTS.md](GRADING_INVARIANTS.md) §0n. Final unit gate: **2,208 tests across
+85 files** (2,193 → 2,208; one new focused file). No merge, deploy, ready-state change, or
+auto-merge.
+
 ## 2026-07-22 — Call QA independent identity chronology, refusal-aware disclosure, candidate binding, exact DOB span, surname particles, provider grammar, bidirectional consistency, privacy-gated smoke (correction pass #6)
 
 **Status: Draft PR #41 remains unmerged, undeployed, and not ready.** No Firestore migration or

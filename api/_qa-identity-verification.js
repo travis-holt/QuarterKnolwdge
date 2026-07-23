@@ -254,6 +254,23 @@ export function parseDateOfBirth(text) {
   return null;
 }
 
+function dateOfBirthOccurrences(text) {
+  const raw = String(text ?? '');
+  const occurrences = [];
+  for (const form of DOB_FORMS) {
+    const pattern = new RegExp(form.pattern.source, `${form.pattern.flags.replace('g', '')}g`);
+    for (const match of raw.matchAll(pattern)) {
+      const parts = form.map(match);
+      if (isRealCalendarDate(parts.month, parts.day, parts.year)) {
+        occurrences.push({ text: match[0], ...parts, index: match.index });
+      }
+    }
+  }
+  return occurrences
+    .sort((a, b) => a.index - b.index)
+    .filter((item, index, all) => index === 0 || item.index !== all[index - 1].index);
+}
+
 /** Backwards-compatible span accessor: the matched text, or null. */
 export function extractDateOfBirth(text) {
   return parseDateOfBirth(text)?.text ?? null;
@@ -897,6 +914,7 @@ export function resolvePatientSubject(transcript) {
 // @returns {{ candidates: object[] }}
 export function resolveIdentityCandidates(transcript) {
   const turns = Array.isArray(transcript) ? transcript : [];
+  const subject = resolvePatientSubject(turns);
   const candidates = [];
   let sequenceId = 0;
   let activeCandidate = null;
@@ -954,9 +972,13 @@ export function resolveIdentityCandidates(transcript) {
     // Independent DOB detection (no model claim), attributed to the candidate
     // active in this turn. Used to establish an EARLIEST identity chronology the
     // model cannot skew (B1).
-    if (activeCandidate && activeCandidate.dobTurn == null && parseDateOfBirth(turns[index].text)) {
-      activeCandidate.dobTurn = index;
-      activeCandidate.turns.add(index);
+    if (activeCandidate && activeCandidate.dobTurn == null) {
+      const ownedDob = dateOfBirthOccurrences(turns[index].text)
+        .find((dob) => !dobOwnershipFailureAtPosition(turns, index, dob.index, subject));
+      if (ownedDob) {
+        activeCandidate.dobTurn = index;
+        activeCandidate.turns.add(index);
+      }
     }
   }
   return { candidates };
@@ -1047,35 +1069,28 @@ function allIndexesOf(haystack, needle) {
   return out;
 }
 
-function dobOwnershipFailure(transcript, dobClaim, subject) {
-  const dobTurnIndex = dobClaim.turnIndex;
+function lastMatchIndex(text, pattern) {
+  let last = -1;
+  for (const match of String(text ?? '').matchAll(pattern)) last = match.index;
+  return last;
+}
+
+function dobOwnershipFailureAtPosition(transcript, dobTurnIndex, dobPos, subject) {
   const text = String(transcript?.[dobTurnIndex]?.text ?? '');
-  // Locate the DOB by the EXACT occurrence contained in the verified caller
-  // QUOTE, not the first identical date anywhere in the turn (correction pass #6,
-  // B4). A turn may hold two identical dates ("my DOB is March 2, 1991 … her DOB
-  // is March 2, 1991"); the quote disambiguates which one was claimed. The value
-  // still positions the date (so a phone/address elsewhere cannot short-circuit
-  // ownership) and the full quote carries the ownership language.
-  const valueText = String(dobClaim.rawValue ?? dobClaim.value ?? '');
-  const ownershipQuote = String(dobClaim.quote ?? valueText);
-  const quoteOccurrences = allIndexesOf(text, ownershipQuote);
-  let dobPos;
-  if (ownershipQuote && quoteOccurrences.length === 1) {
-    const valueInQuote = ownershipQuote.toLowerCase().indexOf(valueText.toLowerCase());
-    if (valueInQuote < 0) return 'dob-value-not-in-quote';
-    dobPos = quoteOccurrences[0] + valueInQuote;
-  } else if (ownershipQuote && quoteOccurrences.length > 1) {
-    // The quote itself appears more than once: it cannot be mapped to a unique
-    // occurrence, so fail closed to review rather than guessing.
-    return 'dob-claim-quote-ambiguous';
-  } else {
-    // No usable quote occurrence — fall back to the value's unique occurrence,
-    // and fail closed if the value itself is ambiguous in the turn.
-    const valueOccurrences = allIndexesOf(text, valueText);
-    if (valueOccurrences.length === 0) return 'dob-claim-span-not-found';
-    if (valueOccurrences.length > 1) return 'dob-claim-quote-ambiguous';
-    dobPos = valueOccurrences[0];
+  const beforeDob = text.slice(0, dobPos);
+  const priorThirdParty = subject.spans.some((span) => span.subject === 'thirdParty' && span.turnIndex <= dobTurnIndex);
+  if (priorThirdParty) {
+    const callerOwnedAt = Math.max(
+      lastMatchIndex(beforeDob, /\bmy\s+(?:date\s+of\s+birth|dob)\b/gi),
+      lastMatchIndex(beforeDob, /\bi\s+was\s+born\b/gi),
+    );
+    const patientLinkedAt = Math.max(
+      lastMatchIndex(beforeDob, /\b(?:the\s+patient(?:'s|’s)?|his|her|the\s+child(?:'s|’s)?)\s+(?:date\s+of\s+birth|dob)\b/gi),
+      lastMatchIndex(beforeDob, /\b[\p{L}'’-]+(?:'s|’s)\s+(?:date\s+of\s+birth|dob)\b/giu),
+    );
+    if (callerOwnedAt > patientLinkedAt) return 'dob-explicitly-caller-owned';
   }
+
   if (dobPos < 0) return 'dob-claim-span-not-found';
   const preceding = designationSpansWithPositions(text)
     .filter((span) => span.start >= 0 && span.start < dobPos)
@@ -1087,14 +1102,13 @@ function dobOwnershipFailure(transcript, dobClaim, subject) {
     if (!belongsToPatient) return 'dob-belongs-to-different-subject';
   }
 
-  const priorThirdParty = subject.spans.some((span) => span.subject === 'thirdParty' && span.turnIndex <= dobTurnIndex);
   let question = '';
   for (let index = dobTurnIndex - 1; index >= 0; index--) {
     if (transcript[index]?.role === 'navigator') { question = String(transcript[index].text ?? ''); break; }
   }
   // Ownership may be established by the navigator's question OR by the caller's
   // own verified answer quote.
-  const ownershipText = `${question} ${ownershipQuote}`;
+  const ownershipText = `${question} ${beforeDob}`;
   const patientLinked = /\b(?:the\s+patient(?:'s|’s)?|his|her|the\s+child(?:'s|’s)?)\s+(?:date\s+of\s+birth|dob)\b/i.test(ownershipText)
     || /\b[\p{L}'’-]+(?:'s|’s)\s+(?:date\s+of\s+birth|dob)\b/iu.test(ownershipText);
   if (priorThirdParty && /\byour\s+(?:date\s+of\s+birth|dob)\b/i.test(question) && !patientLinked) {
@@ -1105,6 +1119,28 @@ function dobOwnershipFailure(transcript, dobClaim, subject) {
     return 'dob-ownership-not-patient-linked';
   }
   return null;
+}
+
+function dobOwnershipFailure(transcript, dobClaim, subject) {
+  const dobTurnIndex = dobClaim.turnIndex;
+  const text = String(transcript?.[dobTurnIndex]?.text ?? '');
+  const valueText = String(dobClaim.rawValue ?? dobClaim.value ?? '');
+  const ownershipQuote = String(dobClaim.quote ?? valueText);
+  const quoteOccurrences = allIndexesOf(text, ownershipQuote);
+  let dobPos;
+  if (ownershipQuote && quoteOccurrences.length === 1) {
+    const valueInQuote = ownershipQuote.toLowerCase().indexOf(valueText.toLowerCase());
+    if (valueInQuote < 0) return 'dob-value-not-in-quote';
+    dobPos = quoteOccurrences[0] + valueInQuote;
+  } else if (ownershipQuote && quoteOccurrences.length > 1) {
+    return 'dob-claim-quote-ambiguous';
+  } else {
+    const valueOccurrences = allIndexesOf(text, valueText);
+    if (valueOccurrences.length === 0) return 'dob-claim-span-not-found';
+    if (valueOccurrences.length > 1) return 'dob-claim-quote-ambiguous';
+    dobPos = valueOccurrences[0];
+  }
+  return dobOwnershipFailureAtPosition(transcript, dobTurnIndex, dobPos, subject);
 }
 
 // A privacy-safe, VALUE-FREE audit record of what the server established.
@@ -1210,8 +1246,10 @@ export function evaluateIdentityEvidence(transcript, identityEvidence) {
     const fnCand = candidateForClaim(candidates, verified.firstName);
     const lnCand = candidateForClaim(candidates, verified.lastName);
     const dobCand = candidateForClaim(candidates, verified.dob);
-    if (fnCand && lnCand && dobCand
-      && !(fnCand.id === lnCand.id && fnCand.id === dobCand.id)) {
+    if (!fnCand || !lnCand || !dobCand) {
+      failures.push({ ok: false, field: 'subject', reason: 'identifier-candidate-unresolved' });
+      complete = false;
+    } else if (!(fnCand.id === lnCand.id && fnCand.id === dobCand.id)) {
       failures.push({ ok: false, field: 'subject', reason: 'identifiers-cross-candidate' });
       complete = false;
     }
@@ -1419,6 +1457,7 @@ function matchDisclosureCategory(text) {
 // A clause is a genuine disclosure only when it matches a protected category AND
 // is NOT governed by a refusal that precedes (or coincides with) the match.
 function clauseDisclosure(clause) {
+  if (/^\s*(?:what|when|where|who|why|how)\b/i.test(String(clause ?? ''))) return null;
   const disc = disclosureCategoryMatch(clause);
   if (!disc) return null;
   const refusalIdx = clauseRefusalIndex(clause);
@@ -1467,12 +1506,12 @@ export function findProtectedDisclosureInTurn(text) {
  * disclosure keyword never verifies the auto-fail (correction pass #6, B2).
  *
  * @returns {{ verified: boolean, ambiguous: boolean, turnIndex: number,
- *             category: string|null }}
+ *             clauseIndex: number, clause: string|null, category: string|null }}
  */
 export function classifyAfHipaaEvidence(transcript, quote) {
   const turns = Array.isArray(transcript) ? transcript : [];
   const nq = normalizeForMatch(stripRoleLabel(quote));
-  if (!nq) return { verified: false, ambiguous: false, turnIndex: -1, category: null };
+  if (!nq) return { verified: false, ambiguous: false, turnIndex: -1, clauseIndex: -1, clause: null, category: null };
 
   const navTurns = [];
   for (let index = 0; index < turns.length; index++) {
@@ -1482,19 +1521,21 @@ export function classifyAfHipaaEvidence(transcript, quote) {
   }
   // The quote must map to exactly ONE navigator turn — otherwise it cannot be
   // uniquely attributed, so fail closed to review.
-  if (navTurns.length !== 1) return { verified: false, ambiguous: true, turnIndex: navTurns[0] ?? -1, category: null };
+  if (navTurns.length !== 1) return { verified: false, ambiguous: true, turnIndex: navTurns[0] ?? -1, clauseIndex: -1, clause: null, category: null };
 
   const turnIndex = navTurns[0];
   const rawTurn = String(turns[turnIndex].text ?? '');
   const spans = clauseSpans(rawTurn);
-  const containing = spans.filter((span) => normalizeForMatch(span.clause).includes(nq));
+  const containing = spans
+    .map((span, clauseIndex) => ({ ...span, clauseIndex }))
+    .filter((span) => normalizeForMatch(span.clause).includes(nq));
   // The quote must sit inside exactly ONE clause; spanning/mapping several clauses
   // is ambiguous.
-  if (containing.length !== 1) return { verified: false, ambiguous: true, turnIndex, category: null };
+  if (containing.length !== 1) return { verified: false, ambiguous: true, turnIndex, clauseIndex: -1, clause: null, category: null };
 
-  const clause = containing[0].clause;
+  const { clause, clauseIndex } = containing[0];
   const disc = clauseDisclosure(clause);
-  if (!disc) return { verified: false, ambiguous: false, turnIndex, category: null };
+  if (!disc) return { verified: false, ambiguous: false, turnIndex, clauseIndex, clause, category: null };
 
   // Overlap: the quote itself must carry the disclosure content, not merely sit
   // in the same clause as one. A quote that is a benign fragment of a disclosure
@@ -1502,7 +1543,7 @@ export function classifyAfHipaaEvidence(transcript, quote) {
   // does not, on its own, match a protected pattern, so it does not verify the
   // auto-fail. (Checked in normalized space so trailing punctuation never matters.)
   const overlaps = disclosureCategoryMatch(nq) !== null;
-  return { verified: overlaps, ambiguous: false, turnIndex, category: disc.category };
+  return { verified: overlaps, ambiguous: false, turnIndex, clauseIndex, clause, category: disc.category };
 }
 
 /**
