@@ -263,7 +263,7 @@ describe('B4 · the identity contract is caller-only everywhere', () => {
   });
 
   it('the prompt version moved past v5', () => {
-    expect(CALL_QA_PROMPT_VERSION).toBe('call-qa-grader-v7');
+    expect(CALL_QA_PROMPT_VERSION).toBe('call-qa-grader-v8');
   });
 
   it('validation rejects a navigator-role identity claim', () => {

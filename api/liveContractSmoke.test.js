@@ -149,6 +149,7 @@ describe('qa:live-contract-smoke gate behavior', () => {
     const output = lines.join('\n');
     expect(code).toBe(0);
     expect(output).toContain('LIVE_CONTRACT_SMOKE_VERIFIED');
+    expect(output).toContain('call-qa-grader-v8');
     expect(output).not.toMatch(/Maria|Alvarez|1991|dedicated-test-key/);
   });
 

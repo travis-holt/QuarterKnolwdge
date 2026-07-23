@@ -1,5 +1,25 @@
 ﻿# Development History - Knowledge Check
 
+## 2026-07-23 — Call QA live-contract evidence correction (prompt v8)
+
+**Status: Draft PR #41 remains unmerged, undeployed, and not ready.** A real non-production
+live-contract run against the pinned grader reproduced malformed model responses: `MET` criteria
+with empty `evidence` failed server validation. The root cause was a prompt contradiction: global
+response rules required a non-empty quote for every `MET`, while identity guidance told the grader
+not to populate free-text identity evidence. Prompt `call-qa-grader-v8` now requires a contiguous
+caller quote for every MET identity response solely to satisfy the response shape; only the
+structured `identityEvidence` array establishes identity credit. The rubric remains
+`qa-rubric-obgyn-v1` (100 points, 85 pass); identity parsing, DOB ownership, disclosure detection,
+calibration thresholds, and scoring are unchanged.
+
+The live smoke now emits a privacy-safe response-contract category for malformed responses, never
+raw model output or identifier values. The v8 targeted live cases for separate one-word answers and
+authorized third-party callers both passed. A full v8 run then passed 18/20 cases, but cases 15 and
+20 exhausted the dedicated pool with upstream HTTP 429; it emitted
+`LIVE_CONTRACT_SMOKE_FAILED`, not verified evidence. Because this is model-visible, v8 is a
+distinct calibration population; no human evidence was fabricated and current readiness remains
+`INSUFFICIENT_DATA`.
+
 ## 2026-07-23 — Call QA auxiliary confirmation structure (correction pass #7 follow-up 2)
 
 **Status: Draft PR #41 remains unmerged, undeployed, and not ready.** No migration, production

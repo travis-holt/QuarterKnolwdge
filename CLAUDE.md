@@ -11,7 +11,22 @@
 > [§8 Current System State](#8-current-system-state) and [§15 Current Priorities](#15-current-priorities)
 > accurate at all times.
 >
-> **Last updated:** 2026-07-23 (**CORRECTION PASS #7 FOLLOW-UP 2 — auxiliary confirmation structure.**
+> **Last updated:** 2026-07-23 (**LIVE-CONTRACT EVIDENCE CORRECTION — prompt v8.**
+> Draft PR #41 remains **NOT merged, NOT deployed, and NOT ready**. A real dedicated-key,
+> non-production live-contract run reproduced malformed `MET` responses with empty evidence. The
+> prompt contradicted the shared response shape by telling identity criteria not to populate
+> free-text evidence even though every MET requires a quote. Prompt **`call-qa-grader-v8`** now
+> requires one contiguous caller quote for MET identity responses solely to satisfy response shape;
+> structured `identityEvidence` remains the only identity-credit authority. The OB/GYN rubric
+> remains `qa-rubric-obgyn-v1` (100 points, 85 pass); parser, DOB, disclosure, calibration
+> thresholds, and scoring are unchanged. The targeted live cases for separate one-word identity and
+> an authorized third party passed under v8. The full v8 smoke passed 18/20 cases but cases 15 and
+> 20 hit upstream HTTP 429, so it emitted FAILED and does not satisfy the gate. v8 is a new
+> calibration population; no human fixtures exist, readiness remains `INSUFFICIENT_DATA`, and
+> dedicated capacity plus owner decisions are still required. No migration, production write,
+> private provisioning, historical rewrite, merge, deploy,
+> auto-merge, or ready-state change. See docs/HISTORY.md. ·
+> **Prior update:** 2026-07-23 (**CORRECTION PASS #7 FOLLOW-UP 2 — auxiliary confirmation structure.**
 > Draft PR #41 remains **NOT merged, NOT deployed, and NOT ready**. Against independently reviewed
 > head `e6fd39d`, the focused pass-7 file ran 31 tests with **5 failures / 26 passes** before the
 > correction: four auxiliary-led confirmation disclosures were suppressed and the end-to-end
@@ -2673,7 +2688,9 @@ of this file on 2026-07-07 to cut per-session context cost (it was ~55% of the f
   and one canonical identity/disclosure chronology are server-enforced. `af-hipaa` needs a quoted
   protected disclosure before completion; a deterministically established model-false conflict
   forces critical review without speculative auto-zeroing. Negative auto-fails require empty
-  evidence/note. The prompt is `call-qa-grader-v7`; rubric versions, points, the 85 threshold,
+  evidence/note. The prompt is `call-qa-grader-v8`; a MET identity response now also carries a
+  non-empty caller quote for response shape while structured identity evidence remains authoritative.
+  Rubric versions, points, the 85 threshold,
   Pediatrics, and stored results are unchanged. The live contract gate accepts only dedicated
   `CALL_QA_LIVE_SMOKE_API_KEY(S)` credentials and only the exact VERIFIED marker counts.
 
@@ -3697,18 +3714,20 @@ npm run test:e2e     # run the Playwright browser tests (auto-builds + starts th
      safety-critical misses prevent a confident pass and force `needs_review`; a verified HIPAA
      auto-fail still zeroes the score. Re-weighting was explicitly out of scope for both
      correction passes and needs owner sign-off.
-   - **Prompt version `call-qa-grader-v7`** (v3 → v4 → v5 → v6 → v7). v4 added profile-rendered evidence
+   - **Prompt version `call-qa-grader-v8`** (v3 → v4 → v5 → v6 → v7 → v8). v4 added profile-rendered evidence
      role rules, `[n]`-indexed transcript turns and the structured `identityEvidence` array; v5
      added the patient-identity ownership rules for name claims, explicit spoken-DOB guidance,
      and the requirement to answer every auto-fail id (with a quote when triggered); v6 made
-     identity caller-only; v7 requires an untriggered auto-fail to carry empty evidence and note.
+     identity caller-only; v7 requires an untriggered auto-fail to carry empty evidence and note;
+     v8 resolves the MET-identity evidence contradiction by requiring a caller quote for response
+     shape while structured identity evidence remains authoritative.
      Each is a
      real model-visible contract change, so **evidence gathered under v3 or v4 is a separate
-     calibration population from v7** and populations can never be pooled. The rubric itself stays
+     calibration population from v8** and populations can never be pooled. The rubric itself stays
      `qa-rubric-obgyn-v1` — no criterion, point, weight, applicability or auto-fail changed.
    - **The live smoke must now also confirm the model populates identity claims correctly.**
      Prompt-contract tests assert prompt TEXT; they cannot prove how Gemini fills the structured
-     `identityEvidence` array under v7. A grader that omits it, or that submits a navigator or
+     `identityEvidence` array under v8. A grader that omits it, or that submits a navigator or
      provider name, will correctly but unhelpfully lose verification credit.
    - **The non-production live contract gate requires a dedicated key and exact marker.** Use
      `CALL_QA_LIVE_SMOKE_API_KEY` or its plural form; generic application Gemini keys are ignored.

@@ -23,7 +23,9 @@
 //     explicit local convenience whose SKIPPED marker cannot satisfy the gate.
 // ─────────────────────────────────────────────────────────────────────────────
 
-import { gradeCallQaTranscript, callQaGraderModel } from '../../api/grade-call-qa.js';
+import {
+  gradeCallQaTranscript, callQaGraderModel, CALL_QA_PROMPT_VERSION,
+} from '../../api/grade-call-qa.js';
 
 const STATIC_SOP = [
   'SYNTHETIC NON-PRODUCTION SOP CONTEXT (contract smoke only).',
@@ -385,7 +387,8 @@ export function liveSmokeApiKeys(env = process.env) {
 }
 
 export async function runLiveContractSmoke({
-  env = process.env, args = process.argv.slice(2), grade = gradeCallQaTranscript, write = console.log,
+  env = process.env, args = process.argv.slice(2), grade = gradeCallQaTranscript,
+  cases = CASES, write = console.log,
 } = {}) {
   const keys = liveSmokeApiKeys(env);
   const graderModel = callQaGraderModel(env);
@@ -400,10 +403,10 @@ export async function runLiveContractSmoke({
   }
 
   write(`Running live Call QA contract smoke against pinned grader model: ${graderModel}`);
-  write(`${CASES.length} synthetic cases. No Firestore access or private bank.`);
+  write(`${cases.length} synthetic cases. No Firestore access or private bank.`);
 
   const results = [];
-  for (const testCase of CASES) {
+  for (const testCase of cases) {
     let outcome;
     try {
       const { qa } = await grade({
@@ -424,7 +427,8 @@ export async function runLiveContractSmoke({
       // A thrown GradingServiceError here means the model produced a malformed /
       // unusable response even after the retry — exactly what this gate exists to
       // catch. The message never contains identifier values.
-      outcome = { id: testCase.id, status: 'FAIL', detail: `unusable grader response: ${err?.error ?? err?.message ?? err}` };
+      const contract = err?.contractFailureKind ? `; contract=${err.contractFailureKind}` : '';
+      outcome = { id: testCase.id, status: 'FAIL', detail: `unusable grader response: ${err?.error ?? err?.message ?? err}${contract}` };
     }
     results.push(outcome);
     write(`  [${outcome.status}] ${outcome.id}${outcome.detail ? ` - ${outcome.detail}` : ''}`);
@@ -432,10 +436,10 @@ export async function runLiveContractSmoke({
 
   const failed = results.filter((r) => r.status === 'FAIL');
   if (failed.length > 0) {
-    write(`LIVE_CONTRACT_SMOKE_FAILED - ${failed.length}/${results.length} case(s) did not satisfy the v7 contract.`);
+    write(`LIVE_CONTRACT_SMOKE_FAILED - ${failed.length}/${results.length} case(s) did not satisfy the ${CALL_QA_PROMPT_VERSION} contract.`);
     return 1;
   }
-  write(`LIVE_CONTRACT_SMOKE_VERIFIED - ${results.length}/${results.length} cases satisfied the v7 contract.`);
+  write(`LIVE_CONTRACT_SMOKE_VERIFIED - ${results.length}/${results.length} cases satisfied the ${CALL_QA_PROMPT_VERSION} contract.`);
   write('This is NON-PRODUCTION and carries NO calibration or automation authority.');
   return 0;
 }

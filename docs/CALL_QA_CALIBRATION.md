@@ -145,8 +145,12 @@ pass (2026-07-22) made the identity contract CALLER-ONLY (the schema no longer a
 navigator role) and required the three identifiers to belong to ONE patient, moving it to
 `call-qa-grader-v6`; correction pass #4 then made the negative auto-fail contract explicit
 (`triggered: false` requires empty evidence and note), moving it to
-**`call-qa-grader-v7`**. The server-only candidate, name-field, DOB-ownership, and HIPAA chronology
-checks do not independently require a prompt bump.
+**`call-qa-grader-v7`**. The live contract smoke then found a model-visible contradiction:
+identity instructions said not to populate free-text `evidence`, while the shared response shape
+requires every `MET` verdict to include a non-empty quote. The correction requires a real caller
+quote for a MET identity response but keeps the structured `identityEvidence` array as the sole
+source of identity credit, moving the prompt to **`call-qa-grader-v8`**. The server-only candidate,
+name-field, DOB-ownership, and HIPAA chronology checks do not independently require a prompt bump.
 
 **Provenance compatibility (2026-07-22).** A GRADED fixture is validated against the rubric its
 RECORDED `modelRun.rubricVersion` maps to — never the current department profile — and its
@@ -160,13 +164,13 @@ An unknown recorded rubric or prompt version fails closed. The compatibility pol
 
 | Department | Rubric version | Legitimate prompt versions |
 |---|---|---|
-| `pediatrics` | `qa-rubric-v2` | any supported (v3–v7) |
+| `pediatrics` | `qa-rubric-v2` | any supported (v3–v8) |
 | `obgyn` | `qa-rubric-v2` (historical shared) | v3 only |
-| `obgyn` | `qa-rubric-obgyn-v1` | v4, v5, v6, v7 |
+| `obgyn` | `qa-rubric-obgyn-v1` | v4, v5, v6, v7, v8 |
 
 **Interpretable is not the same as producible (corrected 2026-07-21).**
 `SUPPORTED_CALL_QA_PROMPT_VERSIONS` lists every version this build can still INTERPRET in a
-stored record (v3–v7). It previously read as though a fixture could simply declare any
+stored record (v3–v8). It previously read as though a fixture could simply declare any
 of them, while `validateModelRun` in fact required an exact match with the current version —
 a contradiction the second review flagged. The policy is now explicit and enforced:
 
@@ -191,9 +195,9 @@ breaks down prompt version, a multi-version population displays
 every gate on its own (`requireSinglePromptVersion`). Two helpers express the split —
 `isSupportedStoredPromptVersion()` and `isCurrentPromptVersion()`.
 
-**Re-baselining.** `call-qa-grader-v7` (like the v4/v5/v6 moves before it, and like
+**Re-baselining.** `call-qa-grader-v8` (like the v4/v5/v6/v7 moves before it, and like
 `qa-rubric-obgyn-v1`) re-baselines OB/GYN calibration: evidence gathered under an earlier
-prompt is a separate population and cannot be pooled with v7 evidence. This has no effect
+prompt is a separate population and cannot be pooled with v8 evidence. This has no effect
 on current readiness, because there are still zero human-pilot fixtures.
 
 **Rubric version is department-scoped (2026-07-21).** Each department carries its
@@ -312,7 +316,7 @@ fixtures and requires each grading fixture to embed a sanitized
 Firestore bank.
 
 The production grader prompt version has one source of truth:
-`api/_qa-grading-versions.js` (`call-qa-grader-v7`), re-exported by
+`api/_qa-grading-versions.js` (`call-qa-grader-v8`), re-exported by
 `api/grade-call-qa.js` and validated against fixture `modelRun.promptVersion`.
 
 Private provisioning is a separate deliberate operator action:

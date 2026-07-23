@@ -276,8 +276,10 @@ export function evidenceRoleRules(profile) {
       + ' month and day with no year cannot be verified.',
     'If the array does not independently prove all three identifiers, the identity criteria lose'
       + ' credit regardless of the verdict you return. Do not claim MET and leave this array empty.',
-    'Do NOT put a free-text quote in "evidence" for these criteria as a substitute — the server'
-      + ' derives their evidence from this array and discards anything else.',
+    'For a MET identity criterion, "evidence" MUST still contain one non-empty verbatim CALLER'
+      + ' quote (use the same caller quote as an identity claim) to satisfy the response contract.'
+      + ' The server ignores this free-text field for identity credit and derives identity only from'
+      + ' the structured array.',
   );
   return lines.join('\n');
 }
@@ -580,6 +582,13 @@ class GradingServiceError extends Error {
   }
 }
 
+function validationFailureKind(error) {
+  const message = String(error ?? '');
+  if (/MET requires a non-empty evidence quote/i.test(message)) return 'met-evidence-empty';
+  if (/identityEvidence|identity criterion|Identity criteria/i.test(message)) return 'identity-contract';
+  return 'response-contract';
+}
+
 /**
  * Reusable Call QA grading service. Given a transcript + a TRUSTED scenario
  * context (both server-owned), it runs the pinned grader, all deterministic
@@ -637,6 +646,7 @@ export async function gradeCallQaTranscript({ transcript: rawTranscript, scenari
   // Scored Call QA uses ONE pinned, auditable model — key rotation only, NO
   // model fallback. A malformed-output retry reuses the SAME pinned model.
   let validated = null;
+  let validationError = null;
   let usedModel = graderModel;
   let attemptsUsed = 0;
   const gradingStartedAt = Date.now();
@@ -667,10 +677,15 @@ export async function gradeCallQaTranscript({ transcript: rawTranscript, scenari
     }
     const check = validateQaResponse(parsed, profile);
     if (check.data) validated = check.data;
-    else console.warn(`grade-call-qa: upstream response invalid model=${usedModel} attempt=${attemptsUsed} elapsedMs=${Date.now() - gradingStartedAt}`);
+    else {
+      validationError = check.error;
+      console.warn(`grade-call-qa: upstream response invalid model=${usedModel} attempt=${attemptsUsed} elapsedMs=${Date.now() - gradingStartedAt}`);
+    }
   }
   if (!validated) {
-    throw new GradingServiceError(502, 'The grader returned an unusable review. Try again.');
+    const error = new GradingServiceError(502, 'The grader returned an unusable review. Try again.');
+    error.contractFailureKind = validationFailureKind(validationError);
+    throw error;
   }
 
   const boundedTranscript = transcript

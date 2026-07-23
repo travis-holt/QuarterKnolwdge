@@ -29,7 +29,7 @@
 > server-derived identity evidence, real spoken/calendar DOB parsing, strict raw-response
 > validation, a truthful prompt-version policy, and metadata-less history resolving to the
 > historical shared rubric. Correction pass #4 is §0k. Current grader prompt version
-> `call-qa-grader-v7`; OB/GYN rubric `qa-rubric-obgyn-v1`.)
+> `call-qa-grader-v8`; OB/GYN rubric `qa-rubric-obgyn-v1`.)
 
 ## 0k. Canonical identity chronology and live gate (2026-07-22, correction pass #4)
 

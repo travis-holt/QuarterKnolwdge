@@ -339,7 +339,22 @@ describe('E2E · malformed first response triggers the retry, second response sc
 
   it('two malformed identity responses fail as an unusable grader, never a false navigator failure', async () => {
     const malformed = modelResponse({ identityEvidence: [] });
-    await expect(runPipeline(BASE_TRANSCRIPT, [malformed, malformed])).rejects.toThrow(/unusable/i);
+    await expect(runPipeline(BASE_TRANSCRIPT, [malformed, malformed])).rejects.toMatchObject({
+      message: expect.stringMatching(/unusable/i),
+      contractFailureKind: 'identity-contract',
+    });
+  });
+
+  it('classifies a MET response with empty evidence without exposing its quote', async () => {
+    const malformed = modelResponse({
+      overrides: {
+        'open-greet': { verdict: 'MET', basis: 'EVIDENCE', evidence: '', note: '', identityEvidence: [] },
+      },
+    });
+    await expect(runPipeline(BASE_TRANSCRIPT, [malformed, malformed])).rejects.toMatchObject({
+      message: expect.stringMatching(/unusable/i),
+      contractFailureKind: 'met-evidence-empty',
+    });
   });
 
   it('retries after an untriggered auto-fail carries evidence', async () => {
@@ -628,7 +643,7 @@ describe('E2E · prompt contract matches what the server enforces', () => {
   );
 
   it('is stamped with the current prompt version', () => {
-    expect(CALL_QA_PROMPT_VERSION).toBe('call-qa-grader-v7');
+    expect(CALL_QA_PROMPT_VERSION).toBe('call-qa-grader-v8');
   });
 
   it('tells the model the navigator\'s own name is not the patient\'s', () => {
@@ -651,8 +666,9 @@ describe('E2E · prompt contract matches what the server enforces', () => {
     expect(systemInstruction).toMatch(/triggered auto-fail with no quote is[\s\S]{0,20}rejected/i);
   });
 
-  it('tells the model its free-text identity evidence is discarded', () => {
-    expect(systemInstruction).toMatch(/server\s+derives their evidence from this array/i);
+  it('requires a caller quote for a MET identity response while retaining structured identity authority', () => {
+    expect(systemInstruction).toMatch(/MET identity criterion.*MUST still contain one non-empty verbatim CALLER quote/i);
+    expect(systemInstruction).toMatch(/ignores this free-text field for identity credit/i);
   });
 
   it('still describes identity as caller-eligible for the two verification criteria only', () => {

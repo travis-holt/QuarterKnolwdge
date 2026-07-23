@@ -38,7 +38,10 @@
 //          patient's name, and first/last cannot come from two different people.
 // v7 = strict auto-fail response contract (2026-07-22): untriggered entries
 //      must carry empty evidence and note; contradictory allegations retry.
-export const CALL_QA_PROMPT_VERSION = 'call-qa-grader-v7';
+// v8 = identity MET evidence alignment (2026-07-23): identity criteria still
+//      require a non-empty caller quote for the shared response shape; the
+//      structured identityEvidence array remains the sole source of identity credit.
+export const CALL_QA_PROMPT_VERSION = 'call-qa-grader-v8';
 
 // Prompt versions this repository can still INTERPRET for stored records.
 // Historical attempts keep rendering under the version they recorded; this list
@@ -55,6 +58,7 @@ export const SUPPORTED_CALL_QA_PROMPT_VERSIONS = Object.freeze([
   'call-qa-grader-v5',
   'call-qa-grader-v6',
   'call-qa-grader-v7',
+  'call-qa-grader-v8',
 ]);
 
 const SUPPORTED = new Set(SUPPORTED_CALL_QA_PROMPT_VERSIONS);
