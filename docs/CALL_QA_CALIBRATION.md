@@ -413,6 +413,15 @@ the missing-vs-explicit-empty distinction is exercised live. Neither case suppli
 
 All 20 prior identity/privacy cases are retained.
 
+**Measure the exit code from ONE invocation.** The gate makes 22 sequential upstream calls, and the
+free-tier quota is per-key-per-model, so running the command twice back to back to "confirm" the exit
+code reliably trips HTTP 429 and produces a FAILED run that says nothing about the contract. Use
+`npm run qa:live-contract-smoke; echo $?` once. A run whose `[FAIL]` lines all read
+`unusable grader response: The grader is busy right now` (after `status=429`) is a **quota exhaustion,
+not a contract failure** — it carries no semantic signal in either direction and must be re-run cold
+rather than reported as a gate result. This flakiness is long-standing: the v8 full run previously
+failed cases 15 and 20 for the same reason.
+
 The merge/release gate requires **both** exit 0 and the exact marker
 `LIVE_CONTRACT_SMOKE_VERIFIED`. A malformed or semantically wrong run exits nonzero and prints
 `LIVE_CONTRACT_SMOKE_FAILED`. A missing dedicated key exits with distinct nonzero status and

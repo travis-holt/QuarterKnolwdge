@@ -74,6 +74,20 @@ smoke → **stop** → explicit owner authorization → provision → verify cur
 additive fields → final merge review → **separate** explicit merge authorization → merge/deploy.
 Provisioning authorization and merge authorization are distinct decisions.
 
+**Live v9 contract gate.** Run against the pinned grader model (`gemini-2.5-flash`) with dedicated
+non-production `CALL_QA_LIVE_SMOKE_API_KEYS`. **Run 1 was clean:**
+`LIVE_CONTRACT_SMOKE_VERIFIED - 22/22 cases satisfied the call-qa-grader-v9 contract`, every case
+`[PASS]` including both new chart cases (one `upstream response invalid` was absorbed by the existing
+retry). Two further runs exited 1, but they are **invalid measurements, not contract failures**: run 3's
+log shows cases 1–7 `[PASS]` and cases 8–22 failing ONLY with `unusable grader response: The grader is
+busy right now` after `status=429`. **No case failed a semantic assertion in any run.** The cause was
+self-inflicted — the smoke was invoked three times in ~20 minutes (~66 upstream calls) while capturing an
+exit code, exhausting the free-tier quota; this repo has documented history of the same 429 flakiness
+(the v8 full run previously failed cases 15 and 20 for exactly this reason). Run 1 satisfies the gate's
+stated condition (exit 0 + exact marker across all current cases), but a confirmatory cold run after the
+quota window resets is recommended before merge. **Lesson:** measure this gate's exit code from a single
+invocation (`npm run qa:live-contract-smoke; echo $?`) — never by running it twice.
+
 **Validation.** `npm test` **2,290 passed across 86 files, zero failures** (up from 2,239 with one
 suite-load failure). Focused regressions 87/87. Build clean incl. the private-runtime bundle scan.
 Playwright safe suite 12/12. `qa:pilot-smoke` `PILOT_SMOKE_VERIFIED`. `qa:calibrate`/`qa:coverage`

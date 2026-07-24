@@ -67,6 +67,14 @@
 > asserting a wrong booking is caught by `sched-flow`/`know-rule` while `sched-recap` stays NA. Both
 > build their grader context through the real `buildTrustedGradingScenario` with a chart authored in the
 > script: no Firestore, no private bank, no production data, dedicated smoke credentials only.
+> **Live gate result:** one clean run — `LIVE_CONTRACT_SMOKE_VERIFIED - 22/22` against pinned
+> `gemini-2.5-flash` with dedicated `CALL_QA_LIVE_SMOKE_API_KEYS`, all cases `[PASS]` incl. both new
+> chart cases. Two later runs exited 1 but are **invalid measurements, not contract failures** — every
+> failure was `unusable grader response: The grader is busy` after `status=429`, and **no case failed a
+> semantic assertion in any run**. Cause: the smoke was invoked three times in ~20 minutes (~66 upstream
+> calls) while capturing an exit code, exhausting free-tier quota (this gate has documented 429
+> flakiness). A confirmatory cold run is recommended before merge. Measure its exit code from ONE
+> invocation (`npm run qa:live-contract-smoke; echo $?`), never by running it twice.
 > Unit suite **2,290 passed across 86 files, zero failures** — the previously reported
 > `liveContractSmoke.test.js` suite-load failure is **fixed**, not tolerated: the
 > `#!/usr/bin/env node` shebang broke Vitest's transform on Windows so its 13 tests never ran; the
