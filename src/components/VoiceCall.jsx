@@ -147,6 +147,55 @@ function appendTranscriptFragment(existing, fragment) {
   return `${existing}${needsSpace ? ' ' : ''}${next}`;
 }
 
+// Read-only "Simulated ECW chart" panel. Renders ONLY the navigator-visible chart
+// facts the server sent in the ready projection — never any correct answer, next
+// action, or grader-only data. Empty list sections render "None on file" so a
+// NEGATIVE fact (no order, no upcoming appointment) is visible on screen, which is
+// exactly what lets the navigator reason about it during the graded call.
+function SimulatedChartPanel({ chart }) {
+  if (!chart || typeof chart !== 'object') return null;
+  const sections = [
+    { key: 'activeOrders', label: 'Active orders' },
+    { key: 'openEncounters', label: 'Open Telephone Encounters / messages' },
+    { key: 'futureAppointments', label: 'Future appointments' },
+  ];
+  const otherFacts = Array.isArray(chart.otherFacts) ? chart.otherFacts.filter(Boolean) : [];
+  const hasAny = chart.summary || chart.planRto
+    || sections.some((s) => Array.isArray(chart[s.key]) && chart[s.key].length)
+    || otherFacts.length;
+  if (!hasAny) return null;
+  return (
+    <div className="card voicecall__chart" aria-label="Simulated ECW chart">
+      <h3 className="voicecall__chart-title">Simulated ECW chart</h3>
+      <p className="readoff__sub voicecall__chart-note">
+        This is the chart information visible to you for this call. Use it to decide how to handle the request.
+      </p>
+      <dl className="voicecall__chart-list">
+        {chart.summary && (
+          <div className="voicecall__chart-row"><dt>Summary</dt><dd>{chart.summary}</dd></div>
+        )}
+        {chart.planRto && (
+          <div className="voicecall__chart-row"><dt>Plan / RTO</dt><dd>{chart.planRto}</dd></div>
+        )}
+        {sections.map(({ key, label }) => {
+          const list = Array.isArray(chart[key]) ? chart[key].filter(Boolean) : [];
+          return (
+            <div key={key} className="voicecall__chart-row">
+              <dt>{label}</dt>
+              <dd>{list.length ? list.join('; ') : 'None on file'}</dd>
+            </div>
+          );
+        })}
+      </dl>
+      {otherFacts.length > 0 && (
+        <ul className="voicecall__chart-facts">
+          {otherFacts.map((fact, i) => <li key={i}>{fact}</li>)}
+        </ul>
+      )}
+    </div>
+  );
+}
+
 // mode: 'practice' (advisory holistic review) | 'test' (server-authoritative,
 // hard rubric-based QA test graded against the call quality guide).
 export default function VoiceCall({ navigatorId, name, department = 'pediatrics', preferredDomain = null, onExit, onDone, onQaResult, mode = 'practice' }) {
@@ -163,6 +212,7 @@ export default function VoiceCall({ navigatorId, name, department = 'pediatrics'
   const [qa, setQa]               = useState(null);  // full QA scorecard (test mode)
   const [gradeBusy, setGradeBusy] = useState(false);  // retrying a failed grade
   const [captions, setCaptions]   = useState([]);     // [{role, text}] mirror only
+  const [navChart, setNavChart]   = useState(null);   // simulated ECW chart (test mode)
   const [captureComplete, setCaptureComplete] = useState(true);
   // Practice-mode persistence state
   const [pendingTranscript, setPendingTranscript] = useState(null);
@@ -280,6 +330,7 @@ export default function VoiceCall({ navigatorId, name, department = 'pediatrics'
     setQa(null);
     setGradeBusy(false);
     setCaptions([]);
+    setNavChart(null);
     setCaptureComplete(true);
     clearPersistenceState();
     caseFileRef.current = null;
@@ -369,6 +420,10 @@ export default function VoiceCall({ navigatorId, name, department = 'pediatrics'
             setScenario(String(publicScenario.prompt ?? ''));
             setCallerName(String(publicScenario.callerName ?? 'the caller'));
             setDomainId(publicScenario.primaryDomainId ?? pick);
+            // Navigator-visible simulated ECW chart (safe projection only — no
+            // grader-only data). Rendered read-only during the graded call so the
+            // navigator reasons from the same chart facts the grader judges against.
+            setNavChart(publicScenario.navigatorChartState ?? null);
             // Trust the SERVER-computed finalize guard (defensively clamped); it
             // is sized to always exceed the server's real drain deadline. Fall
             // back to a value ≥ the server maximum if it is missing/invalid.
@@ -914,6 +969,7 @@ export default function VoiceCall({ navigatorId, name, department = 'pediatrics'
         <div className="card voicecall">
           <span className="interview__domain-tag tag">{domain?.name}</span>
           <p className="interview__scenario">{scenario}</p>
+          {isTest && <SimulatedChartPanel chart={navChart} />}
           <div className={`voicecall__orb ${speaking ? 'is-speaking' : ''}`} aria-hidden="true" />
           <p className="voicecall__status">
             {speaking ? `${callerName} is speaking…` : 'Listening — go ahead and respond'}

@@ -8,7 +8,10 @@
 > [`api/_qa-grading-corpus.test.js`](../api/_qa-grading-corpus.test.js) — if one of
 > those tests fails after your change, re-read this document before "fixing" the test.
 >
-> Last updated: 2026-07-23 (correction pass #7 follow-up 2 — §0n — genuine caller-information
+> Last updated: 2026-07-24 (pilot assessment-observability correction — §0o — navigator-visible chart
+> authority, sched-recap conditional NA, listen-gather caller-observable scope, and the caller
+> role-break fail-safe. Current grader prompt version `call-qa-grader-v9`; OB/GYN rubric unchanged at
+> `qa-rubric-obgyn-v1`. Earlier: correction pass #7 follow-up 2 — §0n — genuine caller-information
 > requests are non-disclosures while auxiliary-led confirmations that reveal protected facts remain
 > disclosures. §0n supersedes the candidate, DOB ownership, and af-hipaa chronology portions of §0m.
 > Earlier: correction pass #6 — §0m:
@@ -29,7 +32,51 @@
 > server-derived identity evidence, real spoken/calendar DOB parsing, strict raw-response
 > validation, a truthful prompt-version policy, and metadata-less history resolving to the
 > historical shared rubric. Correction pass #4 is §0k. Current grader prompt version
-> `call-qa-grader-v8`; OB/GYN rubric `qa-rubric-obgyn-v1`.)
+> `call-qa-grader-v9`; OB/GYN rubric `qa-rubric-obgyn-v1`.)
+
+## 0o. Assessment observability, scheduling/listening applicability, and caller integrity (2026-07-24, pilot correction)
+
+Derived from the first real reproduced post-PR-41 Call QA pilot attempt (not theoretical edge-case
+hunting). Grader prompt moves to `call-qa-grader-v9`; the OB/GYN rubric (`qa-rubric-obgyn-v1`),
+criterion set, points, category weights, applicability flags, auto-fails, and profile signature are
+unchanged, so historical bindings and Pediatrics are untouched.
+
+1. **A scored decision must never depend on a chart fact that exists only in grader-only hidden state.**
+   A scored Call QA scenario exposes a deliberately curated, server-authoritative
+   `navigatorChartState` ("Simulated ECW chart") — current plan/RTO, active orders, open Telephone
+   Encounters, future appointments, and other operationally-visible facts (including explicit "none on
+   file" negatives). It is validated + sanitized in `validatePrivateScenario`, stored in the immutable
+   attempt snapshot, projected as a SAFE subset into the authenticated test-mode `ready` message,
+   rendered read-only during the scored call, and threaded into the grader prompt. The grader judges
+   every chart-dependent decision ONLY against the navigator-visible chart and caller-provided
+   information; `hiddenChartState` is grader-only ground truth the navigator may not have seen and can
+   never, on its own, penalize the navigator. Grader-only fields
+   (`gradingContext`/`expectedActions`/`criticalMisses`/`scoringNotes`/`hiddenChartState`/
+   `callerCaseFile`/`ruleIds`) never reach the browser (verified by `check-call-qa-client-bundle.mjs`).
+2. **Fail closed on an unusable chart-dependent scenario.** An OB/GYN scenario must declare an explicit
+   `requiresNavigatorChartContext` boolean; when true it MUST carry a non-empty `navigatorChartState`.
+   `validatePrivateScenario` rejects a chart-dependent scenario with no chart, the relay independently
+   guards it (scenario-unavailable error, no attempt created), and grading's snapshot integrity check
+   fails closed to `needs_review` — the system returns a configuration error rather than administering
+   an impossible test.
+3. **`sched-recap` is CONDITIONAL (OB/GYN).** It applies only when the CORRECT workflow books an
+   appointment during the call. A no-booking / clarification / TE / escalation / approval-first /
+   records outcome makes `sched-recap` **NA** — there is nothing to recap. A wrong booking is captured
+   by `sched-flow`/`know-rule`/the applicable workflow criteria, never by a second `sched-recap`
+   penalty. `sched-recap` is `core: false`, so a model NA verdict is honored (never forced to NOT_MET).
+4. **`listen-gather` measures caller-observable information gathering (OB/GYN).** It stays strict when
+   the navigator genuinely fails to ask the caller for information the request needs, but is NOT marked
+   NOT_MET merely because the navigator did not state, discover, or narrate an internal/system chart
+   fact — chart correctness lives in the knowledge/scheduling/workflow criteria. One invisible-chart
+   issue is never double-penalized as an active-listening failure.
+5. **Caller role-break fail-safe.** The scored caller receives a caller-ONLY system instruction (no
+   navigator scoring/decision/mistake material) plus explicit no-AI / no-meta / no-disclaimer rules.
+   A deterministic detector (`detectCallerRoleBreak`) scans server-captured CALLER turns for
+   unmistakable meta/AI/safety-disclaimer role breaks; on a hit the attempt is forced to `needs_review`
+   with a `simulated-caller-role-break` flag and a `qa.callerIntegrity` record. The navigator is never
+   auto-failed because the simulated patient malfunctioned, and the detector never changes a rubric
+   verdict or a score. It is narrow — only explicit role/meta failure language, only caller turns —
+   and preserves legitimate patient speech (own symptoms, worries, what a clinician previously said).
 
 ## 0k. Canonical identity chronology and live gate (2026-07-22, correction pass #4)
 

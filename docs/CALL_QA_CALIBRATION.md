@@ -149,8 +149,15 @@ navigator role) and required the three identifiers to belong to ONE patient, mov
 identity instructions said not to populate free-text `evidence`, while the shared response shape
 requires every `MET` verdict to include a non-empty quote. The correction requires a real caller
 quote for a MET identity response but keeps the structured `identityEvidence` array as the sole
-source of identity credit, moving the prompt to **`call-qa-grader-v8`**. The server-only candidate,
-name-field, DOB-ownership, and HIPAA chronology checks do not independently require a prompt bump.
+source of identity credit, moving the prompt to `call-qa-grader-v8`. The pilot
+assessment-observability correction (2026-07-24) then changed the model-visible grader contract again —
+the grader now receives a NAVIGATOR-VISIBLE CHART block and must judge chart-dependent decisions only
+against it (with `hiddenChartState` reframed as grader-only ground truth), `sched-recap` is described as
+CONDITIONAL (NA when the correct workflow books no appointment), and `listen-gather` is scoped to
+caller-observable information gathering — moving the prompt to **`call-qa-grader-v9`**. The OB/GYN
+criteria, points, category weights, applicability flags and auto-fails are unchanged, so the rubric
+stays `qa-rubric-obgyn-v1`. The server-only candidate, name-field, DOB-ownership, and HIPAA chronology
+checks, and the deterministic caller role-break fail-safe, do not independently require a prompt bump.
 
 **Provenance compatibility (2026-07-22).** A GRADED fixture is validated against the rubric its
 RECORDED `modelRun.rubricVersion` maps to — never the current department profile — and its
@@ -164,13 +171,13 @@ An unknown recorded rubric or prompt version fails closed. The compatibility pol
 
 | Department | Rubric version | Legitimate prompt versions |
 |---|---|---|
-| `pediatrics` | `qa-rubric-v2` | any supported (v3–v8) |
+| `pediatrics` | `qa-rubric-v2` | any supported (v3–v9) |
 | `obgyn` | `qa-rubric-v2` (historical shared) | v3 only |
-| `obgyn` | `qa-rubric-obgyn-v1` | v4, v5, v6, v7, v8 |
+| `obgyn` | `qa-rubric-obgyn-v1` | v4, v5, v6, v7, v8, v9 |
 
 **Interpretable is not the same as producible (corrected 2026-07-21).**
 `SUPPORTED_CALL_QA_PROMPT_VERSIONS` lists every version this build can still INTERPRET in a
-stored record (v3–v8). It previously read as though a fixture could simply declare any
+stored record (v3–v9). It previously read as though a fixture could simply declare any
 of them, while `validateModelRun` in fact required an exact match with the current version —
 a contradiction the second review flagged. The policy is now explicit and enforced:
 
@@ -195,10 +202,27 @@ breaks down prompt version, a multi-version population displays
 every gate on its own (`requireSinglePromptVersion`). Two helpers express the split —
 `isSupportedStoredPromptVersion()` and `isCurrentPromptVersion()`.
 
-**Re-baselining.** `call-qa-grader-v8` (like the v4/v5/v6/v7 moves before it, and like
+**Re-baselining.** `call-qa-grader-v9` (like the v4/v5/v6/v7/v8 moves before it, and like
 `qa-rubric-obgyn-v1`) re-baselines OB/GYN calibration: evidence gathered under an earlier
-prompt is a separate population and cannot be pooled with v8 evidence. This has no effect
+prompt is a separate population and cannot be pooled with v9 evidence. This has no effect
 on current readiness, because there are still zero human-pilot fixtures.
+
+## Simulated-caller integrity
+
+The scored Call QA caller is an AI roleplaying a patient. A deterministic detector
+(`detectCallerRoleBreak`, `api/_qa-caller-integrity.js`) scans server-captured CALLER turns for
+explicit meta/AI/safety-disclaimer role breaks (declaring itself an AI, acknowledging the simulation,
+or reciting an AI-policy medical/safety disclaimer a real patient would never volunteer). On a hit the
+grading pipeline sets `qa.callerIntegrity.roleBreak = true`, adds a `simulated-caller-role-break`
+supervisor review flag, and forces `needs_review` — the navigator is never auto-failed because the
+simulated patient malfunctioned. This never changes a rubric verdict or a score.
+
+An attempt whose transcript carries a simulated-caller integrity failure is **invalid for a confident
+automatic decision**. Such an attempt is not usable as clean calibration or automation-readiness
+evidence: a genuinely captured role-break attempt is `needs_review`, so it is not a confident model
+verdict, and the reproduced invalid pilot attempt must not be counted as calibration evidence. Human
+adjudicators should exclude any attempt flagged with a caller role break from grading-accuracy counts,
+recording it (if at all) only as a capture/roleplay-reliability observation.
 
 **Rubric version is department-scoped (2026-07-21).** Each department carries its
 own rubric profile and version, so a multi-department population legitimately
@@ -321,7 +345,7 @@ fixtures and requires each grading fixture to embed a sanitized
 Firestore bank.
 
 The production grader prompt version has one source of truth:
-`api/_qa-grading-versions.js` (`call-qa-grader-v8`), re-exported by
+`api/_qa-grading-versions.js` (`call-qa-grader-v9`), re-exported by
 `api/grade-call-qa.js` and validated against fixture `modelRun.promptVersion`.
 
 Private provisioning is a separate deliberate operator action:

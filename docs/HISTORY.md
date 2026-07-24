@@ -1,5 +1,94 @@
 ﻿# Development History - Knowledge Check
 
+## 2026-07-24 — Call QA pilot defect correction (assessment observability, applicability, caller integrity)
+
+**Status: NEW correction PR from current `main` (`da23a45`). NOT merged, NOT deployed, NOT
+provisioned.** Based on the FIRST real reproduced post-PR-41 Call QA pilot attempt (not theoretical
+edge-case hunting). The pilot exposed four concrete defects; each is fixed at the architecture level.
+
+**1. Assessment-observability defect (root cause).** A pregnant caller said her provider told her she
+needed a Growth ultrasound. The private grader context knew there was NO visible sonography order and
+no future appointment, so the correct workflow was clarification/TE, not scheduling — but the scored
+test UI never showed the navigator any chart, and the grader penalized the navigator for not acting on
+information the navigator could not possibly observe. Any scenario whose correct action depends on
+chart state was therefore potentially invalid.
+Fix (architecture, not one scenario): a deliberately curated, server-authoritative
+**`navigatorChartState`** ("Simulated ECW chart") — current plan/RTO, active orders, open Telephone
+Encounters, future appointments, and other operationally-visible facts (including explicit
+"none on file" negatives). It is validated + sanitized in `validatePrivateScenario`, stored in the
+immutable server attempt snapshot, projected (safe subset only) into the authenticated test-mode
+`ready` message, rendered read-only during the scored call in `VoiceCall`, and threaded into the
+grader prompt. The grader now judges every chart-dependent decision ONLY against the navigator-visible
+chart; `hiddenChartState` is reframed as grader-only ground truth the navigator may not have seen, and
+a scored decision must never depend on a hidden fact. Grader-only data
+(`gradingContext`/`expectedActions`/`criticalMisses`/`scoringNotes`/`hiddenChartState`/`callerCaseFile`/
+`ruleIds`) still never reaches the browser. **Fail closed:** an OB/GYN scenario must declare an explicit
+`requiresNavigatorChartContext` boolean; when true it MUST carry a non-empty `navigatorChartState`, or
+the relay returns a scenario-unavailable error and creates no attempt (grading fails closed the same
+way). A regression fixture reproduces the Growth-ultrasound pattern (RTO 4 weeks, no order, no open TE,
+no future appointment).
+
+**2. Rubric applicability — scheduling recap.** The grader correctly decided the Growth scan should NOT
+have been scheduled, but ALSO deducted `sched-recap` for not recapping date/time/place. Fixed: for
+OB/GYN, `sched-flow` judges the correct scheduling OUTCOME; `sched-recap` is CONDITIONAL and applies
+only when the correct workflow actually books an appointment during the call. A no-booking /
+clarification / TE / escalation outcome makes `sched-recap` **NA** — a wrong booking is captured by
+`sched-flow`/`know-rule`, never by a second `sched-recap` penalty. Criterion text + grader instructions
+made this explicit; scoring already honors a model NA on this non-core criterion. No weight change.
+
+**3. Active-listening scope.** `listen-gather` was penalized for not gathering chart information the
+navigator could not see. Fixed: `listen-gather` measures CALLER-OBSERVABLE information gathering
+(identity, clarification, symptoms, preferences). It stays strict when the navigator genuinely fails to
+ask the caller for information the request needs, but is not marked NOT_MET merely for an
+internal/system chart fact — chart correctness lives in the knowledge/scheduling/workflow criteria.
+
+**4. AI caller character break.** The simulated caller recited an AI-policy safety disclaimer
+("I'm required to tell you that I'm not a medical professional, and this isn't medical advice or a
+diagnosis. You should always see a healthcare professional or seek care."). Root cause: the caller
+system instruction was fed the full navigator operating model (decision loop, SCORING PRINCIPLES,
+safety/scope boundaries, mistake taxonomy) via `navigatorContextBlock({mode:'roleplay-caller'})`. Fix:
+`buildSystemInstruction` now uses a caller-ONLY `callerRoleplayContextBlock` (no grader/scoring
+material) plus explicit rules — never say it is an AI, never acknowledge the simulation, never announce
+it is not a medical professional, never give medical/legal/safety disclaimers, never tell anyone to
+"seek/see/consult a healthcare professional", never recite policy; it is the caller only. Legitimate
+patient speech (own symptoms, worries, what a clinician previously told them) is preserved.
+**Narrow fail-safe:** a new deterministic detector (`detectCallerRoleBreak`, `api/_qa-caller-integrity.js`)
+scans CALLER turns for unmistakable meta/AI/safety-disclaimer role breaks. On a hit the attempt is
+forced to `needs_review` with a `simulated-caller-role-break` supervisor flag and `qa.callerIntegrity`
+record; the navigator is never auto-failed because the simulated patient malfunctioned. It is not a
+broad content classifier — it only matches explicit role/meta failure language, only on caller turns.
+
+**Prompt version.** The MODEL-VISIBLE grader contract changed (navigator-visible chart block,
+`sched-recap` NA, `listen-gather` scope), so `CALL_QA_PROMPT_VERSION` moves **v8 → `call-qa-grader-v9`**.
+The OB/GYN criteria, points, category weights, applicability flags and auto-fails are unchanged, so the
+rubric stays `qa-rubric-obgyn-v1` (100 points, 85 pass, 5-point closing, first name + last name + DOB
+verification), and the profile signature and historical bindings are unchanged. Pediatrics behavior,
+HIPAA chronology, authorized-third-party handling, empathy/hold applicability, and
+server-authoritative transcript/attempt-id grading are unchanged; no historical grade is rewritten. The
+caller system prompt also changed (caller model-visible), but it is not versioned.
+
+**What did NOT change:** approved category weights, 100-point total, 85 pass threshold, closing 5,
+verification identifiers, Pediatrics, historical grades, the private scenario bank (not read, exported,
+or modified), and Firestore (not provisioned).
+
+**Remaining private-scenario data step (post-review):** every provisioned OB/GYN private scenario in
+`callQaScenariosPrivate` must be updated to add an explicit `requiresNavigatorChartContext` boolean and,
+where the correct workflow depends on chart facts, a curated non-empty `navigatorChartState`. Until then
+the relay fails closed on those scenarios (the intended safe behavior). No provisioning/rotation is done
+in this PR.
+
+**Validation.** New focused regression file `api/callQaPilotDefects.test.js` (24 tests: chart projection
++ fail-closed, grader-context threading, sched-recap NA / sched-flow NOT_MET / listen-gather scope,
+caller-only prompt + role-break fail-safe, invariants) + a `VoiceCall` "Simulated ECW chart" UI test.
+Full unit suite **2,239 passed** (one pre-existing environment-only suite-load failure in
+`liveContractSmoke.test.js`, present on clean `main`, unrelated). Build clean incl. the private-runtime
+bundle scan; 12/12 safe Playwright e2e; `qa:pilot-smoke` VERIFIED; `qa:calibrate` / `qa:coverage`
+remain `INSUFFICIENT_DATA` (0 human fixtures — the correct state; no fixtures fabricated, no thresholds
+lowered). `test:rules` requires Java (not available in this environment); `firestore.rules` is
+unchanged. The v9 prompt is a model-visible grader change, so the non-production live-contract smoke
+should be rerun before merge/deploy with a dedicated `CALL_QA_LIVE_SMOKE_API_KEY`; it was NOT run here
+(no dedicated key) and is NOT treated as satisfied.
+
 ## 2026-07-24 — PR #41 merged for controlled supervisor-reviewed OB/GYN pilot
 
 PR #41 merged to `main` as `107817809f72b421b0d8bf8492e65981253099a3` after accepted review,

@@ -40,6 +40,7 @@ import {
 } from './_call-qa-attempts.js';
 import { randomUUID } from 'node:crypto';
 import { CALL_QA_PROMPT_VERSION } from './_qa-grading-versions.js';
+import { detectCallerRoleBreak } from './_qa-caller-integrity.js';
 
 const MAX_TURNS = 60;
 const MAX_TURN_CHARS = 2000;
@@ -99,6 +100,30 @@ export function callQaGeminiTotalDeadlineMs(env = process.env) {
   );
 }
 
+// Render the navigator-visible chart (the "Simulated ECW chart" the navigator saw
+// during the call) into readable grader lines. Empty list sections render an
+// explicit "None on file" so a NEGATIVE fact (no order, no future appointment) is
+// unambiguous to the grader — matching what the navigator saw on screen.
+export function renderNavigatorChartLines(chart) {
+  if (!chart || typeof chart !== 'object' || Array.isArray(chart)) return [];
+  const labels = {
+    summary: 'Summary', planRto: 'Plan / RTO',
+    activeOrders: 'Active orders', openEncounters: 'Open Telephone Encounters / messages',
+    futureAppointments: 'Future appointments', otherFacts: 'Other visible chart facts',
+  };
+  const lines = [];
+  for (const field of ['summary', 'planRto']) {
+    if (typeof chart[field] === 'string' && chart[field].trim()) lines.push(`- ${labels[field]}: ${chart[field]}`);
+  }
+  for (const field of ['activeOrders', 'openEncounters', 'futureAppointments']) {
+    const list = Array.isArray(chart[field]) ? chart[field].filter((item) => typeof item === 'string' && item.trim()) : [];
+    lines.push(`- ${labels[field]}: ${list.length ? list.join('; ') : 'None on file'}`);
+  }
+  const other = Array.isArray(chart.otherFacts) ? chart.otherFacts.filter((item) => typeof item === 'string' && item.trim()) : [];
+  for (const fact of other) lines.push(`- ${fact}`);
+  return lines;
+}
+
 export function buildTrustedGradingScenario(scenario) {
   const lines = [
     scenario.gradingContext ?? scenario.scenario,
@@ -111,11 +136,19 @@ export function buildTrustedGradingScenario(scenario) {
     'Critical misses (fail the relevant criteria if these occur):',
     ...scenario.criticalMisses.map((item) => `- ${item}`),
   ];
+  const navigatorChartLines = renderNavigatorChartLines(scenario.navigatorChartState);
+  if (navigatorChartLines.length) {
+    lines.push(
+      'NAVIGATOR-VISIBLE CHART (the ONLY chart information the navigator could see in ECW during this call):',
+      ...navigatorChartLines,
+      'Judge EVERY chart-dependent decision ONLY against these navigator-visible facts. A chart fact that is not listed here was NOT visible to the navigator — never penalize the navigator for failing to act on it, and never expect them to infer it. When the correct workflow is "explain what is/is not on file and route/clarify", the navigator is judged on doing that against THIS chart, not against any hidden ground truth.',
+    );
+  }
   if (scenario.hiddenChartState) {
     lines.push(
-      'HIDDEN CHART FACTS (server-authoritative; judge the navigator against these facts):',
+      'HIDDEN CHART FACTS (grader ground-truth context ONLY — the navigator may NOT have been able to see all of these):',
       JSON.stringify(scenario.hiddenChartState),
-      'Do not require the navigator to narrate silent chart clicks. Grade only observable questions, classifications, explanations, and stated actions; absence of unobservable telemetry alone is neither a miss nor a review reason.',
+      'Use these only to understand the scenario. A SCORED decision must depend ONLY on the NAVIGATOR-VISIBLE CHART above and on caller-provided information — never penalize the navigator for not acting on a hidden fact that was not in the navigator-visible chart. Do not require the navigator to narrate silent chart clicks; absence of unobservable telemetry alone is neither a miss nor a review reason.',
     );
   }
   if (scenario.scoringNotes?.length) {
@@ -474,6 +507,21 @@ export function finalizeQaResult(scored, transcript, correctedTurns = 0, repairs
     });
     review.recommendation = 'needs_review';
   }
+  // Simulated-caller integrity gate: if the AI caller stepped out of character
+  // with an explicit meta/AI/safety-disclaimer role break, the transcript is not a
+  // valid basis for a CONFIDENT automatic verdict. The navigator is never
+  // penalized for the simulated patient malfunctioning — the whole attempt is
+  // marked invalid-for-confident-decision and forced to supervisor review. This
+  // never changes a rubric verdict or a score.
+  const callerIntegrity = detectCallerRoleBreak(transcript);
+  if (callerIntegrity.detected) {
+    review.reviewFlags.push({
+      id: 'simulated-caller-role-break',
+      label: 'Simulated caller broke character',
+      detail: `The simulated patient produced an out-of-character ${callerIntegrity.category} statement (e.g. an AI/meta/safety-disclaimer line a real caller would not say). This attempt is invalid for a confident automatic decision and must be reviewed by a supervisor; the navigator is not penalized for the simulated caller malfunctioning.`,
+    });
+    review.recommendation = 'needs_review';
+  }
   const qa = {
     ...scored,
     // Projected with the SAME profile that graded the attempt — never the
@@ -482,6 +530,14 @@ export function finalizeQaResult(scored, transcript, correctedTurns = 0, repairs
     domainScoreVersion: '2026-07-09-v1',
     review,
     correctedTurns,
+    // Simulated-caller integrity record (never includes patient identifiers beyond
+    // the offending line snippet). `roleBreak: true` means the AI caller broke
+    // character and the attempt was forced to supervisor review.
+    callerIntegrity: {
+      roleBreak: callerIntegrity.detected,
+      category: callerIntegrity.category,
+      ...(callerIntegrity.detected ? { evidence: callerIntegrity.evidence } : {}),
+    },
     repairs,
     repairCount: repairs.length,
     deterministicFindings,
@@ -518,6 +574,19 @@ function storedScenarioIntegrity(attempt, snapshot) {
     || !Array.isArray(snapshot.expectedActions)
     || !Array.isArray(snapshot.criticalMisses)
     || !Array.isArray(snapshot.scoringNotes)) return 'incomplete-scenario-snapshot';
+  // Defensive: a chart-dependent attempt must carry the navigator-visible chart it
+  // was graded against. Attempts are created only from validated scenarios, so a
+  // real attempt always satisfies this; a snapshot that claims to require chart
+  // context but carries none fails closed to supervisor review rather than being
+  // scored against grader-only hidden state.
+  if (snapshot.requiresNavigatorChartContext === true) {
+    const chart = snapshot.navigatorChartState;
+    const hasContent = chart && typeof chart === 'object' && !Array.isArray(chart)
+      && (['summary', 'planRto'].some((field) => typeof chart[field] === 'string' && chart[field].trim())
+        || ['activeOrders', 'openEncounters', 'futureAppointments', 'otherFacts']
+          .some((field) => Array.isArray(chart[field]) && chart[field].some((item) => typeof item === 'string' && item.trim())));
+    if (!hasContent) return 'missing-navigator-chart';
+  }
   return 'verified';
 }
 
@@ -538,6 +607,7 @@ export function buildScenarioContextFromAttempt(attempt) {
     criticalMisses: snapshot.criticalMisses ?? attempt.criticalMisses ?? [],
     scoringNotes: snapshot.scoringNotes ?? [],
     hiddenChartState: snapshot.hiddenChartState ?? null,
+    navigatorChartState: snapshot.navigatorChartState ?? null,
     ruleIds: snapshot.ruleIds ?? attempt.ruleIds ?? [],
     sourceSopVersion: snapshot.sourceSopVersion ?? attempt.sourceSopVersion ?? null,
     sourceRuleVersion: snapshot.sourceRuleVersion ?? attempt.sourceRuleVersion ?? null,

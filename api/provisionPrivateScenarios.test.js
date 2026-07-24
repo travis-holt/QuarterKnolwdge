@@ -31,6 +31,7 @@ function scenarioDoc(id, overrides = {}) {
     criticalMisses: ['State the fictional unsafe outcome.'],
     scoringNotes: [],
     hiddenChartState: null,
+    requiresNavigatorChartContext: false,
     callerCaseFile: {
       callerGoal: 'Resolve a fictional request.',
       knownFacts: ['A fictional consistent fact.'],

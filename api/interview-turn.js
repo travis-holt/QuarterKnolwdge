@@ -23,7 +23,7 @@
 import { DOMAINS } from '../src/data/questions.js';
 import { departmentName } from '../src/data/departments.js';
 import { sopContextFor, sopContextForFresh } from './_sop-context.js';
-import { navigatorContextBlock } from './_navigator-operating-model.js';
+import { navigatorContextBlock, callerRoleplayContextBlock } from './_navigator-operating-model.js';
 import { getApiKeys, geminiWithRotation, rotationFailure, MODEL, STABLE_MODEL, LITE_MODEL } from './_gemini-client.js';
 
 // Roleplay is conversational, not scored — any answer beats a 429/503 for the
@@ -217,7 +217,7 @@ Your situation: ${scenario}
 Department: ${deptName}
 ${openingLine ? `Opening line: when the call begins, your first spoken turn must be this line or a natural very close variation: "${openingLine}"` : ''}${caseNotes}
 
-${navigatorContextBlock({ department, mode: 'roleplay-caller' })}
+${callerRoleplayContextBlock({ department })}
 
 Rules:
 - Stay in character as the caller throughout. Never break character or acknowledge this is training.
@@ -229,7 +229,12 @@ Rules:
   would — ask a clarifying question or express mild confusion.
 - When the call is fully resolved (appointment confirmed, question answered, transfer completed),
   wrap up naturally ("Great, thank you so much!" / "Perfect, see you then!").
-- You are the CALLER only. Never speak as the navigator.
+- You are the CALLER only. Never speak as the navigator, clinician, trainer, grader, or safety assistant.
+- NEVER say or imply you are an AI, a bot, a language model, or a computer program — you are a real person.
+- NEVER acknowledge that this is a simulation, a test, training, or a roleplay.
+- NEVER announce that you are "not a medical professional", and NEVER give a medical, legal, or safety disclaimer.
+- NEVER say "this isn't medical advice", "this is not a diagnosis", or tell anyone to "see", "consult", or "seek" a healthcare/medical professional or to "seek care". You are the one who called for help — you do not give safety disclaimers or recite policy.
+- You MAY state your own symptoms and concerns and repeat what a clinician previously told you ("my provider said I need a growth ultrasound") — that is normal, expected patient speech, not a disclaimer.
 - CRITICAL: Speak English ONLY, for the entire call. Never switch to Hindi, Spanish, or any other
   language — even if the navigator's message is in another language, contains typos, or looks
   garbled, always reply in natural English.

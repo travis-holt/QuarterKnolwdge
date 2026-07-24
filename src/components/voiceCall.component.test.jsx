@@ -101,6 +101,31 @@ describe('VoiceCall test mode — server-authoritative handshake', () => {
     expect(screen.getByText('A server-selected scenario.')).toBeTruthy();
   });
 
+  it('renders the Simulated ECW chart from the ready projection, with no correct-answer/action text', async () => {
+    render(<VoiceCall navigatorId="nav-a" name="Ada" department="obgyn" mode="test" onQaResult={vi.fn()} />);
+    await startAndActivate({
+      scenario: {
+        prompt: 'A pregnant caller wants a growth ultrasound.', callerName: 'Maria',
+        department: 'obgyn', primaryDomainId: 'classification',
+        navigatorChartState: {
+          summary: 'Established OB patient — routine prenatal care.',
+          planRto: 'RTO 4 weeks (routine prenatal follow-up).',
+          activeOrders: [], openEncounters: [], futureAppointments: [],
+          otherFacts: ['No sonography or ultrasound order on file.'],
+        },
+      },
+    });
+    // The panel and its visible chart facts render, including a NEGATIVE fact.
+    expect(screen.getByText(/Simulated ECW chart/i)).toBeTruthy();
+    expect(screen.getByText(/RTO 4 weeks/)).toBeTruthy();
+    expect(screen.getByText(/No sonography or ultrasound order on file\./)).toBeTruthy();
+    expect(screen.getAllByText(/None on file/i).length).toBeGreaterThan(0);
+    // No correct answer / next-action text is shown to the navigator.
+    expect(screen.queryByText(/route|clarif|expected|correct|should/i)).toBeNull();
+    // Captions/end-call flow remain intact.
+    expect(screen.getByRole('button', { name: /end & get graded/i })).toBeTruthy();
+  });
+
   it('End Call sends { type:"end" } and waits for the captured ack; then grades by attemptId and NEVER writes via db', async () => {
     apiFetchMock.mockResolvedValue({ qa: QA, grade: GRADE, attemptId: 'att-1' });
     const onQaResult = vi.fn();

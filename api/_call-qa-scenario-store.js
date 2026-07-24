@@ -28,6 +28,64 @@ function unique(items) {
   return [...new Set(items.filter(Boolean))];
 }
 
+// ── Navigator-visible chart context (the "Simulated ECW chart") ──────────────
+//
+// A DELIBERATELY CURATED representation of what a real navigator could see in
+// ECW during this call: current plan / RTO, active orders, open Telephone
+// Encounters/messages, future appointments, and other operationally-visible
+// chart facts (including explicit "none on file" facts). It is the ONE piece of
+// scenario chart data that is SAFE to show the navigator and to send to the
+// browser, and it is what the grader must judge chart-dependent decisions
+// against.
+//
+// It is deliberately SEPARATE from `hiddenChartState`:
+//   * `hiddenChartState` is grader-only ground truth — it may contain facts the
+//     navigator could NOT see, and it is never sent to the browser.
+//   * `navigatorChartState` contains ONLY facts a navigator could legitimately
+//     observe and act on. It must NOT tell the navigator what action to take.
+//
+// Scalars are optional single lines; list fields are arrays of short fact
+// strings. Every value is a chart FACT, never a grading instruction, correct
+// action, or scoring note.
+export const NAVIGATOR_CHART_SCALAR_FIELDS = Object.freeze(['summary', 'planRto']);
+export const NAVIGATOR_CHART_LIST_FIELDS = Object.freeze([
+  'activeOrders', 'openEncounters', 'futureAppointments', 'otherFacts',
+]);
+
+export function validateNavigatorChartState(raw, scenarioId) {
+  if (raw === null || raw === undefined) return null;
+  if (typeof raw !== 'object' || Array.isArray(raw)) {
+    throw new Error(`Private Call QA navigator chart state is invalid for ${scenarioId}.`);
+  }
+  const chart = {};
+  for (const field of NAVIGATOR_CHART_SCALAR_FIELDS) {
+    const value = raw[field];
+    if (value === undefined || value === null) { chart[field] = null; continue; }
+    if (!nonEmptyString(value)) {
+      throw new Error(`Private Call QA navigator chart ${field} is invalid for ${scenarioId}.`);
+    }
+    chart[field] = value;
+  }
+  for (const field of NAVIGATOR_CHART_LIST_FIELDS) {
+    const value = raw[field];
+    if (value === undefined || value === null) { chart[field] = []; continue; }
+    if (!stringArray(value, { allowEmpty: true })) {
+      throw new Error(`Private Call QA navigator chart ${field} is invalid for ${scenarioId}.`);
+    }
+    chart[field] = [...value];
+  }
+  return chart;
+}
+
+// True when the curated chart carries at least one visible fact. A scenario that
+// declares it REQUIRES chart context must expose a non-empty chart, otherwise the
+// navigator would be graded on chart state they were never shown.
+export function navigatorChartStateHasContent(chart) {
+  if (!chart) return false;
+  return NAVIGATOR_CHART_SCALAR_FIELDS.some((field) => Boolean(chart[field]))
+    || NAVIGATOR_CHART_LIST_FIELDS.some((field) => Array.isArray(chart[field]) && chart[field].length > 0);
+}
+
 // The caller's private contract: what the AI caller consistently knows and how
 // it reveals it. Lives ONLY in the private Firestore scenario document and the
 // immutable server attempt snapshot; it is passed server-side into the caller
@@ -99,9 +157,34 @@ export function validatePrivateScenario(data, { documentId, department }) {
   )) {
     throw new Error(`Private Call QA hidden chart state is invalid for ${data.id}.`);
   }
+  // The navigator-visible chart is validated for ALL departments (sanitized to a
+  // safe shape); the fail-closed REQUIREMENT below is enforced per rollout dept.
+  const navigatorChartState = validateNavigatorChartState(data.navigatorChartState, data.id);
   const callerCaseFile = validateCallerCaseFile(data.callerCaseFile, data.id);
   if (![data.sourceSopVersion, data.sourceRuleVersion, data.sourceAuthority].every(nullableString)) {
     throw new Error(`Private Call QA source provenance is invalid for ${data.id}.`);
+  }
+
+  // ── Navigator-visible chart requirement (fail closed) ──────────────────────
+  //
+  // Every OB/GYN rollout scenario must DECLARE whether the correct workflow
+  // decision depends on chart facts (`requiresNavigatorChartContext`, an explicit
+  // boolean). When it does, a non-empty `navigatorChartState` is MANDATORY so the
+  // navigator actually SEES those facts in the simulated ECW chart. A scored
+  // decision must never depend on a chart fact that lives only in grader-only
+  // hidden state, so a scenario that needs chart context but exposes none is
+  // rejected here — the relay then fails closed with a scenario-unavailable error
+  // instead of administering an impossible test.
+  const requiresNavigatorChartContext = data.requiresNavigatorChartContext;
+  if (data.department === 'obgyn') {
+    if (typeof requiresNavigatorChartContext !== 'boolean') {
+      throw new Error(`Private Call QA scenario must declare requiresNavigatorChartContext for ${data.id}.`);
+    }
+    if (requiresNavigatorChartContext && !navigatorChartStateHasContent(navigatorChartState)) {
+      throw new Error(`Private Call QA scenario requires a non-empty navigatorChartState for ${data.id}.`);
+    }
+  } else if (requiresNavigatorChartContext !== undefined && typeof requiresNavigatorChartContext !== 'boolean') {
+    throw new Error(`Private Call QA scenario requiresNavigatorChartContext must be a boolean for ${data.id}.`);
   }
 
   let primaryDomainId = data.primaryDomainId;
@@ -161,6 +244,8 @@ export function validatePrivateScenario(data, { documentId, department }) {
     criticalMisses: [...data.criticalMisses],
     scoringNotes: [...data.scoringNotes],
     hiddenChartState: data.hiddenChartState,
+    navigatorChartState,
+    requiresNavigatorChartContext: requiresNavigatorChartContext === true,
     callerCaseFile,
     ruleIds: [...data.ruleIds],
     sourceSopVersion: data.sourceSopVersion,

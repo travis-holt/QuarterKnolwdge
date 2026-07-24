@@ -237,9 +237,19 @@ describe('buildSystemInstruction', () => {
     expect(si).toContain('first spoken turn');
   });
 
-  it('injects the roleplay-caller operating model guidance', () => {
+  it('injects the caller-ONLY roleplay context and NOT the navigator scoring/decision model', () => {
     const si = buildSystemInstruction('Maria', 'A scenario');
-    expect(si).toMatch(/ROLEPLAY AS THE CALLER/i);
+    // The caller gets a caller-only framing block ...
+    expect(si).toMatch(/CALLER ROLEPLAY/);
+    expect(si).toMatch(/YOU ARE THE CALLER/i);
+    // ... and NEVER the navigator grader/scoring/decision/mistake material that
+    // caused the live caller to recite AI-policy safety disclaimers.
+    expect(si).not.toMatch(/SCORING PRINCIPLES/);
+    expect(si).not.toMatch(/DECISION LOOP/);
+    expect(si).not.toMatch(/NAVIGATOR MISTAKE TYPES/);
+    // Explicit no-meta / no-disclaimer caller rules are present.
+    expect(si).toMatch(/NEVER say or imply you are an AI/i);
+    expect(si).toMatch(/NEVER announce that you are "not a medical professional"/i);
   });
 
   it('renders the private callerCaseFile contract (facts, reveal rules, no coaching)', () => {

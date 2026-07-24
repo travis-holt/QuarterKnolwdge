@@ -112,6 +112,24 @@ export function clientFinalizeGuardMs() {
 
 const activeByIp = new Map();
 
+// The SAFE browser projection of the navigator-visible chart. It carries ONLY
+// the curated navigator-observable chart facts (validated + sanitized upstream in
+// `validatePrivateScenario`), never grader-only data (gradingContext,
+// expectedActions, criticalMisses, scoringNotes, hiddenChartState, callerCaseFile,
+// rule ids). Returns null when the scenario carries no navigator-visible chart.
+export function navigatorVisibleChartProjection(chart) {
+  if (!chart || typeof chart !== 'object' || Array.isArray(chart)) return null;
+  const projection = {};
+  for (const field of ['summary', 'planRto']) {
+    if (typeof chart[field] === 'string' && chart[field].trim()) projection[field] = chart[field];
+  }
+  for (const field of ['activeOrders', 'openEncounters', 'futureAppointments', 'otherFacts']) {
+    const list = Array.isArray(chart[field]) ? chart[field].filter((item) => typeof item === 'string' && item.trim()) : [];
+    if (list.length) projection[field] = [...list];
+  }
+  return Object.keys(projection).length ? projection : null;
+}
+
 function send(sock, obj) {
   if (sock && sock.readyState === 1) sock.send(JSON.stringify(obj));
 }
@@ -509,6 +527,16 @@ export function handleConnection(client, req, depsInput) {
         send(client, { type: 'error', message: 'That Call QA scenario is not available.' });
         return shutdown('bad-scenario');
       }
+      // Fail closed on an unusable chart-dependent scenario. `validatePrivateScenario`
+      // already enforces this invariant, but the relay guards it independently so
+      // a scenario whose correct workflow depends on chart facts can never be
+      // administered without a navigator-visible chart to reason from. A missing
+      // chart is a configuration problem, not an impossible test for the navigator.
+      if (scenario.requiresNavigatorChartContext === true && !navigatorVisibleChartProjection(scenario.navigatorChartState)) {
+        console.warn(`[live-relay] scenario ${scenario.id} requires navigator chart context but has none`);
+        send(client, { type: 'error', message: 'That Call QA scenario is not available.' });
+        return shutdown('missing-navigator-chart');
+      }
 
       session.navigatorId = identity.navigatorId;
       session.department = department;
@@ -636,6 +664,10 @@ export function handleConnection(client, req, depsInput) {
           callerName: session.scenario.callerName,
           department: session.department,
           primaryDomainId: session.scenario.primaryDomainId ?? session.scenario.domainIds?.[0] ?? null,
+          // Navigator-visible simulated ECW chart (safe projection only). This is
+          // rendered in the scored test UI so the navigator can reason from the
+          // same chart facts the grader judges chart-dependent decisions against.
+          navigatorChartState: navigatorVisibleChartProjection(session.scenario.navigatorChartState),
         };
         // Trusted, server-computed finalization timing. The browser sizes its
         // finalize guard from clientGuardMs so it can never abandon a valid drain

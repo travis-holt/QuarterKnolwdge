@@ -60,6 +60,8 @@ describe('buildScenarioSnapshot / buildAttemptDoc', () => {
       criticalMisses: SCENARIO.criticalMisses,
       scoringNotes: SCENARIO.scoringNotes,
       hiddenChartState: SCENARIO.hiddenChartState,
+      navigatorChartState: SCENARIO.navigatorChartState ?? null,
+      requiresNavigatorChartContext: SCENARIO.requiresNavigatorChartContext === true,
       callerCaseFile: SCENARIO.callerCaseFile,
       ruleIds: [],
       sourceSopVersion: null,
