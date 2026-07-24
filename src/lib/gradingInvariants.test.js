@@ -15,6 +15,9 @@ import { describe, it, expect } from 'vitest';
 import { THRESHOLDS } from '../data/config.js';
 import { QA_PASS_THRESHOLD, rubricCriteria } from '../data/qaRubric.js';
 import {
+  QA_RUBRIC_PROFILES, QA_EVIDENCE_POLICIES, getQaRubricProfile,
+} from '../data/qaRubricProfiles.js';
+import {
   scorePerDomain, scorePerCompetency, scoreToLevel,
   scoreSpotTheError, scoreSpotTheErrorByDomain,
 } from './scoring.js';
@@ -268,5 +271,138 @@ describe('invariant: supervisor final verdict preserves the AI result', () => {
     expect(pending.status).toBe('pending');
     expect(pending.finalPass).toBeNull();
     expect(pending.needsSupervisorReview).toBe(true);
+  });
+});
+
+// ── I-PROFILE: department rubric profiles (2026-07-21) ──────────────────────
+//
+// The Call QA rubric is department-based. These invariants hold ACROSS every
+// configured profile, so adding a department cannot quietly weaken the shared
+// contract or let one department inherit another's rubric.
+
+describe('invariant: department rubric profiles', () => {
+  const profiles = Object.values(QA_RUBRIC_PROFILES);
+
+  it('every profile totals exactly 100 points and passes at the shared threshold', () => {
+    for (const profile of profiles) {
+      expect(profile.totalPoints, profile.department).toBe(100);
+      expect(profile.passThreshold, profile.department).toBe(QA_PASS_THRESHOLD);
+    }
+  });
+
+  it('every profile has unique criterion ids, unique category ids, and no empty categories', () => {
+    for (const profile of profiles) {
+      const criterionIds = profile.criteria.map((c) => c.id);
+      expect(new Set(criterionIds).size, profile.department).toBe(criterionIds.length);
+      const categoryIds = profile.rubric.map((c) => c.id);
+      expect(new Set(categoryIds).size, profile.department).toBe(categoryIds.length);
+      for (const category of profile.rubric) {
+        expect(category.criteria.length, `${profile.department}/${category.id}`).toBeGreaterThan(0);
+      }
+    }
+  });
+
+  it('every repairable criterion is also safety-critical in the same profile (R10)', () => {
+    for (const profile of profiles) {
+      for (const id of profile.repairableCriteria) {
+        expect(profile.safetyCriticalCriteria.has(id), `${profile.department}/${id}`).toBe(true);
+        expect(profile.criterionIds.has(id), `${profile.department}/${id}`).toBe(true);
+      }
+    }
+  });
+
+  it('every safety-critical criterion actually exists in its own profile', () => {
+    for (const profile of profiles) {
+      for (const id of profile.safetyCriticalCriteria) {
+        expect(profile.criterionIds.has(id), `${profile.department}/${id}`).toBe(true);
+      }
+    }
+  });
+
+  it('profiles carry distinct rubric versions so stored results stay attributable', () => {
+    const versions = profiles.map((profile) => profile.rubricVersion);
+    expect(new Set(versions).size).toBe(versions.length);
+    for (const version of versions) expect(version).toMatch(/\S/);
+  });
+
+  it('an unsupported department resolves to null and never inherits another rubric', () => {
+    for (const department of ['adultmed', 'behavioral', '', null, undefined, 'constructor']) {
+      expect(getQaRubricProfile(department)).toBeNull();
+    }
+  });
+
+  it('a criterion opting into a relaxed evidence policy names a known policy', () => {
+    const known = new Set(Object.values(QA_EVIDENCE_POLICIES));
+    for (const profile of profiles) {
+      for (const criterion of profile.criteria) {
+        if (!criterion.evidencePolicy) continue;
+        expect(known.has(criterion.evidencePolicy), `${profile.department}/${criterion.id}`).toBe(true);
+      }
+    }
+  });
+
+  it('no auto-fail may relax navigator-only evidence', () => {
+    // Auto-fails accuse the navigator of an explicit unsafe statement, so they
+    // must never carry an evidence-policy relaxation.
+    for (const profile of profiles) {
+      for (const autoFail of profile.autoFails) {
+        expect(autoFail.evidencePolicy, `${profile.department}/${autoFail.id}`).toBeUndefined();
+      }
+    }
+  });
+
+  it('validation and scoring cannot be run against different profiles', () => {
+    const obgyn = QA_RUBRIC_PROFILES.obgyn;
+    const verdicts = obgyn.criteria.map((c) => ({
+      id: c.id, verdict: 'NA', basis: 'ABSENCE', evidence: '', note: '',
+    }));
+    expect(() => scoreQa(verdicts, [], [], QA_RUBRIC_PROFILES.pediatrics))
+      .toThrow(/unknown criterion|missing criteria/);
+  });
+
+  it('every profile carries a signature that changes with its grading shape', () => {
+    // The binding must be defeated by a weight change, not only an id change.
+    const signatures = profiles.map((profile) => profile.signature);
+    expect(new Set(signatures).size).toBe(signatures.length);
+    for (const signature of signatures) expect(signature).toMatch(/^[0-9a-f]{8}-[0-9a-f]{8}$/);
+  });
+
+  // ── Correction pass #2 invariants (2026-07-21) ────────────────────────────
+
+  it('an identity criterion never persists model-authored evidence', () => {
+    // Scoring an identity criterion ignores the model's free text, so that text
+    // must never survive onto the scored criterion where the UI would render it.
+    const obgyn = QA_RUBRIC_PROFILES.obgyn;
+    const identityIds = new Set(obgyn.identityVerificationCriteria);
+    expect(identityIds.size).toBeGreaterThan(0);
+    const verdicts = obgyn.criteria.map((c) => ({
+      id: c.id, verdict: 'MET', basis: 'EVIDENCE',
+      evidence: 'FABRICATED MODEL SENTENCE', note: '', identityEvidence: [],
+    }));
+    const scored = scoreQa(verdicts, [], [], obgyn);
+    for (const criterion of scored.criteria) {
+      if (!identityIds.has(criterion.id)) continue;
+      expect(criterion.evidence, criterion.id).not.toContain('FABRICATED MODEL SENTENCE');
+      expect(criterion.evidenceSource, criterion.id).toBe('server-derived');
+    }
+  });
+
+  it('every profile that declares an identity policy declares it safety-critical', () => {
+    // A criterion that may cite caller wording must be one a supervisor reviews
+    // when it fails, otherwise the narrow exception could quietly cost points.
+    for (const profile of profiles) {
+      for (const id of profile.identityVerificationCriteria ?? []) {
+        expect(profile.safetyCriticalCriteria.has(id), `${profile.department}/${id}`).toBe(true);
+      }
+    }
+  });
+
+  it('no profile permits an identity policy on a criterion outside verification', () => {
+    for (const profile of profiles) {
+      for (const criterion of profile.criteria) {
+        if (criterion.evidencePolicy !== QA_EVIDENCE_POLICIES.IDENTITY_VERIFICATION) continue;
+        expect(criterion.categoryId, `${profile.department}/${criterion.id}`).toBe('verification');
+      }
+    }
   });
 });

@@ -27,44 +27,44 @@ import {
   BASES,
   rubricCriteria,
 } from '../src/data/qaRubric.js';
+import {
+  QA_EVIDENCE_POLICIES,
+  QA_RUBRIC_PROFILES,
+  getQaRubricProfile,
+  requireQaRubricProfile,
+  UnsupportedQaDepartmentError,
+} from '../src/data/qaRubricProfiles.js';
+import {
+  IDENTITY_FIELDS,
+  evaluateIdentityEvidence,
+  evaluateVerificationBeforeAccess,
+  findProtectedDisclosureInTurn,
+} from './_qa-identity-verification.js';
+import { normalizeForMatch, quoteWords, stripRoleLabel } from './_qa-text-normalize.js';
 import { detectObgynContradictions, isObgynProhibitedActionNegated } from '../src/lib/contentGuards.js';
 
 export { QA_RUBRIC, QA_AUTO_FAILS, QA_PASS_THRESHOLD, QA_RUBRIC_VERSION, VERDICTS, BASES, rubricCriteria };
+export {
+  QA_EVIDENCE_POLICIES, QA_RUBRIC_PROFILES,
+  getQaRubricProfile, requireQaRubricProfile, UnsupportedQaDepartmentError,
+};
+
+// The department profile used when a caller does not supply one. This is the
+// HISTORICAL shared rubric (Pediatrics), so pre-existing callers and stored
+// results behave exactly as before. The SCORED runtime never relies on it:
+// `gradeCallQaTranscript` resolves the profile from the server-authoritative
+// attempt department and threads that one object through every stage.
+export const DEFAULT_QA_PROFILE = QA_RUBRIC_PROFILES.pediatrics;
+
+function profileOf(profile) {
+  return profile ?? DEFAULT_QA_PROFILE;
+}
 
 // ── Evidence verification ────────────────────────────────────────────────────
-
-// A small, conservative, deterministic contraction expansion so a quote and a
-// transcript turn match even when one wrote "I'm" and the other "I am". Applied
-// to BOTH sides before punctuation is stripped. Only unambiguous contractions
-// are expanded; possessive "'s" is left to be stripped as punctuation.
-const CONTRACTIONS = [
-  [/\bcan['’]t\b/g, 'can not'],
-  [/\bwon['’]t\b/g, 'will not'],
-  [/\bshan['’]t\b/g, 'shall not'],
-  [/\bain['’]t\b/g, 'is not'],
-  [/(\w)n['’]t\b/g, '$1 not'],       // didn't → did not, isn't → is not, …
-  [/\bi['’]m\b/g, 'i am'],
-  [/\bit['’]s\b/g, 'it is'],
-  [/\bthat['’]s\b/g, 'that is'],
-  [/\bwhat['’]s\b/g, 'what is'],
-  [/\bhe['’]s\b/g, 'he is'],
-  [/\bshe['’]s\b/g, 'she is'],
-  [/\bthere['’]s\b/g, 'there is'],
-  [/\blet['’]s\b/g, 'let us'],
-  [/(\w)['’]re\b/g, '$1 are'],       // you're → you are, we're → we are
-  [/(\w)['’]ve\b/g, '$1 have'],      // I've → I have
-  [/(\w)['’]ll\b/g, '$1 will'],      // I'll → I will
-  [/(\w)['’]d\b/g, '$1 would'],      // I'd → I would
-];
-
-function normalizeForMatch(s) {
-  let text = String(s ?? '').toLowerCase().replace(/[‘’]/g, "'");
-  for (const [pattern, replacement] of CONTRACTIONS) text = text.replace(pattern, replacement);
-  return text
-    .replace(/[^\p{L}\p{N}\s]/gu, ' ')
-    .replace(/\s+/g, ' ')
-    .trim();
-}
+//
+// `normalizeForMatch` / `quoteWords` / `stripRoleLabel` come from the shared
+// `_qa-text-normalize.js` so this module and the identity-verification module
+// use ONE definition of what a verbatim quote means.
 
 // Caller-side role aliases: historical fixtures use `patient`, live transcripts
 // use `patient`, and some corpora say `caller`. They are equivalent and are NEVER
@@ -79,12 +79,6 @@ function turnMatchesRole(turnRole, role) {
 
 function eligibleTurns(transcript, role) {
   return (Array.isArray(transcript) ? transcript : []).filter((t) => turnMatchesRole(t?.role, role));
-}
-
-// A quote must be substantive (2+ words) to be evidence — a single word can
-// match by accident and proves nothing.
-function quoteWords(needle) {
-  return needle.split(' ').filter(Boolean);
 }
 
 /**
@@ -106,7 +100,7 @@ function quoteWords(needle) {
  * @param {{role?: 'navigator'|'caller'|'patient', requireSingleTurn?: boolean}} [opts]
  */
 export function verifyEvidence(transcript, quote, { role = 'navigator', requireSingleTurn = true } = {}) {
-  const stripped = String(quote ?? '').replace(/^\s*["'“”]*\s*(navigator|caller|patient)\s*:\s*/i, '');
+  const stripped = stripRoleLabel(quote);
   const needle = normalizeForMatch(stripped);
   if (quoteWords(needle).length < 2) return false;
 
@@ -129,6 +123,86 @@ export function verifyEvidence(transcript, quote, { role = 'navigator', requireS
 const NAVIGATOR_EVIDENCE = { role: 'navigator', requireSingleTurn: true };
 export function verifyNavigatorEvidence(transcript, quote) {
   return verifyEvidence(transcript, quote, NAVIGATOR_EVIDENCE);
+}
+
+// ── Identity-verification evidence policy (narrow, named exception) ──────────
+//
+// Identity is frequently established by the CALLER: "Hi, this is Maria Alvarez,
+// date of birth March 2nd 1991." A navigator-only evidence gate would mark that
+// call's verification unverified even though it is complete, so the identity
+// policy lets `verify-three` / `verify-before-access` verify a quote against ONE
+// contiguous turn of EITHER role.
+//
+// Scope limits (all enforced below and by tests):
+//  * MET credit only. An evidence-based NEGATIVE stays navigator-only, so a
+//    caller line can never substantiate an accusation against the navigator.
+//  * Auto-fails are never covered — af-hipaa still needs a navigator quote.
+//  * Only criteria that explicitly opt in via `evidencePolicy` are covered, so
+//    caller wording can never earn an unrelated navigator-performance criterion.
+//  * Transcript ORDER is preserved for `evidenceOrder:'before-protected-disclosure'`.
+
+// The disclosure detector and the structured identifier contract live in
+// `_qa-identity-verification.js`. There is exactly ONE detector, so the ordering
+// check, the tests, and any future caller cannot drift apart.
+export {
+  IDENTITY_FIELDS, extractDateOfBirth, looksLikePersonName,
+  looksLikePhoneNumber, looksLikeAddress,
+  verifyIdentifierClaim, evaluateIdentityEvidence,
+  classifyProtectedDisclosure, findProtectedDisclosureIndex,
+  evaluateVerificationBeforeAccess, PROTECTED_DISCLOSURE_CATEGORIES,
+  classifyAfHipaaEvidence, earliestCompleteIdentity, findProtectedDisclosure,
+} from './_qa-identity-verification.js';
+
+import {
+  classifyAfHipaaEvidence as classifyAfHipaaEvidenceFn,
+  earliestCompleteIdentity as earliestCompleteIdentityFn,
+  findProtectedDisclosure as findProtectedDisclosureFn,
+} from './_qa-identity-verification.js';
+
+/**
+ * Verify a criterion's MET evidence, honoring its evidence policy.
+ *
+ * `identityEvidence` is the model's STRUCTURED identifier array for this
+ * criterion. For an identity criterion the free-text `quote` is NOT sufficient
+ * on its own — a two-word quote proves nothing about which identifiers were
+ * collected — so the structured array is re-derived from the transcript and, for
+ * a criterion declaring `evidenceOrder`, the chronological ordering is checked
+ * against the first protected disclosure.
+ *
+ * @returns {{ verified: boolean, reason: string|null, detail: object|null }}
+ */
+export function verifyCriterionEvidenceDetailed(transcript, quote, criterionDef, identityEvidence) {
+  if (criterionDef?.evidencePolicy !== QA_EVIDENCE_POLICIES.IDENTITY_VERIFICATION) {
+    return {
+      verified: verifyNavigatorEvidence(transcript, quote),
+      reason: null,
+      detail: null,
+    };
+  }
+
+  if (criterionDef.evidenceOrder === 'before-protected-disclosure') {
+    const order = evaluateVerificationBeforeAccess(transcript, identityEvidence);
+    return {
+      verified: order.satisfied,
+      reason: order.satisfied ? null : order.reason,
+      detail: order,
+    };
+  }
+
+  const identity = evaluateIdentityEvidence(transcript, identityEvidence);
+  return {
+    verified: identity.complete,
+    reason: identity.complete ? null : 'identity-not-verified',
+    detail: identity,
+  };
+}
+
+/**
+ * Boolean convenience wrapper. Kept because several call sites only need the
+ * yes/no answer; the detailed form above is what scoring uses.
+ */
+export function verifyCriterionEvidence(transcript, quote, criterionDef, identityEvidence) {
+  return verifyCriterionEvidenceDetailed(transcript, quote, criterionDef, identityEvidence).verified;
 }
 
 // ── Response validation (model output → trusted verdicts) ───────────────────
@@ -164,43 +238,313 @@ export function validateCriterionBasis(verdict, basis, evidence) {
   return null;
 }
 
+// Identity claims are CALLER-ONLY (v6): the navigator saying a name proves
+// nothing about verification, and the server always rejects a navigator-sourced
+// identifier — so a navigator role in the raw response is a contract violation,
+// not something to accept and silently drop later.
+const IDENTITY_CLAIM_ROLES = new Set(['caller', 'patient']);
+
 /**
- * Validate the model's raw JSON against the rubric. Pure; no I/O.
+ * Validate the SHAPE of a criterion's structured identity evidence.
+ *
+ * Two directions matter. A criterion whose profile declares no identity policy
+ * must not carry identity claims at all — accepting them would leave a channel
+ * open for caller wording to influence an unrelated navigator-performance
+ * criterion. And a criterion that DOES declare the policy must send claims the
+ * server can actually re-derive; a half-filled claim is a contract violation,
+ * not something to quietly drop.
+ *
+ * @returns {string|null} an error message, or null when the shape is legal
+ */
+function validateIdentityEvidenceShape(criterion, profile) {
+  const raw = criterion.identityEvidence;
+  const def = profile.criteriaById.get(criterion.id);
+  const allowed = def?.evidencePolicy === QA_EVIDENCE_POLICIES.IDENTITY_VERIFICATION;
+
+  if (raw === undefined || raw === null) return null;
+  if (!Array.isArray(raw)) return 'identityEvidence must be an array when present.';
+  if (raw.length === 0) return null;
+  if (!allowed) {
+    return 'identityEvidence is not permitted on a criterion without the identity-verification policy.';
+  }
+
+  const seenFields = new Set();
+  for (const [index, claim] of raw.entries()) {
+    const at = `identityEvidence[${index}]`;
+    if (!claim || typeof claim !== 'object' || Array.isArray(claim)) {
+      return `${at} is not an object.`;
+    }
+    if (!IDENTITY_FIELDS.includes(claim.field)) return `${at}.field is not a known identifier.`;
+    if (typeof claim.value !== 'string' || !claim.value.trim()) return `${at}.value must be a non-empty string.`;
+    if (typeof claim.quote !== 'string' || !claim.quote.trim()) return `${at}.quote must be a non-empty string.`;
+    // Identity claims are caller-only (v6): a navigator role is rejected here so
+    // the malformed-response retry runs, rather than being accepted and dropped.
+    if (!IDENTITY_CLAIM_ROLES.has(String(claim.role ?? '').toLowerCase())) return `${at}.role must be "caller".`;
+    if (!Number.isInteger(claim.turnIndex) || claim.turnIndex < 0) return `${at}.turnIndex must be a non-negative integer.`;
+    // No identifier may be claimed twice — otherwise a duplicate could paper over
+    // a missing one, or conflict silently.
+    if (seenFields.has(claim.field)) return `duplicate identity claim for "${claim.field}".`;
+    seenFields.add(claim.field);
+  }
+  return null;
+}
+
+/** Canonical form of an identity-evidence array for equality comparison. */
+function canonicalIdentityArray(raw) {
+  return (Array.isArray(raw) ? raw : [])
+    .map((claim) => ({
+      field: claim.field,
+      value: String(claim.value ?? ''),
+      role: String(claim.role ?? '').toLowerCase(),
+      turnIndex: claim.turnIndex,
+      quote: String(claim.quote ?? ''),
+    }))
+    .sort((a, b) => a.field.localeCompare(b.field));
+}
+
+/**
+ * Validate the raw auto-fail array against the profile.
+ *
+ * The prompt contract asks for EVERY auto-fail id, so a missing one is a
+ * contract violation rather than an implicit "not triggered". Unknown and
+ * duplicate ids were previously filtered away silently, which hid exactly the
+ * malformed output the retry exists to catch.
+ *
+ * @returns {string|null} an error message, or null when the array is legal
+ */
+function validateAutoFailShapes(autoFails, profile) {
+  if (!Array.isArray(autoFails)) return 'Missing auto-fail array.';
+  const seen = new Set();
+  for (const [index, a] of autoFails.entries()) {
+    if (!a || typeof a !== 'object' || Array.isArray(a)) return `Auto-fail at index ${index} is not an object.`;
+    if (typeof a.id !== 'string' || !profile.autoFailIds.has(a.id)) {
+      return `Unknown auto-fail "${a.id}" for rubric profile "${profile.department}".`;
+    }
+    if (seen.has(a.id)) return `Duplicate auto-fail "${a.id}".`;
+    seen.add(a.id);
+    if (typeof a.triggered !== 'boolean') return `Auto-fail ${a.id}: "triggered" must be a boolean.`;
+    if (a.evidence !== undefined && typeof a.evidence !== 'string') return `Auto-fail ${a.id}: evidence must be a string.`;
+    if (a.note !== undefined && typeof a.note !== 'string') return `Auto-fail ${a.id}: note must be a string.`;
+    // A triggered auto-fail accuses the navigator of an explicit unsafe
+    // statement, so it must carry the quote the server will verify. An empty
+    // one is definitionally unverifiable.
+    if (a.triggered === true && !String(a.evidence ?? '').trim()) {
+      return `Auto-fail ${a.id}: a triggered auto-fail requires a verbatim evidence quote.`;
+    }
+    if (a.triggered === false && String(a.evidence ?? '').trim()) {
+      return `Auto-fail ${a.id}: an untriggered auto-fail must have empty evidence.`;
+    }
+    if (a.triggered === false && String(a.note ?? '').trim()) {
+      return `Auto-fail ${a.id}: an untriggered auto-fail must have an empty note.`;
+    }
+  }
+  const missing = [...profile.autoFailIds].filter((id) => !seen.has(id));
+  if (missing.length > 0) return `Missing auto-fail verdicts for: ${missing.join(', ')}`;
+  return null;
+}
+
+/**
+ * Validate the model's raw JSON against the RESOLVED department rubric profile.
+ * Pure; no I/O. The same `profile` object must later be handed to `scoreQa`, so
+ * validation and scoring can never run against different criterion sets.
+ *
+ * @param {object} parsed
+ * @param {object} [profile] resolved department profile (default: Pediatrics)
  * @returns {{ data: {criteria: [], autoFails: []} } | { error: string }}
  */
-export function validateQaResponse(parsed) {
+export function validateQaResponse(parsed, profile) {
+  const active = profileOf(profile);
   if (!parsed || typeof parsed !== 'object') return { error: 'Response is not an object.' };
   const critList = Array.isArray(parsed.criteria) ? parsed.criteria : null;
   if (!critList) return { error: 'Missing criteria array.' };
 
+  // ── Strict RAW validation, before any normalization ────────────────────────
+  //
+  // The previous implementation `continue`d past every malformed entry and then
+  // rebuilt the array from the profile, so a duplicate id silently overwrote the
+  // earlier verdict, and unknown/extra ids and unknown auto-fail ids vanished.
+  // The exact-set check downstream then only ever saw the CLEANED array, so a
+  // model that broke its contract looked compliant and the malformed-response
+  // retry never ran. Every rejection below trips that retry instead.
   const byId = new Map();
-  for (const c of critList) {
-    if (!c || typeof c !== 'object' || typeof c.id !== 'string') continue;
+  for (const [index, c] of critList.entries()) {
+    if (!c || typeof c !== 'object' || Array.isArray(c)) {
+      return { error: `Criterion at index ${index} is not an object.` };
+    }
+    if (typeof c.id !== 'string' || !c.id.trim()) {
+      return { error: `Criterion at index ${index} has a missing or non-string id.` };
+    }
+    if (!active.criterionIds.has(c.id)) {
+      return { error: `Unknown criterion "${c.id}" for rubric profile "${active.department}".` };
+    }
+    if (byId.has(c.id)) return { error: `Duplicate criterion "${c.id}".` };
+
     const verdict = String(c.verdict ?? '').toUpperCase();
-    if (!VERDICTS.has(verdict)) continue;
+    if (!VERDICTS.has(verdict)) return { error: `Criterion ${c.id}: unknown or missing verdict "${c.verdict}".` };
     const basis = String(c.basis ?? '').toUpperCase();
-    const evidence = typeof c.evidence === 'string' ? c.evidence : '';
-    const note = typeof c.note === 'string' ? c.note : '';
+    // Evidence and note are REQUIRED strings. Coercing a non-string (a number, an
+    // object) to "" would let a malformed ABSENCE response pass validation; reject
+    // it so the malformed-response retry runs instead (correction pass #3, B7).
+    if (typeof c.evidence !== 'string') return { error: `Criterion ${c.id}: evidence must be a string.` };
+    if (typeof c.note !== 'string') return { error: `Criterion ${c.id}: note must be a string.` };
+    const evidence = c.evidence;
+    const note = c.note;
     // Reject malformed verdict/basis/evidence combinations rather than silently
     // coercing them — this trips the endpoint's malformed-response retry.
     const basisError = validateCriterionBasis(verdict, basis, evidence);
     if (basisError) return { error: `Criterion ${c.id}: ${basisError}` };
-    byId.set(c.id, { id: c.id, verdict, basis, evidence, note });
+
+    // Structured identifier claims travel with the criterion so scoring can
+    // re-derive them from the transcript. SHAPE is validated here; whether the
+    // claims are TRUE is decided by the server against the transcript.
+    const identityError = validateIdentityEvidenceShape(c, active);
+    if (identityError) return { error: `Criterion ${c.id}: ${identityError}` };
+    const identityEvidence = Array.isArray(c.identityEvidence) ? c.identityEvidence : [];
+
+    byId.set(c.id, { id: c.id, verdict, basis, evidence, note, identityEvidence });
   }
 
-  const missing = rubricCriteria().filter((c) => !byId.has(c.id)).map((c) => c.id);
+  const missing = active.criteria.filter((c) => !byId.has(c.id)).map((c) => c.id);
   if (missing.length > 0) return { error: `Missing verdicts for: ${missing.join(', ')}` };
 
-  const afIds = new Set(QA_AUTO_FAILS.map((a) => a.id));
-  const autoFails = (Array.isArray(parsed.autoFails) ? parsed.autoFails : [])
-    .filter((a) => a && typeof a === 'object' && afIds.has(a.id) && a.triggered === true)
+  // ── Identity contract (correction pass #3, B1 + B5) ─────────────────────────
+  //
+  // A MET identity criterion must carry a COMPLETE structured payload — exactly
+  // one claim per identifier (firstName, lastName, dob). A MET verdict with a
+  // missing/empty/partial array is a model contract failure, not evidence the
+  // navigator failed, so it must trip the malformed-response retry rather than
+  // silently degrading to a navigator deduction. And the two identity criteria
+  // may not submit DIFFERENT arrays — one canonical identity must feed both.
+  const identityIds = active.identityVerificationCriteria ?? [];
+  const nonEmptyIdentityArrays = [];
+  for (const id of identityIds) {
+    const criterion = byId.get(id);
+    if (!criterion) continue;
+    const arr = criterion.identityEvidence ?? [];
+    if (criterion.verdict === 'MET') {
+      const fields = arr.map((claim) => claim.field);
+      const missingIds = IDENTITY_FIELDS.filter((field) => !fields.includes(field));
+      if (missingIds.length > 0) {
+        return {
+          error: `Criterion ${id}: a MET identity criterion must prove all three identifiers `
+            + `(missing: ${missingIds.join(', ')}). Do not claim MET with an incomplete identityEvidence array.`,
+        };
+      }
+      if (fields.length !== IDENTITY_FIELDS.length) {
+        return { error: `Criterion ${id}: a MET identity criterion must carry exactly one claim per identifier.` };
+      }
+    }
+    if (arr.length > 0) nonEmptyIdentityArrays.push({ id, canonical: JSON.stringify(canonicalIdentityArray(arr)) });
+  }
+  if (nonEmptyIdentityArrays.length >= 2) {
+    const first = nonEmptyIdentityArrays[0];
+    const divergent = nonEmptyIdentityArrays.find((entry) => entry.canonical !== first.canonical);
+    if (divergent) {
+      return {
+        error: `Identity criteria ${first.id} and ${divergent.id} submitted DIFFERENT identity evidence; `
+          + 'both verification criteria must describe the same patient identity.',
+      };
+    }
+  }
+
+  // ── Cross-criterion logical consistency (correction pass #5, B6) ────────────
+  //
+  // Proving the identifiers were collected BEFORE a protected disclosure
+  // necessarily proves they were collected. So the ORDERED identity criterion
+  // (verify-before-access) cannot be MET while the BASE identity criterion
+  // (verify-three) is not MET — that is a logically impossible pair of verdicts,
+  // so it is a malformed response that must trip the retry rather than silently
+  // producing contradictory verdicts. The reverse (verify-three MET while
+  // verify-before-access is NOT_MET) is legal: identity can complete AFTER a
+  // disclosure.
+  const orderedIdentity = active.criteria.find(
+    (c) => c.evidencePolicy === QA_EVIDENCE_POLICIES.IDENTITY_VERIFICATION
+      && c.evidenceOrder === 'before-protected-disclosure');
+  const baseIdentity = active.criteria.find(
+    (c) => c.evidencePolicy === QA_EVIDENCE_POLICIES.IDENTITY_VERIFICATION
+      && c.evidenceOrder !== 'before-protected-disclosure');
+  if (orderedIdentity && baseIdentity) {
+    const ordered = byId.get(orderedIdentity.id);
+    const base = byId.get(baseIdentity.id);
+    if (ordered?.verdict === 'MET' && base?.verdict !== 'MET') {
+      return {
+        error: `Criterion ${orderedIdentity.id} MET requires ${baseIdentity.id} MET: `
+          + 'proving the identifiers were collected before a protected disclosure necessarily '
+          + 'proves they were collected.',
+      };
+    }
+    // Correction pass #6, B7 case A is handled at SCORING time, not here: a
+    // NOT_MET base identity criterion is contradictory only when its array
+    // SERVER-VERIFIES as a complete valid identity. Shape-completeness alone is
+    // legitimate (e.g. a "dob" that is really a phone number is a valid NOT_MET),
+    // so validation must not reject it — `scoreQa` reconciles the real case.
+  }
+
+  const autoFailsError = validateAutoFailShapes(parsed.autoFails, active);
+  if (autoFailsError) return { error: autoFailsError };
+
+  // Only TRIGGERED auto-fails flow into scoring; the untriggered ones exist so
+  // the model must positively answer every auto-fail id rather than omit the
+  // ones it wants to ignore.
+  const autoFails = parsed.autoFails
+    .filter((a) => a.triggered === true)
     .map((a) => ({
       id: a.id,
       evidence: typeof a.evidence === 'string' ? a.evidence : '',
       note: typeof a.note === 'string' ? a.note : '',
     }));
 
-  return { data: { criteria: rubricCriteria().map((c) => byId.get(c.id)), autoFails } };
+  return {
+    data: {
+      criteria: active.criteria.map((c) => byId.get(c.id)),
+      autoFails,
+      // The IMMUTABLE binding to the profile that produced these verdicts. The
+      // signature covers points, `core` applicability, categories, evidence
+      // policies and auto-fail definitions — not just criterion IDs — so two
+      // profiles with the same IDs but different weights are distinguishable.
+      // This must survive the repair stage and is re-checked by scoreQa().
+      profileBinding: profileBindingOf(active),
+    },
+  };
+}
+
+/** The immutable identity a validated response is bound to. */
+export function profileBindingOf(profile) {
+  return Object.freeze({
+    department: profile.department,
+    rubricVersion: profile.rubricVersion,
+    signature: profile.signature,
+  });
+}
+
+/**
+ * Compare a carried binding against a profile. Returns null when they match, or
+ * a reason string. A MISSING binding is itself a failure in the scored path:
+ * losing the stamp is exactly the bug this guards against.
+ */
+export function profileBindingMismatch(binding, profile) {
+  if (!binding) return 'missing-profile-binding';
+  if (binding.department !== profile.department) return 'profile-binding-department-mismatch';
+  if (binding.rubricVersion !== profile.rubricVersion) return 'profile-binding-version-mismatch';
+  if (binding.signature !== profile.signature) return 'profile-binding-signature-mismatch';
+  return null;
+}
+
+/**
+ * Exact criterion-set integrity: no unknown ids, no missing ids, no duplicates,
+ * no extras. Returns null when the set is exactly the profile's criteria.
+ */
+export function criterionSetMismatch(verdicts, profile) {
+  const seen = new Set();
+  for (const verdict of verdicts) {
+    const id = verdict?.id;
+    if (!profile.criterionIds.has(id)) return `unknown criterion "${id}"`;
+    if (seen.has(id)) return `duplicate criterion "${id}"`;
+    seen.add(id);
+  }
+  const missing = [...profile.criterionIds].filter((id) => !seen.has(id));
+  if (missing.length) return `missing criteria: ${missing.join(', ')}`;
+  return null;
 }
 
 export const CALL_QA_FAIRNESS_RULES = {
@@ -590,9 +934,29 @@ export function getRefillWorkflowSignals(transcript, context = {}) {
 
 // The ONLY criteria the repair layer may ever touch, and the only direction it
 // may move a verdict (NOT_MET → MET). Enforced by tests as a grading invariant.
-export const REPAIRABLE_CRITERIA = new Set(['know-rule', 'doc-te']);
+// The authoritative per-department set lives on the resolved profile; this
+// export remains the default (Pediatrics) set for legacy callers.
+// LEGACY-COMPATIBILITY EXPORT ONLY. The authoritative set is always
+// `profile.repairableCriteria` on the RESOLVED profile, and nothing inside the
+// grading pipeline reads this constant. It remains exported because
+// `gradingInvariants.test.js` and older callers reference it as the Pediatrics
+// default. Do not reintroduce it into the scored path.
+export const REPAIRABLE_CRITERIA = DEFAULT_QA_PROFILE.repairableCriteria;
 
 export function repairQaVerdictsForScenario(validated, transcript, context = {}) {
+  const activeProfile = profileOf(context.profile);
+  const repairable = activeProfile.repairableCriteria;
+  // The binding must survive this stage UNCHANGED. If a caller supplied a
+  // profile that disagrees with the validated binding, fail closed rather than
+  // repairing verdicts under a rubric that did not produce them.
+  if (context.profile && validated.profileBinding) {
+    const mismatch = profileBindingMismatch(validated.profileBinding, activeProfile);
+    if (mismatch) {
+      throw new Error(`repairQaVerdictsForScenario: ${mismatch} (validated under `
+        + `${validated.profileBinding.department}/${validated.profileBinding.rubricVersion}, `
+        + `repairing under ${activeProfile.department}/${activeProfile.rubricVersion}).`);
+    }
+  }
   const criteria = validated.criteria.map((criterion) => ({
     ...criterion,
     // Preserve the RAW model judgment before any repair mutates the effective
@@ -652,7 +1016,7 @@ export function repairQaVerdictsForScenario(validated, transcript, context = {})
         'Fairness repair: accepted natural patient-facing message/routing wording; exact TE/Telephone Encounter phrase is not required.');
     }
     if (context?.department === 'obgyn'
-      && REPAIRABLE_CRITERIA.has(criterion.id)
+      && repairable.has(criterion.id)
       && criterion.verdict === 'NOT_MET'
       && isObgynInternalNarrationOnlyFailure(criterion)
       && safeObgynOutcome
@@ -671,6 +1035,9 @@ export function repairQaVerdictsForScenario(validated, transcript, context = {})
     autoFails: validated.autoFails,
     repairs,
     reviewReasons: routingPolicy?.reviewOnly ? ['routing-policy-review-only'] : [],
+    // Carried through UNCHANGED so scoreQa can re-check it. Dropping it here is
+    // exactly how the binding was previously lost before scoring.
+    profileBinding: validated.profileBinding ?? null,
   };
 }
 
@@ -686,11 +1053,12 @@ export function repairQaVerdictsForScenario(validated, transcript, context = {})
 // are persisted on `qa.deterministicFindings` for the supervisor UI.
 
 export function evaluateQaDeterministicFindings(criteria, transcript, context = {}) {
+  const repairable = profileOf(context.profile).repairableCriteria;
   const findings = [];
   const signals = getRefillWorkflowSignals(transcript, context);
   const policy = routingPolicyFor(context);
   const metRoutingCriteria = (Array.isArray(criteria) ? criteria : [])
-    .filter((criterion) => REPAIRABLE_CRITERIA.has(criterion.id) && criterion.verdict === 'MET')
+    .filter((criterion) => repairable.has(criterion.id) && criterion.verdict === 'MET')
     .map((criterion) => criterion.id);
 
   const decision = signals.routingDecision;
@@ -782,8 +1150,136 @@ export function evaluateQaDeterministicFindings(criteria, transcript, context = 
  * @param {{id,evidence,note}[]} autoFails           validated triggered auto-fails
  * @param {{role,text}[]} transcript
  */
-export function scoreQa(verdicts, autoFails, transcript) {
-  const defs = new Map(rubricCriteria().map((c) => [c.id, c]));
+/**
+ * Flatten an identity/ordering evaluation into a compact, supervisor-readable
+ * audit record. Never includes the raw model claims verbatim — only what the
+ * SERVER independently verified plus the reasons it rejected the rest.
+ */
+function summarizeIdentityDetail(evidenceCheck) {
+  const detail = evidenceCheck.detail ?? {};
+  const identity = detail.identity ?? detail;
+  return {
+    verified: Object.fromEntries(
+      Object.entries(identity.verified ?? {}).map(([field, item]) => [
+        field, { role: item.role, turnIndex: item.turnIndex },
+      ]),
+    ),
+    complete: identity.complete === true,
+    completedAtIndex: identity.completedAtIndex ?? null,
+    rejectedClaims: (identity.failures ?? []).map((failure) => ({
+      field: failure.field, reason: failure.reason,
+    })),
+    ...(detail.disclosureIndex !== undefined
+      ? {
+        disclosureIndex: detail.disclosureIndex,
+        disclosureCategory: detail.disclosureCategory ?? null,
+        disclosureClauseIndex: detail.disclosureClauseIndex ?? null,
+        orderReason: detail.reason ?? null,
+      }
+      : {}),
+  };
+}
+
+// Human labels for the identifier ids, used only in the server-derived summary.
+const IDENTITY_FIELD_LABELS = {
+  firstName: 'first name', lastName: 'last name', dob: 'date of birth',
+};
+
+/**
+ * Build the ONLY evidence string an identity criterion is allowed to carry.
+ *
+ * The model's free-text `evidence` is NEVER trusted for an identity criterion:
+ * scoring uses the structured `identityEvidence` array, so a grader could submit
+ * valid structured claims alongside an invented quote ("The patient was fully
+ * verified.") and that fabricated sentence would previously be persisted and
+ * rendered to a supervisor as observed evidence.
+ *
+ * This summary is derived entirely from what the SERVER re-verified, and it is
+ * deliberately PRIVACY-SAFE: it names which identifiers verified and in which
+ * turn, never the identifier values themselves. A navigator-facing strength
+ * should not repeat a patient's name or date of birth back at them, and the
+ * per-field audit record (`identityVerification`) already carries the turn-level
+ * detail a supervisor needs.
+ *
+ * Returns '' when nothing verified — there is genuinely nothing to show.
+ */
+function buildIdentityEvidenceSummary(evidenceCheck) {
+  const detail = evidenceCheck?.detail ?? {};
+  const identity = detail.identity ?? detail;
+  const fields = IDENTITY_FIELDS.filter((field) => identity.verified?.[field]);
+  if (fields.length === 0) return '';
+
+  const labels = fields.map((field) => IDENTITY_FIELD_LABELS[field] ?? field);
+  const turn = identity.completedAtIndex;
+  const parts = [
+    `Server-verified from the transcript: ${labels.join(', ')}`
+    + (Number.isInteger(turn) ? ` (complete by turn ${turn})` : ''),
+  ];
+  if (detail.disclosureIndex !== undefined && detail.reason === 'verified-before-disclosure') {
+    parts.push('identity completed before the first protected disclosure');
+  }
+  return `${parts.join('; ')}.`;
+}
+
+export function scoreQa(verdicts, autoFails, transcript, profile, profileBinding) {
+  const active = profileOf(profile);
+  const defs = active.criteriaById;
+
+  // ── Profile binding + criterion-set integrity (checked BEFORE any scoring) ──
+  // Validation and scoring must provably be the same rubric. Criterion IDs alone
+  // are not identity: two profiles can share IDs but differ in points, `core`
+  // applicability, categories, evidence policies, or auto-fails. The signature
+  // covers all of it.
+  if (profileBinding !== undefined) {
+    const mismatch = profileBindingMismatch(profileBinding, active);
+    if (mismatch) {
+      throw new Error(`scoreQa: ${mismatch} — verdicts were validated under a different rubric `
+        + `profile than the one supplied for scoring (${active.department}/${active.rubricVersion}).`);
+    }
+  }
+  const setMismatch = criterionSetMismatch(verdicts, active);
+  if (setMismatch) {
+    throw new Error(
+      `scoreQa: ${setMismatch} for rubric profile "${active.department}" (${active.rubricVersion}).`,
+    );
+  }
+
+  // ── ONE canonical identity evaluation feeds BOTH verification criteria (B1) ──
+  // The two identity criteria can never be credited from different identities:
+  // validation guarantees their arrays are identical when both are present, and
+  // here scoring evaluates a SINGLE canonical array once and feeds the result to
+  // whichever identity criteria are MET.
+  const identityDefs = [...defs.values()]
+    .filter((d) => d.evidencePolicy === QA_EVIDENCE_POLICIES.IDENTITY_VERIFICATION);
+  let canonicalIdentity = null;
+  let canonicalOrder = null;
+  if (identityDefs.length > 0) {
+    const canonicalArray = identityDefs
+      .map((d) => verdicts.find((v) => v.id === d.id)?.identityEvidence)
+      .find((arr) => Array.isArray(arr) && arr.length > 0) ?? [];
+    canonicalIdentity = evaluateIdentityEvidence(transcript, canonicalArray);
+    canonicalOrder = evaluateVerificationBeforeAccess(transcript, canonicalArray);
+  }
+
+  // ── Independent, model-agnostic identity chronology (correction pass #6) ─────
+  // Derived from the whole transcript, NEVER from the model's selected claims, so
+  // a model that submits only a LATER repetition of an identity cannot make the
+  // server believe verification happened after a disclosure when it actually
+  // happened before. This drives the af-hipaa auto-zero (B1) and reconciles a
+  // contradictory verify-before-access verdict (B7).
+  const serverChrono = identityDefs.length > 0 ? earliestCompleteIdentityFn(transcript) : null;
+  const firstDisclosure = identityDefs.length > 0 ? findProtectedDisclosureFn(transcript) : null;
+  // "Verified before access" is PROVEN only when the independent earliest complete
+  // identity is unambiguous and strictly before the first protected disclosure
+  // (or there was no disclosure at all).
+  const orderProvenBefore = Boolean(serverChrono
+    && serverChrono.earliestIndex !== null && !serverChrono.ambiguous
+    && (firstDisclosure === null || serverChrono.earliestIndex < firstDisclosure.turnIndex));
+  // A disclosure happened but identity-before-disclosure is NOT proven: an
+  // unresolved privacy situation → critical review, never an automatic zero
+  // unless the auto-fail itself positively verifies.
+  const disclosureBeforeIdentityUnresolved = Boolean(firstDisclosure) && !orderProvenBefore;
+  const contradictionFindings = [];
 
   const criteria = verdicts.map((v) => {
     const def = defs.get(v.id);
@@ -800,11 +1296,37 @@ export function scoreQa(verdicts, autoFails, transcript) {
     let unresolved = Boolean(v.originalUnresolved);
     let unresolvedReason = unresolved ? 'negative-evidence-not-verified' : null;
 
-    if (verdict === 'MET' && !verifyNavigatorEvidence(transcript, v.evidence)) {
-      // A MET whose quote can't be verified in a navigator turn loses the credit.
+    // MET credit uses the criterion's own evidence policy. For an identity
+    // criterion this re-derives the STRUCTURED identifier claims (and, where the
+    // criterion declares it, the chronological ordering against the first
+    // protected disclosure) from the transcript — a model Boolean or a two-word
+    // quote is never sufficient. Negatives below stay navigator-only regardless
+    // of policy, so caller wording can never substantiate an accusation.
+    let evidenceCheck = null;
+    if (verdict === 'MET') {
+      if (def.evidencePolicy === QA_EVIDENCE_POLICIES.IDENTITY_VERIFICATION) {
+        // Consume the ONE canonical identity evaluation, so both verification
+        // criteria are decided from the same server-derived identity result.
+        const source = def.evidenceOrder === 'before-protected-disclosure'
+          ? { verified: canonicalOrder.satisfied, reason: canonicalOrder.satisfied ? null : canonicalOrder.reason, detail: canonicalOrder }
+          : { verified: canonicalIdentity.complete, reason: canonicalIdentity.complete ? null : 'identity-not-verified', detail: canonicalIdentity };
+        evidenceCheck = source;
+      } else {
+        evidenceCheck = verifyCriterionEvidenceDetailed(transcript, v.evidence, def, v.identityEvidence);
+      }
+    }
+    if (verdict === 'MET' && !evidenceCheck.verified) {
+      // A MET whose evidence can't be verified loses the credit.
       verdict = 'NOT_MET';
       basis = 'ABSENCE';
       unverified = true;
+      // An identity criterion whose ORDER could not be established is not a
+      // confident negative — it is an unresolved integrity problem, so it also
+      // takes the existing evidence-integrity review treatment.
+      if (evidenceCheck.detail?.uncertain) {
+        unresolved = true;
+        unresolvedReason = 'verification-order-unverified';
+      }
     } else if (verdict === 'NOT_MET' && basis === 'EVIDENCE'
       && !verifyNavigatorEvidence(transcript, v.evidence)) {
       // An evidence-based negative whose offending quote can't be verified in a
@@ -820,16 +1342,63 @@ export function scoreQa(verdicts, autoFails, transcript) {
     }
     if (verdict === 'NA' && def.core) { verdict = 'NOT_MET'; basis = 'ABSENCE'; }
 
+    // ── Identity-verdict contradiction reconciliation (B7 cases A/B/C) ──────────
+    // Do NOT silently deduct safety-critical points from a criterion the server
+    // proves satisfied. Credit it, mark it unresolved, and record a contradiction
+    // so the review layer forces supervisor review (never a silent pass).
+    //   * ORDERED (verify-before-access) NOT_MET, but the order is satisfied —
+    //     either independently proven before the disclosure (B1/C) or satisfied by
+    //     the model's own canonical array, e.g. no disclosure occurred (B case B).
+    //   * BASE (verify-three) NOT_MET, but the model's OWN submitted identity
+    //     array SERVER-VERIFIES as a complete valid identity (B case A).
+    if (def.evidencePolicy === QA_EVIDENCE_POLICIES.IDENTITY_VERIFICATION && verdict === 'NOT_MET') {
+      const isOrdered = def.evidenceOrder === 'before-protected-disclosure';
+      const serverSatisfied = isOrdered
+        ? (orderProvenBefore || canonicalOrder?.satisfied === true)
+        : (canonicalIdentity?.complete === true);
+      if (serverSatisfied) {
+        verdict = 'MET';
+        basis = 'EVIDENCE';
+        unverified = false;
+        unresolved = true;
+        unresolvedReason = isOrdered
+          ? 'order-proven-satisfied-model-contradiction'
+          : 'identity-proven-model-contradiction';
+        contradictionFindings.push({
+          id: def.id,
+          type: isOrdered ? 'verify-before-access-contradiction' : 'verify-three-contradiction',
+          detail: isOrdered
+            ? 'The independent transcript chronology / canonical order proves identity completed before the first protected disclosure, contradicting the model NOT_MET verdict.'
+            : 'The model\'s own identity evidence server-verifies as a complete valid identity, contradicting the model NOT_MET verdict.',
+        });
+      }
+    }
+
+    // An identity criterion's displayed evidence is SERVER-DERIVED, never the
+    // model's free text. Scoring already ignores that free text (it uses the
+    // structured claims), so persisting it would let a fabricated quote reach
+    // the supervisor panel, the grade projection and coaching prose as if it
+    // had been observed. See docs/GRADING_INVARIANTS.md §0.5.
+    const isIdentityCriterion = def.evidencePolicy === QA_EVIDENCE_POLICIES.IDENTITY_VERIFICATION;
+    const evidence = isIdentityCriterion
+      ? buildIdentityEvidenceSummary(evidenceCheck)
+      : v.evidence;
+
     return {
       id: def.id, text: def.text, points: def.points,
       categoryId: def.categoryId, categoryName: def.categoryName,
-      verdict, basis, evidence: v.evidence, note: v.note,
+      verdict, basis, evidence, note: v.note,
+      ...(isIdentityCriterion ? { evidenceSource: 'server-derived' } : {}),
       unverified, unresolved, unresolvedReason,
       modelJudgment,
+      // Auditable record of WHY an identity criterion was (or was not) credited:
+      // which identifiers verified, in which turns, where the first protected
+      // disclosure was, and which claims the server rejected.
+      ...(evidenceCheck?.detail ? { identityVerification: summarizeIdentityDetail(evidenceCheck) } : {}),
     };
   });
 
-  const categories = QA_RUBRIC.map((cat) => {
+  const categories = active.rubric.map((cat) => {
     const items = criteria.filter((c) => c.categoryId === cat.id);
     const applicable = items.filter((c) => c.verdict !== 'NA');
     return {
@@ -845,25 +1414,72 @@ export function scoreQa(verdicts, autoFails, transcript) {
   const earnedTotal = categories.reduce((s, c) => s + c.earned, 0);
   const rawScore = applicableTotal > 0 ? Math.round((earnedTotal / applicableTotal) * 100) : 0;
 
-  const withText = (a) => ({ ...a, text: QA_AUTO_FAILS.find((d) => d.id === a.id)?.text ?? a.id });
+  const withText = (a) => ({ ...a, text: active.autoFails.find((d) => d.id === a.id)?.text ?? a.id });
   const verifiedAutoFails = [];
   const unverifiedAutoFails = [];
   for (const a of autoFails) {
     // An auto-fail is a navigator behavior: only a navigator turn can verify it.
-    (verifyNavigatorEvidence(transcript, a.evidence) ? verifiedAutoFails : unverifiedAutoFails).push(withText(a));
+    let verified = verifyNavigatorEvidence(transcript, a.evidence);
+    if (verified && a.id === 'af-hipaa' && identityDefs.length > 0) {
+      // A verified automatic HIPAA fail zeroes the call, so it demands POSITIVE,
+      // server-verifiable chronology from an INDEPENDENT, model-agnostic identity
+      // timeline (correction pass #6, B1) — never the model's selected claims, and
+      // never a mere ABSENCE of structured identity evidence. It verifies ONLY
+      // when:
+      //   (a) the quoted line is a genuine, uniquely-mapped, non-refusal
+      //       disclosure that OVERLAPS the detected disclosure span (B2), AND
+      //   (b) the INDEPENDENT earliest complete identity is unambiguous and lands
+      //       AT OR AFTER THIS QUOTED disclosure — i.e. identity was NOT
+      //       established before the model's evidence.
+      // Identity independently proven BEFORE the disclosure => no violation.
+      // Ambiguous / unprovable chronology => the review conflict below, never a
+      // zero.
+      const ev = classifyAfHipaaEvidenceFn(transcript, a.evidence);
+      verified = ev.verified === true && ev.ambiguous === false
+        && serverChrono?.earliestIndex !== null && serverChrono?.ambiguous === false
+        && serverChrono.earliestIndex >= ev.turnIndex;
+    }
+    // A NOT-verified af-hipaa is a critical review conflict ONLY when a disclosure
+    // happened and identity-before-disclosure is not proven. When identity IS
+    // proven before the disclosure the call is clean and a model-triggered
+    // af-hipaa is merely an unverified false positive (still surfaced, no zero).
+    const decorated = a.id === 'af-hipaa' && !verified && disclosureBeforeIdentityUnresolved
+      ? { ...a, privacyConflict: true }
+      : a;
+    (verified ? verifiedAutoFails : unverifiedAutoFails).push(withText(decorated));
+  }
+
+  // Safe policy for a deterministic/model disagreement: the independent detector
+  // establishes an auditable privacy conflict but is not a comprehensive PHI
+  // classifier, so it forces critical supervisor review instead of silently
+  // zeroing the navigator. A model cannot suppress the conflict by returning
+  // af-hipaa=false.
+  if (identityDefs.length > 0 && disclosureBeforeIdentityUnresolved
+      && !autoFails.some((a) => a.id === 'af-hipaa')) {
+    unverifiedAutoFails.push(withText({
+      id: 'af-hipaa', evidence: '',
+      note: 'Deterministic protected-disclosure chronology conflicts with the model response.',
+      privacyConflict: true,
+    }));
   }
 
   const autoFailed = verifiedAutoFails.length > 0;
   const score = autoFailed ? 0 : rawScore;
-  const pass = !autoFailed && score >= QA_PASS_THRESHOLD;
+  const pass = !autoFailed && score >= active.passThreshold;
 
   return {
-    score, rawScore, pass, passThreshold: QA_PASS_THRESHOLD, categories, criteria,
+    score, rawScore, pass, passThreshold: active.passThreshold, categories, criteria,
+    rubricDepartment: active.department,
+    rubricVersion: active.rubricVersion,
     autoFails: verifiedAutoFails,
     // Reported by the model but its quote didn't verify. It must never fail the
     // navigator (anti-hallucination), but it must ALSO never vanish silently —
     // the review layer surfaces it as a supervisor flag.
     unverifiedAutoFails,
+    // Cross-criterion contradictions the server reconciled (B7): a NOT_MET
+    // ordered-identity verdict the independent chronology proved satisfied. These
+    // force supervisor review so a reconciled credit is never a silent pass.
+    ...(contradictionFindings.length > 0 ? { contradictionFindings } : {}),
   };
 }
 
@@ -872,9 +1488,10 @@ export function scoreQa(verdicts, autoFails, transcript) {
 // Criteria whose failure represents a patient-safety / compliance risk, not
 // just lost quality points: identity verification, applying the right SOP rule,
 // and routing to the right queue/contact.
-export const SAFETY_CRITICAL_CRITERIA = new Set([
-  'verify-three', 'verify-before-access', 'know-rule', 'doc-te',
-]);
+// The authoritative per-department set lives on the resolved profile
+// (`profile.safetyCriticalCriteria`); this export remains the default
+// (Pediatrics) set for legacy callers and cross-profile invariant checks.
+export const SAFETY_CRITICAL_CRITERIA = DEFAULT_QA_PROFILE.safetyCriticalCriteria;
 
 // A score within this many points of the pass mark is "borderline" — the AI
 // result alone should not decide pass/fail there.
@@ -894,7 +1511,9 @@ export const QA_REVIEW_MARGIN = 5;
  *             safetyRisk: 'none'|'elevated'|'critical',
  *             reviewFlags: {id:string, label:string, detail:string}[] }}
  */
-export function assessQa(qa, transcript, { correctedTurns = 0, repairs = [], deterministicFindings = [] } = {}) {
+export function assessQa(qa, transcript, { correctedTurns = 0, repairs = [], deterministicFindings = [], profile } = {}) {
+  const active = profileOf(profile);
+  const safetyCritical = active.safetyCriticalCriteria;
   const flags = [];
 
   const navigatorTurns = (transcript ?? []).filter((t) => t?.role === 'navigator').length;
@@ -932,13 +1551,20 @@ export function assessQa(qa, transcript, { correctedTurns = 0, repairs = [], det
       detail: `The grader reported ${unresolvedNegatives.length} negative finding(s) as observed (${unresolvedNegatives.map((c) => c.id).join(', ')}) but the quoted navigator evidence did not verify. Confirm against the transcript before treating them as observed behaviors.`,
     });
   }
-  const unresolvedSafety = unresolvedNegatives.filter((c) => SAFETY_CRITICAL_CRITERIA.has(c.id));
+  const unresolvedSafety = unresolvedNegatives.filter((c) => safetyCritical.has(c.id));
 
   if (qa.unverifiedAutoFails?.length > 0) {
     flags.push({
       id: 'possible-unsafe-behavior',
       label: 'Possible unsafe behavior — unconfirmed',
       detail: `The grader reported a possible violation (${qa.unverifiedAutoFails.map((a) => a.text).join(' ')}) but its quote could not be verified, so it did NOT fail the test. Review the transcript before accepting this result.`,
+    });
+  }
+  if (qa.unverifiedAutoFails?.some((a) => a.privacyConflict)) {
+    flags.push({
+      id: 'deterministic-privacy-conflict',
+      label: 'Deterministic privacy chronology conflict',
+      detail: 'A protected navigator disclosure appears before complete canonical patient verification while the model reported no HIPAA auto-fail. Supervisor review is required; the detector did not automatically zero the call.',
     });
   }
 
@@ -956,7 +1582,7 @@ export function assessQa(qa, transcript, { correctedTurns = 0, repairs = [], det
   }
 
   const safetyMissed = qa.criteria
-    .filter((c) => c.verdict === 'NOT_MET' && SAFETY_CRITICAL_CRITERIA.has(c.id));
+    .filter((c) => c.verdict === 'NOT_MET' && safetyCritical.has(c.id));
   if (safetyMissed.length > 0) {
     flags.push({
       id: 'safety-criterion-missed',
@@ -988,7 +1614,7 @@ export function assessQa(qa, transcript, { correctedTurns = 0, repairs = [], det
 
   // A repair may add points but must never silently flip the outcome: if the
   // call would have FAILED without the repaired criteria, a supervisor decides.
-  const defs = new Map(rubricCriteria().map((c) => [c.id, c]));
+  const defs = active.criteriaById;
   const repairedPoints = repairs
     .filter((r) => r.to === 'MET' && r.from === 'NOT_MET' && r.reviewRequired !== false)
     .reduce((s, r) => s + (defs.get(r.criterionId)?.points ?? 0), 0);
@@ -1012,6 +1638,13 @@ export function assessQa(qa, transcript, { correctedTurns = 0, repairs = [], det
   if (deterministicFindings.some((finding) => finding.type === 'safety')) {
     flags.push({ id: 'deterministic-safety-conflict', label: 'Deterministic unsafe-language signal detected', detail: 'Deterministic checks found unsafe language in the navigator transcript. Supervisor review is required.' });
   }
+  // A reconciled verify-before-access contradiction (B7): the independent
+  // chronology proved the ordered-identity criterion satisfied while the model
+  // returned NOT_MET. The credited criterion must never be a silent pass.
+  const identityContradiction = (qa.contradictionFindings ?? []).length > 0;
+  if (identityContradiction) {
+    flags.push({ id: 'identity-verdict-contradiction', label: 'Identity verdict contradicts server chronology', detail: 'The model returned a NOT_MET identity/order verdict that the independent transcript chronology proves satisfied. Supervisor review is required.' });
+  }
 
   const confidenceHits = flags.filter((f) =>
     ['low-transcript-confidence', 'unverified-evidence', 'possible-unsafe-behavior', 'thin-coverage'].includes(f.id)).length;
@@ -1031,6 +1664,7 @@ export function assessQa(qa, transcript, { correctedTurns = 0, repairs = [], det
   else if (qa.pass && safetyMissed.length > 0) recommendation = 'needs_review'; // never an unreviewed pass over a safety miss
   else if (repairFlippedOutcome) recommendation = 'needs_review'; // repairs are decision support, not the final word
   else if (deterministicFindings.length > 0 && qa.pass) recommendation = 'needs_review';
+  else if (identityContradiction) recommendation = 'needs_review'; // reconciled contradiction is never a silent pass
   else recommendation = qa.pass ? 'pass' : 'fail';
 
   return { recommendation, confidence, safetyRisk, reviewFlags: flags };
@@ -1054,9 +1688,17 @@ export function buildGradeProjection(qa) {
     summary += ` FLAGGED FOR SUPERVISOR REVIEW (${qa.review.reviewFlags.map((f) => f.label).join('; ')}).`;
   }
 
-  // Only quote evidence that actually verified: never present an unverified MET
+  // Only show evidence that actually verified: never present an unverified MET
   // or an unresolved (unverifiable) negative quote as if it were observed.
-  const quote = (c) => (c.evidence && !c.unverified && !c.unresolved ? ` — "${c.evidence}"` : '');
+  //
+  // A `server-derived` string is NOT a transcript quote — it is the server's own
+  // summary of what it re-verified for an identity criterion — so it is rendered
+  // as a plain statement. Wrapping it in quotation marks would present the
+  // server's words as something the navigator said.
+  const quote = (c) => {
+    if (!c.evidence || c.unverified || c.unresolved) return '';
+    return c.evidenceSource === 'server-derived' ? ` — ${c.evidence}` : ` — "${c.evidence}"`;
+  };
   const strengths = qa.criteria
     .filter((c) => c.verdict === 'MET')
     .sort((a, b) => b.points - a.points)

@@ -7,14 +7,15 @@ import {
   scenarioResolverFrom,
 } from './_qa-calibration-scenarios.js';
 import {
-  QA_AUTO_FAILS,
-  QA_RUBRIC_VERSION,
-  rubricCriteria,
   VERDICTS,
 } from '../src/data/qaRubric.js';
-import { SAFETY_CRITICAL_CRITERIA } from './_qa-rubric.js';
+import {
+  QA_RUBRIC_PROFILES, getQaRubricProfile,
+} from '../src/data/qaRubricProfiles.js';
 import { CALL_QA_CAPTURE_VERSION } from './_call-qa-attempts.js';
-import { CALL_QA_PROMPT_VERSION } from './_qa-grading-versions.js';
+import {
+  isSupportedStoredPromptVersion, isCurrentPromptVersion, SUPPORTED_CALL_QA_PROMPT_VERSIONS,
+} from './_qa-grading-versions.js';
 import {
   CALL_QA_CALIBRATION_GATES,
   CALL_QA_CALIBRATION_POLICY_VERSION,
@@ -34,9 +35,93 @@ export const CALIBRATION_GRADING_STATUSES = new Set([
   'not_started', 'grading', 'graded', 'grade_failed',
 ]);
 
-const CRITERIA = rubricCriteria();
-const CRITERION_IDS = new Set(CRITERIA.map((criterion) => criterion.id));
-const AUTO_FAIL_IDS = new Set(QA_AUTO_FAILS.map((autoFail) => autoFail.id));
+// Calibration is DEPARTMENT-AWARE: a fixture is validated and its criterion
+// metrics are computed against the rubric profile of its OWN department, so an
+// OB/GYN case is never labelled with Pediatrics criteria (or vice versa). A
+// fixture whose department has no profile fails validation rather than being
+// silently checked against someone else's rubric.
+function profileForFixtureDepartment(department) {
+  return getQaRubricProfile(department);
+}
+
+// ── Provenance compatibility (correction pass #3, B8) ────────────────────────
+//
+// A graded fixture must be validated against the rubric that ACTUALLY graded it,
+// resolved from the RECORDED rubric version — never the current department
+// profile. A genuine pre-profile OB/GYN call was graded under the historical
+// shared rubric (`qa-rubric-v2`) with the old closing ids, and it must validate
+// under THAT rubric. An impossible tuple (v3 + `qa-rubric-obgyn-v1`, or a NEW
+// OB/GYN run claiming the shared rubric) is rejected rather than accepted.
+//
+// department → rubricVersion → the prompt versions that legitimately produced it.
+const CALL_QA_PROVENANCE_COMPATIBILITY = Object.freeze({
+  pediatrics: {
+    // Pediatrics keeps the shared rubric across every prompt version.
+    'qa-rubric-v2': new Set(SUPPORTED_CALL_QA_PROMPT_VERSIONS),
+  },
+  obgyn: {
+    // OB/GYN was graded under the SHARED rubric ONLY in the pre-profile v3 era.
+    'qa-rubric-v2': new Set(['call-qa-grader-v3']),
+    // The dedicated OB/GYN profile was introduced with prompt v4 and is current.
+    'qa-rubric-obgyn-v1': new Set(['call-qa-grader-v4', 'call-qa-grader-v5', 'call-qa-grader-v6', 'call-qa-grader-v7', 'call-qa-grader-v8']),
+  },
+});
+
+/** Is (department, rubricVersion, promptVersion) a real historical/current tuple? */
+export function callQaProvenanceCompatible(department, rubricVersion, promptVersion) {
+  const allowed = CALL_QA_PROVENANCE_COMPATIBILITY[department]?.[rubricVersion];
+  return Boolean(allowed && allowed.has(promptVersion));
+}
+
+/**
+ * The rubric profile that ACTUALLY graded a fixture, resolved by the RECORDED
+ * rubric version (not the current department profile). Returns null for a
+ * missing/unknown recorded version.
+ */
+function gradingProfileForFixture(fixture) {
+  const version = String(fixture?.modelRun?.rubricVersion ?? '').trim();
+  if (!version) return null;
+  return Object.values(QA_RUBRIC_PROFILES).find((profile) => profile.rubricVersion === version) ?? null;
+}
+
+// Every rubric version any configured profile can legitimately produce.
+const SUPPORTED_RUBRIC_VERSIONS = new Set(
+  Object.values(QA_RUBRIC_PROFILES).map((profile) => profile.rubricVersion),
+);
+
+// The union of every profile's criteria, used for cross-department aggregate
+// reporting. Each metric records which departments actually define it, and a
+// case only contributes to a criterion its own profile contains.
+const ALL_CRITERIA = (() => {
+  const byId = new Map();
+  for (const profile of Object.values(QA_RUBRIC_PROFILES)) {
+    for (const criterion of profile.criteria) {
+      const existing = byId.get(criterion.id);
+      if (existing) existing.departments.add(profile.department);
+      else byId.set(criterion.id, { ...criterion, departments: new Set([profile.department]) });
+    }
+  }
+  return [...byId.values()];
+})();
+
+// The union of every profile's auto-fail definitions, for cross-department
+// aggregate reporting (same rules as ALL_CRITERIA).
+const ALL_AUTO_FAILS = (() => {
+  const byId = new Map();
+  for (const profile of Object.values(QA_RUBRIC_PROFILES)) {
+    for (const autoFail of profile.autoFails) {
+      if (!byId.has(autoFail.id)) byId.set(autoFail.id, autoFail);
+    }
+  }
+  return [...byId.values()];
+})();
+
+// A criterion is treated as safety-critical in reporting when ANY configured
+// department marks it so — reporting must never under-state safety scope.
+function isSafetyCriticalAnywhere(criterionId) {
+  return Object.values(QA_RUBRIC_PROFILES)
+    .some((profile) => profile.safetyCriticalCriteria.has(criterionId));
+}
 const PROHIBITED_KEYS = new Set([
   'navigatorid', 'patientid', 'employeeid', 'firebaseid', 'firebasedocumentid',
   'firestoredocumentid', 'documentid', 'email', 'emailaddress', 'phone',
@@ -73,46 +158,48 @@ function scanProhibited(value, path, errors, seen = new Set()) {
   }
 }
 
-function validateCriteria(criteria, path, errors) {
+function validateCriteria(criteria, path, errors, profile) {
   if (!criteria || typeof criteria !== 'object' || Array.isArray(criteria)) {
     addError(errors, path, 'must be an object keyed by rubric criterion id');
     return;
   }
+  if (!profile) return; // department already flagged; do not guess a rubric
   for (const [id, verdict] of Object.entries(criteria)) {
-    if (!CRITERION_IDS.has(id)) addError(errors, `${path}.${id}`, 'unknown rubric criterion');
+    if (!profile.criterionIds.has(id)) addError(errors, `${path}.${id}`, 'unknown rubric criterion for this department');
     if (!VERDICTS.has(verdict)) addError(errors, `${path}.${id}`, 'invalid verdict');
   }
-  for (const id of CRITERION_IDS) {
+  for (const id of profile.criterionIds) {
     if (!Object.prototype.hasOwnProperty.call(criteria, id)) {
       addError(errors, `${path}.${id}`, 'missing rubric criterion; use NA when inapplicable');
     }
   }
 }
 
-function validateAutoFails(autoFails, path, errors) {
+function validateAutoFails(autoFails, path, errors, profile) {
   if (!Array.isArray(autoFails)) {
     addError(errors, path, 'must be an array');
     return;
   }
+  if (!profile) return;
   for (const [index, item] of autoFails.entries()) {
     const id = typeof item === 'string' ? item : item?.id;
-    if (!AUTO_FAIL_IDS.has(id)) addError(errors, `${path}[${index}]`, 'unknown auto-fail id');
+    if (!profile.autoFailIds.has(id)) addError(errors, `${path}[${index}]`, 'unknown auto-fail id for this department');
   }
 }
 
-function validateReviewer(reviewer, index, errors) {
+function validateReviewer(reviewer, index, errors, profile) {
   const path = `humanReview.reviewers[${index}]`;
   if (!/^reviewer-[a-z0-9-]+$/.test(String(reviewer?.reviewerId ?? ''))) {
     addError(errors, `${path}.reviewerId`, 'must be a pseudonymous reviewer-* id');
   }
-  validateCriteria(reviewer?.criteria, `${path}.criteria`, errors);
-  validateAutoFails(reviewer?.autoFails, `${path}.autoFails`, errors);
+  validateCriteria(reviewer?.criteria, `${path}.criteria`, errors, profile);
+  validateAutoFails(reviewer?.autoFails, `${path}.autoFails`, errors, profile);
   if (!CALIBRATION_RECOMMENDATIONS.has(reviewer?.recommendation)) {
     addError(errors, `${path}.recommendation`, 'invalid recommendation');
   }
 }
 
-function validateHumanReview(fixture, errors) {
+function validateHumanReview(fixture, errors, profile) {
   const review = fixture?.humanReview;
   if (!review || typeof review !== 'object') {
     addError(errors, 'humanReview', 'is required');
@@ -121,7 +208,7 @@ function validateHumanReview(fixture, errors) {
   if (!Array.isArray(review.reviewers)) {
     addError(errors, 'humanReview.reviewers', 'must be an array');
   } else {
-    review.reviewers.forEach((reviewer, index) => validateReviewer(reviewer, index, errors));
+    review.reviewers.forEach((reviewer, index) => validateReviewer(reviewer, index, errors, profile));
     const ids = review.reviewers.map((reviewer) => reviewer?.reviewerId);
     if (new Set(ids).size !== ids.length) {
       addError(errors, 'humanReview.reviewers', 'duplicate reviewer ids');
@@ -144,8 +231,8 @@ function validateHumanReview(fixture, errors) {
     addError(errors, 'humanReview.adjudicated', 'is required');
     return;
   }
-  validateCriteria(adjudicated.criteria, 'humanReview.adjudicated.criteria', errors);
-  validateAutoFails(adjudicated.autoFails, 'humanReview.adjudicated.autoFails', errors);
+  validateCriteria(adjudicated.criteria, 'humanReview.adjudicated.criteria', errors, profile);
+  validateAutoFails(adjudicated.autoFails, 'humanReview.adjudicated.autoFails', errors, profile);
   if (!CALIBRATION_RECOMMENDATIONS.has(adjudicated.recommendation)) {
     addError(errors, 'humanReview.adjudicated.recommendation', 'invalid recommendation');
   }
@@ -168,7 +255,7 @@ function validateHumanReview(fixture, errors) {
   }
 }
 
-function validateModelRun(fixture, errors, expectedScenarioVersion = null) {
+function validateModelRun(fixture, errors, expectedScenarioVersion = null, profile = null) {
   const gradingStatus = fixture?.capture?.gradingStatus;
   const run = fixture?.modelRun;
   if (gradingStatus !== 'graded') {
@@ -182,11 +269,31 @@ function validateModelRun(fixture, errors, expectedScenarioVersion = null) {
   for (const field of ['model', 'rubricVersion', 'promptVersion', 'scenarioVersion']) {
     if (!String(run[field] ?? '').trim()) addError(errors, `modelRun.${field}`, 'provenance is required');
   }
-  if (run.rubricVersion && run.rubricVersion !== QA_RUBRIC_VERSION) {
+  // A run must declare a rubric version this repo still knows how to interpret.
+  // The `profile` passed here is the rubric that ACTUALLY graded the record
+  // (resolved by the recorded version, not the current department profile), and
+  // the (department, rubricVersion, promptVersion) compatibility is enforced by
+  // the caller's provenance-matrix check — so a genuine historical OB/GYN record
+  // graded under the shared rubric is validated against that shared rubric.
+  if (run.rubricVersion && !SUPPORTED_RUBRIC_VERSIONS.has(run.rubricVersion)) {
     addError(errors, 'modelRun.rubricVersion', 'unsupported rubric version');
   }
-  if (run.promptVersion && run.promptVersion !== CALL_QA_PROMPT_VERSION) {
+  // Prompt-version policy (corrected 2026-07-21). `SUPPORTED_CALL_QA_PROMPT_VERSIONS`
+  // declares which versions this repo can still INTERPRET; that is not the same
+  // as which a fixture may be produced under. Genuine stored evidence
+  // (human-pilot / operational-pilot) may carry any supported version, because
+  // it records what actually happened. An authored `synthetic-example` is
+  // written NOW, so it must not claim to be output from a retired prompt — that
+  // would manufacture a historical population that never existed. An unknown
+  // version fails closed either way, and the readiness gates keep populations
+  // from blending (see `requireSinglePromptVersion`).
+  if (run.promptVersion && !isSupportedStoredPromptVersion(run.promptVersion)) {
     addError(errors, 'modelRun.promptVersion', 'unsupported prompt version');
+  } else if (run.promptVersion
+    && fixture.source === 'synthetic-example'
+    && !isCurrentPromptVersion(run.promptVersion)) {
+    addError(errors, 'modelRun.promptVersion',
+      'a synthetic example must use the current prompt version; only genuine stored evidence may carry a historical one');
   }
   if (run.scenarioVersion && expectedScenarioVersion && run.scenarioVersion !== expectedScenarioVersion) {
     addError(errors, 'modelRun.scenarioVersion', 'does not match the referenced scenario version');
@@ -205,8 +312,8 @@ function validateModelRun(fixture, errors, expectedScenarioVersion = null) {
   } else {
     const ids = new Set();
     run.criteria.forEach((criterion, index) => {
-      if (!CRITERION_IDS.has(criterion?.id)) {
-        addError(errors, `modelRun.criteria[${index}].id`, 'unknown rubric criterion');
+      if (profile && !profile.criterionIds.has(criterion?.id)) {
+        addError(errors, `modelRun.criteria[${index}].id`, 'unknown rubric criterion for this department');
       }
       if (!VERDICTS.has(criterion?.verdict)) {
         addError(errors, `modelRun.criteria[${index}].verdict`, 'invalid verdict');
@@ -214,11 +321,11 @@ function validateModelRun(fixture, errors, expectedScenarioVersion = null) {
       if (ids.has(criterion?.id)) addError(errors, `modelRun.criteria[${index}].id`, 'duplicate criterion');
       ids.add(criterion?.id);
     });
-    for (const id of CRITERION_IDS) {
+    for (const id of profile?.criterionIds ?? []) {
       if (!ids.has(id)) addError(errors, `modelRun.criteria.${id}`, 'missing rubric criterion; use NA when inapplicable');
     }
   }
-  validateAutoFails(run.autoFails, 'modelRun.autoFails', errors);
+  validateAutoFails(run.autoFails, 'modelRun.autoFails', errors, profile);
   if (!Array.isArray(run.reviewFlags)) addError(errors, 'modelRun.reviewFlags', 'must be an array');
 }
 
@@ -239,6 +346,11 @@ export function validateCalibrationFixture(fixture, { scenarios = SYNTHETIC_CALI
   if (!CALIBRATION_SOURCES.has(fixture.source)) addError(errors, 'source', 'unsupported source');
   if (fixture.sanitized !== true) addError(errors, 'sanitized', 'must be true');
   if (!ASSESSED_DEPTS.includes(fixture.department)) addError(errors, 'department', 'unknown department');
+  // The rubric profile of the fixture's OWN department decides which criterion
+  // and auto-fail ids are legal. A department with no profile cannot be
+  // calibrated at all — it is never checked against another department's rubric.
+  const profile = profileForFixtureDepartment(fixture.department);
+  if (!profile) addError(errors, 'department', 'no Call QA rubric profile is configured for this department');
 
   const scenario = resolveScenario(fixture.scenarioId);
   if (!scenario) addError(errors, 'scenarioId', 'unknown scenario id');
@@ -347,8 +459,22 @@ export function validateCalibrationFixture(fixture, { scenarios = SYNTHETIC_CALI
       addError(errors, 'modelRun', 'must be omitted for operational-pilot fixtures');
     }
   } else {
-    validateHumanReview(fixture, errors);
-    validateModelRun(fixture, errors, scenario?.version ?? null);
+    // Validate human + model criteria against the rubric that ACTUALLY graded the
+    // record — resolved by the recorded rubric version — and reject an impossible
+    // (department, rubricVersion, promptVersion) provenance tuple.
+    const gradingProfile = gradingProfileForFixture(fixture) ?? profile;
+    const recordedRubric = String(fixture?.modelRun?.rubricVersion ?? '').trim();
+    const recordedPrompt = String(fixture?.modelRun?.promptVersion ?? '').trim();
+    if (recordedRubric && recordedPrompt
+      && SUPPORTED_RUBRIC_VERSIONS.has(recordedRubric)
+      && isSupportedStoredPromptVersion(recordedPrompt)
+      && !callQaProvenanceCompatible(fixture.department, recordedRubric, recordedPrompt)) {
+      addError(errors, 'modelRun',
+        `incompatible provenance: ${fixture.department} + ${recordedRubric} + ${recordedPrompt} `
+        + 'is not a valid historical or current combination');
+    }
+    validateHumanReview(fixture, errors, gradingProfile);
+    validateModelRun(fixture, errors, scenario?.version ?? null, gradingProfile);
   }
   scanProhibited(fixture, 'fixture', errors);
   return { valid: errors.length === 0, errors };
@@ -445,7 +571,11 @@ function buildCriterionMetrics(cases) {
   let nonSafetyCorrect = 0;
   let nonSafetyTotal = 0;
 
-  for (const definition of CRITERIA) {
+  // Iterate the UNION of every department profile's criteria. A case only
+  // contributes to a criterion its own department rubric actually defines
+  // (`humanCriteria`/`modelCriteria` simply have no entry otherwise), so
+  // OB/GYN-only and Pediatrics-only criteria never dilute each other.
+  for (const definition of ALL_CRITERIA) {
     const comparisons = cases.flatMap((item) => {
       const human = item.humanCriteria.get(definition.id);
       const model = item.modelCriteria.get(definition.id);
@@ -482,13 +612,15 @@ function buildCriterionMetrics(cases) {
       evidenceUnresolvedCount: unresolved,
       reviewEscalationCount: escalated,
       disagreementExamples,
-      safetyCritical: SAFETY_CRITICAL_CRITERIA.has(definition.id),
+      safetyCritical: isSafetyCriticalAnywhere(definition.id),
+      // Which department rubrics define this criterion at all.
+      departments: [...definition.departments].sort(),
     };
     applicableCorrect += applicableAgreement;
     applicableTotal += applicable.length;
     weightedCorrect += applicableAgreement * definition.points;
     weightedTotal += applicable.length * definition.points;
-    if (SAFETY_CRITICAL_CRITERIA.has(definition.id)) {
+    if (isSafetyCriticalAnywhere(definition.id)) {
       safetyCorrect += applicableAgreement;
       safetyTotal += applicable.length;
     } else {
@@ -514,7 +646,7 @@ function buildCriterionMetrics(cases) {
 function buildAutoFailMetrics(cases) {
   const metrics = {};
   let aggregateTp = 0; let aggregateFp = 0; let aggregateFn = 0; let aggregateTn = 0;
-  for (const definition of QA_AUTO_FAILS) {
+  for (const definition of ALL_AUTO_FAILS) {
     let tp = 0; let fp = 0; let fn = 0; let tn = 0; let escalated = 0;
     for (const item of cases) {
       const human = item.humanAutoFails.has(definition.id);
@@ -631,6 +763,22 @@ function versionBreakdown(cases, getter) {
   }));
 }
 
+/**
+ * True when any single department contributed more than one rubric version —
+ * the only shape that is genuine rubric drift now that each department carries
+ * its own rubric profile and version.
+ * @param {{value:string}[]} breakdown entries keyed "<department>::<version>"
+ */
+export function mixedRubricVersionWithinADepartment(breakdown = []) {
+  const byDepartment = new Map();
+  for (const entry of breakdown) {
+    const [department, version] = String(entry?.value ?? '').split('::');
+    if (!byDepartment.has(department)) byDepartment.set(department, new Set());
+    byDepartment.get(department).add(version);
+  }
+  return [...byDepartment.values()].some((versions) => versions.size > 1);
+}
+
 function populationKey(item) {
   const run = item.fixture.modelRun ?? {};
   return [
@@ -680,9 +828,18 @@ function buildCalibrationReportInternal(fixtures, includePopulations, options = 
     captureVersion: versionBreakdown(cases, (item) => item.fixture.capture.captureVersion),
     liveVoiceModel: versionBreakdown(cases, (item) => item.fixture.capture.liveModel),
     populations: versionBreakdown(cases, populationKey),
+    // Since 2026-07-21 the rubric is DEPARTMENT-scoped, so two departments
+    // legitimately report two different rubric versions in one population. That
+    // is department identity, not calibration drift. Real rubric drift is more
+    // than one rubric version WITHIN a single department, which this breakdown
+    // (and the readiness gate) measures instead.
+    rubricVersionByDepartment: versionBreakdown(
+      cases, (item) => `${item.fixture.department}::${item.fixture.modelRun.rubricVersion}`,
+    ),
   };
+  const rubricDrift = mixedRubricVersionWithinADepartment(versions.rubricVersionByDepartment);
   const mixed = versions.graderModel.length > 1 ||
-    versions.rubricVersion.length > 1 ||
+    rubricDrift ||
     versions.promptVersion.length > 1;
   const report = {
     formatVersion: 1,
@@ -850,7 +1007,11 @@ function safetyFailures(report, gates) {
 export function evaluateCalibrationReadiness(report, gates = CALL_QA_CALIBRATION_GATES) {
   const mixedRequired = (
     (gates.requireSingleGraderModelVersion && report.versionBreakdowns.graderModel.length > 1) ||
-    (gates.requireSingleRubricVersion && report.versionBreakdowns.rubricVersion.length > 1) ||
+    // Rubric drift is measured WITHIN a department (see
+    // `mixedRubricVersionWithinADepartment`): two departments reporting their
+    // own rubric versions is expected and is not a mixed population.
+    (gates.requireSingleRubricVersion
+      && mixedRubricVersionWithinADepartment(report.versionBreakdowns.rubricVersionByDepartment ?? [])) ||
     (gates.requireSinglePromptVersion && report.versionBreakdowns.promptVersion.length > 1)
   );
   if (mixedRequired) {
@@ -922,9 +1083,14 @@ export function buildScenarioCoverageReport(scenarios = SYNTHETIC_CALIBRATION_SC
   const human = fixtures.filter((fixture) => fixture.source === 'human-pilot');
   const departments = {};
   const flags = [];
-  const safetyIds = [...SAFETY_CRITICAL_CRITERIA];
 
   for (const department of ASSESSED_DEPTS) {
+    // Coverage is measured against THIS department's own rubric profile: a
+    // criterion that does not exist for the department must not be reported as
+    // uncovered, and one that only exists here must not be omitted.
+    const departmentProfile = profileForFixtureDepartment(department);
+    const departmentCriteria = departmentProfile?.criteria ?? [];
+    const safetyIds = [...(departmentProfile?.safetyCriticalCriteria ?? [])];
     const departmentScenarios = scenarios.filter((scenario) => scenario.department === department);
     // Honest runtime-bank evidence: descriptor counts only prove runtime
     // coverage when they come from a validated private-bank manifest. The
@@ -978,11 +1144,11 @@ export function buildScenarioCoverageReport(scenarios = SYNTHETIC_CALIBRATION_SC
       if (!matching.length || !humanCases) flags.push({ id: 'competency-not-meaningfully-exercised', department, competencyId: competency.id, humanCases });
       return [competency.id, { scenarioCount: matching.length, humanCaseCount: humanCases }];
     }));
-    const rubricCriterionCoverage = Object.fromEntries(CRITERIA.map((criterion) => {
+    const rubricCriterionCoverage = Object.fromEntries(departmentCriteria.map((criterion) => {
       const count = departmentFixtures.filter((fixture) =>
         fixture.humanReview.adjudicated.criteria?.[criterion.id] &&
         fixture.humanReview.adjudicated.criteria[criterion.id] !== 'NA').length;
-      if (SAFETY_CRITICAL_CRITERIA.has(criterion.id) && count < 8) {
+      if (departmentProfile.safetyCriticalCriteria.has(criterion.id) && count < 8) {
         flags.push({ id: 'safety-critical-low-volume', department, criterionId: criterion.id, count });
       }
       return [criterion.id, count];

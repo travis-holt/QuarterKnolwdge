@@ -9,36 +9,190 @@
     "scenario": "A parent is calling for a standard pediatric medication refill. The navigator must gather medication name, preferred pharmacy, callback details, and whether the patient is out, route the request correctly, and avoid promising approval or giving dosing advice."
   },
   "transcript": [
-    { "role": "navigator", "text": "Good morning, thank you for calling. How can I help?" },
-    { "role": "patient", "text": "My child needs a refill." },
-    { "role": "navigator", "text": "I verified the patient, medication, pharmacy, callback number, and that the patient is out." },
-    { "role": "patient", "text": "That is correct." },
-    { "role": "navigator", "text": "I will send the request to the PEDS Encounters queue as high priority. I cannot promise approval. Thank you for calling." }
+    {
+      "role": "navigator",
+      "text": "Good morning, thank you for calling. How can I help?"
+    },
+    {
+      "role": "patient",
+      "text": "My child needs a refill."
+    },
+    {
+      "role": "navigator",
+      "text": "I verified the patient, medication, pharmacy, callback number, and that the patient is out."
+    },
+    {
+      "role": "patient",
+      "text": "That is correct."
+    },
+    {
+      "role": "navigator",
+      "text": "I will send the request to the PEDS Encounters queue as high priority. I cannot promise approval. Thank you for calling."
+    }
   ],
   "rawModelResponse": {
     "criteria": [
-      { "id": "open-greet", "verdict": "MET", "basis": "EVIDENCE", "evidence": "Good morning, thank you for calling. How can I help?", "note": "" },
-      { "id": "open-name", "verdict": "MET", "basis": "EVIDENCE", "evidence": "Good morning, thank you for calling. How can I help?", "note": "" },
-      { "id": "open-org", "verdict": "MET", "basis": "EVIDENCE", "evidence": "Good morning, thank you for calling. How can I help?", "note": "" },
-      { "id": "verify-three", "verdict": "MET", "basis": "EVIDENCE", "evidence": "I verified the patient, medication, pharmacy, callback number, and that the patient is out.", "note": "" },
-      { "id": "verify-before-access", "verdict": "MET", "basis": "EVIDENCE", "evidence": "I verified the patient, medication, pharmacy, callback number, and that the patient is out.", "note": "" },
-      { "id": "control-narrate", "verdict": "MET", "basis": "EVIDENCE", "evidence": "I verified the patient, medication, pharmacy, callback number, and that the patient is out.", "note": "" },
-      { "id": "control-guide", "verdict": "MET", "basis": "EVIDENCE", "evidence": "Good morning, thank you for calling. How can I help?", "note": "" },
-      { "id": "doc-reason", "verdict": "MET", "basis": "EVIDENCE", "evidence": "I verified the patient, medication, pharmacy, callback number, and that the patient is out.", "note": "" },
-      { "id": "doc-te", "verdict": "MET", "basis": "EVIDENCE", "evidence": "I will send the request to the PEDS Encounters as high priority.", "note": "" },
-      { "id": "comm-plain", "verdict": "MET", "basis": "EVIDENCE", "evidence": "I cannot promise approval.", "note": "" },
-      { "id": "comm-professional", "verdict": "MET", "basis": "EVIDENCE", "evidence": "Thank you for calling.", "note": "" },
-      { "id": "comm-empathy", "verdict": "MET", "basis": "EVIDENCE", "evidence": "Good morning, thank you for calling. How can I help?", "note": "" },
-      { "id": "listen-ack", "verdict": "MET", "basis": "EVIDENCE", "evidence": "I verified the patient, medication, pharmacy, callback number, and that the patient is out.", "note": "" },
-      { "id": "listen-gather", "verdict": "MET", "basis": "EVIDENCE", "evidence": "I verified the patient, medication, pharmacy, callback number, and that the patient is out.", "note": "" },
-      { "id": "know-rule", "verdict": "MET", "basis": "EVIDENCE", "evidence": "I will send the request to the PEDS Encounters as high priority.", "note": "" },
-      { "id": "know-details", "verdict": "MET", "basis": "EVIDENCE", "evidence": "I verified the patient, medication, pharmacy, callback number, and that the patient is out.", "note": "" },
-      { "id": "sched-flow", "verdict": "NA", "basis": "ABSENCE", "evidence": "", "note": "No appointment was requested." },
-      { "id": "sched-recap", "verdict": "NA", "basis": "ABSENCE", "evidence": "", "note": "No appointment was requested." },
-      { "id": "close-survey", "verdict": "MET", "basis": "EVIDENCE", "evidence": "Thank you for calling.", "note": "" },
-      { "id": "close-anything-thanks", "verdict": "MET", "basis": "EVIDENCE", "evidence": "Thank you for calling.", "note": "" }
+      {
+        "id": "open-greet",
+        "verdict": "MET",
+        "basis": "EVIDENCE",
+        "evidence": "Good morning, thank you for calling. How can I help?",
+        "note": ""
+      },
+      {
+        "id": "open-name",
+        "verdict": "MET",
+        "basis": "EVIDENCE",
+        "evidence": "Good morning, thank you for calling. How can I help?",
+        "note": ""
+      },
+      {
+        "id": "open-org",
+        "verdict": "MET",
+        "basis": "EVIDENCE",
+        "evidence": "Good morning, thank you for calling. How can I help?",
+        "note": ""
+      },
+      {
+        "id": "verify-three",
+        "verdict": "MET",
+        "basis": "EVIDENCE",
+        "evidence": "I verified the patient, medication, pharmacy, callback number, and that the patient is out.",
+        "note": ""
+      },
+      {
+        "id": "verify-before-access",
+        "verdict": "MET",
+        "basis": "EVIDENCE",
+        "evidence": "I verified the patient, medication, pharmacy, callback number, and that the patient is out.",
+        "note": ""
+      },
+      {
+        "id": "control-narrate",
+        "verdict": "MET",
+        "basis": "EVIDENCE",
+        "evidence": "I verified the patient, medication, pharmacy, callback number, and that the patient is out.",
+        "note": ""
+      },
+      {
+        "id": "control-guide",
+        "verdict": "MET",
+        "basis": "EVIDENCE",
+        "evidence": "Good morning, thank you for calling. How can I help?",
+        "note": ""
+      },
+      {
+        "id": "doc-reason",
+        "verdict": "MET",
+        "basis": "EVIDENCE",
+        "evidence": "I verified the patient, medication, pharmacy, callback number, and that the patient is out.",
+        "note": ""
+      },
+      {
+        "id": "doc-te",
+        "verdict": "MET",
+        "basis": "EVIDENCE",
+        "evidence": "I will send the request to the PEDS Encounters as high priority.",
+        "note": ""
+      },
+      {
+        "id": "comm-plain",
+        "verdict": "MET",
+        "basis": "EVIDENCE",
+        "evidence": "I cannot promise approval.",
+        "note": ""
+      },
+      {
+        "id": "comm-professional",
+        "verdict": "MET",
+        "basis": "EVIDENCE",
+        "evidence": "Thank you for calling.",
+        "note": ""
+      },
+      {
+        "id": "comm-empathy",
+        "verdict": "MET",
+        "basis": "EVIDENCE",
+        "evidence": "Good morning, thank you for calling. How can I help?",
+        "note": ""
+      },
+      {
+        "id": "listen-ack",
+        "verdict": "MET",
+        "basis": "EVIDENCE",
+        "evidence": "I verified the patient, medication, pharmacy, callback number, and that the patient is out.",
+        "note": ""
+      },
+      {
+        "id": "listen-gather",
+        "verdict": "MET",
+        "basis": "EVIDENCE",
+        "evidence": "I verified the patient, medication, pharmacy, callback number, and that the patient is out.",
+        "note": ""
+      },
+      {
+        "id": "know-rule",
+        "verdict": "MET",
+        "basis": "EVIDENCE",
+        "evidence": "I will send the request to the PEDS Encounters as high priority.",
+        "note": ""
+      },
+      {
+        "id": "know-details",
+        "verdict": "MET",
+        "basis": "EVIDENCE",
+        "evidence": "I verified the patient, medication, pharmacy, callback number, and that the patient is out.",
+        "note": ""
+      },
+      {
+        "id": "sched-flow",
+        "verdict": "NA",
+        "basis": "ABSENCE",
+        "evidence": "",
+        "note": "No appointment was requested."
+      },
+      {
+        "id": "sched-recap",
+        "verdict": "NA",
+        "basis": "ABSENCE",
+        "evidence": "",
+        "note": "No appointment was requested."
+      },
+      {
+        "id": "close-survey",
+        "verdict": "MET",
+        "basis": "EVIDENCE",
+        "evidence": "Thank you for calling.",
+        "note": ""
+      },
+      {
+        "id": "close-anything-thanks",
+        "verdict": "MET",
+        "basis": "EVIDENCE",
+        "evidence": "Thank you for calling.",
+        "note": ""
+      }
     ],
-    "autoFails": []
+    "autoFails": [
+      {
+        "id": "af-hipaa",
+        "triggered": false,
+        "evidence": "",
+        "note": ""
+      },
+      {
+        "id": "af-scope",
+        "triggered": false,
+        "evidence": "",
+        "note": ""
+      },
+      {
+        "id": "af-conduct",
+        "triggered": false,
+        "evidence": "",
+        "note": ""
+      }
+    ]
   },
   "expected": {
     "pass": true,

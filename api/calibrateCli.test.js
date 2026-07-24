@@ -146,7 +146,7 @@ describe('Call QA calibration CLI', () => {
           gradingMetadata: {
             model: 'gemini-2.5-flash',
             rubricVersion: 'qa-rubric-v2',
-            promptVersion: 'call-qa-grader-v3',
+            promptVersion: 'call-qa-grader-v8',
             scenarioVersion: 'synthetic-rehearsal-v1',
           },
         },

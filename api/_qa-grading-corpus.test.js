@@ -22,24 +22,30 @@ import { readFileSync } from 'node:fs';
 import { QA_GRADING_CORPUS, simulateGrader, applyVariant } from './_qa-grading-corpus.js';
 import { correctTranscriptWithStats } from './_qa-glossary.js';
 import { validateQaResponse, repairQaVerdictsForScenario, scoreQa, evaluateQaDeterministicFindings } from './_qa-rubric.js';
+import { requireQaRubricProfile } from '../src/data/qaRubricProfiles.js';
 import { finalizeQaResult } from './grade-call-qa.js';
 
 function runPipeline(caseDef, profileName, transcriptOverride) {
   const raw = transcriptOverride ?? caseDef.transcript;
   const { transcript, correctedTurns } = correctTranscriptWithStats(raw, caseDef.department);
-  const parsed = simulateGrader(transcript, caseDef.graders[profileName]);
-  const check = validateQaResponse(parsed);
+  // Resolve the department rubric profile ONCE, exactly as the real grading
+  // service does, and thread that same object through every stage.
+  const rubricProfile = requireQaRubricProfile(caseDef.department);
+  const parsed = simulateGrader(transcript, caseDef.graders[profileName], rubricProfile);
+  const check = validateQaResponse(parsed, rubricProfile);
   if (!check.data) throw new Error(`corpus ${caseDef.id}/${profileName}: invalid simulated grader output: ${check.error}`);
   const context = {
     scenario: caseDef.scenario,
     department: caseDef.department,
     metadata: caseDef.metadata,
+    profile: rubricProfile,
   };
   const repaired = repairQaVerdictsForScenario(check.data, transcript, context);
-  const scored = scoreQa(repaired.criteria, repaired.autoFails, transcript);
+  const scored = scoreQa(repaired.criteria, repaired.autoFails, transcript, rubricProfile);
   const deterministicFindings = evaluateQaDeterministicFindings(scored.criteria, transcript, context);
   const { qa, grade } = finalizeQaResult(
     scored, transcript, correctedTurns, repaired.repairs, { verified: true, status: 'verified' }, repaired.reviewReasons, deterministicFindings,
+    null, { complete: true }, null, rubricProfile,
   );
   return { qa, grade, correctedTurns };
 }

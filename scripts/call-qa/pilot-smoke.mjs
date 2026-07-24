@@ -11,6 +11,7 @@ import {
 } from '../../api/_qa-calibration-scenarios.js';
 import { isActiveQaInterview } from '../../src/lib/phases.js';
 import { CALL_QA_ROLLOUT_DEPARTMENTS } from '../../src/data/callQaScenarios.js';
+import { getQaRubricProfile } from '../../src/data/qaRubricProfiles.js';
 
 export const PILOT_SMOKE_VERIFIED = 'PILOT_SMOKE_VERIFIED';
 export const PILOT_SMOKE_FAILED = 'PILOT_SMOKE_FAILED';
@@ -23,17 +24,41 @@ async function readExample(name) {
 
 const getSyntheticScenario = scenarioResolverFrom(SYNTHETIC_CALIBRATION_SCENARIOS);
 
-function forScenario(base, caseId, scenarioId) {
+// A criterion label may NEVER be translated across departments.
+//
+// The previous version carried an old `close-anything-thanks` / `close-survey`
+// verdict straight onto OB/GYN's `close-offer-help`. Those are not semantically
+// equivalent: a polite goodbye could be MET under the old criteria and MUST be
+// NOT_MET under the new one, so the remap could have hidden exactly the change
+// the smoke test exists to exercise. Pilot smoke now uses a dedicated fixture
+// per department, whose transcript really contains (or really lacks) the
+// behavior its labels claim.
+//
+// Retargeting is therefore only allowed WITHIN a department. Anything else is a
+// missing fixture, not something to synthesize.
+function retargetWithinDepartment(base, caseId, scenarioId) {
   const scenario = getSyntheticScenario(scenarioId);
+  if (base.department !== scenario.department) {
+    throw new Error(
+      `pilot-smoke: refusing to retarget a ${base.department} fixture onto the `
+      + `${scenario.department} scenario "${scenarioId}". Criterion labels are not `
+      + 'translatable across department rubrics — add a dedicated fixture instead.',
+    );
+  }
+  const profile = getQaRubricProfile(scenario.department);
+  if (!profile) throw new Error(`pilot-smoke: no rubric profile for department "${scenario.department}".`);
   return {
     ...structuredClone(base),
     caseId,
-    department: scenario.department,
     scenarioId: scenario.id,
     workflowType: scenario.workflowType,
     difficulty: scenario.difficulty,
   };
 }
+
+// Kept as the public name used by the case list below (exported so the
+// cross-department refusal is directly testable).
+export const forScenario = retargetWithinDepartment;
 
 function generalFail(base, caseId, scenarioId) {
   const fixture = forScenario(base, caseId, scenarioId);
@@ -79,20 +104,27 @@ function smokeCase(category, fixture, phase3Complete, extra = {}) {
 }
 
 export async function buildPilotSmokeCases() {
-  const [pass, fail, review] = await Promise.all([
-    readExample('example-pass.json'),
-    readExample('example-fail.json'),
-    readExample('example-review.json'),
+  // One base fixture PER DEPARTMENT. The OB/GYN fixtures carry real OB/GYN
+  // transcripts whose closing behavior genuinely matches their labels: the pass
+  // and review calls explicitly offer further help, the fail call ends on a bare
+  // goodbye. Nothing is translated from the Pediatrics rubric.
+  const [pass, pedsFail, review, obgynPass, obgynFail, obgynReview] = await Promise.all([
+    readExample('example-pass.json'),          // pediatrics
+    readExample('peds-example-fail.json'),     // pediatrics
+    readExample('example-review.json'),        // pediatrics
+    readExample('obgyn-example-pass.json'),
+    readExample('obgyn-example-fail.json'),
+    readExample('obgyn-example-review.json'),
   ]);
   return [
     smokeCase('pass', forScenario(pass, 'smoke-peds-pass', 'synthetic-peds-refill-01'), true),
-    smokeCase('pass', forScenario(pass, 'smoke-obgyn-pass', 'synthetic-obgyn-refill-01'), true),
-    smokeCase('fail', generalFail(fail, 'smoke-peds-fail', 'synthetic-peds-scheduling-01'), true),
-    smokeCase('fail', generalFail(fail, 'smoke-obgyn-fail', 'synthetic-obgyn-new-gyn-01'), true),
-    smokeCase('safety-violation', forScenario(fail, 'smoke-peds-safety', 'synthetic-peds-urgent-boundary-01'), true),
-    smokeCase('safety-violation', forScenario(fail, 'smoke-obgyn-safety', 'synthetic-obgyn-results-boundary-01'), true),
+    smokeCase('pass', forScenario(obgynPass, 'smoke-obgyn-pass', 'synthetic-obgyn-new-gyn-01'), true),
+    smokeCase('fail', generalFail(pedsFail, 'smoke-peds-fail', 'synthetic-peds-scheduling-01'), true),
+    smokeCase('fail', generalFail(obgynFail, 'smoke-obgyn-fail', 'synthetic-obgyn-refill-01'), true),
+    smokeCase('safety-violation', forScenario(pedsFail, 'smoke-peds-safety', 'synthetic-peds-urgent-boundary-01'), true),
+    smokeCase('safety-violation', forScenario(obgynFail, 'smoke-obgyn-safety', 'synthetic-obgyn-results-boundary-01'), true),
     smokeCase('needs-review', forScenario(review, 'smoke-peds-review', 'synthetic-peds-urgent-boundary-01'), true),
-    smokeCase('needs-review', forScenario(review, 'smoke-obgyn-review', 'synthetic-obgyn-mfm-01'), true),
+    smokeCase('needs-review', forScenario(obgynReview, 'smoke-obgyn-review', 'synthetic-obgyn-mfm-01'), true),
     smokeCase('incomplete-capture', operationalFailure(
       'smoke-peds-incomplete', 'synthetic-peds-unclear-01', 'capture_incomplete', 'not_started',
     ), false),
