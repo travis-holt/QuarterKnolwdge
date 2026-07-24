@@ -87,13 +87,21 @@
 > **Release sequencing:** provisioning authorization and merge authorization are SEPARATE decisions —
 > corrections → review → CI → dedicated live v9 smoke → **stop** → explicit owner authorization →
 > provision → verify the current runtime ignores the additive fields → final merge review → **separate**
-> explicit merge authorization → merge/deploy. **Independent review PASSED at head `d1133d0` and the
-> owner authorized the private-scenario compatibility step — but it is BLOCKED and NOT done:** the
-> gitignored operator authoring source (`private-call-qa/` · `call-qa-private*.json`) is absent from this
-> machine, as are Firebase Admin credentials, so the provisioning tool has nothing trusted to validate or
-> apply. Substituting a Firestore export, reconstructing scenarios from memory, or guessing is forbidden,
-> so the step STOPPED with no dry run, no apply, and no Firestore read/write. It must run on the operator
-> machine that holds the manifest. **PR #42 still must not be merged or deployed until it lands**, since
+> explicit merge authorization → merge/deploy. **Independent review PASSED at head `d1133d0`.** The lost
+> operator manifest was then **recovered read-only** from `callQaScenariosPrivate` under explicit owner
+> authorization via the new `scripts/call-qa/recover-private-scenarios.mjs` (one collection read, **zero
+> writes**, no `--apply` flag, mandatory `--project` matched to the service account, destination proven
+> gitignored+untracked before any read, counts-only logging): **15 documents · 15 active OB/GYN · 0
+> inactive**, written to gitignored `private-call-qa/scenarios.json` and never staged. All 15 fail the
+> PR #42 validator with exactly one class — `must declare requiresNavigatorChartContext` — confirming
+> recovery fidelity and fail-closed behavior. **Compatibility authoring is BLOCKED and provisioning was
+> NOT run:** every scenario is genuinely chart-dependent (their `hiddenChartState` is keyed by real ECW
+> surfaces), but the trusted source carries **no order-level chart surface**, and order status is exactly
+> what the pilot defect turned on — one active `missing_rto_order` scenario mentions no order at all
+> (`activeOrders: []` could only be invented) and six bury it in `medicalSummary` prose where an
+> explicit-empty vs populated call is interpretation, not derivation. Per "do not guess; flag and STOP
+> if any unresolved scenario is active", authoring stopped, the manifest was left unmodified, and no dry
+> run or apply occurred. **PR #42 still must not be merged or deployed until compatibility lands**, since
 > the provisioned population predates the schema and fails closed.
 > See docs/HISTORY.md 2026-07-24 and docs/GRADING_INVARIANTS.md §0o.
 >

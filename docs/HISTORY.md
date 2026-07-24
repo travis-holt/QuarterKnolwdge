@@ -74,7 +74,41 @@ smoke → **stop** → explicit owner authorization → provision → verify cur
 additive fields → final merge review → **separate** explicit merge authorization → merge/deploy.
 Provisioning authorization and merge authorization are distinct decisions.
 
-**Private-scenario compatibility provisioning: AUTHORIZED but BLOCKED — NOT performed.** After the
+**Private-manifest recovery DONE; compatibility authoring BLOCKED on missing chart facts (2026-07-24,
+later same day).** The owner authorized a one-time, controlled, READ-ONLY recovery of
+`callQaScenariosPrivate` so the lost operator manifest could be rebuilt locally. A new operator-only
+tool, `scripts/call-qa/recover-private-scenarios.mjs`, performs it: one `.get()` on ONE collection,
+**zero Firestore writes**, no `--apply` flag at all, a mandatory explicit `--project` checked against
+the service-account project, and a destination that must be proven **gitignored AND untracked before
+any Firestore access**. It logs counts and department names only — never scenario content — and copies
+documents verbatim (`api/recoverPrivateScenarios.test.js`, 11 tests).
+
+Recovery succeeded: **15 documents, 15 active OB/GYN, 0 inactive, 0 out-of-scope**, written to the
+gitignored `private-call-qa/scenarios.json` (confirmed by `git check-ignore` + absence from
+`git status`; never staged). Run against the PR #42 validator, all 15 fail with exactly ONE failure
+class — `must declare requiresNavigatorChartContext` — which confirms both recovery fidelity (nothing
+else is structurally wrong) and the intended fail-closed behavior.
+
+**Phase 3 authoring stopped without guessing.** Every scenario's `hiddenChartState` is keyed by real
+ECW surfaces (`encounters`, `medicalSummary`, `telephoneEncounters`, `futureAppointments`, `schedule`,
+`providerContext`, `recordStatus`), so all 15 are genuinely chart-dependent. But the trusted source
+carries **no order-level chart surface at all**, and the navigator-visible chart must be able to state
+order status — that is the exact fact the reproduced pilot defect turned on. Concretely: one active
+`missing_rto_order` scenario mentions no order anywhere in its chart state, so `activeOrders: []` could
+only be INVENTED; in six others the order status is buried inside `medicalSummary` prose, where
+turning it into a decisive explicit-empty vs populated section is an interpretation, not a derivation —
+and getting it wrong either hands the navigator the answer or reproduces the original unfair grading.
+One scenario also carries directive-style wording in a chart field that a human must review before any
+of it is shown to a navigator. Per the standing rule ("do not guess; flag for owner review and STOP
+before provisioning if any unresolved scenario would be active" — all 15 are active), authoring
+stopped. The recovered manifest was left **unmodified**, no provisioning dry run or apply was run, and
+**no Firestore write occurred at any point**.
+
+What the owner must supply per affected scenario: the order-level facts a navigator would actually see
+in ECW (or an explicit "nothing on file"), and a decision on the directive-worded field. With those,
+the remaining work is mechanical.
+
+**Earlier the same day — provisioning AUTHORIZED but BLOCKED (manifest absent).** After the
 independent review passed at head `d1133d0`, the owner explicitly authorized the private OB/GYN Call QA
 scenario compatibility step (add `requiresNavigatorChartContext`, plus `navigatorChartState` where the
 correct workflow depends on chart facts). It was **not executed**, because the trusted local authoring
