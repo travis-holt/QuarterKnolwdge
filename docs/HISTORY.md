@@ -74,6 +74,28 @@ smoke → **stop** → explicit owner authorization → provision → verify cur
 additive fields → final merge review → **separate** explicit merge authorization → merge/deploy.
 Provisioning authorization and merge authorization are distinct decisions.
 
+**Private-scenario compatibility provisioning: AUTHORIZED but BLOCKED — NOT performed.** After the
+independent review passed at head `d1133d0`, the owner explicitly authorized the private OB/GYN Call QA
+scenario compatibility step (add `requiresNavigatorChartContext`, plus `navigatorChartState` where the
+correct workflow depends on chart facts). It was **not executed**, because the trusted local authoring
+source it must operate on does not exist in this environment:
+
+* `private-call-qa/` — absent; `call-qa-private*.json` — absent (both are the gitignored operator paths
+  named by `scripts/call-qa/provision-private-scenarios.mjs` and `.gitignore`);
+* no such manifest exists in the parent directory, the sibling project copies, or the user profile;
+* no Firebase Admin credentials are present either (`FIREBASE_SERVICE_ACCOUNT_JSON`,
+  `FIREBASE_PROJECT_ID`/`CLIENT_EMAIL`/`PRIVATE_KEY`, `GOOGLE_APPLICATION_CREDENTIALS` all unset), so
+  the tool could not authenticate against a project even with a manifest.
+
+The authorization explicitly forbids substituting a Firestore export, reconstructing scenarios from
+memory, or guessing, and requires a STOP in exactly this case — so no dry run, no apply, no Firestore
+read or write, and no fabricated scenario content occurred. The operator must supply the ignored local
+manifest (and Admin credentials) on the machine that performed the 2026-07-18 provisioning; the
+compatibility step then runs there as:
+`node scripts/call-qa/provision-private-scenarios.mjs --input private-call-qa/scenarios.json --project <id>`
+(dry run first, then `--apply`). Until that lands, PR #42 must not be merged or deployed, because the
+provisioned population predates the schema and would fail closed.
+
 **Live v9 contract gate.** Run against the pinned grader model (`gemini-2.5-flash`) with dedicated
 non-production `CALL_QA_LIVE_SMOKE_API_KEYS`. **Run 1 was clean:**
 `LIVE_CONTRACT_SMOKE_VERIFIED - 22/22 cases satisfied the call-qa-grader-v9 contract`, every case
@@ -117,7 +139,10 @@ immutable server attempt snapshot, projected (safe subset only) into the authent
 `ready` message, rendered read-only during the scored call in `VoiceCall`, and threaded into the
 grader prompt. The grader now judges every chart-dependent decision ONLY against the navigator-visible
 chart; `hiddenChartState` is reframed as grader-only ground truth the navigator may not have seen, and
-a scored decision must never depend on a hidden fact. Grader-only data
+a scored decision must never depend on a hidden fact. *(SUPERSEDED the same day by the
+independent-review pass above: reframing was judged an insufficient control, so `hiddenChartState` is
+now STRUCTURALLY ABSENT from the model-visible grader context rather than sent-and-ignored.)*
+Grader-only data
 (`gradingContext`/`expectedActions`/`criticalMisses`/`scoringNotes`/`hiddenChartState`/`callerCaseFile`/
 `ruleIds`) still never reaches the browser. **Fail closed:** an OB/GYN scenario must declare an explicit
 `requiresNavigatorChartContext` boolean; when true it MUST carry a non-empty `navigatorChartState`, or

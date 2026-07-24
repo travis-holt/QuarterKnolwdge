@@ -152,7 +152,11 @@ quote for a MET identity response but keeps the structured `identityEvidence` ar
 source of identity credit, moving the prompt to `call-qa-grader-v8`. The pilot
 assessment-observability correction (2026-07-24) then changed the model-visible grader contract again —
 the grader now receives a NAVIGATOR-VISIBLE CHART block and must judge chart-dependent decisions only
-against it (with `hiddenChartState` reframed as grader-only ground truth), `sched-recap` is described as
+against it, while **`hiddenChartState` is STRUCTURALLY ABSENT from the model-visible grader context —
+not merely reframed**: the prompt emits no hidden-chart block and `buildScenarioContextFromAttempt`
+does not pass the field into `buildTrustedGradingScenario` at all, so the grader never receives chart
+facts the navigator could not see (it remains server-side in the immutable attempt snapshot for trusted
+audit provenance). `sched-recap` is described as
 CONDITIONAL (NA when the correct workflow books no appointment), and `listen-gather` is scoped to
 caller-observable information gathering — moving the prompt to **`call-qa-grader-v9`**. The OB/GYN
 criteria, points, category weights, applicability flags and auto-fails are unchanged, so the rubric

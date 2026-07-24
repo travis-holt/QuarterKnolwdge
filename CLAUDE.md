@@ -87,7 +87,14 @@
 > **Release sequencing:** provisioning authorization and merge authorization are SEPARATE decisions —
 > corrections → review → CI → dedicated live v9 smoke → **stop** → explicit owner authorization →
 > provision → verify the current runtime ignores the additive fields → final merge review → **separate**
-> explicit merge authorization → merge/deploy.
+> explicit merge authorization → merge/deploy. **Independent review PASSED at head `d1133d0` and the
+> owner authorized the private-scenario compatibility step — but it is BLOCKED and NOT done:** the
+> gitignored operator authoring source (`private-call-qa/` · `call-qa-private*.json`) is absent from this
+> machine, as are Firebase Admin credentials, so the provisioning tool has nothing trusted to validate or
+> apply. Substituting a Firestore export, reconstructing scenarios from memory, or guessing is forbidden,
+> so the step STOPPED with no dry run, no apply, and no Firestore read/write. It must run on the operator
+> machine that holds the manifest. **PR #42 still must not be merged or deployed until it lands**, since
+> the provisioned population predates the schema and fails closed.
 > See docs/HISTORY.md 2026-07-24 and docs/GRADING_INVARIANTS.md §0o.
 >
 > **Prior release evidence (2026-07-24).** PR #41 is **MERGED** at
