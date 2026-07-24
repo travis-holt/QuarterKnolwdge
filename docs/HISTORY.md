@@ -1,5 +1,19 @@
 ﻿# Development History - Knowledge Check
 
+## 2026-07-24 — PR #41 controlled-pilot merge-policy clarification
+
+**Status: Draft PR #41 remains unmerged, undeployed, and draft.** Independent review confirmed
+that the accepted runtime is suitable to land for a controlled supervisor-reviewed OB/GYN pilot,
+subject to final validation and final independent merge authorization. This corrects prior merge
+guidance: the full human calibration dataset is an automation-readiness gate, **not** a prerequisite
+to merge the controlled pilot.
+
+Readiness remains `INSUFFICIENT_DATA`; calibration thresholds, version/provenance separation, and
+automation safeguards are unchanged. Post-merge, genuine sanitized navigator attempts will be
+independently adjudicated to build the v8 OB/GYN calibration population. Automatic/final employee
+decisions remain unauthorized and supervisor review remains authoritative. No runtime behavior,
+grading, prompt, rubric, data, deployment, or automation behavior changed.
+
 ## 2026-07-24 — Live-contract gate verified; OB/GYN rubric owner sign-off recorded
 
 **Status: Draft PR #41 remains unmerged, undeployed, and not ready.** The complete dedicated

@@ -245,8 +245,13 @@ States:
 - `READY_FOR_SHADOW`: observed gates pass, but confidence bounds are not tight enough for clean-pass consideration.
 - `READY_FOR_CLEAN_PASS_CONSIDERATION`: all observed, coverage, version, and confidence gates pass.
 
+These states are automation/readiness evidence, not a merge gate for a controlled
+supervisor-reviewed pilot. Such a pilot may run before the formal human calibration sample minimum
+is reached, provided final employee decisions remain supervisor-authoritative. Thresholds are not
+lowered for pilot use: until the population qualifies, readiness remains `INSUFFICIENT_DATA`.
+
 The last state is still not authorization for production auto-finalization. A
-separate explicitly approved PR is required.
+separate explicitly approved PR is required; no automatic finalization is authorized by this PR.
 
 ## Offline CLI
 

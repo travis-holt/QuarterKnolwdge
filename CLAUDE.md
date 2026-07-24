@@ -12,17 +12,21 @@
 > accurate at all times.
 >
 > **Current release evidence (2026-07-24).** Draft PR #41 remains **NOT merged, NOT deployed, and
-> NOT ready**. The complete dedicated non-production v8 live-contract smoke passed all **20/20**
+> draft**; it is **READY TO MERGE FOR A CONTROLLED SUPERVISOR-REVIEWED OB/GYN PILOT, subject to final
+> validation and final independent merge authorization**. The complete dedicated non-production v8 live-contract smoke passed all **20/20**
 > synthetic cases with exit 0 and exact `LIVE_CONTRACT_SMOKE_VERIFIED` marker. The owner approved
 > the implemented OB/GYN rubric: no survey; first name + last name + DOB verification
 > (phone/address never substitute); caller-volunteered identifiers and authorized third-party
 > callers count; conditional empathy/hold; explicit further-assistance closing worth 5; 100 total
 > points; 85 pass; verification stays 10/100; an unproven verification miss requires
 > `needs_review`, while a positively verified HIPAA auto-fail may still zero the call. Genuine
-> independently adjudicated human-pilot evidence remains required; readiness is
-> `INSUFFICIENT_DATA`. No behavior, production-data, deployment, or ready-state change occurred.
+> independently adjudicated human-pilot evidence is not yet available; readiness remains
+> `INSUFFICIENT_DATA` and this PR is **NOT HUMAN-CALIBRATED FOR AUTOMATION**. Automatic/final
+> employee decisions remain unauthorized; genuine navigator attempts will supply the post-merge
+> controlled-pilot calibration population. No behavior, production-data, deployment, or ready-state
+> change occurred.
 >
-> **Last updated:** 2026-07-23 (**LIVE-CONTRACT EVIDENCE CORRECTION — prompt v8.**
+> **Prior implementation update:** 2026-07-23 (**LIVE-CONTRACT EVIDENCE CORRECTION — prompt v8.**
 > Draft PR #41 remains **NOT merged, NOT deployed, and NOT ready**. A real dedicated-key,
 > non-production live-contract run reproduced malformed `MET` responses with empty evidence. The
 > prompt contradicted the shared response shape by telling identity criteria not to populate
@@ -2693,6 +2697,14 @@ of this file on 2026-07-07 to cut per-session context cost (it was ~55% of the f
 
 ## 8. Current System State
 
+- **PR #41 controlled-pilot merge posture (2026-07-24):** **READY TO MERGE FOR A CONTROLLED
+  SUPERVISOR-REVIEWED OB/GYN PILOT, subject to final validation and final independent merge
+  authorization.** The live v8 contract gate passed 20/20 and owner rubric approval is recorded.
+  The pilot is **NOT HUMAN-CALIBRATED FOR AUTOMATION**: readiness remains `INSUFFICIENT_DATA`, no
+  automatic or final employee decision is authorized, and supervisor review remains authoritative.
+  Genuine sanitized navigator attempts will form the post-merge calibration population; calibration
+  thresholds and version/provenance separation are unchanged.
+
 - **PR #41 correction pass #4 (2026-07-22, DRAFT — not merged/deployed/ready):** identity is now
   one discrete patient candidate or one uninterrupted field-answer sequence, not a union of name
   tokens. Ordered first/last semantics, transcript-level DOB ownership from verified claim spans,
@@ -3694,7 +3706,13 @@ npm run test:e2e     # run the Playwright browser tests (auto-builds + starts th
 
 1. **Maintain this CLAUDE.md** on every change (highest standing priority).
 1a. **OPEN DRAFT PR — department-based Call QA rubric profiles (2026-07-21).** Not merged, not
-   deployed, no migration, no production write, no private-bank change. Before it can ship:
+   deployed, no migration, no production write, no private-bank change. Merge preparation:
+   - **Controlled-pilot merge policy (2026-07-24).** The PR is ready to merge for a controlled,
+     supervisor-reviewed OB/GYN pilot once final validation and final independent merge
+     authorization are complete. Human calibration is an automation-readiness gate, not a
+     prerequisite to landing this pilot. Readiness remains `INSUFFICIENT_DATA`; no automatic or
+     final employee decision is authorized. Post-merge, genuine sanitized navigator attempts begin
+     the calibration population; thresholds are not lowered.
    - **Owner sign-off on the OB/GYN rubric content — complete 2026-07-24.** The owner approved
      the implemented policy: no patient survey; first name + last name + DOB verification;
      phone/address never substitute; caller-volunteered identifiers and authorized third-party
@@ -3704,8 +3722,9 @@ npm run test:e2e     # run the Playwright browser tests (auto-builds + starts th
      auto-fail may zero the call. No scoring behavior changed in recording this decision.
    - **Re-baseline OB/GYN calibration.** `qa-rubric-obgyn-v1` is a real rubric change, so any
      future OB/GYN human-pilot evidence gathered under `qa-rubric-v2` is a different population
-     and cannot be pooled with it. Current readiness is unaffected only because there are zero
-     human-pilot fixtures today.
+     and cannot be pooled with it. Genuine controlled-pilot navigator attempts will be adjudicated
+     after merge under the v8 population; current readiness remains `INSUFFICIENT_DATA` because
+     there are zero human-pilot fixtures today.
    - **Live-contract gate — complete 2026-07-24.** Dedicated non-production v8 smoke passed 20/20
      synthetic cases with exit 0 and exact `LIVE_CONTRACT_SMOKE_VERIFIED`; it has no calibration
      or deployment authority. The separate post-deploy browser smoke remains outstanding.
