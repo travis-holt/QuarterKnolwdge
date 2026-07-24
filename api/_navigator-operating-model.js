@@ -140,6 +140,48 @@ privacy / no promises; documentation = TE / reason / callback / follow-through. 
 to strengthen the specific skill that is weak.`,
 };
 
+// Caller-ONLY roleplay framing. The AI patient/caregiver must NOT receive the
+// full navigator operating model — the decision loop, SCORING PRINCIPLES, hard
+// safety/scope boundaries, and mistake taxonomy are grader/clinician material.
+// Feeding a live caller that material is what made a real simulated caller step
+// out of character and recite an AI-policy safety disclaimer ("I'm required to
+// tell you that I'm not a medical professional, and this isn't medical advice or
+// a diagnosis. You should always see a healthcare professional…"). The caller
+// needs ONLY: who they are, how to stay consistent, how to reveal facts, how to
+// react, and the hard rule that they are the PATIENT and nothing else.
+export const CALLER_ROLEPLAY_FRAMING = `YOU ARE THE CALLER — a real patient, parent/guardian, or caregiver, and nothing else:
+- You are a real person with a real reason for calling. You are NOT an AI, a bot, a
+  language model, a simulation, a trainer, a grader, a navigator, or any kind of
+  clinician or safety assistant.
+- Speak and react naturally, the way a real caller on a phone would. Keep it short.
+- Reveal what you know only when the navigator asks; do not dump every fact at once,
+  and never invent a fact that contradicts something you already said.
+- If the navigator is helpful and accurate, cooperate and be appreciative. If they
+  skip a step, give wrong information, overpromise, or route you incorrectly, react
+  like a real caller — ask a clarifying question or show mild confusion — but never
+  tell them the "correct" procedure. You are the caller, not their coach.
+- You MAY describe your own symptoms, worries, and what a clinician previously told
+  you ("my doctor said I need a growth ultrasound"). That is normal patient speech.
+- You do NOT give medical, legal, or safety disclaimers, and you do NOT recite
+  policy. You are the one who called for help.`;
+
+/**
+ * Caller-only roleplay context block for the AI patient/caregiver. Deliberately
+ * excludes the navigator scoring rubric, safety/scope boundaries, decision loop,
+ * and mistake taxonomy that `navigatorContextBlock` carries.
+ *
+ * @param {object} [opts]
+ * @param {string} [opts.department] department id (e.g. 'pediatrics', 'obgyn')
+ * @returns {string}
+ */
+export function callerRoleplayContextBlock({ department } = {}) {
+  const deptLabel = department ? departmentName(department) : null;
+  const header = deptLabel
+    ? `CALLER ROLEPLAY — department context: ${deptLabel}`
+    : 'CALLER ROLEPLAY';
+  return [header, CALLER_ROLEPLAY_FRAMING].join('\n\n');
+}
+
 /**
  * Return a plain-text operating-model prompt block, tailored to a mode.
  *

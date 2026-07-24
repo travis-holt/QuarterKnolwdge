@@ -11,7 +11,111 @@
 > [§8 Current System State](#8-current-system-state) and [§15 Current Priorities](#15-current-priorities)
 > accurate at all times.
 >
-> **Current release evidence (2026-07-24).** PR #41 is **MERGED** at
+> **Current implementation update (2026-07-24) — CALL QA PILOT DEFECT CORRECTION (prompt v9).**
+> **Correction PR from current `main` (`da23a45`); NOT merged and NOT deployed.** Private-scenario
+> compatibility provisioning completed on 2026-07-24; final independent merge review is next.
+> Based on the FIRST real reproduced post-PR-41 Call QA pilot attempt. Four defects fixed at the
+> architecture level: **(1) assessment observability** — a scored decision could depend on chart facts
+> the navigator was never shown (a caller wanted a Growth ultrasound; there was no visible order/appt,
+> so the correct workflow was clarification/TE, but no chart surface existed). Added a curated,
+> server-authoritative **`navigatorChartState`** ("Simulated ECW chart"): validated + sanitized in
+> `validatePrivateScenario`, stored in the immutable attempt snapshot, projected (safe subset only)
+> into the authenticated test-mode `ready` message, rendered read-only in `VoiceCall`, and threaded
+> into the grader prompt. The grader judges chart-dependent decisions ONLY against it; grader-only
+> fields still never reach the browser. **Chart presence has THREE states and they never collapse**
+> (independent-review correction): **missing/null** = not part of this scenario — omitted from the
+> browser projection, never rendered, never mentioned to the grader, and NEVER shown as "None on file";
+> **explicit `[]`** = the navigator checked and nothing is on file — preserved verbatim through
+> validation → snapshot → relay → UI → grader and rendered "None on file"; **non-empty** = exactly
+> these items. One shared `sanitizeNavigatorChartState` feeds BOTH the browser and the grader, so the
+> two can never diverge, and an explicit `[]` counts as real chart content (a missing order is often the
+> whole point of the call). **`hiddenChartState` is STRUCTURALLY absent from the model-visible grader
+> prompt** — it is not merely reframed. Handing the grader hidden facts and asking it to ignore them is
+> not a control, since the reproduced defect was exactly that the model held information the navigator
+> did not; `buildScenarioContextFromAttempt` no longer even passes it into `buildTrustedGradingScenario`.
+> It stays server-side in the immutable attempt snapshot for trusted audit provenance and reaches
+> neither the browser nor Gemini. **Fail closed:** an OB/GYN scenario must declare an explicit
+> `requiresNavigatorChartContext` boolean and, when true, carry a non-empty `navigatorChartState`, else
+> the relay returns scenario-unavailable and creates no attempt (grading fails closed too). **(2)
+> sched-recap applicability** — CONDITIONAL: NA when the correct workflow books no appointment; a wrong
+> booking is captured by `sched-flow`/`know-rule`, never a second `sched-recap` penalty. **(3)
+> listen-gather scope** — caller-observable information gathering only; not failed for an internal chart
+> fact the navigator could not see. **(4) AI caller character break** — the caller was fed the full
+> navigator operating model (scoring/safety/decision material) and recited an AI-policy safety
+> disclaimer; it now gets a caller-ONLY context (`callerRoleplayContextBlock`) plus explicit
+> no-AI/no-meta/no-disclaimer rules, with legitimate patient speech preserved. A narrow deterministic
+> **caller role-break fail-safe** (`detectCallerRoleBreak`) forces `needs_review` (never an auto-fail)
+> when a caller turn breaks character. It is **two-tier and high precision** (independent-review
+> correction): a SINGLE match counts only for unmistakable meta breaks (AI/bot/language-model
+> self-identification, simulation/training/roleplay acknowledgment), while generic medical/safety
+> disclaimers require ONE caller turn to stack **two distinct** signals (meta obligation framing,
+> not-a-clinician, not-medical-advice/diagnosis, a SECOND-PERSON directive to seek professional care).
+> So "I'm not a doctor, but…", "I'm not a nurse, so…", "I'm required to tell you my insurance changed",
+> and reported speech like "my doctor told me to see a healthcare professional" never invalidate a real
+> attempt, while the reproduced disclaimer (four signals) still fires. Grader prompt **v8 →
+> `call-qa-grader-v9`** (model-visible
+> contract changed); OB/GYN rubric stays **`qa-rubric-obgyn-v1`** — no criterion, point, weight,
+> applicability flag, auto-fail, or profile-signature change, so historical bindings and Pediatrics are
+> untouched, and no historical grade is rewritten. Server-authoritative transcript/attempt-id grading,
+> HIPAA chronology, authorized-third-party handling, and empathy/hold applicability are unchanged. The
+> private scenario bank was **not read, exported, or modified** and Firestore was **not provisioned**;
+> a post-review data step must add `requiresNavigatorChartContext` (+ `navigatorChartState` where
+> needed) to each provisioned OB/GYN private scenario, and until then the relay fails closed on them.
+> The **live contract smoke now actually tests v9**: rerunning the v7/v8 identity cases under a "v9"
+> label would prove nothing about the chart/applicability rules, so two synthetic navigator-visible-chart
+> cases were added (**22 total**, all 20 prior cases retained) — one asserting the correct no-booking
+> handling is credited (`sched-recap` NA, `listen-gather` not failed for a chart-sourced fact) and one
+> asserting a wrong booking is caught by `sched-flow`/`know-rule` while `sched-recap` stays NA. Both
+> build their grader context through the real `buildTrustedGradingScenario` with a chart authored in the
+> script: no Firestore, no private bank, no production data, dedicated smoke credentials only.
+> **Live gate result:** one clean run — `LIVE_CONTRACT_SMOKE_VERIFIED - 22/22` against pinned
+> `gemini-2.5-flash` with dedicated `CALL_QA_LIVE_SMOKE_API_KEYS`, all cases `[PASS]` incl. both new
+> chart cases. Two later runs exited 1 but are **invalid measurements, not contract failures** — every
+> failure was `unusable grader response: The grader is busy` after `status=429`, and **no case failed a
+> semantic assertion in any run**. Cause: the smoke was invoked three times in ~20 minutes (~66 upstream
+> calls) while capturing an exit code, exhausting free-tier quota (this gate has documented 429
+> flakiness). A confirmatory cold run is recommended before merge. Measure its exit code from ONE
+> invocation (`npm run qa:live-contract-smoke; echo $?`), never by running it twice.
+> Unit suite **2,290 passed across 86 files, zero failures** — the previously reported
+> `liveContractSmoke.test.js` suite-load failure is **fixed**, not tolerated: the
+> `#!/usr/bin/env node` shebang broke Vitest's transform on Windows so its 13 tests never ran; the
+> script is invoked via `node` and no sibling script has a shebang, so removing it restored coverage.
+> Build clean incl. the private-runtime
+> bundle scan; 12/12 safe Playwright e2e; `qa:pilot-smoke` VERIFIED; `qa:calibrate`/`qa:coverage` remain
+> `INSUFFICIENT_DATA` and `qa:calibrate:check` exits 1 (0 human fixtures — the correct state; none
+> fabricated, thresholds not lowered).
+> `test:rules` needs Java (unavailable here); `firestore.rules` is unchanged (CI is authoritative).
+> **Release sequencing:** provisioning authorization and merge authorization are SEPARATE decisions —
+> corrections → review → CI → dedicated live v9 smoke → **stop** → explicit owner authorization →
+> provision → verify the current runtime ignores the additive fields → final merge review → **separate**
+> explicit merge authorization → merge/deploy. **Independent review PASSED at head `d1133d0`.** The lost
+> operator manifest was then **recovered read-only** from `callQaScenariosPrivate` under explicit owner
+> authorization via the new `scripts/call-qa/recover-private-scenarios.mjs` (one collection read, **zero
+> writes**, no `--apply` flag, mandatory `--project` matched to the service account, destination proven
+> gitignored+untracked before any read, counts-only logging): **15 documents · 15 active OB/GYN · 0
+> inactive**, written to gitignored `private-call-qa/scenarios.json` and never staged. All 15 fail the
+> PR #42 validator with exactly one class — `must declare requiresNavigatorChartContext` — confirming
+> recovery fidelity and fail-closed behavior. **Compatibility authoring is BLOCKED and provisioning was
+> NOT run:** every scenario is genuinely chart-dependent (their `hiddenChartState` is keyed by real ECW
+> surfaces), but the trusted source carries **no order-level chart surface**, and order status is exactly
+> what the pilot defect turned on — one active `missing_rto_order` scenario mentions no order at all
+> (`activeOrders: []` could only be invented) and six bury it in `medicalSummary` prose where an
+> explicit-empty vs populated call is interpretation, not derivation. Per "do not guess; flag and STOP
+> if any unresolved scenario is active", authoring stopped, the manifest was left unmodified, and no dry
+> run or apply occurred. **PR #42 still must not be merged or deployed until compatibility lands**, since
+> the provisioned population predates the schema and fails closed.
+> **Compatibility provisioning completed later on 2026-07-24 (supersedes the blocked status above).**
+> The ignored recovered manifest was locally authored and validated 15/15. One owner-confirmed
+> scenario deliberately carries `activeOrders: []`; all other absent sections remain omitted. The trusted
+> tool dry-run and apply were **0 creates, 15 updates, 0 deactivations** in `callQaScenariosPrivate`.
+> Post-apply all 15 active OB/GYN documents validate and exactly match the ignored local manifest; the
+> pre-PR-42 runtime source ignores the additive fields. No private scenario content was committed or
+> published, no results or historical grades changed, readiness remains `INSUFFICIENT_DATA`, and PR #42
+> remains DRAFT, unmerged, and undeployed. Provisioning did not authorize merge; final independent review
+> is the next step.
+> See docs/HISTORY.md 2026-07-24 and docs/GRADING_INVARIANTS.md §0o.
+>
+> **Prior release evidence (2026-07-24).** PR #41 is **MERGED** at
 > `107817809f72b421b0d8bf8492e65981253099a3`; it is **NOT deployed**. The merged runtime supports a
 > controlled supervisor-reviewed OB/GYN pilot. The complete dedicated non-production v8 live-contract smoke passed all **20/20**
 > synthetic cases with exit 0 and exact `LIVE_CONTRACT_SMOKE_VERIFIED` marker. The owner approved
@@ -1413,6 +1517,50 @@ training assignments.
   get a hard PASS/FAIL, a per-category scorecard, the exact criteria they lost points on, and
   auto-fail alerts. Supervisors see a "QA TEST · PASS/FAIL" badge on the session in
   NavigatorDetail plus the full grade breakdown.
+- **Navigator-visible chart + pilot applicability/caller fixes (2026-07-24, prompt v9).** A scored
+  Call QA scenario now exposes a curated, server-authoritative **`navigatorChartState`** — the
+  "Simulated ECW chart" the navigator was actually shown (current plan/RTO, active orders, open
+  Telephone Encounters, future appointments, other visible facts, including explicit "none on file"
+  negatives). Validated + sanitized in `validatePrivateScenario`
+  ([api/_call-qa-scenario-store.js](api/_call-qa-scenario-store.js)), stored in the immutable attempt
+  snapshot ([api/_call-qa-attempts.js](api/_call-qa-attempts.js)), projected as a SAFE subset into the
+  authenticated test-mode `ready` message via `navigatorVisibleChartProjection`
+  ([api/live-relay.js](api/live-relay.js)), rendered read-only during the graded call by
+  `SimulatedChartPanel` ([src/components/VoiceCall.jsx](src/components/VoiceCall.jsx)), and threaded
+  into the grader prompt ([api/grade-call-qa.js](api/grade-call-qa.js) `buildTrustedGradingScenario` /
+  `renderNavigatorChartLines`). The grader judges every chart-dependent decision ONLY against the
+  navigator-visible chart, so a scored decision never depends on a fact the navigator could not
+  see. **`hiddenChartState` never reaches the model at all** — it is not merely reframed. Giving the
+  grader hidden facts and instructing it to disregard them is not a control (the reproduced defect was
+  exactly that the model held information the navigator did not), so the prompt emits no hidden-chart
+  block and `buildScenarioContextFromAttempt` does not even pass the field into
+  `buildTrustedGradingScenario`; it remains server-side in the attempt snapshot for trusted audit
+  provenance. **Chart presence is three-state** — missing/null (not part of this scenario: omitted
+  everywhere, never rendered, never described to the grader, and NEVER shown as "None on file"),
+  explicit `[]` (the navigator checked and nothing is on file: preserved end to end and rendered
+  "None on file"), and non-empty (exactly these items). One shared `sanitizeNavigatorChartState` builds
+  the projection consumed by BOTH the browser and the grader, so they can never show different sections;
+  an explicit `[]` counts as real chart content, while `null`/`{}` is absent.
+  Grader-only fields (`gradingContext`/`expectedActions`/`criticalMisses`/`scoringNotes`/
+  `hiddenChartState`/`callerCaseFile`/`ruleIds`) still never reach the browser. **Fail closed:** an
+  OB/GYN scenario must declare an explicit `requiresNavigatorChartContext` boolean and, when true, carry
+  a non-empty `navigatorChartState`, else the relay returns scenario-unavailable and creates no attempt.
+  **`sched-recap`** is CONDITIONAL — NA when the correct workflow books no appointment (a wrong booking
+  is captured by `sched-flow`/`know-rule`, never a second penalty). **`listen-gather`** measures
+  caller-observable information gathering only — not failed for an internal chart fact the navigator
+  could not see. The **AI caller** now gets a caller-ONLY system instruction
+  (`callerRoleplayContextBlock` in [api/_navigator-operating-model.js](api/_navigator-operating-model.js);
+  no navigator scoring/decision/mistake material) plus explicit no-AI/no-meta/no-disclaimer rules, and a
+  narrow deterministic **role-break fail-safe** (`detectCallerRoleBreak` in
+  [api/_qa-caller-integrity.js](api/_qa-caller-integrity.js)) forces `needs_review` with a
+  `simulated-caller-role-break` flag + `qa.callerIntegrity` record when a caller turn breaks character —
+  never an auto-fail. The detector is **two-tier**: a single match counts only for unmistakable meta
+  breaks (AI/bot/model self-identification, simulation/roleplay acknowledgment), while generic
+  medical/safety disclaimers require **two distinct signals in one caller turn**, so ordinary patient
+  speech ("I'm not a doctor, but…", "my doctor told me to see a healthcare professional") never
+  invalidates a real attempt. Grader prompt **v8 → `call-qa-grader-v9`**; the OB/GYN rubric stays
+  **`qa-rubric-obgyn-v1`** (no criterion/point/weight/applicability/auto-fail/signature change). See
+  docs/GRADING_INVARIANTS.md §0o.
 - **Department rubric profiles (2026-07-21).** The rubric is **department-based**, not one
   shared rubric assumed correct everywhere.
   [src/data/qaRubricProfiles.js](src/data/qaRubricProfiles.js) holds the profiles and
@@ -3816,6 +3964,32 @@ npm run test:e2e     # run the Playwright browser tests (auto-builds + starts th
    fix — see [§12](#12-bugs--known-issues) "Client-authoritative MCQ/Spot scoring".
 
 **Active work items:**
+- **Navigator-visible chart compatibility (2026-07-24, COMPLETE):** all 15 active OB/GYN documents in
+  `callQaScenariosPrivate` now declare `requiresNavigatorChartContext: true` with validated curated
+  chart state. The compatibility-only dry run and apply made 0 creates, 15 updates, and 0 deactivations;
+  the pre-PR-42 runtime source ignores the additive fields. No private content, results, historical
+  grades, calibration evidence, deployment, or merge changed. Next: final independent merge review and
+  separate explicit merge authorization.
+
+  - **Historical pre-provisioning instruction:** every provisioned OB/GYN scenario in `callQaScenariosPrivate` must add an
+  explicit `requiresNavigatorChartContext` boolean and, where the correct workflow depends on chart
+  facts, a curated non-empty `navigatorChartState` (current plan/RTO, active orders, open TEs, future
+  appointments, other visible facts — never a correct action or grader-only data). Until a scenario is
+  updated, the relay **fails closed** on it (scenario-unavailable, no attempt created) — the intended
+  safe behavior. This PR did NOT read, export, provision, or modify the private bank; do the update via
+  the operator provisioning tool. The v9 grader change is model-visible, so rerun the non-production
+  live-contract smoke with a dedicated `CALL_QA_LIVE_SMOKE_API_KEY` before merge/deploy. Also verify the
+  Simulated ECW chart renders correctly in a real browser microphone Call QA test — including that a
+  chart section the scenario does NOT supply is absent from the panel rather than showing "None on file".
+  **Release order (provisioning authorization and merge authorization are SEPARATE decisions):**
+  finish corrections → independent review → CI/offline validation → dedicated live v9 smoke →
+  **stop** → explicit owner authorization to touch private scenario data → provision via the trusted
+  operator tool → verify the CURRENT production runtime safely ignores the new additive fields and stays
+  operational → verify the private documents validate → final independent merge review → **separate**
+  explicit merge authorization → merge/deploy. Successful provisioning is never itself permission to
+  merge. Never export production Firestore into the repo, publish private scenario contents, fabricate
+  scenario data, or infer facts from anything but the trusted authoring source; if no trusted authoring
+  source exists for the provisioned population, that is a blocker to report rather than work around.
 - **OB/GYN v2 operational validation:** after private rotation/provisioning, supervisors must
   review/activate newly generated versioned MCQs/audits, run captured-model and live human
   calibration for at least 15 privately provisioned Call QA workflows, verify

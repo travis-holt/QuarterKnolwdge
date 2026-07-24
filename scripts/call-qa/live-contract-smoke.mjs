@@ -1,14 +1,27 @@
-#!/usr/bin/env node
 // ─────────────────────────────────────────────────────────────────────────────
 // qa:live-contract-smoke — an OPT-IN, NON-PRODUCTION live check that the pinned
-// scored Call QA grader model actually OBEYS the v7 structured contract.
+// scored Call QA grader model actually OBEYS the CURRENT structured contract
+// (`CALL_QA_PROMPT_VERSION`, now v9).
 //
 // Unit and stubbed-pipeline tests prove the deterministic pipeline, but they
 // cannot prove the live Gemini model emits the caller-only `identityEvidence`
-// array correctly, keeps the three identifiers on ONE patient, or judges the
-// closing rule. This command runs a handful of SYNTHETIC transcripts through the
-// REAL prompt/schema/validator/pipeline (`gradeCallQaTranscript`) with the pinned
-// grader model, and asserts the semantic outcomes the contract requires.
+// array correctly, keeps the three identifiers on ONE patient, judges the closing
+// rule, or — added for v9 — actually HONOURS the navigator-visible chart and the
+// sched-recap / listen-gather applicability rules. This command runs SYNTHETIC
+// transcripts through the REAL prompt/schema/validator/pipeline
+// (`gradeCallQaTranscript`) with the pinned grader model, and asserts the semantic
+// outcomes the contract requires.
+//
+// v9 COVERAGE (cases 21-22) reproduces the pilot defect this contract exists to
+// prevent: a caller asks to schedule a Growth ultrasound that has NO order on
+// file. The navigator-visible chart is built through the REAL
+// `buildTrustedGradingScenario` so the live model receives exactly the chart block
+// production sends — including explicit "None on file" negatives. Case 21 asserts
+// the correct no-booking handling is credited (sched-recap NA, listen-gather not
+// failed for a chart fact); case 22 asserts a WRONG booking is caught by
+// sched-flow/know-rule and still leaves sched-recap NA, so it is never
+// double-penalized. `hiddenChartState` is deliberately absent — the grader must
+// never receive facts the navigator could not see.
 //
 // GUARANTEES (see docs/CALL_QA_CALIBRATION.md · "Live model-contract smoke"):
 //   * synthetic transcripts only — nothing is derived from the private bank;
@@ -25,29 +38,77 @@
 
 import {
   gradeCallQaTranscript, callQaGraderModel, CALL_QA_PROMPT_VERSION,
+  buildTrustedGradingScenario,
 } from '../../api/grade-call-qa.js';
 
 const STATIC_SOP = [
   'SYNTHETIC NON-PRODUCTION SOP CONTEXT (contract smoke only).',
   'OB/GYN verification requires the patient first name, last name, and date of birth.',
   'A phone number or address never substitutes for the date of birth.',
+  'An imaging study is scheduled only when a matching order is on file.',
+  'When no order is on file, send a message to the OB clinical team to clarify instead of booking.',
   'Close by offering further assistance before ending the call.',
 ].join('\n');
 
 const nav = (text) => ({ role: 'navigator', text });
 const caller = (text) => ({ role: 'patient', text });
 
-function scenarioContext(department) {
+function scenarioContext(department, gradingScenario) {
   return {
     verified: true,
     status: 'verified',
     qaScenarioId: 'synthetic-live-contract-smoke',
     department,
     scenarioVersion: 'synthetic-live-contract-v1',
-    gradingScenario: 'SYNTHETIC contract-smoke call. Judge only what the transcript states.',
+    gradingScenario: gradingScenario
+      ?? 'SYNTHETIC contract-smoke call. Judge only what the transcript states.',
     ruleIds: [],
   };
 }
+
+// ── v9 synthetic navigator-visible chart (no Firestore, no private bank) ──────
+//
+// Authored here in the script; nothing is read from or derived from the private
+// scenario bank. `activeOrders` / `futureAppointments` are EXPLICITLY EMPTY — the
+// author asserting "nothing on file", which the navigator sees on screen as
+// "None on file" and which the correct workflow turns on. `openEncounters` is
+// deliberately OMITTED to exercise the missing-vs-empty distinction: the grader
+// must say nothing about a section that was never supplied.
+const SYNTHETIC_NAV_CHART = Object.freeze({
+  summary: 'Established OB patient, third trimester, routine prenatal care.',
+  planRto: 'RTO 4 weeks (routine prenatal follow-up).',
+  activeOrders: [],
+  futureAppointments: [],
+});
+
+// Built through the REAL grader-context builder so the live model receives the
+// production NAVIGATOR-VISIBLE CHART block. No hiddenChartState is supplied.
+const GROWTH_ULTRASOUND_SCENARIO = buildTrustedGradingScenario({
+  gradingContext: 'SYNTHETIC contract-smoke call. The caller asks to schedule a Growth ultrasound because her provider mentioned one. Judge chart-dependent decisions ONLY against the navigator-visible chart.',
+  title: 'Caller requests a Growth ultrasound',
+  workflowType: 'imaging_request_without_order',
+  difficulty: 'medium',
+  expectedActions: [
+    'Verify the patient first name, last name, and date of birth before discussing the chart.',
+    'Explain that no ultrasound order is on file.',
+    'Do NOT book the Growth ultrasound without an order.',
+    'Send a message to the OB clinical team to clarify the order.',
+    'Offer further assistance before closing.',
+  ],
+  criticalMisses: [
+    'Booking a Growth ultrasound when no order is on file.',
+    'Telling the caller the ultrasound is scheduled.',
+  ],
+  scoringNotes: [],
+  navigatorChartState: SYNTHETIC_NAV_CHART,
+});
+
+const GROWTH_GREET = nav('Thank you for calling Aizer Women\'s Health, this is Dana. How can I help you today?');
+const GROWTH_ASK = caller('Hi, my provider told me I need a Growth ultrasound and I would like to schedule it.');
+const GROWTH_VERIFY = [
+  nav('I can help with that. May I have the patient first name, last name, and date of birth?'),
+  caller('Maria Alvarez, March 2nd 1991.'),
+];
 
 const CLOSE_OFFER = nav('Is there anything else I can help you with today?');
 const CLOSE_THANKS = nav('Thank you, have a great day. Goodbye.');
@@ -369,6 +430,69 @@ export const LIVE_CONTRACT_SMOKE_CASES = [
       [!verifiedAutoFail(qa, 'af-hipaa'), 'no af-hipaa on a verified third-party call'],
     ),
   },
+
+  // ── v9 navigator-visible chart + applicability cases (2026-07-24) ───────────
+  // These reproduce the FIRST real pilot defect: the correct workflow books
+  // nothing, so the navigator must not be penalized under sched-recap (an
+  // appointment that should not exist cannot be recapped) nor under listen-gather
+  // (an internal chart fact is not caller-observable information gathering).
+  // Both cases share ONE navigator-visible chart with explicit "None on file"
+  // negatives; neither supplies hidden chart state.
+  {
+    id: '21-no-order-correct-no-booking',
+    department: 'obgyn',
+    gradingScenario: GROWTH_ULTRASOUND_SCENARIO,
+    transcript: [
+      GROWTH_GREET,
+      GROWTH_ASK,
+      ...GROWTH_VERIFY,
+      nav('Thank you Maria. Let me take a look at your chart.'),
+      nav('I do not see an ultrasound order on file for you, and there is no upcoming ultrasound appointment scheduled. I am not able to book the scan without an order from your provider.'),
+      caller('Oh — but she told me I needed one.'),
+      nav('I understand. I am sending a message to the OB clinical team now to confirm the order with your provider, and they will follow up with you so we can get it scheduled.'),
+      caller('Okay, thank you.'),
+      CLOSE_OFFER,
+      caller('No, that is everything.'),
+    ],
+    check: (qa) => checkAll(
+      // The core applicability fix: nothing should have been booked, so there is
+      // no appointment to recap.
+      [verdictOf(qa, 'sched-recap') === 'NA', 'sched-recap must be NA when the correct workflow books no appointment'],
+      // The navigator gathered every caller-observable detail; the no-order fact
+      // came from the chart, which is never a listen-gather failure.
+      [verdictOf(qa, 'listen-gather') !== 'NOT_MET', 'listen-gather must not be failed because the decisive fact came from the chart rather than the caller'],
+      // The correct no-booking workflow must be recognized, not punished.
+      [verdictOf(qa, 'know-rule') !== 'NOT_MET', 'the correct no-order workflow (explain, do not book, route to the OB team) must not be marked NOT_MET'],
+      [verdictOf(qa, 'sched-flow') !== 'NOT_MET', 'declining to book without an order is the CORRECT scheduling outcome and must not be NOT_MET'],
+      // Identity was collected before any chart discussion.
+      [verdictOf(qa, 'verify-three') === 'MET', 'verify-three should be MET — the navigator collected first name, last name and DOB'],
+      [!verifiedAutoFail(qa, 'af-hipaa'), 'no af-hipaa on a call verified before any chart disclosure'],
+    ),
+  },
+  {
+    id: '22-no-order-wrong-booking',
+    department: 'obgyn',
+    gradingScenario: GROWTH_ULTRASOUND_SCENARIO,
+    transcript: [
+      GROWTH_GREET,
+      GROWTH_ASK,
+      ...GROWTH_VERIFY,
+      nav('Thank you Maria. Let me open your chart and get that scheduled for you.'),
+      nav('You are all set — I have booked your Growth ultrasound for Tuesday at 9:00 at Main Street. Please arrive fifteen minutes early.'),
+      caller('Perfect, thank you.'),
+      CLOSE_OFFER,
+      caller('No, that is all.'),
+    ],
+    check: (qa) => checkAll(
+      // The wrong outcome must be caught by the scheduling/knowledge criteria …
+      [['sched-flow', 'know-rule'].some((id) => verdictOf(qa, id) === 'NOT_MET'),
+        'wrongly booking with no order on file must be captured by sched-flow and/or know-rule'],
+      // … and NEVER by a second sched-recap penalty for an appointment that
+      // should never have existed. The navigator DID recap it, but the correct
+      // workflow booked nothing, so the criterion does not apply.
+      [verdictOf(qa, 'sched-recap') === 'NA', 'sched-recap must stay NA — the correct workflow books nothing, so a wrong booking is never double-penalized here'],
+    ),
+  },
 ];
 
 const CASES = LIVE_CONTRACT_SMOKE_CASES;
@@ -411,7 +535,7 @@ export async function runLiveContractSmoke({
     try {
       const { qa } = await grade({
         transcript: testCase.transcript,
-        scenarioContext: scenarioContext(testCase.department),
+        scenarioContext: scenarioContext(testCase.department, testCase.gradingScenario),
         captureMetadata: { captureComplete: true },
         transcriptMetadata: { captureStatus: 'captured' },
       }, {

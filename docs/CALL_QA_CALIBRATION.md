@@ -149,8 +149,19 @@ navigator role) and required the three identifiers to belong to ONE patient, mov
 identity instructions said not to populate free-text `evidence`, while the shared response shape
 requires every `MET` verdict to include a non-empty quote. The correction requires a real caller
 quote for a MET identity response but keeps the structured `identityEvidence` array as the sole
-source of identity credit, moving the prompt to **`call-qa-grader-v8`**. The server-only candidate,
-name-field, DOB-ownership, and HIPAA chronology checks do not independently require a prompt bump.
+source of identity credit, moving the prompt to `call-qa-grader-v8`. The pilot
+assessment-observability correction (2026-07-24) then changed the model-visible grader contract again —
+the grader now receives a NAVIGATOR-VISIBLE CHART block and must judge chart-dependent decisions only
+against it, while **`hiddenChartState` is STRUCTURALLY ABSENT from the model-visible grader context —
+not merely reframed**: the prompt emits no hidden-chart block and `buildScenarioContextFromAttempt`
+does not pass the field into `buildTrustedGradingScenario` at all, so the grader never receives chart
+facts the navigator could not see (it remains server-side in the immutable attempt snapshot for trusted
+audit provenance). `sched-recap` is described as
+CONDITIONAL (NA when the correct workflow books no appointment), and `listen-gather` is scoped to
+caller-observable information gathering — moving the prompt to **`call-qa-grader-v9`**. The OB/GYN
+criteria, points, category weights, applicability flags and auto-fails are unchanged, so the rubric
+stays `qa-rubric-obgyn-v1`. The server-only candidate, name-field, DOB-ownership, and HIPAA chronology
+checks, and the deterministic caller role-break fail-safe, do not independently require a prompt bump.
 
 **Provenance compatibility (2026-07-22).** A GRADED fixture is validated against the rubric its
 RECORDED `modelRun.rubricVersion` maps to — never the current department profile — and its
@@ -164,13 +175,13 @@ An unknown recorded rubric or prompt version fails closed. The compatibility pol
 
 | Department | Rubric version | Legitimate prompt versions |
 |---|---|---|
-| `pediatrics` | `qa-rubric-v2` | any supported (v3–v8) |
+| `pediatrics` | `qa-rubric-v2` | any supported (v3–v9) |
 | `obgyn` | `qa-rubric-v2` (historical shared) | v3 only |
-| `obgyn` | `qa-rubric-obgyn-v1` | v4, v5, v6, v7, v8 |
+| `obgyn` | `qa-rubric-obgyn-v1` | v4, v5, v6, v7, v8, v9 |
 
 **Interpretable is not the same as producible (corrected 2026-07-21).**
 `SUPPORTED_CALL_QA_PROMPT_VERSIONS` lists every version this build can still INTERPRET in a
-stored record (v3–v8). It previously read as though a fixture could simply declare any
+stored record (v3–v9). It previously read as though a fixture could simply declare any
 of them, while `validateModelRun` in fact required an exact match with the current version —
 a contradiction the second review flagged. The policy is now explicit and enforced:
 
@@ -195,10 +206,27 @@ breaks down prompt version, a multi-version population displays
 every gate on its own (`requireSinglePromptVersion`). Two helpers express the split —
 `isSupportedStoredPromptVersion()` and `isCurrentPromptVersion()`.
 
-**Re-baselining.** `call-qa-grader-v8` (like the v4/v5/v6/v7 moves before it, and like
+**Re-baselining.** `call-qa-grader-v9` (like the v4/v5/v6/v7/v8 moves before it, and like
 `qa-rubric-obgyn-v1`) re-baselines OB/GYN calibration: evidence gathered under an earlier
-prompt is a separate population and cannot be pooled with v8 evidence. This has no effect
+prompt is a separate population and cannot be pooled with v9 evidence. This has no effect
 on current readiness, because there are still zero human-pilot fixtures.
+
+## Simulated-caller integrity
+
+The scored Call QA caller is an AI roleplaying a patient. A deterministic detector
+(`detectCallerRoleBreak`, `api/_qa-caller-integrity.js`) scans server-captured CALLER turns for
+explicit meta/AI/safety-disclaimer role breaks (declaring itself an AI, acknowledging the simulation,
+or reciting an AI-policy medical/safety disclaimer a real patient would never volunteer). On a hit the
+grading pipeline sets `qa.callerIntegrity.roleBreak = true`, adds a `simulated-caller-role-break`
+supervisor review flag, and forces `needs_review` — the navigator is never auto-failed because the
+simulated patient malfunctioned. This never changes a rubric verdict or a score.
+
+An attempt whose transcript carries a simulated-caller integrity failure is **invalid for a confident
+automatic decision**. Such an attempt is not usable as clean calibration or automation-readiness
+evidence: a genuinely captured role-break attempt is `needs_review`, so it is not a confident model
+verdict, and the reproduced invalid pilot attempt must not be counted as calibration evidence. Human
+adjudicators should exclude any attempt flagged with a caller role break from grading-accuracy counts,
+recording it (if at all) only as a capture/roleplay-reliability observation.
 
 **Rubric version is department-scoped (2026-07-21).** Each department carries its
 own rubric profile and version, so a multi-department population legitimately
@@ -321,7 +349,7 @@ fixtures and requires each grading fixture to embed a sanitized
 Firestore bank.
 
 The production grader prompt version has one source of truth:
-`api/_qa-grading-versions.js` (`call-qa-grader-v8`), re-exported by
+`api/_qa-grading-versions.js` (`call-qa-grader-v9`), re-exported by
 `api/grade-call-qa.js` and validated against fixture `modelRun.promptVersion`.
 
 Private provisioning is a separate deliberate operator action:
@@ -357,8 +385,9 @@ CALL_QA_LIVE_SMOKE_API_KEY=dedicated-non-production-key npm run qa:live-contract
 The plural `CALL_QA_LIVE_SMOKE_API_KEYS` is also supported and takes precedence when it holds at
 least one usable key; a set-but-empty plural variable falls back to the singular (correction pass
 #5 — the earlier nullish-coalescing resolver masked a populated singular key). This command
-deliberately does **not** read the application's `GEMINI_API_KEY(S)` pool. It runs 20 synthetic
-semantic cases (correction pass #6 — ten explicit HIPAA/chronology cases) against the pinned scored
+deliberately does **not** read the application's `GEMINI_API_KEY(S)` pool. It runs **22** synthetic
+semantic cases (correction pass #6 — ten explicit HIPAA/chronology cases; the 2026-07-24 pilot
+correction — two navigator-visible-chart cases) against the pinned scored
 grader model with static SOP context, no Firestore or private-bank access, no provisioning, and no
 patient identifiers in output. Each case asserts the complete privacy-relevant scorecard state —
 verdicts plus, where applicable, `qa.autoFails`, `qa.unverifiedAutoFails`, the
@@ -368,6 +397,34 @@ recommendation, or a `deterministic-privacy-conflict` that is a mandatory `needs
 `safetyRisk: 'critical'` — never a generic fail from an unrelated criterion, so a case can never
 report PASS while the scorecard hides a false auto-fail or a needed critical review. It is contract
 evidence only: it has no calibration, release-automation, or scoring-authority effect.
+
+**A prompt bump must be matched by real NEW coverage (2026-07-24).** Re-running the v7/v8
+identity/privacy cases under a `v9` label proves nothing about the v9 chart and applicability rules,
+so the gate gained two cases that exercise exactly the reproduced pilot defect. Both build their
+grader context through the real `buildTrustedGradingScenario` with a SYNTHETIC navigator-visible chart
+(authored in the script — nothing is read from or derived from the private bank) whose `activeOrders`
+and `futureAppointments` are EXPLICITLY empty and whose `openEncounters` is deliberately omitted, so
+the missing-vs-explicit-empty distinction is exercised live. Neither case supplies `hiddenChartState`.
+
+* **`21-no-order-correct-no-booking`** — the navigator verifies identity, reads the chart, explains no
+  ultrasound order is on file, does NOT book, and routes a clarification to the OB clinical team. The
+  case asserts `sched-recap` is **NA**, that `listen-gather` is **not** failed because the decisive fact
+  came from the chart rather than the caller, and that `know-rule`/`sched-flow` do not punish the
+  correct no-booking outcome.
+* **`22-no-order-wrong-booking`** — same caller and same visible chart, but the navigator wrongly books
+  the scan. The case asserts the wrong outcome IS captured by `sched-flow` and/or `know-rule` while
+  `sched-recap` stays **NA**, so a booking that should never have existed is never double-penalized.
+
+All 20 prior identity/privacy cases are retained.
+
+**Measure the exit code from ONE invocation.** The gate makes 22 sequential upstream calls, and the
+free-tier quota is per-key-per-model, so running the command twice back to back to "confirm" the exit
+code reliably trips HTTP 429 and produces a FAILED run that says nothing about the contract. Use
+`npm run qa:live-contract-smoke; echo $?` once. A run whose `[FAIL]` lines all read
+`unusable grader response: The grader is busy right now` (after `status=429`) is a **quota exhaustion,
+not a contract failure** — it carries no semantic signal in either direction and must be re-run cold
+rather than reported as a gate result. This flakiness is long-standing: the v8 full run previously
+failed cases 15 and 20 for the same reason.
 
 The merge/release gate requires **both** exit 0 and the exact marker
 `LIVE_CONTRACT_SMOKE_VERIFIED`. A malformed or semantically wrong run exits nonzero and prints
@@ -382,6 +439,33 @@ OB/GYN rubric: 100 total points, 85 pass, verification at 10/100, and an unprove
 miss routed to `needs_review` rather than automatic zero; a positively verified HIPAA auto-fail may
 still zero the call. This records policy authority only and does not change criteria, weights,
 thresholds, auto-fail definitions, or readiness requirements.
+
+## Private scenario compatibility and release sequencing (2026-07-24)
+
+The pilot correction adds a SCHEMA requirement to the private OB/GYN Call QA bank. Every active
+OB/GYN scenario in `callQaScenariosPrivate` must declare an explicit
+`requiresNavigatorChartContext: true | false`, and any scenario whose correct workflow depends on
+chart facts must additionally carry a `navigatorChartState`. The currently provisioned population
+predates that schema, so a scenario without the field FAILS CLOSED — the relay returns
+scenario-unavailable and creates no attempt. That is the intended safe behavior (it refuses to
+administer a test the navigator cannot pass observably), but it means merging or deploying this change
+BEFORE the bank is made compatible would take scored OB/GYN Call QA offline.
+
+The required order is therefore:
+
+1. Finish the code corrections. 2. Independent code review. 3. CI / offline validation.
+4. Dedicated non-production live v9 smoke passes. 5. **Stop.**
+6. Obtain **explicit owner authorization** to update private scenario data.
+7. Update/provision compatible OB/GYN private scenarios via the trusted operator provisioning tool.
+8. Verify the CURRENT production runtime safely ignores the new additive fields and stays operational.
+9. Verify the private scenario documents validate. 10. Final independent merge review.
+11. Obtain **separate explicit merge authorization**. 12. Merge / deploy.
+
+Provisioning authorization and merge authorization are **separate decisions**; successful provisioning
+is not itself permission to merge. Provisioning remains an operator action performed outside this
+repository: no production Firestore content is ever exported into the repo, no private scenario
+contents are published, and no scenario data may be fabricated or inferred from anything other than the
+trusted authoring source.
 
 ## Optional live calibration
 

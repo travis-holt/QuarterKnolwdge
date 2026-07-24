@@ -41,7 +41,21 @@
 // v8 = identity MET evidence alignment (2026-07-23): identity criteria still
 //      require a non-empty caller quote for the shared response shape; the
 //      structured identityEvidence array remains the sole source of identity credit.
-export const CALL_QA_PROMPT_VERSION = 'call-qa-grader-v8';
+// v9 = pilot assessment-observability corrections (2026-07-24). The MODEL-VISIBLE
+//      grader contract changed (the OB/GYN criteria, points and applicability are
+//      unchanged, so the rubric stays `qa-rubric-obgyn-v1`):
+//        * the grader now receives a NAVIGATOR-VISIBLE CHART block (the simulated
+//          ECW chart the navigator was shown) and must judge every chart-dependent
+//          decision ONLY against those facts, never against grader-only
+//          hiddenChartState — hiddenChartState is reframed as ground-truth context
+//          the navigator may not have been able to see;
+//        * [sched-recap] is described as CONDITIONAL — NA when the correct workflow
+//          books no appointment, so a no-booking/clarification call is never
+//          double-penalized for failing to recap an appointment that should not
+//          exist;
+//        * [listen-gather] is scoped to CALLER-OBSERVABLE information gathering —
+//          not failed for an internal chart fact the navigator could not see.
+export const CALL_QA_PROMPT_VERSION = 'call-qa-grader-v9';
 
 // Prompt versions this repository can still INTERPRET for stored records.
 // Historical attempts keep rendering under the version they recorded; this list
@@ -59,6 +73,7 @@ export const SUPPORTED_CALL_QA_PROMPT_VERSIONS = Object.freeze([
   'call-qa-grader-v6',
   'call-qa-grader-v7',
   'call-qa-grader-v8',
+  'call-qa-grader-v9',
 ]);
 
 const SUPPORTED = new Set(SUPPORTED_CALL_QA_PROMPT_VERSIONS);

@@ -42,6 +42,7 @@ function privateScenario(id = 'qa-test-alpha', overrides = {}) {
     criticalMisses: ['State the fictional unsafe outcome.'],
     scoringNotes: ['Accept natural wording in this fictional fixture.'],
     hiddenChartState: { fixture: true },
+    requiresNavigatorChartContext: false,
     callerCaseFile: {
       callerGoal: 'Get a fictional administrative request resolved.',
       knownFacts: ['Fictional fact the caller knows.', 'A second consistent fictional fact.'],

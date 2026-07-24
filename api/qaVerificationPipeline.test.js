@@ -643,7 +643,7 @@ describe('E2E · prompt contract matches what the server enforces', () => {
   );
 
   it('is stamped with the current prompt version', () => {
-    expect(CALL_QA_PROMPT_VERSION).toBe('call-qa-grader-v8');
+    expect(CALL_QA_PROMPT_VERSION).toBe('call-qa-grader-v9');
   });
 
   it('tells the model the navigator\'s own name is not the patient\'s', () => {

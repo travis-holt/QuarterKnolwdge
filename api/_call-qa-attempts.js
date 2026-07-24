@@ -66,6 +66,11 @@ export function buildScenarioSnapshot(scenario) {
     criticalMisses: scenario.criticalMisses ?? [],
     scoringNotes: scenario.scoringNotes ?? [],
     hiddenChartState: scenario.hiddenChartState ?? null,
+    // The navigator-visible chart the navigator was shown during the call. Stored
+    // so grading judges chart-dependent decisions against exactly what the
+    // navigator could see — never against grader-only hiddenChartState.
+    navigatorChartState: scenario.navigatorChartState ?? null,
+    requiresNavigatorChartContext: scenario.requiresNavigatorChartContext === true,
     callerCaseFile: scenario.callerCaseFile ?? null,
     ruleIds: scenario.ruleIds ?? [],
     sourceSopVersion: scenario.sourceSopVersion ?? null,

@@ -40,6 +40,10 @@ import {
 } from './_call-qa-attempts.js';
 import { randomUUID } from 'node:crypto';
 import { CALL_QA_PROMPT_VERSION } from './_qa-grading-versions.js';
+import { detectCallerRoleBreak } from './_qa-caller-integrity.js';
+import {
+  sanitizeNavigatorChartState, navigatorChartStateHasContent,
+} from './_call-qa-scenario-store.js';
 
 const MAX_TURNS = 60;
 const MAX_TURN_CHARS = 2000;
@@ -99,6 +103,38 @@ export function callQaGeminiTotalDeadlineMs(env = process.env) {
   );
 }
 
+// Render the navigator-visible chart (the "Simulated ECW chart" the navigator saw
+// during the call) into readable grader lines.
+//
+// PRESENCE SEMANTICS — the grader is told EXACTLY what the navigator's screen
+// said, no more (see `sanitizeNavigatorChartState`):
+//   * a section the scenario never supplied is OMITTED entirely — it is NOT
+//     rendered as "None on file", because the navigator was never shown a
+//     statement about it and must not be judged on one;
+//   * an EXPLICITLY empty section renders "None on file" — the author asserted
+//     nothing is on file, and that negative is often the decisive fact;
+//   * a populated section lists its items.
+export function renderNavigatorChartLines(chart) {
+  const projected = sanitizeNavigatorChartState(chart);
+  if (!projected) return [];
+  const labels = {
+    summary: 'Summary', planRto: 'Plan / RTO',
+    activeOrders: 'Active orders', openEncounters: 'Open Telephone Encounters / messages',
+    futureAppointments: 'Future appointments',
+  };
+  const lines = [];
+  for (const field of ['summary', 'planRto']) {
+    if (projected[field]) lines.push(`- ${labels[field]}: ${projected[field]}`);
+  }
+  for (const field of ['activeOrders', 'openEncounters', 'futureAppointments']) {
+    const list = projected[field];
+    if (!Array.isArray(list)) continue; // not supplied → say nothing about it
+    lines.push(`- ${labels[field]}: ${list.length ? list.join('; ') : 'None on file'}`);
+  }
+  for (const fact of projected.otherFacts ?? []) lines.push(`- ${fact}`);
+  return lines;
+}
+
 export function buildTrustedGradingScenario(scenario) {
   const lines = [
     scenario.gradingContext ?? scenario.scenario,
@@ -111,13 +147,35 @@ export function buildTrustedGradingScenario(scenario) {
     'Critical misses (fail the relevant criteria if these occur):',
     ...scenario.criticalMisses.map((item) => `- ${item}`),
   ];
-  if (scenario.hiddenChartState) {
+  // ── NAVIGATOR-VISIBLE CHART ONLY ────────────────────────────────────────────
+  //
+  // `hiddenChartState` is DELIBERATELY ABSENT from this model-visible prompt.
+  //
+  // The reproduced pilot defect was precisely that THE MODEL HELD CHART
+  // INFORMATION THE NAVIGATOR DID NOT, and then graded the navigator on it. That
+  // invariant is enforced STRUCTURALLY — by never handing the grader those facts —
+  // not by handing them over and asking the model to ignore them. A model
+  // instructed to disregard information it has already been given still reasons
+  // from it, so an "ignore the hidden facts" instruction is not a control.
+  //
+  // `hiddenChartState` remains server-side ground truth in the immutable attempt
+  // snapshot for trusted supervisor/audit provenance; it reaches neither the
+  // browser nor Gemini. See docs/GRADING_INVARIANTS.md §0o.
+  const navigatorChartLines = renderNavigatorChartLines(scenario.navigatorChartState);
+  if (navigatorChartLines.length) {
     lines.push(
-      'HIDDEN CHART FACTS (server-authoritative; judge the navigator against these facts):',
-      JSON.stringify(scenario.hiddenChartState),
-      'Do not require the navigator to narrate silent chart clicks. Grade only observable questions, classifications, explanations, and stated actions; absence of unobservable telemetry alone is neither a miss nor a review reason.',
+      'NAVIGATOR-VISIBLE CHART (the ONLY chart information the navigator could see in ECW during this call):',
+      ...navigatorChartLines,
+      'Judge EVERY chart-dependent decision ONLY against these navigator-visible facts and against what the caller said. A chart section not listed above was NOT shown to the navigator — never assume what it contains, never penalize the navigator for failing to act on it, and never expect them to infer it. A section listed as "None on file" IS a fact the navigator could see and act on. When the correct workflow is "explain what is/is not on file and route/clarify", the navigator is judged on doing that against THIS chart.',
     );
   }
+  // Applies with or without a navigator-visible chart: silent chart work is never
+  // observable in a transcript, so its absence is neither a miss nor a review
+  // reason. (Previously this fairness rule rode along with the hidden-chart block
+  // and was therefore lost for scenarios that carried no hidden state.)
+  lines.push(
+    'Do not require the navigator to narrate silent chart clicks. Grade only observable questions, classifications, explanations, and stated actions; absence of unobservable telemetry alone is neither a miss nor a review reason.',
+  );
   if (scenario.scoringNotes?.length) {
     lines.push('Scenario-specific grading notes:', ...scenario.scoringNotes.map((item) => `- ${item}`));
   }
@@ -474,6 +532,21 @@ export function finalizeQaResult(scored, transcript, correctedTurns = 0, repairs
     });
     review.recommendation = 'needs_review';
   }
+  // Simulated-caller integrity gate: if the AI caller stepped out of character
+  // with an explicit meta/AI/safety-disclaimer role break, the transcript is not a
+  // valid basis for a CONFIDENT automatic verdict. The navigator is never
+  // penalized for the simulated patient malfunctioning — the whole attempt is
+  // marked invalid-for-confident-decision and forced to supervisor review. This
+  // never changes a rubric verdict or a score.
+  const callerIntegrity = detectCallerRoleBreak(transcript);
+  if (callerIntegrity.detected) {
+    review.reviewFlags.push({
+      id: 'simulated-caller-role-break',
+      label: 'Simulated caller broke character',
+      detail: `The simulated patient produced an out-of-character ${callerIntegrity.category} statement (e.g. an AI/meta/safety-disclaimer line a real caller would not say). This attempt is invalid for a confident automatic decision and must be reviewed by a supervisor; the navigator is not penalized for the simulated caller malfunctioning.`,
+    });
+    review.recommendation = 'needs_review';
+  }
   const qa = {
     ...scored,
     // Projected with the SAME profile that graded the attempt — never the
@@ -482,6 +555,14 @@ export function finalizeQaResult(scored, transcript, correctedTurns = 0, repairs
     domainScoreVersion: '2026-07-09-v1',
     review,
     correctedTurns,
+    // Simulated-caller integrity record (never includes patient identifiers beyond
+    // the offending line snippet). `roleBreak: true` means the AI caller broke
+    // character and the attempt was forced to supervisor review.
+    callerIntegrity: {
+      roleBreak: callerIntegrity.detected,
+      category: callerIntegrity.category,
+      ...(callerIntegrity.detected ? { evidence: callerIntegrity.evidence } : {}),
+    },
     repairs,
     repairCount: repairs.length,
     deterministicFindings,
@@ -518,6 +599,18 @@ function storedScenarioIntegrity(attempt, snapshot) {
     || !Array.isArray(snapshot.expectedActions)
     || !Array.isArray(snapshot.criticalMisses)
     || !Array.isArray(snapshot.scoringNotes)) return 'incomplete-scenario-snapshot';
+  // Defensive: a chart-dependent attempt must carry the navigator-visible chart it
+  // was graded against. Attempts are created only from validated scenarios, so a
+  // real attempt always satisfies this; a snapshot that claims to require chart
+  // context but carries none fails closed to supervisor review rather than being
+  // scored against grader-only hidden state.
+  // One shared presence rule for validation, the relay, and grading — an
+  // explicitly empty section ("no order on file") counts as supplied chart
+  // context; only a chart that supplies nothing at all fails closed.
+  if (snapshot.requiresNavigatorChartContext === true
+    && !navigatorChartStateHasContent(snapshot.navigatorChartState)) {
+    return 'missing-navigator-chart';
+  }
   return 'verified';
 }
 
@@ -537,7 +630,11 @@ export function buildScenarioContextFromAttempt(attempt) {
     expectedActions: snapshot.expectedActions ?? attempt.expectedActions ?? [],
     criticalMisses: snapshot.criticalMisses ?? attempt.criticalMisses ?? [],
     scoringNotes: snapshot.scoringNotes ?? [],
-    hiddenChartState: snapshot.hiddenChartState ?? null,
+    // `hiddenChartState` is INTENTIONALLY NOT PASSED. The grader prompt builder
+    // must never receive grader-only chart facts, so the invariant holds even if
+    // a future edit reintroduced a hidden-chart block downstream. The snapshot
+    // keeps it for trusted server-side audit provenance.
+    navigatorChartState: snapshot.navigatorChartState ?? null,
     ruleIds: snapshot.ruleIds ?? attempt.ruleIds ?? [],
     sourceSopVersion: snapshot.sourceSopVersion ?? attempt.sourceSopVersion ?? null,
     sourceRuleVersion: snapshot.sourceRuleVersion ?? attempt.sourceRuleVersion ?? null,
