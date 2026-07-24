@@ -1,5 +1,88 @@
 ﻿# Development History - Knowledge Check
 
+## 2026-07-24 — Call QA pilot correction, independent-review pass (chart presence semantics, hidden-state removal, detector precision, real v9 live coverage)
+
+**Status: same correction PR (`fix/call-qa-pilot-observability-defects`, PR #42). Still NOT merged,
+NOT deployed, NOT provisioned; returned to DRAFT.** Independent review of the first implementation
+(head `2fc22ce`) found four merge blockers and one release-sequencing requirement. Two of the four were
+underspecification in the original implementation brief rather than implementation error.
+
+**Blocker 1 — missing chart data was indistinguishable from "none on file".**
+`validateNavigatorChartState` coerced a missing/null list field to `[]`, the relay projection then
+dropped empty arrays, and both `SimulatedChartPanel` and `renderNavigatorChartLines` printed
+"None on file" for every list section unconditionally. A scenario that supplied only `planRto` therefore
+TOLD the navigator and the grader that there were no active orders, no open TEs and no future
+appointments — fabricating three decisive chart facts the author never asserted. The pipeline now
+preserves THREE distinct states end to end (validation → attempt snapshot → relay projection → UI →
+grader): **missing/null** = not part of this scenario, omitted everywhere and never rendered;
+**explicit `[]`** = the navigator checked and nothing is on file, preserved verbatim and rendered
+"None on file"; **non-empty** = exactly these items. One shared `sanitizeNavigatorChartState` now
+produces the projection consumed by BOTH the browser and the grader, so the two can never diverge, and
+`navigatorChartStateHasContent` counts an explicit `[]` as real content (a missing order is often the
+whole point of the call) while `null`/`{}` still fails closed under `requiresNavigatorChartContext`.
+
+**Blocker 2 — `hiddenChartState` still reached the Gemini grader.** The first implementation kept the
+hidden-chart block in the prompt and merely reframed it as "grader ground-truth context only … do not
+penalize the navigator for it". That is not a control: the reproduced defect was precisely that the
+MODEL HELD INFORMATION THE NAVIGATOR DID NOT, and a model still reasons from context it has been given.
+The block is removed entirely; `buildScenarioContextFromAttempt` no longer even passes
+`hiddenChartState` into `buildTrustedGradingScenario`, so the invariant survives future edits. The
+field remains server-side in the immutable attempt snapshot for trusted audit provenance. The
+silent-chart-click fairness rule, which previously rode along inside the hidden-chart block and would
+have been lost for scenarios without hidden state, is now emitted unconditionally. Regression: a unique
+token planted in `hiddenChartState` is asserted absent from the trusted grading scenario and from EVERY
+argument handed to Gemini, while the navigator-visible chart IS present. This also surfaced a stale
+line in the OB/GYN grader instructions that still referenced a "HIDDEN CHART FACTS" block; it was
+rewritten to describe the navigator-visible chart as the complete record instead.
+
+**Blocker 3 — the caller role-break detector was too broad.** Single patterns fired on
+"I'm not a doctor…", "I'm not a nurse…", "I'm required to tell you…", and any "see a healthcare
+professional" mention — all things a real caller legitimately says, and each one would have invalidated
+a perfectly good navigator attempt. The detector is now two-tier: **Tier 1** keeps single-signal
+detection for unmistakable meta breaks only (AI/bot/language-model self-identification, simulation /
+training / roleplay acknowledgment); **Tier 2** requires ONE caller turn to stack at least TWO DISTINCT
+disclaimer signals (meta obligation framing, not-a-clinician, not-medical-advice/diagnosis, a
+SECOND-PERSON directive to seek professional care). Reported speech carries no directive, so
+"my doctor told me to see a healthcare professional" is not a signal at all. The reproduced pilot line
+stacks four signals and still fires; ten authored negative cases stay clean.
+
+**Blocker 4 — the live contract smoke did not test v9.** The gate still exercised only the v7/v8
+identity/privacy contract, so rerunning it under a "v9" label would have proved nothing about the new
+chart and applicability rules. Two cases were added (**22 total**, all 20 prior cases retained), both
+building their grader context through the real `buildTrustedGradingScenario` with a SYNTHETIC
+navigator-visible chart authored in the script — no Firestore, no private bank, no production data.
+`21-no-order-correct-no-booking` asserts the correct no-booking handling is credited (`sched-recap` NA,
+`listen-gather` not failed for a chart-sourced fact, `know-rule`/`sched-flow` not punished);
+`22-no-order-wrong-booking` asserts a wrong booking IS caught by `sched-flow`/`know-rule` while
+`sched-recap` stays NA, so it is never double-penalized. The synthetic chart leaves `openEncounters`
+omitted and `activeOrders`/`futureAppointments` explicitly empty, exercising the Blocker-1 distinction
+live.
+
+**Incidental fix — the pre-existing `liveContractSmoke.test.js` suite-load failure is resolved.** The
+previous PR head reported it as an unexplained environment-only failure. Root cause: the
+`#!/usr/bin/env node` shebang on `scripts/call-qa/live-contract-smoke.mjs` broke Vitest's transform on
+Windows, so the whole suite failed to load with a bare `SyntaxError` and its 13 tests never ran
+locally. The shebang was an outlier — `package.json` invokes the script via `node`, and no sibling
+script in `scripts/call-qa/` has one — so removing it is safe and restores local coverage. The full
+suite is now green with **no** known failures.
+
+**Release sequencing (documented, not executed).** Every active OB/GYN private scenario must declare
+`requiresNavigatorChartContext` (+ `navigatorChartState` where the correct workflow depends on chart
+facts). The provisioned population predates that schema and will fail closed until updated, so the
+required order is: finish corrections → independent review → CI/offline validation → dedicated live v9
+smoke → **stop** → explicit owner authorization → provision → verify current runtime ignores the
+additive fields → final merge review → **separate** explicit merge authorization → merge/deploy.
+Provisioning authorization and merge authorization are distinct decisions.
+
+**Validation.** `npm test` **2,290 passed across 86 files, zero failures** (up from 2,239 with one
+suite-load failure). Focused regressions 87/87. Build clean incl. the private-runtime bundle scan.
+Playwright safe suite 12/12. `qa:pilot-smoke` `PILOT_SMOKE_VERIFIED`. `qa:calibrate`/`qa:coverage`
+`INSUFFICIENT_DATA` with `qa:calibrate:check` exiting 1 — the correct state with zero human fixtures;
+none fabricated, no threshold lowered. `git diff --check` clean; `node --check` clean on every changed
+server module. `test:rules` not runnable locally (no Java); `firestore.rules` is unchanged and CI is
+authoritative. No merge, deploy, auto-merge, production write, or private-bank read/rotation occurred,
+and no historical grade was modified. See docs/GRADING_INVARIANTS.md §0o.
+
 ## 2026-07-24 — Call QA pilot defect correction (assessment observability, applicability, caller integrity)
 
 **Status: NEW correction PR from current `main` (`da23a45`). NOT merged, NOT deployed, NOT

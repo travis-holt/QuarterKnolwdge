@@ -41,6 +41,9 @@ import {
 import { randomUUID } from 'node:crypto';
 import { CALL_QA_PROMPT_VERSION } from './_qa-grading-versions.js';
 import { detectCallerRoleBreak } from './_qa-caller-integrity.js';
+import {
+  sanitizeNavigatorChartState, navigatorChartStateHasContent,
+} from './_call-qa-scenario-store.js';
 
 const MAX_TURNS = 60;
 const MAX_TURN_CHARS = 2000;
@@ -101,26 +104,34 @@ export function callQaGeminiTotalDeadlineMs(env = process.env) {
 }
 
 // Render the navigator-visible chart (the "Simulated ECW chart" the navigator saw
-// during the call) into readable grader lines. Empty list sections render an
-// explicit "None on file" so a NEGATIVE fact (no order, no future appointment) is
-// unambiguous to the grader — matching what the navigator saw on screen.
+// during the call) into readable grader lines.
+//
+// PRESENCE SEMANTICS — the grader is told EXACTLY what the navigator's screen
+// said, no more (see `sanitizeNavigatorChartState`):
+//   * a section the scenario never supplied is OMITTED entirely — it is NOT
+//     rendered as "None on file", because the navigator was never shown a
+//     statement about it and must not be judged on one;
+//   * an EXPLICITLY empty section renders "None on file" — the author asserted
+//     nothing is on file, and that negative is often the decisive fact;
+//   * a populated section lists its items.
 export function renderNavigatorChartLines(chart) {
-  if (!chart || typeof chart !== 'object' || Array.isArray(chart)) return [];
+  const projected = sanitizeNavigatorChartState(chart);
+  if (!projected) return [];
   const labels = {
     summary: 'Summary', planRto: 'Plan / RTO',
     activeOrders: 'Active orders', openEncounters: 'Open Telephone Encounters / messages',
-    futureAppointments: 'Future appointments', otherFacts: 'Other visible chart facts',
+    futureAppointments: 'Future appointments',
   };
   const lines = [];
   for (const field of ['summary', 'planRto']) {
-    if (typeof chart[field] === 'string' && chart[field].trim()) lines.push(`- ${labels[field]}: ${chart[field]}`);
+    if (projected[field]) lines.push(`- ${labels[field]}: ${projected[field]}`);
   }
   for (const field of ['activeOrders', 'openEncounters', 'futureAppointments']) {
-    const list = Array.isArray(chart[field]) ? chart[field].filter((item) => typeof item === 'string' && item.trim()) : [];
+    const list = projected[field];
+    if (!Array.isArray(list)) continue; // not supplied → say nothing about it
     lines.push(`- ${labels[field]}: ${list.length ? list.join('; ') : 'None on file'}`);
   }
-  const other = Array.isArray(chart.otherFacts) ? chart.otherFacts.filter((item) => typeof item === 'string' && item.trim()) : [];
-  for (const fact of other) lines.push(`- ${fact}`);
+  for (const fact of projected.otherFacts ?? []) lines.push(`- ${fact}`);
   return lines;
 }
 
@@ -136,21 +147,35 @@ export function buildTrustedGradingScenario(scenario) {
     'Critical misses (fail the relevant criteria if these occur):',
     ...scenario.criticalMisses.map((item) => `- ${item}`),
   ];
+  // ── NAVIGATOR-VISIBLE CHART ONLY ────────────────────────────────────────────
+  //
+  // `hiddenChartState` is DELIBERATELY ABSENT from this model-visible prompt.
+  //
+  // The reproduced pilot defect was precisely that THE MODEL HELD CHART
+  // INFORMATION THE NAVIGATOR DID NOT, and then graded the navigator on it. That
+  // invariant is enforced STRUCTURALLY — by never handing the grader those facts —
+  // not by handing them over and asking the model to ignore them. A model
+  // instructed to disregard information it has already been given still reasons
+  // from it, so an "ignore the hidden facts" instruction is not a control.
+  //
+  // `hiddenChartState` remains server-side ground truth in the immutable attempt
+  // snapshot for trusted supervisor/audit provenance; it reaches neither the
+  // browser nor Gemini. See docs/GRADING_INVARIANTS.md §0o.
   const navigatorChartLines = renderNavigatorChartLines(scenario.navigatorChartState);
   if (navigatorChartLines.length) {
     lines.push(
       'NAVIGATOR-VISIBLE CHART (the ONLY chart information the navigator could see in ECW during this call):',
       ...navigatorChartLines,
-      'Judge EVERY chart-dependent decision ONLY against these navigator-visible facts. A chart fact that is not listed here was NOT visible to the navigator — never penalize the navigator for failing to act on it, and never expect them to infer it. When the correct workflow is "explain what is/is not on file and route/clarify", the navigator is judged on doing that against THIS chart, not against any hidden ground truth.',
+      'Judge EVERY chart-dependent decision ONLY against these navigator-visible facts and against what the caller said. A chart section not listed above was NOT shown to the navigator — never assume what it contains, never penalize the navigator for failing to act on it, and never expect them to infer it. A section listed as "None on file" IS a fact the navigator could see and act on. When the correct workflow is "explain what is/is not on file and route/clarify", the navigator is judged on doing that against THIS chart.',
     );
   }
-  if (scenario.hiddenChartState) {
-    lines.push(
-      'HIDDEN CHART FACTS (grader ground-truth context ONLY — the navigator may NOT have been able to see all of these):',
-      JSON.stringify(scenario.hiddenChartState),
-      'Use these only to understand the scenario. A SCORED decision must depend ONLY on the NAVIGATOR-VISIBLE CHART above and on caller-provided information — never penalize the navigator for not acting on a hidden fact that was not in the navigator-visible chart. Do not require the navigator to narrate silent chart clicks; absence of unobservable telemetry alone is neither a miss nor a review reason.',
-    );
-  }
+  // Applies with or without a navigator-visible chart: silent chart work is never
+  // observable in a transcript, so its absence is neither a miss nor a review
+  // reason. (Previously this fairness rule rode along with the hidden-chart block
+  // and was therefore lost for scenarios that carried no hidden state.)
+  lines.push(
+    'Do not require the navigator to narrate silent chart clicks. Grade only observable questions, classifications, explanations, and stated actions; absence of unobservable telemetry alone is neither a miss nor a review reason.',
+  );
   if (scenario.scoringNotes?.length) {
     lines.push('Scenario-specific grading notes:', ...scenario.scoringNotes.map((item) => `- ${item}`));
   }
@@ -579,13 +604,12 @@ function storedScenarioIntegrity(attempt, snapshot) {
   // real attempt always satisfies this; a snapshot that claims to require chart
   // context but carries none fails closed to supervisor review rather than being
   // scored against grader-only hidden state.
-  if (snapshot.requiresNavigatorChartContext === true) {
-    const chart = snapshot.navigatorChartState;
-    const hasContent = chart && typeof chart === 'object' && !Array.isArray(chart)
-      && (['summary', 'planRto'].some((field) => typeof chart[field] === 'string' && chart[field].trim())
-        || ['activeOrders', 'openEncounters', 'futureAppointments', 'otherFacts']
-          .some((field) => Array.isArray(chart[field]) && chart[field].some((item) => typeof item === 'string' && item.trim())));
-    if (!hasContent) return 'missing-navigator-chart';
+  // One shared presence rule for validation, the relay, and grading — an
+  // explicitly empty section ("no order on file") counts as supplied chart
+  // context; only a chart that supplies nothing at all fails closed.
+  if (snapshot.requiresNavigatorChartContext === true
+    && !navigatorChartStateHasContent(snapshot.navigatorChartState)) {
+    return 'missing-navigator-chart';
   }
   return 'verified';
 }
@@ -606,7 +630,10 @@ export function buildScenarioContextFromAttempt(attempt) {
     expectedActions: snapshot.expectedActions ?? attempt.expectedActions ?? [],
     criticalMisses: snapshot.criticalMisses ?? attempt.criticalMisses ?? [],
     scoringNotes: snapshot.scoringNotes ?? [],
-    hiddenChartState: snapshot.hiddenChartState ?? null,
+    // `hiddenChartState` is INTENTIONALLY NOT PASSED. The grader prompt builder
+    // must never receive grader-only chart facts, so the invariant holds even if
+    // a future edit reintroduced a hidden-chart block downstream. The snapshot
+    // keeps it for trusted server-side audit provenance.
     navigatorChartState: snapshot.navigatorChartState ?? null,
     ruleIds: snapshot.ruleIds ?? attempt.ruleIds ?? [],
     sourceSopVersion: snapshot.sourceSopVersion ?? attempt.sourceSopVersion ?? null,

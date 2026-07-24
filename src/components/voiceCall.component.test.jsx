@@ -126,6 +126,42 @@ describe('VoiceCall test mode — server-authoritative handshake', () => {
     expect(screen.getByRole('button', { name: /end & get graded/i })).toBeTruthy();
   });
 
+  // A section the server never supplied must NOT be rendered as "None on file" —
+  // that would put a chart fact on the navigator's screen the scenario never
+  // asserted. Only an EXPLICITLY empty section is a visible negative.
+  it('renders "None on file" only for explicitly empty sections, never for missing ones', async () => {
+    render(<VoiceCall navigatorId="nav-a" name="Ada" department="obgyn" mode="test" onQaResult={vi.fn()} />);
+    await startAndActivate({
+      scenario: {
+        prompt: 'A pregnant caller wants a growth ultrasound.', callerName: 'Maria',
+        department: 'obgyn', primaryDomainId: 'classification',
+        // activeOrders is EXPLICITLY empty; openEncounters/futureAppointments are
+        // simply not part of this scenario and must stay off screen.
+        navigatorChartState: { planRto: 'RTO 4 weeks', activeOrders: [] },
+      },
+    });
+    expect(screen.getByText(/Simulated ECW chart/i)).toBeTruthy();
+    expect(screen.getByText(/RTO 4 weeks/)).toBeTruthy();
+    // The explicit negative is shown, exactly once.
+    expect(screen.getByText(/^Active orders$/i)).toBeTruthy();
+    expect(screen.getAllByText(/None on file/i).length).toBe(1);
+    // The unsupplied sections are absent entirely — not shown as "None on file".
+    expect(screen.queryByText(/Open Telephone Encounters/i)).toBeNull();
+    expect(screen.queryByText(/Future appointments/i)).toBeNull();
+  });
+
+  it('does not render the chart panel at all when the server supplied no chart', async () => {
+    render(<VoiceCall navigatorId="nav-a" name="Ada" department="obgyn" mode="test" onQaResult={vi.fn()} />);
+    await startAndActivate({
+      scenario: {
+        prompt: 'A routine scheduling call.', callerName: 'Maria',
+        department: 'obgyn', primaryDomainId: 'scheduling', navigatorChartState: null,
+      },
+    });
+    expect(screen.queryByText(/Simulated ECW chart/i)).toBeNull();
+    expect(screen.queryByText(/None on file/i)).toBeNull();
+  });
+
   it('End Call sends { type:"end" } and waits for the captured ack; then grades by attemptId and NEVER writes via db', async () => {
     apiFetchMock.mockResolvedValue({ qa: QA, grade: GRADE, attemptId: 'att-1' });
     const onQaResult = vi.fn();

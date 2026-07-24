@@ -9,7 +9,7 @@ import {
 } from '../scripts/call-qa/live-contract-smoke.mjs';
 
 describe('qa:live-contract-smoke case coverage', () => {
-  it('covers all twenty required contract scenarios in order', () => {
+  it('covers all twenty-two required contract scenarios in order', () => {
     const ids = LIVE_CONTRACT_SMOKE_CASES.map((c) => c.id);
     expect(ids).toEqual([
       '1-volunteered-one-turn',
@@ -32,7 +32,81 @@ describe('qa:live-contract-smoke case coverage', () => {
       '18-model-false-negative-before-verification',
       '19-provider-name-ambiguity',
       '20-third-party-dob-ownership',
+      // v9 navigator-visible chart + applicability coverage (2026-07-24).
+      '21-no-order-correct-no-booking',
+      '22-no-order-wrong-booking',
     ]);
+  });
+
+  // The grader prompt moved to v9, so the gate must actually exercise the NEW
+  // contract — rerunning the v7/v8 identity cases under a v9 label would prove
+  // nothing about the chart / applicability rules.
+  describe('v9 navigator-visible chart cases', () => {
+    const v9Ids = ['21-no-order-correct-no-booking', '22-no-order-wrong-booking'];
+    const v9Cases = () => v9Ids.map((id) => LIVE_CONTRACT_SMOKE_CASES.find((c) => c.id === id));
+
+    it('sends a real NAVIGATOR-VISIBLE CHART and never any hidden chart facts', () => {
+      for (const testCase of v9Cases()) {
+        expect(testCase.gradingScenario).toMatch(/NAVIGATOR-VISIBLE CHART/);
+        expect(testCase.gradingScenario).not.toMatch(/HIDDEN CHART FACTS/);
+        // Explicit negatives — the facts the correct no-booking workflow needs.
+        expect(testCase.gradingScenario).toMatch(/Active orders: None on file/);
+        expect(testCase.gradingScenario).toMatch(/Future appointments: None on file/);
+        // A section the synthetic chart never supplied is never asserted at all.
+        expect(testCase.gradingScenario).not.toMatch(/Open Telephone Encounters/);
+      }
+    });
+
+    it('case 21 requires sched-recap NA and refuses to fail listen-gather on a chart fact', () => {
+      const [correct] = v9Cases();
+      const base = {
+        autoFails: [], unverifiedAutoFails: [], review: { recommendation: 'pass', reviewFlags: [] },
+        criteria: [
+          { id: 'sched-recap', verdict: 'NA' }, { id: 'listen-gather', verdict: 'MET' },
+          { id: 'know-rule', verdict: 'MET' }, { id: 'sched-flow', verdict: 'NA' },
+          { id: 'verify-three', verdict: 'MET' },
+        ],
+      };
+      expect(correct.check(base)).toBe(true);
+      // Recapping an appointment that should not exist must not be demanded.
+      const recapDemanded = { ...base, criteria: base.criteria.map((c) => (c.id === 'sched-recap' ? { ...c, verdict: 'NOT_MET' } : c)) };
+      expect(typeof correct.check(recapDemanded)).toBe('string');
+      // Nor may the chart-sourced fact be charged to listen-gather.
+      const gatherFailed = { ...base, criteria: base.criteria.map((c) => (c.id === 'listen-gather' ? { ...c, verdict: 'NOT_MET' } : c)) };
+      expect(typeof correct.check(gatherFailed)).toBe('string');
+      // Declining to book without an order is the CORRECT outcome.
+      const flowFailed = { ...base, criteria: base.criteria.map((c) => (c.id === 'sched-flow' ? { ...c, verdict: 'NOT_MET' } : c)) };
+      expect(typeof correct.check(flowFailed)).toBe('string');
+    });
+
+    it('case 22 requires the wrong booking to be caught WITHOUT a second sched-recap penalty', () => {
+      const [, wrongBooking] = v9Cases();
+      const caught = {
+        autoFails: [], unverifiedAutoFails: [], review: { recommendation: 'fail', reviewFlags: [] },
+        criteria: [{ id: 'sched-flow', verdict: 'NOT_MET' }, { id: 'sched-recap', verdict: 'NA' }],
+      };
+      expect(wrongBooking.check(caught)).toBe(true);
+      // know-rule alone also counts as capturing the wrong workflow.
+      expect(wrongBooking.check({
+        ...caught,
+        criteria: [{ id: 'know-rule', verdict: 'NOT_MET' }, { id: 'sched-recap', verdict: 'NA' }],
+      })).toBe(true);
+      // Double-penalizing via sched-recap is rejected.
+      expect(typeof wrongBooking.check({
+        ...caught,
+        criteria: [{ id: 'sched-flow', verdict: 'NOT_MET' }, { id: 'sched-recap', verdict: 'NOT_MET' }],
+      })).toBe('string');
+      // Letting the wrong booking pass entirely is rejected.
+      expect(typeof wrongBooking.check({
+        ...caught,
+        criteria: [{ id: 'sched-flow', verdict: 'MET' }, { id: 'sched-recap', verdict: 'NA' }],
+      })).toBe('string');
+    });
+
+    it('keeps every prior identity/privacy case alongside the new ones', () => {
+      expect(LIVE_CONTRACT_SMOKE_CASES.length).toBe(22);
+      expect(LIVE_CONTRACT_SMOKE_CASES.filter((c) => c.gradingScenario).length).toBe(2);
+    });
   });
 
   it('every case has a synthetic transcript and a check function', () => {
@@ -92,9 +166,20 @@ function qaFor(id) {
     case '18-model-false-negative-before-verification':
       return afHipaaFail();
     case '16-no-identity-before-disclosure':
-      return privacyConflict({ 'verify-three': 'NOT_MET' });
     case '15-partial-identity-before-disclosure':
       return privacyConflict({ 'verify-three': 'NOT_MET' });
+    // v9: correct no-order handling — nothing booked, so sched-recap is NA and
+    // the chart-sourced fact never counts against listen-gather.
+    case '21-no-order-correct-no-booking':
+      return build(verds({
+        'sched-recap': 'NA', 'sched-flow': 'NA', 'listen-gather': 'MET', 'know-rule': 'MET',
+      }));
+    // v9: the navigator wrongly booked — caught by sched-flow/know-rule ONLY,
+    // never by a second sched-recap penalty.
+    case '22-no-order-wrong-booking':
+      return build(verds({
+        'sched-flow': 'NOT_MET', 'know-rule': 'NOT_MET', 'sched-recap': 'NA', 'listen-gather': 'MET',
+      }), { recommendation: 'fail', pass: false });
     default:
       // 1,2,3,8,10,11,12,14,17,20 — clean, correct-model scorecards.
       return build(verds());
@@ -147,6 +232,8 @@ describe('qa:live-contract-smoke gate behavior', () => {
       write: (line) => lines.push(line),
     });
     const output = lines.join('\n');
+    // Surface which case regressed instead of a bare exit-code mismatch.
+    expect(lines.filter((l) => l.includes('[FAIL]'))).toEqual([]);
     expect(code).toBe(0);
     expect(output).toContain('LIVE_CONTRACT_SMOKE_VERIFIED');
     expect(output).toContain('call-qa-grader-v9');

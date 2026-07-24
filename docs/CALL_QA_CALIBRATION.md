@@ -381,8 +381,9 @@ CALL_QA_LIVE_SMOKE_API_KEY=dedicated-non-production-key npm run qa:live-contract
 The plural `CALL_QA_LIVE_SMOKE_API_KEYS` is also supported and takes precedence when it holds at
 least one usable key; a set-but-empty plural variable falls back to the singular (correction pass
 #5 — the earlier nullish-coalescing resolver masked a populated singular key). This command
-deliberately does **not** read the application's `GEMINI_API_KEY(S)` pool. It runs 20 synthetic
-semantic cases (correction pass #6 — ten explicit HIPAA/chronology cases) against the pinned scored
+deliberately does **not** read the application's `GEMINI_API_KEY(S)` pool. It runs **22** synthetic
+semantic cases (correction pass #6 — ten explicit HIPAA/chronology cases; the 2026-07-24 pilot
+correction — two navigator-visible-chart cases) against the pinned scored
 grader model with static SOP context, no Firestore or private-bank access, no provisioning, and no
 patient identifiers in output. Each case asserts the complete privacy-relevant scorecard state —
 verdicts plus, where applicable, `qa.autoFails`, `qa.unverifiedAutoFails`, the
@@ -392,6 +393,25 @@ recommendation, or a `deterministic-privacy-conflict` that is a mandatory `needs
 `safetyRisk: 'critical'` — never a generic fail from an unrelated criterion, so a case can never
 report PASS while the scorecard hides a false auto-fail or a needed critical review. It is contract
 evidence only: it has no calibration, release-automation, or scoring-authority effect.
+
+**A prompt bump must be matched by real NEW coverage (2026-07-24).** Re-running the v7/v8
+identity/privacy cases under a `v9` label proves nothing about the v9 chart and applicability rules,
+so the gate gained two cases that exercise exactly the reproduced pilot defect. Both build their
+grader context through the real `buildTrustedGradingScenario` with a SYNTHETIC navigator-visible chart
+(authored in the script — nothing is read from or derived from the private bank) whose `activeOrders`
+and `futureAppointments` are EXPLICITLY empty and whose `openEncounters` is deliberately omitted, so
+the missing-vs-explicit-empty distinction is exercised live. Neither case supplies `hiddenChartState`.
+
+* **`21-no-order-correct-no-booking`** — the navigator verifies identity, reads the chart, explains no
+  ultrasound order is on file, does NOT book, and routes a clarification to the OB clinical team. The
+  case asserts `sched-recap` is **NA**, that `listen-gather` is **not** failed because the decisive fact
+  came from the chart rather than the caller, and that `know-rule`/`sched-flow` do not punish the
+  correct no-booking outcome.
+* **`22-no-order-wrong-booking`** — same caller and same visible chart, but the navigator wrongly books
+  the scan. The case asserts the wrong outcome IS captured by `sched-flow` and/or `know-rule` while
+  `sched-recap` stays **NA**, so a booking that should never have existed is never double-penalized.
+
+All 20 prior identity/privacy cases are retained.
 
 The merge/release gate requires **both** exit 0 and the exact marker
 `LIVE_CONTRACT_SMOKE_VERIFIED`. A malformed or semantically wrong run exits nonzero and prints
@@ -406,6 +426,33 @@ OB/GYN rubric: 100 total points, 85 pass, verification at 10/100, and an unprove
 miss routed to `needs_review` rather than automatic zero; a positively verified HIPAA auto-fail may
 still zero the call. This records policy authority only and does not change criteria, weights,
 thresholds, auto-fail definitions, or readiness requirements.
+
+## Private scenario compatibility and release sequencing (2026-07-24)
+
+The pilot correction adds a SCHEMA requirement to the private OB/GYN Call QA bank. Every active
+OB/GYN scenario in `callQaScenariosPrivate` must declare an explicit
+`requiresNavigatorChartContext: true | false`, and any scenario whose correct workflow depends on
+chart facts must additionally carry a `navigatorChartState`. The currently provisioned population
+predates that schema, so a scenario without the field FAILS CLOSED — the relay returns
+scenario-unavailable and creates no attempt. That is the intended safe behavior (it refuses to
+administer a test the navigator cannot pass observably), but it means merging or deploying this change
+BEFORE the bank is made compatible would take scored OB/GYN Call QA offline.
+
+The required order is therefore:
+
+1. Finish the code corrections. 2. Independent code review. 3. CI / offline validation.
+4. Dedicated non-production live v9 smoke passes. 5. **Stop.**
+6. Obtain **explicit owner authorization** to update private scenario data.
+7. Update/provision compatible OB/GYN private scenarios via the trusted operator provisioning tool.
+8. Verify the CURRENT production runtime safely ignores the new additive fields and stays operational.
+9. Verify the private scenario documents validate. 10. Final independent merge review.
+11. Obtain **separate explicit merge authorization**. 12. Merge / deploy.
+
+Provisioning authorization and merge authorization are **separate decisions**; successful provisioning
+is not itself permission to merge. Provisioning remains an operator action performed outside this
+repository: no production Firestore content is ever exported into the repo, no private scenario
+contents are published, and no scenario data may be fabricated or inferred from anything other than the
+trusted authoring source.
 
 ## Optional live calibration
 

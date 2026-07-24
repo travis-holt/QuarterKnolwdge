@@ -149,20 +149,26 @@ function appendTranscriptFragment(existing, fragment) {
 
 // Read-only "Simulated ECW chart" panel. Renders ONLY the navigator-visible chart
 // facts the server sent in the ready projection — never any correct answer, next
-// action, or grader-only data. Empty list sections render "None on file" so a
-// NEGATIVE fact (no order, no upcoming appointment) is visible on screen, which is
-// exactly what lets the navigator reason about it during the graded call.
+// action, or grader-only data.
+//
+// PRESENCE SEMANTICS (must match the server projection and the grader exactly —
+// see `sanitizeNavigatorChartState` in api/_call-qa-scenario-store.js):
+//   * a section the server did NOT supply is NOT RENDERED. It says nothing about
+//     whether anything exists, so showing "None on file" for it would put a fact
+//     on the navigator's screen that the scenario never asserted.
+//   * an EXPLICITLY empty section renders "None on file" — that negative is real,
+//     visible information and is often what the correct workflow turns on.
+//   * a populated section lists its items.
 function SimulatedChartPanel({ chart }) {
   if (!chart || typeof chart !== 'object') return null;
   const sections = [
     { key: 'activeOrders', label: 'Active orders' },
     { key: 'openEncounters', label: 'Open Telephone Encounters / messages' },
     { key: 'futureAppointments', label: 'Future appointments' },
-  ];
+    // A section is "supplied" when the server sent an array for it — including [].
+  ].filter(({ key }) => Array.isArray(chart[key]));
   const otherFacts = Array.isArray(chart.otherFacts) ? chart.otherFacts.filter(Boolean) : [];
-  const hasAny = chart.summary || chart.planRto
-    || sections.some((s) => Array.isArray(chart[s.key]) && chart[s.key].length)
-    || otherFacts.length;
+  const hasAny = chart.summary || chart.planRto || sections.length || otherFacts.length;
   if (!hasAny) return null;
   return (
     <div className="card voicecall__chart" aria-label="Simulated ECW chart">
@@ -178,7 +184,7 @@ function SimulatedChartPanel({ chart }) {
           <div className="voicecall__chart-row"><dt>Plan / RTO</dt><dd>{chart.planRto}</dd></div>
         )}
         {sections.map(({ key, label }) => {
-          const list = Array.isArray(chart[key]) ? chart[key].filter(Boolean) : [];
+          const list = chart[key].filter(Boolean);
           return (
             <div key={key} className="voicecall__chart-row">
               <dt>{label}</dt>

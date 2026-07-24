@@ -49,10 +49,35 @@ unchanged, so historical bindings and Pediatrics are untouched.
    attempt snapshot, projected as a SAFE subset into the authenticated test-mode `ready` message,
    rendered read-only during the scored call, and threaded into the grader prompt. The grader judges
    every chart-dependent decision ONLY against the navigator-visible chart and caller-provided
-   information; `hiddenChartState` is grader-only ground truth the navigator may not have seen and can
-   never, on its own, penalize the navigator. Grader-only fields
+   information. Grader-only fields
    (`gradingContext`/`expectedActions`/`criticalMisses`/`scoringNotes`/`hiddenChartState`/
    `callerCaseFile`/`ruleIds`) never reach the browser (verified by `check-call-qa-client-bundle.mjs`).
+
+1a. **`hiddenChartState` is STRUCTURALLY absent from the model-visible grader prompt.** The reproduced
+   defect was precisely that THE MODEL HELD CHART INFORMATION THE NAVIGATOR DID NOT and then graded the
+   navigator on it. Handing the grader those facts and instructing it to ignore them is not a control —
+   a model still reasons from information already in its context. So `buildTrustedGradingScenario` emits
+   no hidden-chart block at all, and `buildScenarioContextFromAttempt` does not even pass
+   `hiddenChartState` into it. The field remains server-side in the immutable attempt snapshot for
+   trusted supervisor/audit provenance; it reaches neither the browser nor Gemini. Regression: a unique
+   token planted in `hiddenChartState` is asserted absent from the trusted grading scenario and from
+   EVERY argument handed to Gemini, while the navigator-visible chart IS present.
+
+1b. **Chart presence has THREE states and they must never collapse.** Confusing any two of them
+   fabricates information the scenario author never asserted:
+   * **missing / null** — the section is not part of this scenario's simulated information. It says
+     NOTHING about whether anything exists, is omitted from the browser projection, is not rendered in
+     the UI, and is not mentioned to the grader. It must NEVER be presented as "None on file".
+   * **explicit `[]`** — the navigator checked and there is NOTHING ON FILE. This is real, decisive
+     information (a missing order is frequently what the whole call turns on), so it survives
+     validation → attempt snapshot → relay projection → UI → grader and renders "None on file" in both
+     the UI and the grader context. It also COUNTS as supplied chart content, so a scenario whose only
+     chart facts are explicit negatives is legitimately chart-dependent.
+   * **non-empty array** — exactly these items are visible on file.
+   `validateNavigatorChartState` preserves `null` vs `[]` (it no longer coerces a missing list to `[]`),
+   and one shared `sanitizeNavigatorChartState` produces the projection consumed by BOTH the browser and
+   the grader, so the navigator and the grader can never be shown different chart sections. Only a chart
+   supplying no sections at all (`null`, `{}`) is "absent" for the fail-closed rule in §0o.2.
 2. **Fail closed on an unusable chart-dependent scenario.** An OB/GYN scenario must declare an explicit
    `requiresNavigatorChartContext` boolean; when true it MUST carry a non-empty `navigatorChartState`.
    `validatePrivateScenario` rejects a chart-dependent scenario with no chart, the relay independently
@@ -75,8 +100,26 @@ unchanged, so historical bindings and Pediatrics are untouched.
    unmistakable meta/AI/safety-disclaimer role breaks; on a hit the attempt is forced to `needs_review`
    with a `simulated-caller-role-break` flag and a `qa.callerIntegrity` record. The navigator is never
    auto-failed because the simulated patient malfunctioned, and the detector never changes a rubric
-   verdict or a score. It is narrow — only explicit role/meta failure language, only caller turns —
-   and preserves legitimate patient speech (own symptoms, worries, what a clinician previously said).
+   verdict or a score.
+
+5a. **The role-break detector is TWO-TIER and high precision.** A false positive throws away a valid
+   navigator attempt, which is worse than missing an occasional malfunction (a supervisor reviews every
+   pilot call anyway), so the detector is deliberately conservative:
+   * **Tier 1 — a single match is conclusive**, but only for language a real patient would never
+     produce: AI/bot/language-model self-identification ("I am an AI", "As an AI language model",
+     "I am a chatbot", "I'm not a real person") and simulation/roleplay acknowledgment ("this is a
+     simulation", "this is a training scenario", "I'm roleplaying a patient").
+   * **Tier 2 — generic medical/safety disclaimers require a COMBINATION.** Each individual signal
+     (meta obligation framing, "I'm not a doctor/nurse/medical professional", "this isn't medical
+     advice/a diagnosis", a second-person directive to seek professional care) is something a real
+     caller legitimately says, so a break is declared only when ONE caller turn stacks at least TWO
+     DISTINCT signals — the structure of a recited AI-policy disclaimer, not of natural speech.
+   The reproduced pilot line stacks four signals and fires. These must NOT fire: "I'm not a doctor, but
+   I thought Dr. Weinstein said I needed a growth scan.", "I'm not a nurse, so I don't know what that
+   order means.", "I'm required to tell you my insurance changed.", and "My doctor told me to see a
+   healthcare professional if the bleeding got worse." (reported speech carries no second-person
+   directive, so it is not a signal at all). Only CALLER turns are scanned. Keep this detector short —
+   it is a narrow fail-safe, not a content classifier.
 
 ## 0k. Canonical identity chronology and live gate (2026-07-22, correction pass #4)
 

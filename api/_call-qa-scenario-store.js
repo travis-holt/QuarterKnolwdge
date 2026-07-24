@@ -47,6 +47,25 @@ function unique(items) {
 // Scalars are optional single lines; list fields are arrays of short fact
 // strings. Every value is a chart FACT, never a grading instruction, correct
 // action, or scoring note.
+//
+// ── PRESENCE SEMANTICS (three distinct states — never collapse them) ─────────
+//
+// A chart section has THREE meaningfully different states, and confusing any two
+// of them fabricates information the scenario author never asserted:
+//
+//   1. MISSING / null  — this section is NOT part of the simulated information
+//      available for this scenario. It says NOTHING about whether anything
+//      exists. It must never be rendered, described, or reasoned about, and it
+//      must NEVER be presented as "None on file".
+//   2. EXPLICIT []     — the navigator checked this section and there is NOTHING
+//      ON FILE. This is REAL, decisive information ("no active orders" is often
+//      the single fact the whole call turns on) and must survive end to end.
+//   3. NON-EMPTY array — exactly these items are visible on file.
+//
+// The pipeline preserves that distinction at every hop:
+//   validatePrivateScenario → attempt snapshot → relay projection → UI → grader.
+// `null` stays `null` (omitted downstream); `[]` stays `[]` (rendered "None on
+// file"); a populated array keeps its sanitized items.
 export const NAVIGATOR_CHART_SCALAR_FIELDS = Object.freeze(['summary', 'planRto']);
 export const NAVIGATOR_CHART_LIST_FIELDS = Object.freeze([
   'activeOrders', 'openEncounters', 'futureAppointments', 'otherFacts',
@@ -60,6 +79,7 @@ export function validateNavigatorChartState(raw, scenarioId) {
   const chart = {};
   for (const field of NAVIGATOR_CHART_SCALAR_FIELDS) {
     const value = raw[field];
+    // Absent scalar → null (unavailable), never an empty string.
     if (value === undefined || value === null) { chart[field] = null; continue; }
     if (!nonEmptyString(value)) {
       throw new Error(`Private Call QA navigator chart ${field} is invalid for ${scenarioId}.`);
@@ -68,22 +88,52 @@ export function validateNavigatorChartState(raw, scenarioId) {
   }
   for (const field of NAVIGATOR_CHART_LIST_FIELDS) {
     const value = raw[field];
-    if (value === undefined || value === null) { chart[field] = []; continue; }
+    // ABSENT is NOT "none on file": a missing section stays null so nothing
+    // downstream can claim the navigator saw an empty section they never saw.
+    if (value === undefined || value === null) { chart[field] = null; continue; }
     if (!stringArray(value, { allowEmpty: true })) {
       throw new Error(`Private Call QA navigator chart ${field} is invalid for ${scenarioId}.`);
     }
+    // An explicit [] is PRESERVED — it is the author asserting "nothing on file".
     chart[field] = [...value];
   }
   return chart;
 }
 
-// True when the curated chart carries at least one visible fact. A scenario that
-// declares it REQUIRES chart context must expose a non-empty chart, otherwise the
-// navigator would be graded on chart state they were never shown.
+// True when the curated chart SUPPLIES at least one navigator-visible section.
+//
+// An explicit empty list COUNTS: "no active orders on file" / "no future
+// appointment on file" is frequently the decisive chart fact a correct
+// no-booking workflow depends on, so a scenario whose whole point is an absent
+// order is legitimately chart-dependent. Only a chart that supplies NOTHING
+// (null, {}, or every section missing) is treated as absent — that is the case
+// that must fail closed when `requiresNavigatorChartContext` is true.
 export function navigatorChartStateHasContent(chart) {
-  if (!chart) return false;
-  return NAVIGATOR_CHART_SCALAR_FIELDS.some((field) => Boolean(chart[field]))
-    || NAVIGATOR_CHART_LIST_FIELDS.some((field) => Array.isArray(chart[field]) && chart[field].length > 0);
+  if (!chart || typeof chart !== 'object' || Array.isArray(chart)) return false;
+  return NAVIGATOR_CHART_SCALAR_FIELDS.some((field) => nonEmptyString(chart[field]))
+    || NAVIGATOR_CHART_LIST_FIELDS.some((field) => Array.isArray(chart[field]));
+}
+
+// The SAFE, presence-preserving projection of the navigator-visible chart.
+//
+// Shared by the browser `ready` projection and the grader context so the
+// navigator and the grader see EXACTLY the same sections. It carries only
+// curated navigator-observable facts — never grader-only data (gradingContext,
+// expectedActions, criticalMisses, scoringNotes, hiddenChartState,
+// callerCaseFile, rule ids). A section the scenario did not supply is OMITTED
+// (not emptied); an explicitly empty section is preserved as `[]`.
+// Returns null when the chart supplies no sections at all.
+export function sanitizeNavigatorChartState(chart) {
+  if (!chart || typeof chart !== 'object' || Array.isArray(chart)) return null;
+  const projection = {};
+  for (const field of NAVIGATOR_CHART_SCALAR_FIELDS) {
+    if (nonEmptyString(chart[field])) projection[field] = chart[field];
+  }
+  for (const field of NAVIGATOR_CHART_LIST_FIELDS) {
+    if (!Array.isArray(chart[field])) continue; // missing section stays missing
+    projection[field] = chart[field].filter((item) => nonEmptyString(item));
+  }
+  return Object.keys(projection).length ? projection : null;
 }
 
 // The caller's private contract: what the AI caller consistently knows and how

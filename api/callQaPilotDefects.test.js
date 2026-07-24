@@ -22,6 +22,7 @@ import {
 } from './live-relay.js';
 import {
   validatePrivateScenario, privateScenarioDocumentId,
+  validateNavigatorChartState, navigatorChartStateHasContent,
 } from './_call-qa-scenario-store.js';
 import { buildAttemptDoc } from './_call-qa-attempts.js';
 import {
@@ -182,13 +183,110 @@ describe('navigatorVisibleChartProjection', () => {
     expect(projected).not.toHaveProperty('gradingContext');
     expect(projected).not.toHaveProperty('expectedActions');
     expect(projected).not.toHaveProperty('hiddenChartState');
-    // Empty list fields are omitted (the panel renders "None on file" for them).
-    expect(projected).not.toHaveProperty('activeOrders');
+    // An EXPLICITLY empty section survives — "no active orders on file" is real
+    // information the navigator saw, not an absence of information.
+    expect(projected.activeOrders).toEqual([]);
   });
 
-  it('returns null when there is no navigator-visible chart', () => {
+  it('returns null only when the chart supplies no sections at all', () => {
     expect(navigatorVisibleChartProjection(null)).toBeNull();
-    expect(navigatorVisibleChartProjection({ activeOrders: [] })).toBeNull();
+    expect(navigatorVisibleChartProjection({})).toBeNull();
+    // An explicit [] IS a supplied section, so this is NOT an empty chart.
+    expect(navigatorVisibleChartProjection({ activeOrders: [] })).toEqual({ activeOrders: [] });
+  });
+});
+
+// ── BLOCKER 1: missing vs explicit-empty vs populated chart sections ──────────
+//
+// Three distinct states that must never collapse into one another:
+//   missing/null → the section is NOT part of this scenario (say nothing)
+//   []           → the navigator checked and there is NOTHING ON FILE
+//   [items]      → exactly these items are visible
+describe('navigator chart presence semantics (missing vs explicit empty)', () => {
+  const validateChart = (raw) => validateNavigatorChartState(raw, 'fixture');
+
+  it('keeps a MISSING list section null — never coerced to an empty section', () => {
+    const chart = validateChart({ planRto: 'RTO 4 weeks' });
+    expect(chart.planRto).toBe('RTO 4 weeks');
+    for (const field of ['activeOrders', 'openEncounters', 'futureAppointments', 'otherFacts']) {
+      expect(chart[field]).toBeNull();
+    }
+  });
+
+  it('preserves an EXPLICIT empty section distinctly from a missing one', () => {
+    const chart = validateChart({ activeOrders: [], futureAppointments: ['Prenatal visit 08/14'] });
+    expect(chart.activeOrders).toEqual([]);              // explicitly nothing on file
+    expect(chart.futureAppointments).toEqual(['Prenatal visit 08/14']);
+    expect(chart.openEncounters).toBeNull();             // never supplied
+  });
+
+  it('treats an explicit [] as meaningful chart content but a supply-nothing chart as absent', () => {
+    // "No active orders on file" can itself be the decisive chart fact.
+    expect(navigatorChartStateHasContent(validateChart({ activeOrders: [] }))).toBe(true);
+    expect(navigatorChartStateHasContent(validateChart({}))).toBe(false);
+    expect(navigatorChartStateHasContent(null)).toBe(false);
+  });
+
+  it('a scenario providing ONLY planRto tells neither the UI nor the grader "None on file"', () => {
+    const chart = validateChart({ planRto: 'RTO 4 weeks' });
+    const grader = renderNavigatorChartLines(chart).join('\n');
+    expect(grader).toMatch(/Plan \/ RTO: RTO 4 weeks/);
+    expect(grader).not.toMatch(/None on file/);
+    expect(grader).not.toMatch(/Active orders/);
+    expect(grader).not.toMatch(/Future appointments/);
+    // The browser projection must not invent the sections either.
+    const projected = navigatorVisibleChartProjection(chart);
+    expect(projected).toEqual({ planRto: 'RTO 4 weeks' });
+  });
+
+  it('renders "None on file" ONLY for a section the scenario explicitly emptied', () => {
+    const grader = renderNavigatorChartLines(validateChart({ activeOrders: [] })).join('\n');
+    expect(grader).toMatch(/Active orders: None on file/);
+    expect(grader).not.toMatch(/Open Telephone Encounters/);
+    expect(grader).not.toMatch(/Future appointments/);
+  });
+
+  it('a missing activeOrders section is never interpreted as "no active orders"', () => {
+    const grader = renderNavigatorChartLines(validateChart({ summary: 'Established OB patient.' })).join('\n');
+    expect(grader).not.toMatch(/Active orders/);
+    expect(grader).not.toMatch(/None on file/);
+  });
+
+  it('an explicit [] survives validation -> snapshot -> relay projection -> UI/grader', () => {
+    // 1. validation
+    const validated = validatePrivateScenario(
+      { ...structuredClone(GROWTH_SCENARIO), active: true },
+      { documentId: privateScenarioDocumentId(GROWTH_SCENARIO), department: 'obgyn' },
+    );
+    expect(validated.navigatorChartState.activeOrders).toEqual([]);
+    expect(validated.navigatorChartState.openEncounters).toEqual([]);
+
+    // 2. immutable attempt snapshot
+    const attempt = buildAttemptDoc({ navigatorId: 'n', name: 'N', department: 'obgyn', scenario: validated, liveModel: 'm' });
+    expect(attempt.scenarioSnapshot.navigatorChartState.activeOrders).toEqual([]);
+
+    // 3. relay projection (what the browser receives)
+    const projected = navigatorVisibleChartProjection(attempt.scenarioSnapshot.navigatorChartState);
+    expect(projected.activeOrders).toEqual([]);
+
+    // 4. UI + grader both read the SAME projection and render "None on file"
+    const grader = renderNavigatorChartLines(attempt.scenarioSnapshot.navigatorChartState).join('\n');
+    expect(grader).toMatch(/Active orders: None on file/);
+    expect(grader).toMatch(/Future appointments: None on file/);
+  });
+
+  it('accepts a chart-dependent scenario whose ONLY chart content is explicit negatives', () => {
+    // The reproduced pilot case: the decisive fact is that nothing is on file.
+    const data = {
+      ...structuredClone(GROWTH_SCENARIO),
+      navigatorChartState: { activeOrders: [], futureAppointments: [] },
+      active: true,
+    };
+    const result = validatePrivateScenario(data, {
+      documentId: privateScenarioDocumentId(data), department: 'obgyn',
+    });
+    expect(result.navigatorChartState.activeOrders).toEqual([]);
+    expect(result.requiresNavigatorChartContext).toBe(true);
   });
 });
 
@@ -204,10 +302,11 @@ describe('validatePrivateScenario navigator chart requirement (OB/GYN)', () => {
     expect(result.navigatorChartState).toMatchObject({ planRto: NAV_CHART.planRto });
   });
 
-  it('fails closed when a chart-dependent scenario has no navigator chart', () => {
+  it('fails closed when a chart-dependent scenario supplies NO chart sections at all', () => {
     expect(() => validate({ ...base(), navigatorChartState: null }))
       .toThrow(/requires a non-empty navigatorChartState/i);
-    expect(() => validate({ ...base(), navigatorChartState: { activeOrders: [] } }))
+    // `{}` supplies nothing — not even an explicit negative — so it is absent.
+    expect(() => validate({ ...base(), navigatorChartState: {} }))
       .toThrow(/requires a non-empty navigatorChartState/i);
   });
 
@@ -291,16 +390,95 @@ describe('grader context threads the navigator-visible chart', () => {
     expect(lines).toMatch(/No sonography or ultrasound order on file\./);
   });
 
-  it('includes a NAVIGATOR-VISIBLE CHART block and reframes hidden chart as grader-only', () => {
+  it('includes a NAVIGATOR-VISIBLE CHART block', () => {
     const text = buildTrustedGradingScenario({
       gradingContext: 'ctx', title: 't', workflowType: 'w', difficulty: 'medium',
       expectedActions: ['a'], criticalMisses: ['m'], scoringNotes: [],
-      hiddenChartState: { rto: '4 weeks' }, navigatorChartState: NAV_CHART,
+      navigatorChartState: NAV_CHART,
     });
     expect(text).toMatch(/NAVIGATOR-VISIBLE CHART/);
     expect(text).toMatch(/ONLY against these navigator-visible facts/i);
-    expect(text).toMatch(/grader ground-truth context ONLY/i);
-    expect(text).toMatch(/never penalize the navigator for not acting on a hidden fact/i);
+    expect(text).toMatch(/never assume what it contains/i);
+    // The silent-chart-clicks fairness rule applies with or without hidden state.
+    expect(text).toMatch(/Do not require the navigator to narrate silent chart clicks/i);
+  });
+
+  it('keeps the silent-chart-click fairness rule even with no navigator chart', () => {
+    const text = buildTrustedGradingScenario({
+      gradingContext: 'ctx', title: 't', workflowType: 'w', difficulty: 'medium',
+      expectedActions: ['a'], criticalMisses: ['m'], scoringNotes: [],
+      navigatorChartState: null,
+    });
+    expect(text).not.toMatch(/NAVIGATOR-VISIBLE CHART/);
+    expect(text).toMatch(/Do not require the navigator to narrate silent chart clicks/i);
+  });
+});
+
+// ── BLOCKER 2: hiddenChartState must never reach the Gemini grader ────────────
+//
+// The reproduced defect was that THE MODEL HELD CHART INFORMATION THE NAVIGATOR
+// DID NOT. That is enforced structurally — the facts are never handed over — not
+// by asking the model to ignore facts it has already been given.
+describe('hiddenChartState never reaches the model-visible grader context', () => {
+  const SECRET = 'SECRET_HIDDEN_CHART_TOKEN_9F31';
+  const scenarioWithSecret = () => ({
+    ...structuredClone(GROWTH_SCENARIO),
+    hiddenChartState: { sonographyOrder: null, auditToken: SECRET },
+  });
+
+  it('retains the hidden state in the trusted server-side attempt snapshot', () => {
+    const attempt = buildAttemptDoc({
+      navigatorId: 'n', name: 'N', department: 'obgyn', scenario: scenarioWithSecret(), liveModel: 'm',
+    });
+    // Server-side audit provenance is preserved …
+    expect(JSON.stringify(attempt.scenarioSnapshot.hiddenChartState)).toContain(SECRET);
+  });
+
+  it('excludes it from the navigator-visible chart and the browser payload', () => {
+    const projected = navigatorVisibleChartProjection(scenarioWithSecret().navigatorChartState);
+    expect(JSON.stringify(projected)).not.toContain(SECRET);
+  });
+
+  it('excludes it from buildTrustedGradingScenario even when passed directly', () => {
+    const text = buildTrustedGradingScenario({
+      gradingContext: 'ctx', title: 't', workflowType: 'w', difficulty: 'medium',
+      expectedActions: ['a'], criticalMisses: ['m'], scoringNotes: [],
+      hiddenChartState: { auditToken: SECRET },
+      navigatorChartState: NAV_CHART,
+    });
+    expect(text).not.toContain(SECRET);
+    expect(text).not.toMatch(/HIDDEN CHART FACTS/);
+  });
+
+  it('excludes it from the scenario context built from a stored attempt', () => {
+    const attempt = { id: 'att-1', ...buildAttemptDoc({ navigatorId: 'n', name: 'N', department: 'obgyn', scenario: scenarioWithSecret(), liveModel: 'm' }) };
+    const context = buildScenarioContextFromAttempt(attempt);
+    expect(context.gradingScenario).not.toContain(SECRET);
+  });
+
+  it('excludes it from EVERY Gemini message while the navigator-visible chart IS present', async () => {
+    const attempt = { id: 'att-1', ...buildAttemptDoc({ navigatorId: 'n', name: 'N', department: 'obgyn', scenario: scenarioWithSecret(), liveModel: 'm' }) };
+    const context = buildScenarioContextFromAttempt(attempt);
+    let captured = null;
+    await gradeCallQaTranscript(
+      { transcript: WRONG_BOOKING_TRANSCRIPT, scenarioContext: context, captureMetadata: { captureComplete: true }, transcriptMetadata: { captureStatus: 'captured' } },
+      {
+        keys: ['fixture-key'], graderModel: 'fixture-model',
+        sopContextForFresh: async () => 'Synthetic OB/GYN SOP context.',
+        // Capture EVERY argument the grader hands to Gemini, so nothing can slip
+        // through in a parameter this assertion did not inspect.
+        geminiWithRotation: async (...args) => {
+          captured = args;
+          return { ok: true, text: JSON.stringify(obgynResponse()), model: 'fixture-model' };
+        },
+      },
+    );
+    const everythingSentToGemini = JSON.stringify(captured);
+    expect(everythingSentToGemini).not.toContain(SECRET);
+    expect(everythingSentToGemini).not.toContain('HIDDEN CHART FACTS');
+    // …and the navigator-visible chart IS in the grader context.
+    expect(everythingSentToGemini).toContain('NAVIGATOR-VISIBLE CHART');
+    expect(everythingSentToGemini).toContain('Active orders: None on file');
   });
 
   it('grader instructions carry the sched-recap NA and listen-gather caller-observable rules; prompt is v9', () => {
@@ -364,6 +542,9 @@ describe('caller system instruction is caller-only with explicit no-disclaimer r
 });
 
 describe('detectCallerRoleBreak', () => {
+  const said = (text) => detectCallerRoleBreak([{ role: 'patient', text }]);
+
+  // ── POSITIVE: unmistakable role breaks that MUST fire ──────────────────────
   it('flags the reproduced AI/safety-disclaimer statement', () => {
     const transcript = [
       { role: 'navigator', text: 'How can I help?' },
@@ -372,16 +553,52 @@ describe('detectCallerRoleBreak', () => {
     const result = detectCallerRoleBreak(transcript);
     expect(result.detected).toBe(true);
     expect(result.turnIndex).toBe(1);
+    expect(result.category).toBe('policy-disclaimer');
+    // The reproduced line stacks several independent disclaimer signals.
+    expect(result.signals.length).toBeGreaterThanOrEqual(2);
   });
 
-  it('flags an explicit AI self-identification', () => {
-    expect(detectCallerRoleBreak([{ role: 'patient', text: 'As an AI language model, I cannot do that.' }]).detected).toBe(true);
+  it.each([
+    ['AI self-identification', 'As an AI language model, I cannot do that.'],
+    ['first-person AI claim', "Actually, I'm an AI assistant and cannot book that."],
+    ['chatbot claim', 'I am a chatbot, so I do not have a real chart.'],
+    ['simulation acknowledgment', 'Just so you know, this is a simulation.'],
+    ['training-scenario acknowledgment', 'This is a training scenario, correct?'],
+    ['roleplay acknowledgment', "I'm roleplaying a patient for this exercise."],
+    ['not-a-real-person claim', "I'm not a real person, I should mention."],
+  ])('flags a single unmistakable meta break: %s', (_label, text) => {
+    expect(said(text).detected).toBe(true);
   });
 
-  it('does NOT flag legitimate patient statements about symptoms or what a clinician said', () => {
+  it('flags a shorter recited disclaimer that still stacks two signals', () => {
+    const result = said("I'm not a medical professional and this is not medical advice.");
+    expect(result.detected).toBe(true);
+    expect(result.category).toBe('policy-disclaimer');
+  });
+
+  // ── NEGATIVE: normal patient speech that must NEVER invalidate an attempt ──
+  // Each of these carries at most ONE disclaimer signal, which is exactly how a
+  // real caller talks. Firing here would throw away a valid navigator attempt.
+  it.each([
+    ['not-a-doctor aside', "I'm not a doctor, but I thought Dr. Weinstein said I needed a growth scan."],
+    ['not-a-nurse aside', "I'm not a nurse, so I don't know what that order means."],
+    ['required-to-tell about insurance', "I'm required to tell you my insurance changed."],
+    ['reported clinician instruction', 'My doctor told me to see a healthcare professional if the bleeding got worse.'],
+    ['prior-provider instruction', 'My provider said I need a growth ultrasound and told me to call and schedule it.'],
+    ['symptom description', 'I have been having cramping since yesterday and some spotting.'],
+    ['uncertainty', "I'm not sure what my due date is, my provider told me to call."],
+    ['worry', 'I am really worried about the baby, I have not felt her move much today.'],
+    ['not-a-doctor plus reported advice', "I'm not a doctor, but my midwife told me to see a healthcare professional if it got worse."],
+    ['habitual care statement', 'I always see a healthcare professional for this kind of thing.'],
+  ])('does NOT flag normal patient speech: %s', (_label, text) => {
+    expect(said(text).detected).toBe(false);
+  });
+
+  it('does NOT flag a caller repeating several legitimate statements across turns', () => {
     expect(detectCallerRoleBreak([
       { role: 'patient', text: 'My doctor said I need a growth ultrasound, and I am worried about the baby.' },
-      { role: 'patient', text: "I'm not sure what my due date is, my provider told me to call." },
+      { role: 'patient', text: "I'm not a doctor so I don't really understand the order." },
+      { role: 'patient', text: 'She told me to see a healthcare professional if anything changed.' },
     ]).detected).toBe(false);
   });
 
@@ -389,7 +606,13 @@ describe('detectCallerRoleBreak', () => {
     // Only CALLER turns can trigger the fail-safe.
     expect(detectCallerRoleBreak([
       { role: 'navigator', text: 'I cannot give medical advice; let me route this to the clinical team.' },
+      { role: 'navigator', text: "I'm not a medical professional and this is not medical advice, so I will route this." },
     ]).detected).toBe(false);
+  });
+
+  it('is safe on malformed input', () => {
+    expect(detectCallerRoleBreak(null).detected).toBe(false);
+    expect(detectCallerRoleBreak([null, { role: 'patient' }, { role: 'patient', text: '  ' }]).detected).toBe(false);
   });
 });
 
@@ -423,6 +646,7 @@ describe('caller role-break forces needs_review without penalizing the navigator
 });
 
 // ── E. Invariants preserved ───────────────────────────────────────────────────
+// (v9 live-contract-smoke case coverage lives in api/liveContractSmoke.test.js.)
 
 describe('OB/GYN rubric invariants unchanged by the pilot fix', () => {
   it('keeps 100 points, 85 pass, 5-point closing, and the verification identifiers', () => {

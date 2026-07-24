@@ -49,7 +49,7 @@ import { verifySocketToken } from './_auth.js';
 import { getFirebaseAdmin } from './_firebase-admin.js';
 import { clientIp } from './_rate-limit.js';
 import { buildSystemInstruction } from './interview-turn.js';
-import { selectServerCallQaScenario } from './_call-qa-scenario-store.js';
+import { selectServerCallQaScenario, sanitizeNavigatorChartState } from './_call-qa-scenario-store.js';
 // Scored Call QA is only available for rollout departments (currently OB/GYN
 // only). Assessed-but-not-in-rollout departments (Pediatrics) keep practice
 // mode; a scored test start for them fails closed here, server-side.
@@ -117,17 +117,14 @@ const activeByIp = new Map();
 // `validatePrivateScenario`), never grader-only data (gradingContext,
 // expectedActions, criticalMisses, scoringNotes, hiddenChartState, callerCaseFile,
 // rule ids). Returns null when the scenario carries no navigator-visible chart.
+//
+// PRESENCE-PRESERVING: a section the scenario never supplied is OMITTED, while an
+// explicitly empty section survives as `[]` so the UI can render "None on file"
+// for it. The browser and the grader consume the SAME projection, so the
+// navigator can never be judged against a section they were not shown. See
+// `sanitizeNavigatorChartState` for the three-state contract.
 export function navigatorVisibleChartProjection(chart) {
-  if (!chart || typeof chart !== 'object' || Array.isArray(chart)) return null;
-  const projection = {};
-  for (const field of ['summary', 'planRto']) {
-    if (typeof chart[field] === 'string' && chart[field].trim()) projection[field] = chart[field];
-  }
-  for (const field of ['activeOrders', 'openEncounters', 'futureAppointments', 'otherFacts']) {
-    const list = Array.isArray(chart[field]) ? chart[field].filter((item) => typeof item === 'string' && item.trim()) : [];
-    if (list.length) projection[field] = [...list];
-  }
-  return Object.keys(projection).length ? projection : null;
+  return sanitizeNavigatorChartState(chart);
 }
 
 function send(sock, obj) {
