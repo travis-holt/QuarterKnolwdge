@@ -11,9 +11,9 @@
 > [§8 Current System State](#8-current-system-state) and [§15 Current Priorities](#15-current-priorities)
 > accurate at all times.
 >
-> **Current release evidence (2026-07-24).** Draft PR #41 remains **NOT merged, NOT deployed, and
-> draft**; it is **READY TO MERGE FOR A CONTROLLED SUPERVISOR-REVIEWED OB/GYN PILOT, subject to final
-> validation and final independent merge authorization**. The complete dedicated non-production v8 live-contract smoke passed all **20/20**
+> **Current release evidence (2026-07-24).** PR #41 is **MERGED** at
+> `107817809f72b421b0d8bf8492e65981253099a3`; it is **NOT deployed**. The merged runtime supports a
+> controlled supervisor-reviewed OB/GYN pilot. The complete dedicated non-production v8 live-contract smoke passed all **20/20**
 > synthetic cases with exit 0 and exact `LIVE_CONTRACT_SMOKE_VERIFIED` marker. The owner approved
 > the implemented OB/GYN rubric: no survey; first name + last name + DOB verification
 > (phone/address never substitute); caller-volunteered identifiers and authorized third-party
@@ -2697,13 +2697,13 @@ of this file on 2026-07-07 to cut per-session context cost (it was ~55% of the f
 
 ## 8. Current System State
 
-- **PR #41 controlled-pilot merge posture (2026-07-24):** **READY TO MERGE FOR A CONTROLLED
-  SUPERVISOR-REVIEWED OB/GYN PILOT, subject to final validation and final independent merge
-  authorization.** The live v8 contract gate passed 20/20 and owner rubric approval is recorded.
-  The pilot is **NOT HUMAN-CALIBRATED FOR AUTOMATION**: readiness remains `INSUFFICIENT_DATA`, no
-  automatic or final employee decision is authorized, and supervisor review remains authoritative.
-  Genuine sanitized navigator attempts will form the post-merge calibration population; calibration
-  thresholds and version/provenance separation are unchanged.
+- **PR #41 controlled-pilot merge status (2026-07-24):** **MERGED** as
+  `107817809f72b421b0d8bf8492e65981253099a3`; deployment remains a separate action. The live v8
+  contract gate passed 20/20 and owner rubric approval is recorded. The pilot is **NOT
+  HUMAN-CALIBRATED FOR AUTOMATION**: readiness remains `INSUFFICIENT_DATA`, no automatic or final
+  employee decision is authorized, and supervisor review remains authoritative. Genuine sanitized
+  navigator attempts will form the post-merge calibration population; calibration thresholds and
+  version/provenance separation are unchanged.
 
 - **PR #41 correction pass #4 (2026-07-22, DRAFT — not merged/deployed/ready):** identity is now
   one discrete patient candidate or one uninterrupted field-answer sequence, not a union of name
@@ -3705,14 +3705,13 @@ npm run test:e2e     # run the Playwright browser tests (auto-builds + starts th
 ## 15. Current Priorities
 
 1. **Maintain this CLAUDE.md** on every change (highest standing priority).
-1a. **OPEN DRAFT PR — department-based Call QA rubric profiles (2026-07-21).** Not merged, not
-   deployed, no migration, no production write, no private-bank change. Merge preparation:
-   - **Controlled-pilot merge policy (2026-07-24).** The PR is ready to merge for a controlled,
-     supervisor-reviewed OB/GYN pilot once final validation and final independent merge
-     authorization are complete. Human calibration is an automation-readiness gate, not a
-     prerequisite to landing this pilot. Readiness remains `INSUFFICIENT_DATA`; no automatic or
-     final employee decision is authorized. Post-merge, genuine sanitized navigator attempts begin
-     the calibration population; thresholds are not lowered.
+1a. **MERGED PR #41 — department-based Call QA rubric profiles (2026-07-24).** Merged as
+   `107817809f72b421b0d8bf8492e65981253099a3`; deployment remains separate. No migration,
+   production write, or private-bank change occurred in the merge. Post-merge pilot follow-up:
+   - **Controlled-pilot calibration policy.** Human calibration is an automation-readiness gate,
+     not a prerequisite to the merged controlled supervisor-reviewed OB/GYN pilot. Readiness
+     remains `INSUFFICIENT_DATA`; no automatic or final employee decision is authorized. Genuine
+     sanitized navigator attempts begin the calibration population; thresholds are not lowered.
    - **Owner sign-off on the OB/GYN rubric content — complete 2026-07-24.** The owner approved
      the implemented policy: no patient survey; first name + last name + DOB verification;
      phone/address never substitute; caller-volunteered identifiers and authorized third-party

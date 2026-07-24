@@ -1,5 +1,16 @@
 ﻿# Development History - Knowledge Check
 
+## 2026-07-24 — PR #41 merged for controlled supervisor-reviewed OB/GYN pilot
+
+PR #41 merged to `main` as `107817809f72b421b0d8bf8492e65981253099a3` after accepted review,
+exact-head CI success, 20/20 `LIVE_CONTRACT_SMOKE_VERIFIED`, and recorded owner approval. The merge
+does not deploy or provision production/private scenario data.
+
+The controlled pilot is not human-calibrated for automation: readiness remains
+`INSUFFICIENT_DATA`, calibration thresholds are unchanged, automatic/final employee decisions remain
+unauthorized, and supervisor review remains authoritative. Genuine sanitized navigator attempts will
+be independently adjudicated to build the v8 OB/GYN calibration population.
+
 ## 2026-07-24 — PR #41 controlled-pilot merge-policy clarification
 
 **Status: Draft PR #41 remains unmerged, undeployed, and draft.** Independent review confirmed
