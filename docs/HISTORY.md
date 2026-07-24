@@ -1,5 +1,18 @@
 ﻿# Development History - Knowledge Check
 
+## 2026-07-24 — PR #42 merged after final independent review
+
+**Status: merged to `main` as `942c0860c7a59a45cbf54608e62fa094a8a6e2a1`; NOT deployed.** PR #42 merged
+only after final independent review, exact-head CI success, and separate current-session merge
+authorization. The merge includes the previously completed private-scenario compatibility update:
+15 active OB/GYN documents validate against the new schema, all declare
+`requiresNavigatorChartContext: true`, and the owner-approved explicit no-order chart state remains
+limited to its intended scenario. The compatibility apply was 0 creates, 15 updates, and 0 deactivations.
+
+No private scenario content was committed or published; no historical grades/results changed; and no
+calibration evidence or threshold changed. Readiness remains `INSUFFICIENT_DATA`, with automatic/final
+employee decisions still unauthorized. Deployment remains a separate explicit action.
+
 ## 2026-07-24 — PR #42 private-scenario compatibility provisioning complete
 
 **Status: PR #42 remains DRAFT, unmerged, and undeployed.** The recovered ignored local manifest was
