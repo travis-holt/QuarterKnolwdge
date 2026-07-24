@@ -1,5 +1,21 @@
 ﻿# Development History - Knowledge Check
 
+## 2026-07-24 — PR #42 private-scenario compatibility provisioning complete
+
+**Status: PR #42 remains DRAFT, unmerged, and undeployed.** The recovered ignored local manifest was
+compatibility-authored without publishing scenario content. All **15 active OB/GYN** documents now
+validate against the PR #42 schema and explicitly declare `requiresNavigatorChartContext: true`. One
+owner-confirmed scenario intentionally uses an explicit-empty relevant-order section; missing sections
+elsewhere remain omitted.
+
+The trusted provisioning tool dry-run and apply each reported **0 creates, 15 updates, 0 deactivations**
+in `callQaScenariosPrivate`. Post-apply verification confirmed 15/15 production-validator passes, exact
+agreement with the ignored local manifest, and no unintended creation or deactivation. The current
+pre-PR-42 runtime source ignores these additive fields. No private scenario content was committed or
+published, no historical grades/results changed, and calibration remains `INSUFFICIENT_DATA`. This
+data-only step did not rerun the paid live-contract smoke, merge, deploy, mark ready, or enable
+auto-merge. Final independent merge review is next; merge requires separate explicit authorization.
+
 ## 2026-07-24 — Call QA pilot correction, independent-review pass (chart presence semantics, hidden-state removal, detector precision, real v9 live coverage)
 
 **Status: same correction PR (`fix/call-qa-pilot-observability-defects`, PR #42). Still NOT merged,

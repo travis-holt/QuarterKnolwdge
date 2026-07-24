@@ -12,7 +12,8 @@
 > accurate at all times.
 >
 > **Current implementation update (2026-07-24) — CALL QA PILOT DEFECT CORRECTION (prompt v9).**
-> **NEW correction PR from current `main` (`da23a45`); NOT merged, NOT deployed, NOT provisioned.**
+> **Correction PR from current `main` (`da23a45`); NOT merged and NOT deployed.** Private-scenario
+> compatibility provisioning completed on 2026-07-24; final independent merge review is next.
 > Based on the FIRST real reproduced post-PR-41 Call QA pilot attempt. Four defects fixed at the
 > architecture level: **(1) assessment observability** — a scored decision could depend on chart facts
 > the navigator was never shown (a caller wanted a Growth ultrasound; there was no visible order/appt,
@@ -103,6 +104,15 @@
 > if any unresolved scenario is active", authoring stopped, the manifest was left unmodified, and no dry
 > run or apply occurred. **PR #42 still must not be merged or deployed until compatibility lands**, since
 > the provisioned population predates the schema and fails closed.
+> **Compatibility provisioning completed later on 2026-07-24 (supersedes the blocked status above).**
+> The ignored recovered manifest was locally authored and validated 15/15. One owner-confirmed
+> scenario deliberately carries `activeOrders: []`; all other absent sections remain omitted. The trusted
+> tool dry-run and apply were **0 creates, 15 updates, 0 deactivations** in `callQaScenariosPrivate`.
+> Post-apply all 15 active OB/GYN documents validate and exactly match the ignored local manifest; the
+> pre-PR-42 runtime source ignores the additive fields. No private scenario content was committed or
+> published, no results or historical grades changed, readiness remains `INSUFFICIENT_DATA`, and PR #42
+> remains DRAFT, unmerged, and undeployed. Provisioning did not authorize merge; final independent review
+> is the next step.
 > See docs/HISTORY.md 2026-07-24 and docs/GRADING_INVARIANTS.md §0o.
 >
 > **Prior release evidence (2026-07-24).** PR #41 is **MERGED** at
@@ -3954,8 +3964,14 @@ npm run test:e2e     # run the Playwright browser tests (auto-builds + starts th
    fix — see [§12](#12-bugs--known-issues) "Client-authoritative MCQ/Spot scoring".
 
 **Active work items:**
-- **Navigator-visible chart reprovisioning (2026-07-24, REQUIRED before scored OB/GYN runs after this
-  correction PR deploys):** every provisioned OB/GYN scenario in `callQaScenariosPrivate` must add an
+- **Navigator-visible chart compatibility (2026-07-24, COMPLETE):** all 15 active OB/GYN documents in
+  `callQaScenariosPrivate` now declare `requiresNavigatorChartContext: true` with validated curated
+  chart state. The compatibility-only dry run and apply made 0 creates, 15 updates, and 0 deactivations;
+  the pre-PR-42 runtime source ignores the additive fields. No private content, results, historical
+  grades, calibration evidence, deployment, or merge changed. Next: final independent merge review and
+  separate explicit merge authorization.
+
+  - **Historical pre-provisioning instruction:** every provisioned OB/GYN scenario in `callQaScenariosPrivate` must add an
   explicit `requiresNavigatorChartContext` boolean and, where the correct workflow depends on chart
   facts, a curated non-empty `navigatorChartState` (current plan/RTO, active orders, open TEs, future
   appointments, other visible facts — never a correct action or grader-only data). Until a scenario is
