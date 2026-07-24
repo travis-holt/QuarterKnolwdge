@@ -372,8 +372,11 @@ prints `LIVE_CONTRACT_SMOKE_NOT_RUN`. Developers may use `--allow-skip`, which e
 verify orchestration only and must never be reported as a successful live model run.
 
 The current committed calibration population still contains no qualifying human-pilot evidence,
-so readiness remains `INSUFFICIENT_DATA`. Numeric weighting remains an owner decision; this pass
-does not change criteria, points, category weights, the 85 threshold, or auto-fail definitions.
+so readiness remains `INSUFFICIENT_DATA`. On 2026-07-24, the owner approved the implemented
+OB/GYN rubric: 100 total points, 85 pass, verification at 10/100, and an unproven verification
+miss routed to `needs_review` rather than automatic zero; a positively verified HIPAA auto-fail may
+still zero the call. This records policy authority only and does not change criteria, weights,
+thresholds, auto-fail definitions, or readiness requirements.
 
 ## Optional live calibration
 

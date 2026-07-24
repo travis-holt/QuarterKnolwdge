@@ -11,6 +11,17 @@
 > [§8 Current System State](#8-current-system-state) and [§15 Current Priorities](#15-current-priorities)
 > accurate at all times.
 >
+> **Current release evidence (2026-07-24).** Draft PR #41 remains **NOT merged, NOT deployed, and
+> NOT ready**. The complete dedicated non-production v8 live-contract smoke passed all **20/20**
+> synthetic cases with exit 0 and exact `LIVE_CONTRACT_SMOKE_VERIFIED` marker. The owner approved
+> the implemented OB/GYN rubric: no survey; first name + last name + DOB verification
+> (phone/address never substitute); caller-volunteered identifiers and authorized third-party
+> callers count; conditional empathy/hold; explicit further-assistance closing worth 5; 100 total
+> points; 85 pass; verification stays 10/100; an unproven verification miss requires
+> `needs_review`, while a positively verified HIPAA auto-fail may still zero the call. Genuine
+> independently adjudicated human-pilot evidence remains required; readiness is
+> `INSUFFICIENT_DATA`. No behavior, production-data, deployment, or ready-state change occurred.
+>
 > **Last updated:** 2026-07-23 (**LIVE-CONTRACT EVIDENCE CORRECTION — prompt v8.**
 > Draft PR #41 remains **NOT merged, NOT deployed, and NOT ready**. A real dedicated-key,
 > non-production live-contract run reproduced malformed `MET` responses with empty evidence. The
@@ -21,9 +32,9 @@
 > remains `qa-rubric-obgyn-v1` (100 points, 85 pass); parser, DOB, disclosure, calibration
 > thresholds, and scoring are unchanged. The targeted live cases for separate one-word identity and
 > an authorized third party passed under v8. The full v8 smoke passed 18/20 cases but cases 15 and
-> 20 hit upstream HTTP 429, so it emitted FAILED and does not satisfy the gate. v8 is a new
+> 20 hit upstream HTTP 429, so the earlier full run emitted FAILED and did not satisfy the gate. v8 is a new
 > calibration population; no human fixtures exist, readiness remains `INSUFFICIENT_DATA`, and
-> dedicated capacity plus owner decisions are still required. No migration, production write,
+> genuine human evidence remains required. No migration, production write,
 > private provisioning, historical rewrite, merge, deploy,
 > auto-merge, or ready-state change. See docs/HISTORY.md. ·
 > **Prior update:** 2026-07-23 (**CORRECTION PASS #7 FOLLOW-UP 2 — auxiliary confirmation structure.**
@@ -3684,17 +3695,20 @@ npm run test:e2e     # run the Playwright browser tests (auto-builds + starts th
 1. **Maintain this CLAUDE.md** on every change (highest standing priority).
 1a. **OPEN DRAFT PR — department-based Call QA rubric profiles (2026-07-21).** Not merged, not
    deployed, no migration, no production write, no private-bank change. Before it can ship:
-   - **Owner sign-off on the OB/GYN rubric content** — specifically that OB/GYN runs no patient
-     survey, that verification is exactly first name + last name + DOB with phone/address never
-     substituting, and that empathy/hold-narration should be conditional rather than always
-     required. These are floor-policy decisions encoded as data, not engineering choices.
+   - **Owner sign-off on the OB/GYN rubric content — complete 2026-07-24.** The owner approved
+     the implemented policy: no patient survey; first name + last name + DOB verification;
+     phone/address never substitute; caller-volunteered identifiers and authorized third-party
+     callers count; empathy and hold narration are conditional; explicit further-assistance
+     closing is 5 points; the rubric remains 100 points with an 85 pass; verification remains
+     10/100; an unproven verification miss is `needs_review`, while a positively verified HIPAA
+     auto-fail may zero the call. No scoring behavior changed in recording this decision.
    - **Re-baseline OB/GYN calibration.** `qa-rubric-obgyn-v1` is a real rubric change, so any
      future OB/GYN human-pilot evidence gathered under `qa-rubric-v2` is a different population
      and cannot be pooled with it. Current readiness is unaffected only because there are zero
      human-pilot fixtures today.
-   - **A live OB/GYN Call QA smoke** after deploy, confirming the OB/GYN profile is the one that
-     grades (check `qa.gradingMetadata.rubricDepartment`/`rubricVersion` on the attempt) and that
-     the supervisor panel shows "Graded with: OB/GYN rubric (qa-rubric-obgyn-v1)".
+   - **Live-contract gate — complete 2026-07-24.** Dedicated non-production v8 smoke passed 20/20
+     synthetic cases with exit 0 and exact `LIVE_CONTRACT_SMOKE_VERIFIED`; it has no calibration
+     or deployment authority. The separate post-deploy browser smoke remains outstanding.
    - **Known limitation to watch:** the protected-disclosure detector behind
      `verify-before-access` is a deterministic pattern set (nine categories: appointments,
      prior visits, chart contents, orders, provider notes, results, medication, account,
@@ -3709,11 +3723,9 @@ npm run test:e2e     # run the Playwright browser tests (auto-builds + starts th
      for confirmation ("your last name is Alvarez, correct?" / "Yes.") does not by itself
      establish identity. That is intentional fail-closed behavior, and it is the most likely
      source of avoidable false negatives to watch for in the live smoke.
-   - **Numeric weighting is unchanged and is a standing product decision.** Missing
-     verification can still yield a numeric score above 85 (verification is 10 of 100 points);
-     safety-critical misses prevent a confident pass and force `needs_review`; a verified HIPAA
-     auto-fail still zeroes the score. Re-weighting was explicitly out of scope for both
-     correction passes and needs owner sign-off.
+   - **Numeric weighting is owner-approved.** Verification remains 10 of 100 points. Missing
+     verification can still yield a numeric score above 85, but an unproven verification miss
+     requires `needs_review`; a positively verified HIPAA auto-fail may still zero the score.
    - **Prompt version `call-qa-grader-v8`** (v3 → v4 → v5 → v6 → v7 → v8). v4 added profile-rendered evidence
      role rules, `[n]`-indexed transcript turns and the structured `identityEvidence` array; v5
      added the patient-identity ownership rules for name claims, explicit spoken-DOB guidance,

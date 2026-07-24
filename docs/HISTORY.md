@@ -1,5 +1,24 @@
 ﻿# Development History - Knowledge Check
 
+## 2026-07-24 — Live-contract gate verified; OB/GYN rubric owner sign-off recorded
+
+**Status: Draft PR #41 remains unmerged, undeployed, and not ready.** The complete dedicated
+non-production `npm run qa:live-contract-smoke` run exited 0 and printed
+`LIVE_CONTRACT_SMOKE_VERIFIED - 20/20 cases satisfied the call-qa-grader-v8 contract.` It used
+only the dedicated smoke-key pool, synthetic transcripts, no Firestore or private scenario bank,
+and has no calibration or automation authority.
+
+The owner approved the implemented OB/GYN rubric with no behavior change: no survey; patient first
+name, last name, and DOB for verification; phone/address never substitute; caller-volunteered
+identifiers and authorized third-party callers count; conditional empathy and hold narration;
+explicit further-assistance closing at 5 points; rubric total 100; pass threshold 85; and
+verification weighting 10/100. A verification miss without a proven HIPAA disclosure remains
+`needs_review`, not automatic zero; a positively verified HIPAA auto-fail may zero the call.
+
+Genuine sanitized independently adjudicated human-pilot fixtures remain absent, so calibration
+readiness remains `INSUFFICIENT_DATA`. No calibration fixture, score, prompt, parser, rubric,
+weight, threshold, production data, or deployment changed.
+
 ## 2026-07-23 — Call QA live-contract evidence correction (prompt v8)
 
 **Status: Draft PR #41 remains unmerged, undeployed, and not ready.** A real non-production
