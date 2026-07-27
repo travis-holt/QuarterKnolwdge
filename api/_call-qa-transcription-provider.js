@@ -246,14 +246,38 @@ export function buildTranscriptionProviderDeps({
   const provider = callQaTranscriptionProvider(env);
   let scribe = null;
   let turnTimer = null;
+  let released = false;
+
+  // This listener is registered while the adapter is being built, before the
+  // relay gets control of the socket. That matters because handleConnection()
+  // can shut the client down after selectScenario() but before createUpstream().
+  // Cleanup is intentionally idempotent: relay upstream teardown and socket
+  // close/error may all race each other, but Scribe is closed at most once.
+  const release = () => {
+    if (released) return;
+    released = true;
+    if (turnTimer) { clearTimer(turnTimer); turnTimer = null; }
+    if (scribe) {
+      try { scribe.close(); } catch {}
+    }
+  };
+
+  if (typeof client?.on === 'function') {
+    client.on('close', release);
+    client.on('error', release);
+  }
 
   const stopForScribeFailure = (err) => {
+    if (released) return;
     console.warn(`[call-qa-transcription] ElevenLabs Scribe failed: ${err?.message ?? err}`);
     safeSend(client, {
       type: 'error',
       code: 'call-qa-transcription-unavailable',
       message: 'The Call QA transcription service disconnected. This attempt was not scored; please retake it.',
     });
+    // Close Scribe intentionally before closing the client so its own socket-close
+    // event cannot re-enter the fatal path or report another error to a gone client.
+    release();
     try { client?.close(); } catch {}
   };
 
@@ -267,7 +291,18 @@ export function buildTranscriptionProviderDeps({
       if (provider === CALL_QA_TRANSCRIPTION_PROVIDERS.ELEVENLABS) {
         const apiKey = String(env?.ELEVENLABS_API_KEY ?? '').trim();
         if (!apiKey) throw new Error('ELEVENLABS_API_KEY is required when CALL_QA_TRANSCRIPTION_PROVIDER=elevenlabs.');
-        scribe = await openScribe({ apiKey, department: scenario.department, env });
+        if (released) throw new Error('Call QA client disconnected before ElevenLabs Scribe could start.');
+
+        // Keep the resolved session local until the await completes. If the client
+        // disappears during the connection handshake, release() has already marked
+        // the adapter disposed; close the just-resolved authenticated socket
+        // immediately instead of orphaning it.
+        const openedScribe = await openScribe({ apiKey, department: scenario.department, env });
+        if (released) {
+          try { openedScribe.close(); } catch {}
+          throw new Error('Call QA client disconnected while ElevenLabs Scribe was starting.');
+        }
+        scribe = openedScribe;
       }
 
       return {
@@ -332,8 +367,7 @@ export function buildTranscriptionProviderDeps({
           gemini.send(payload);
         },
         close() {
-          if (turnTimer) { clearTimer(turnTimer); turnTimer = null; }
-          try { scribe.close(); } catch {}
+          release();
           try { gemini.close(); } catch {}
         },
       };
@@ -349,6 +383,9 @@ export function attachLiveRelayWithTranscriptionProvider(server, options = {}) {
   wss.on('connection', (client, req) => {
     let deps;
     try {
+      // buildTranscriptionProviderDeps registers close/error disposal before this
+      // returns, so handleConnection cannot close the client in the gap between a
+      // successful Scribe selection and adapter cleanup being installed.
       deps = buildTranscriptionProviderDeps({ client, ...options });
     } catch (err) {
       console.error(`[call-qa-transcription] configuration error: ${err?.message ?? err}`);
