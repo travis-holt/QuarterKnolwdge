@@ -29,7 +29,7 @@ import mentorScores from './api/mentor-scores.js';
 import myInterviews from './api/my-interviews.js';
 import logout from './api/logout.js';
 import health from './api/health.js';
-import { attachLiveRelay } from './api/live-relay.js';
+import { attachLiveRelayWithTranscriptionProvider } from './api/_call-qa-transcription-provider.js';
 
 app.post('/api/refine-sop', rateLimit({ label: 'refine-sop', max: 6 }), express.json({ limit: '20mb' }), refineSop);
 app.use(express.json({ limit: '100kb' }));
@@ -71,5 +71,7 @@ const server = app.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
 });
 
-// Real-time voice practice call (Gemini Live API) — WebSocket relay at /api/live.
-attachLiveRelay(server);
+// Real-time voice practice + Call QA relay at /api/live. Gemini remains the AI
+// caller/audio transport. For SCORED Call QA only, navigator transcription can be
+// switched between Gemini and ElevenLabs Scribe via CALL_QA_TRANSCRIPTION_PROVIDER.
+attachLiveRelayWithTranscriptionProvider(server);
