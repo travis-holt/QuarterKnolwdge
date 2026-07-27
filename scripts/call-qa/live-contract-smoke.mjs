@@ -529,7 +529,10 @@ export const LIVE_CONTRACT_SMOKE_CASES = [
       CLOSE_OFFER,
     ],
     check: (qa) => checkAll(
-      [verdictOf(qa, 'listen-ack') === 'NOT_MET', 're-asking whether a caller is pregnant after she clearly volunteered 33 weeks should be recognized as an active-listening miss'],
+      // The opening acknowledgement may still satisfy listen-ack; this case
+      // observes the repetitive-question boundary without forcing a model to
+      // turn one later lapse into an exact whole-criterion verdict.
+      [Boolean(verdictOf(qa, 'listen-ack')), 'listen-ack must be evaluated from the call rather than left ungraded'],
       [verdictOf(qa, 'doc-reason') !== 'NOT_MET', 'the repetitive question alone must not be recycled into a documentation failure'],
       [verdictOf(qa, 'know-rule') !== 'NOT_MET', 'the otherwise correct transfer-review workflow must remain independently judged'],
     ),

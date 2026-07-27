@@ -39,6 +39,7 @@ import {
   evaluateIdentityEvidence,
   evaluateVerificationBeforeAccess,
   findProtectedDisclosureInTurn,
+  resolveIdentityCandidates,
 } from './_qa-identity-verification.js';
 import { normalizeForMatch, quoteWords, stripRoleLabel } from './_qa-text-normalize.js';
 import { detectObgynContradictions, isObgynProhibitedActionNegated } from '../src/lib/contentGuards.js';
@@ -553,75 +554,22 @@ export const CALL_QA_FAIRNESS_RULES = {
   obgynCallerObservableOutcome: 'obgyn-caller-observable-outcome',
 };
 
-// Synthetic Call QA callers are given a trusted roleplay name.  Live speech to
-// text can occasionally substitute only the first sound/letter while retaining
-// the rest of that first name (for example, an initial-letter rendering of the
-// same spoken name).  This is NOT general fuzzy matching and never accepts a
-// different patient: it is a tightly bounded recovery used only when (a) the
-// model echoed the trusted synthetic full name, (b) the captured caller quote
-// supplies the same surname plus a first name with the identical remaining
-// letters, and (c) the ordinary identity/DOB ownership pipeline independently
-// verifies the recovered transcript claims.  It always forces supervisor review.
-function escapeRegex(value) {
-  return String(value ?? '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-}
-
-function syntheticIdentityTranscriptionRecovery(criteria, transcript, callerName) {
-  const expected = normalizeForMatch(callerName).split(' ').filter(Boolean);
-  if (expected.length !== 2 || expected.some((part) => part.length < 2)) return null;
-  const [expectedFirst, expectedLast] = expected;
-  const identityCriteria = criteria.filter((criterion) => Array.isArray(criterion.identityEvidence)
-    && criterion.identityEvidence.length > 0);
-  const claims = identityCriteria[0]?.identityEvidence ?? [];
-  const first = claims.find((claim) => claim?.field === 'firstName');
-  const last = claims.find((claim) => claim?.field === 'lastName');
-  const dob = claims.find((claim) => claim?.field === 'dob');
-  if (!first || !last || !dob
-    || normalizeForMatch(first.value) !== expectedFirst
-    || normalizeForMatch(last.value) !== expectedLast) return null;
-
-  // The source of the candidate must be an actual caller quote. Do not inspect
-  // navigator wording, and do not manufacture a name from the scenario.
-  const quote = String(first.quote ?? '');
-  if (String(first.role ?? '').toLowerCase() !== 'caller' && String(first.role ?? '').toLowerCase() !== 'patient') return null;
-  const pair = new RegExp(`\\b([\\p{L}][\\p{L}'’-]*)\\s+${escapeRegex(expectedLast)}\\b`, 'giu');
-  const matches = [...quote.matchAll(pair)];
-  const observedFirst = normalizeForMatch(matches.at(-1)?.[1] ?? '');
-  // Bounded uncertainty only: a one-character initial substitution with the
-  // remainder of the first name identical. Different names (Maria), different
-  // surnames, aliases, and arbitrary edit-distance matches are all rejected.
-  if (!observedFirst || observedFirst.length !== expectedFirst.length
-    || observedFirst[0] === expectedFirst[0]
-    || observedFirst.slice(1) !== expectedFirst.slice(1)) return null;
-
-  const recovered = [
-    { ...first, value: matches.at(-1)[1] },
-    last,
-    dob,
-  ];
-  const identity = evaluateIdentityEvidence(transcript, recovered);
-  if (!identity.complete) return null;
-  const order = evaluateVerificationBeforeAccess(transcript, recovered);
-  return { recovered, identity, order };
-}
-
-function syntheticIdentityScenarioConflict(criteria, callerName) {
+// Synthetic scenario identity is an integrity check, never evidence of how the
+// navigator performed. The transcript parser independently determines whether a
+// caller completed a coherent identity exchange. If that exchange names a
+// different synthetic person, retain the navigator's transcript-derived score
+// and ask a supervisor to review the simulator/capture mismatch. There is no
+// fuzzy comparison, initial-letter recovery, or score deduction here.
+function simulatorIdentityIntegrityMismatch(transcript, callerName) {
   const expected = normalizeForMatch(callerName).split(' ').filter(Boolean);
   if (expected.length !== 2) return false;
-  const [expectedFirst, expectedLast] = expected;
-  const claims = criteria.find((criterion) => Array.isArray(criterion.identityEvidence)
-    && criterion.identityEvidence.length > 0)?.identityEvidence ?? [];
-  const first = claims.find((claim) => claim?.field === 'firstName');
-  const last = claims.find((claim) => claim?.field === 'lastName');
-  if (!first || !last
-    || normalizeForMatch(first.value) !== expectedFirst
-    || normalizeForMatch(last.value) !== expectedLast) return false;
-  // The model says the trusted synthetic identity but its claimed caller quote
-  // does not contain that full identity. This is a scenario/transcript conflict,
-  // never a reason for the independent chronology repair to credit a different
-  // person. The narrower recovery above is the sole exception.
-  const quote = normalizeForMatch(first.quote);
-  return !quote.includes(`${expectedFirst} ${expectedLast}`);
+  const { candidates } = resolveIdentityCandidates(transcript);
+  const completeCandidates = candidates.filter((candidate) => candidate.firstNameTokens?.length
+    && candidate.lastNameTokens?.length && candidate.dobTurn != null);
+  if (completeCandidates.length === 0) return false;
+  return !completeCandidates.some((candidate) =>
+    candidate.firstNameTokens.join(' ') === expected[0]
+      && candidate.lastNameTokens.join(' ') === expected[1]);
 }
 
 export function normalizeQaText(text) {
@@ -1045,25 +993,16 @@ export function repairQaVerdictsForScenario(validated, transcript, context = {})
       && !verifyNavigatorEvidence(transcript, criterion.evidence),
   }));
   const repairs = [];
-  // This is deliberately evaluated before ordinary fairness repairs and is
-  // carried only in-memory into deterministic scoring. It never exposes the
-  // synthetic caller name or recovered identifiers in a stored grade.
-  const syntheticIdentityRecovery = syntheticIdentityTranscriptionRecovery(
-    criteria, transcript, context?.metadata?.callerName,
+  // Scenario/capture integrity is deliberately independent of navigator
+  // performance. It is stored as a review-only signal, without exposing either
+  // identity, and must never replace transcript-derived identity evidence.
+  const simulatorIdentityMismatch = simulatorIdentityIntegrityMismatch(
+    transcript, context?.metadata?.callerName,
   );
-  const syntheticIdentityConflict = !syntheticIdentityRecovery
-    && syntheticIdentityScenarioConflict(criteria, context?.metadata?.callerName);
-  if (syntheticIdentityRecovery) {
+  if (simulatorIdentityMismatch) {
     for (const criterion of criteria) {
       if (Array.isArray(criterion.identityEvidence) && criterion.identityEvidence.length > 0) {
-        criterion.syntheticIdentityRecovery = syntheticIdentityRecovery;
-        criterion.syntheticIdentityScenarioConflict = syntheticIdentityConflict;
-      }
-    }
-  } else if (syntheticIdentityConflict) {
-    for (const criterion of criteria) {
-      if (Array.isArray(criterion.identityEvidence) && criterion.identityEvidence.length > 0) {
-        criterion.syntheticIdentityScenarioConflict = true;
+        criterion.simulatorIdentityIntegrityMismatch = true;
       }
     }
   }
@@ -1344,28 +1283,7 @@ export function scoreQa(verdicts, autoFails, transcript, profile, profileBinding
   // whichever identity criteria are MET.
   const identityDefs = [...defs.values()]
     .filter((d) => d.evidencePolicy === QA_EVIDENCE_POLICIES.IDENTITY_VERIFICATION);
-  let canonicalIdentity = null;
-  let canonicalOrder = null;
-  let syntheticIdentityRecovery = null;
-  let syntheticIdentityScenarioConflict = false;
-  if (identityDefs.length > 0) {
-    const canonicalArray = identityDefs
-      .map((d) => verdicts.find((v) => v.id === d.id)?.identityEvidence)
-      .find((arr) => Array.isArray(arr) && arr.length > 0) ?? [];
-    canonicalIdentity = evaluateIdentityEvidence(transcript, canonicalArray);
-    canonicalOrder = evaluateVerificationBeforeAccess(transcript, canonicalArray);
-    syntheticIdentityRecovery = identityDefs
-      .map((d) => verdicts.find((v) => v.id === d.id)?.syntheticIdentityRecovery)
-      .find(Boolean) ?? null;
-    syntheticIdentityScenarioConflict = identityDefs
-      .some((d) => verdicts.find((v) => v.id === d.id)?.syntheticIdentityScenarioConflict === true);
-    if (!canonicalIdentity.complete && syntheticIdentityRecovery?.identity?.complete) {
-      canonicalIdentity = syntheticIdentityRecovery.identity;
-      canonicalOrder = syntheticIdentityRecovery.order;
-    }
-  }
-
-  // ── Independent, model-agnostic identity chronology (correction pass #6) ─────
+  // ── Independent, model-agnostic identity chronology ─────────────────────────
   // Derived from the whole transcript, NEVER from the model's selected claims, so
   // a model that submits only a LATER repetition of an identity cannot make the
   // server believe verification happened after a disclosure when it actually
@@ -1378,8 +1296,45 @@ export function scoreQa(verdicts, autoFails, transcript, profile, profileBinding
   // (or there was no disclosure at all).
   const orderProvenBefore = Boolean(serverChrono
     && serverChrono.earliestIndex !== null && !serverChrono.ambiguous
-    && !syntheticIdentityScenarioConflict
     && (firstDisclosure === null || serverChrono.earliestIndex < firstDisclosure.turnIndex));
+  // Call QA identity performance is derived from the transcript itself, not the
+  // scenario's expected caller name and not Gemini's selected name tokens. This
+  // means a simulator/capture mismatch cannot silently turn a real, complete
+  // caller exchange into a navigator deduction.
+  const transcriptIdentityComplete = Boolean(serverChrono
+    && serverChrono.earliestIndex !== null && !serverChrono.ambiguous);
+  const transcriptDerivedIdentity = identityDefs.length > 0 ? {
+    complete: transcriptIdentityComplete,
+    verified: Object.fromEntries(IDENTITY_FIELDS.map((field) => [field, transcriptIdentityComplete])),
+    completedAtIndex: transcriptIdentityComplete ? serverChrono.earliestIndex : null,
+    failures: transcriptIdentityComplete ? [] : [{ field: 'identity', reason: 'identity-not-verified' }],
+  } : null;
+  const transcriptDerivedOrder = identityDefs.length > 0 ? {
+    satisfied: orderProvenBefore,
+    reason: orderProvenBefore
+      ? 'verified-before-disclosure'
+      : (!transcriptIdentityComplete ? 'identity-not-verified'
+        : (firstDisclosure ? 'identifiers-collected-after-disclosure' : 'identity-order-unverified')),
+    identity: transcriptDerivedIdentity,
+    disclosureIndex: firstDisclosure?.turnIndex,
+    disclosureCategory: firstDisclosure?.category,
+    disclosureClauseIndex: firstDisclosure?.clauseIndex,
+  } : null;
+  // Preserve the normal structured-claim audit path for ordinary calls. The
+  // scenario/capture mismatch is the narrow exception: in that condition, the
+  // navigator's score is decided from the independently derived exchange, while
+  // the mismatch itself is surfaced separately for review.
+  const canonicalArray = identityDefs
+    .map((d) => verdicts.find((v) => v.id === d.id)?.identityEvidence)
+    .find((arr) => Array.isArray(arr) && arr.length > 0) ?? [];
+  const hasSimulatorIdentityMismatch = identityDefs.some((def) =>
+    verdicts.find((v) => v.id === def.id)?.simulatorIdentityIntegrityMismatch === true);
+  const canonicalIdentity = hasSimulatorIdentityMismatch
+    ? transcriptDerivedIdentity
+    : evaluateIdentityEvidence(transcript, canonicalArray);
+  const canonicalOrder = hasSimulatorIdentityMismatch
+    ? transcriptDerivedOrder
+    : evaluateVerificationBeforeAccess(transcript, canonicalArray);
   // A disclosure happened but identity-before-disclosure is NOT proven: an
   // unresolved privacy situation → critical review, never an automatic zero
   // unless the auto-fail itself positively verifies.
@@ -1400,12 +1355,8 @@ export function scoreQa(verdicts, autoFails, transcript, profile, profileBinding
     // effective verdict to MET — carry that unresolved status through.
     let unresolved = Boolean(v.originalUnresolved);
     let unresolvedReason = unresolved ? 'negative-evidence-not-verified' : null;
-    const syntheticIdentityUncertainty = def.evidencePolicy === QA_EVIDENCE_POLICIES.IDENTITY_VERIFICATION
-      && syntheticIdentityRecovery?.identity?.complete === true;
-    if (syntheticIdentityUncertainty) {
-      unresolved = true;
-      unresolvedReason = 'synthetic-identity-transcription-uncertainty';
-    }
+    const simulatorIdentityIntegrityMismatch = def.evidencePolicy === QA_EVIDENCE_POLICIES.IDENTITY_VERIFICATION
+      && v.simulatorIdentityIntegrityMismatch === true;
 
     // MET credit uses the criterion's own evidence policy. For an identity
     // criterion this re-derives the STRUCTURED identifier claims (and, where the
@@ -1501,7 +1452,7 @@ export function scoreQa(verdicts, autoFails, transcript, profile, profileBinding
       verdict, basis, evidence, note: v.note,
       ...(isIdentityCriterion ? { evidenceSource: 'server-derived' } : {}),
       unverified, unresolved, unresolvedReason,
-      ...(syntheticIdentityUncertainty ? { syntheticIdentityUncertainty: true } : {}),
+      ...(simulatorIdentityIntegrityMismatch ? { simulatorIdentityIntegrityMismatch: true } : {}),
       modelJudgment,
       // Auditable record of WHY an identity criterion was (or was not) credited:
       // which identifiers verified, in which turns, where the first protected
@@ -1655,15 +1606,15 @@ export function assessQa(qa, transcript, { correctedTurns = 0, repairs = [], det
   // navigator evidence) may have changed it to MET — the original allegation
   // stays unresolved regardless, must not be presented as definitively observed,
   // and forces supervisor review.
-  const syntheticIdentityUncertainties = qa.criteria.filter((c) => c.syntheticIdentityUncertainty);
-  if (syntheticIdentityUncertainties.length > 0) {
+  const simulatorIdentityMismatches = qa.criteria.filter((c) => c.simulatorIdentityIntegrityMismatch);
+  if (simulatorIdentityMismatches.length > 0) {
     flags.push({
-      id: 'synthetic-identity-transcription-uncertainty',
-      label: 'Synthetic identity transcription uncertainty',
-      detail: 'The simulated caller name and captured caller speech differ by a narrowly detected transcription variant. The server verified the caller exchange from the transcript, but supervisor review is required before treating the result as final.',
+      id: 'simulator-identity-integrity-mismatch',
+      label: 'Simulator identity integrity mismatch',
+      detail: 'The caller identity derived from the captured transcript differs from the simulator scenario. Navigator verification was scored from the transcript; review the scenario or capture before treating this result as final.',
     });
   }
-  const unresolvedNegatives = qa.criteria.filter((c) => c.unresolved && !c.syntheticIdentityUncertainty);
+  const unresolvedNegatives = qa.criteria.filter((c) => c.unresolved);
   if (unresolvedNegatives.length > 0) {
     flags.push({
       id: 'unresolved-negative-evidence',
@@ -1779,7 +1730,7 @@ export function assessQa(qa, transcript, { correctedTurns = 0, repairs = [], det
   // An unresolved negative (grader alleged an observed miss its quote can't back
   // up) can never produce a confident verdict — a supervisor decides, regardless
   // of the numerical score. Safety-critical unresolved negatives elevate risk.
-  else if (unresolvedNegatives.length > 0 || syntheticIdentityUncertainties.length > 0) recommendation = 'needs_review';
+  else if (unresolvedNegatives.length > 0 || simulatorIdentityMismatches.length > 0) recommendation = 'needs_review';
   else if (confidence === 'low' || borderline || qa.unverifiedAutoFails?.length > 0) recommendation = 'needs_review';
   else if (qa.pass && safetyMissed.length > 0) recommendation = 'needs_review'; // never an unreviewed pass over a safety miss
   else if (repairFlippedOutcome) recommendation = 'needs_review'; // repairs are decision support, not the final word

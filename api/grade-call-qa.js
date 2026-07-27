@@ -658,9 +658,10 @@ export function buildScenarioContextFromAttempt(attempt) {
       department,
       metadata: {
         qaScenarioId: attempt.qaScenarioId ?? null,
-        // Trusted synthetic roleplay identity is used only by the narrowly
-        // bounded server-side STT-uncertainty guard; it is never sent to Gemini
-        // and never accepted as identity evidence on its own.
+        // Trusted synthetic roleplay identity is used only for a server-side
+        // simulator/capture integrity comparison. It is never sent to Gemini,
+        // never accepted as identity evidence, and never changes performance
+        // scoring derived from the captured transcript.
         callerName: snapshot.callerName ?? attempt.callerName ?? null,
         workflowType: snapshot.workflowType ?? attempt.workflowType ?? null,
         difficulty: snapshot.difficulty ?? attempt.difficulty ?? null,

@@ -3135,6 +3135,32 @@ textarea:focus-visible {
   color: var(--ink-soft);
   line-height: 1.5;
 }
+.interview-log__grade--qa { gap: 14px; }
+.qa-history-summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 14px;
+  border: 1px solid var(--line-soft);
+  border-radius: 10px;
+  background: var(--surface);
+}
+.qa-history-summary__eyebrow { margin: 0; color: var(--ink-faint); font-size: 0.7rem; font-weight: 750; letter-spacing: .07em; text-transform: uppercase; }
+.qa-history-summary__score { margin: 2px 0; font-size: 1.45rem; line-height: 1.1; }
+.qa-history-summary__sub { margin: 0; color: var(--ink-soft); font-size: .78rem; }
+.qa-history-summary__verdicts { display: grid; gap: 5px; text-align: right; }
+.qa-history-summary__verdicts p { margin: 0; font-size: .8rem; color: var(--ink-soft); }
+.qa-history-summary__verdicts span { font-weight: 700; color: var(--ink); }
+.qa-history-review { display: grid; gap: 10px; padding: 13px; border: 1px solid var(--level-solid); border-radius: 10px; background: var(--surface); }
+.qa-history-review > header { display: flex; align-items: start; justify-content: space-between; gap: 10px; }
+.qa-history-review__meta { margin: 3px 0 0; color: var(--ink-soft); font-size: .76rem; }
+.qa-history-review__count { flex: none; padding: 3px 7px; border-radius: 999px; background: var(--surface-2); color: var(--ink-soft); font-size: .72rem; font-weight: 700; }
+.qa-history-review__flags { display: grid; gap: 6px; }
+.qa-history-review__flags details { padding: 7px 9px; border-radius: 7px; background: var(--surface-2); }
+.qa-history-review__flags summary { color: var(--ink); cursor: pointer; font-size: .8rem; font-weight: 700; }
+.qa-history-review__flags p { margin: 7px 0 0; color: var(--ink-soft); font-size: .8rem; line-height: 1.45; }
+.qa-history-strengths { padding: 2px 4px; }
 
 /* ── Supervisor grade override ─────────────────────────────────────────────── */
 .interview-log__override-flag {
@@ -6026,6 +6052,8 @@ textarea:focus-visible {
   .qa-development__group { padding: 16px; }
   .qa-development__group-header { align-items: flex-start; }
   .qa-development__coaching { font-size: 0.92rem; }
+  .qa-history-summary { align-items: flex-start; flex-direction: column; }
+  .qa-history-summary__verdicts { text-align: left; }
 }
 
 .qa-log-badge {

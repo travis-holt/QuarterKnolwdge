@@ -9,8 +9,8 @@
 > those tests fails after your change, re-read this document before "fixing" the test.
 >
 > Last updated: 2026-07-27 (post-merge pilot reliability + review presentation correction — §0p —
-> caller-volunteered workflow facts, criterion isolation, bounded synthetic/STT identity uncertainty,
-> and coaching UI). Current grader prompt version `call-qa-grader-v10`; OB/GYN rubric remains
+> caller-volunteered workflow facts, criterion isolation, transcript-derived identity performance,
+> simulator-integrity review, and coaching UI). Current grader prompt version `call-qa-grader-v10`; OB/GYN rubric remains
 > `qa-rubric-obgyn-v1`. Earlier: 2026-07-24 (pilot assessment-observability correction — §0o — navigator-visible chart
 > authority, sched-recap conditional NA, listen-gather caller-observable scope, and the caller
 > role-break fail-safe. The prior pilot correction used grader prompt `call-qa-grader-v9`; OB/GYN rubric unchanged at
@@ -54,15 +54,14 @@ closing, auto-fails, and supervisor-final authority are unchanged. No historical
    independent criterion-specific observable basis; an alleged missed intake question cannot be reused
    as a documentation/routing/knowledge/scheduling miss by default. This is not a one-mistake/one-
    deduction rule: genuinely independent errors remain separately scoreable.
-3. **Bounded synthetic/STT identity uncertainty.** The transcript remains authoritative. A synthetic
-   recovery exists only when the model echoed the trusted synthetic full caller name, the caller quote
-   has the same surname and a first name differing solely by its initial character with every remaining
-   character identical, and the normal caller-owned name/DOB pipeline independently verifies the
-   recovered transcript claims. It is not a nickname dictionary, Levenshtein match, or general fuzzy
-   identity policy. The recovered exchange can earn verification credit only with mandatory supervisor
-   review; different first names, surname changes, provider/staff names, missing DOB, and identity after
+3. **Transcript performance vs. simulator integrity.** Identity performance is derived from the captured
+   caller transcript, using the independent coherent-candidate/chronology parser; neither a scenario name
+   nor model-selected name tokens can alter that score. If a complete transcript identity differs from the
+   trusted simulator identity, the score is retained and a separate mandatory simulator/capture integrity
+   review flag is added. There is no fuzzy match, first-character recovery, nickname equivalence, or
+   deduction for the mismatch. Provider/staff names, missing DOB, ambiguous candidates, and identity after
    a protected disclosure remain uncredited under the existing deterministic checks.
-4. **Review presentation is display-only.** The navigator Call QA result now shows missed criteria as
+4. **Review presentation is display-only.** Navigator and current-interpretable supervisor Call QA results show missed criteria as
    grouped “Areas to develop” category cards with deduction totals, concise coaching first, and native
    expandable rubric detail. Flat criterion IDs, points, stored QA shape, scoring, supervisor overrides,
    auto-fails, review flags, and historical rendering are unchanged.

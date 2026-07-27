@@ -11,19 +11,19 @@ routing, knowledge, or scheduling. A later redundant “Are you pregnant?” que
 an Active Listening deduction, but volunteered gestational age alone cannot fail `listen-gather` or
 `doc-reason`.
 
-Second, the synthetic scenario name could differ from captured speech (`Yulia`/`Julia`): Gemini could
-echo the trusted synthetic name in structured identity evidence, then exact evidence verification
-rejected it because that value was absent from the authoritative transcript quote, causing both
-verification criteria to lose credit. The fix is deliberately bounded: only a same-surname,
-initial-character-only first-name transcription variant that the normal caller-owned name/DOB pipeline
-independently verifies can recover credit, and it always forces `needs_review`. There is no global fuzzy
-matching, nickname list, or hard-coded name; truly different names, surname changes, provider names,
-missing DOB, and late identity remain uncredited.
+Second, a synthetic scenario identity could differ from captured caller speech. Navigator identity
+performance is now derived from the authoritative transcript for that simulator/capture mismatch, while
+the mismatch itself is a separate `needs_review` integrity signal. There is no first-character recovery,
+fuzzy matching, nickname list, or name-equivalence rule: a different complete caller identity does not
+deduct from the navigator, but must be reviewed as scenario/capture integrity. Provider names, missing
+DOB, ambiguous candidates, and identity after protected disclosure remain uncredited under the existing
+deterministic checks.
 
-Third, the navigator result now presents missed criteria in display-only, category-grouped **Areas to
-develop** cards with deduction totals, coaching notes first, and native expandable rubric detail. The
-stored result shape, rubric IDs/points/weights, pass threshold, review flags, auto-fails, supervisor
-overrides, and historical records are unchanged. The local ignored transfer scenario wording was changed
+Third, the navigator and supervisor historical Call QA views now share display-only, category-grouped
+**Areas to develop** cards with deduction totals, coaching notes first, and native expandable rubric
+detail. The supervisor uses them only for current interpretable structured criteria and clearly labels its
+legacy stored-summary fallback. The stored result shape, rubric IDs/points/weights, pass threshold,
+review flags, auto-fails, supervisor overrides, and historical records are unchanged. The local ignored transfer scenario wording was changed
 only to accept caller-volunteered gestational age; no Firestore write or provisioning occurred, so a
 separate authorized compatibility update will be needed after review. Calibration remains
 `INSUFFICIENT_DATA`; no human fixtures or historical grades were created/rewritten.

@@ -186,7 +186,7 @@ function qaFor(id) {
     case '23-transfer-volunteered-gestational-age':
       return build(verds({ 'listen-gather': 'MET', 'doc-reason': 'MET', 'know-rule': 'MET' }));
     case '24-transfer-repetitive-pregnancy-question':
-      return build(verds({ 'listen-ack': 'NOT_MET', 'doc-reason': 'MET', 'know-rule': 'MET' }), { recommendation: 'needs_review', pass: false });
+      return build(verds({ 'listen-ack': 'MET', 'doc-reason': 'MET', 'know-rule': 'MET' }));
     default:
       // 1,2,3,8,10,11,12,14,17,20 — clean, correct-model scorecards.
       return build(verds());

@@ -161,8 +161,9 @@ CONDITIONAL (NA when the correct workflow books no appointment), and `listen-gat
 caller-observable information gathering — moving the prompt to **`call-qa-grader-v9`**. The post-merge
 pilot reliability correction (2026-07-27) makes caller-volunteered ordinary workflow facts count as
 collected unless the SOP requires reconfirmation and requires an independent criterion-specific basis for
-each deduction, moving the prompt to **`call-qa-grader-v10`**. The bounded server-only synthetic/STT
-identity uncertainty recovery also forces supervisor review and is not a confident automation result.
+each deduction, moving the prompt to **`call-qa-grader-v10`**. Identity performance is now derived from
+the captured transcript; a complete identity that differs from the server-owned simulator identity is a
+separate supervisor-review integrity signal, not a name-recovery rule or score deduction.
 The OB/GYN
 criteria, points, category weights, applicability flags and auto-fails are unchanged, so the rubric
 stays `qa-rubric-obgyn-v1`. The server-only candidate, name-field, DOB-ownership, and HIPAA chronology

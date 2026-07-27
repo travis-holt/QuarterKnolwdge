@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { describe, expect, it } from 'vitest';
 import { fireEvent, render, screen } from '@testing-library/react';
-import { QaDevelopmentAreas } from './VoiceCall.jsx';
+import { QaDevelopmentAreas } from './QaDevelopmentAreas.jsx';
 
 const criteria = [
   { id: 'verify-three', verdict: 'NOT_MET', categoryId: 'verification', categoryName: 'Verification', points: 6, text: 'Collect first name, last name, and date of birth.', note: 'Ask for and receive all three identifiers before discussing the chart.' },
