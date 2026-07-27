@@ -186,3 +186,105 @@ describe('ElevenLabs provider adapter', () => {
     await expect(deps.selectScenario({ department: 'obgyn' })).rejects.toThrow(/ELEVENLABS_API_KEY/);
   });
 });
+
+describe('ElevenLabs Scribe resource cleanup', () => {
+  function makeEventfulClient() {
+    const handlers = new Map();
+    return {
+      readyState: 1,
+      send: vi.fn(),
+      close: vi.fn(),
+      on: vi.fn((event, handler) => {
+        const list = handlers.get(event) ?? [];
+        list.push(handler);
+        handlers.set(event, list);
+      }),
+      emit(event, ...args) {
+        for (const handler of handlers.get(event) ?? []) handler(...args);
+      },
+    };
+  }
+
+  function makeCleanupHarness({ openScribe: suppliedOpenScribe } = {}) {
+    let geminiCallbacks;
+    const fakeGemini = { send: vi.fn(), close: vi.fn() };
+    const fakeScribe = {
+      sendAudio: vi.fn(() => true),
+      flushFinalSilence: vi.fn(() => true),
+      close: vi.fn(),
+      setCommittedHandler: vi.fn(),
+      setFatalHandler: vi.fn(),
+    };
+    const client = makeEventfulClient();
+    const baseDeps = {
+      selectScenario: vi.fn(async () => ({ id: 'qa-cleanup', department: 'obgyn' })),
+      createUpstream: vi.fn((_key, callbacks) => {
+        geminiCallbacks = callbacks;
+        return fakeGemini;
+      }),
+    };
+    const openScribe = suppliedOpenScribe ?? vi.fn(async () => fakeScribe);
+    const deps = buildTranscriptionProviderDeps({
+      client,
+      baseDeps,
+      env: {
+        CALL_QA_TRANSCRIPTION_PROVIDER: 'elevenlabs',
+        ELEVENLABS_API_KEY: 'server-secret',
+      },
+      openScribe,
+    });
+    return { deps, client, fakeScribe, fakeGemini, openScribe, callbacks: () => geminiCallbacks };
+  }
+
+  it('closes Scribe exactly once when the client closes after scenario selection but before createUpstream', async () => {
+    const h = makeCleanupHarness();
+    await h.deps.selectScenario({ department: 'obgyn' });
+
+    h.client.emit('close');
+    h.client.emit('error', new Error('socket already gone'));
+
+    expect(h.fakeScribe.close).toHaveBeenCalledTimes(1);
+    expect(h.fakeGemini.close).not.toHaveBeenCalled();
+  });
+
+  it('closes a Scribe session that resolves after the client disconnected during openScribe', async () => {
+    let resolveScribe;
+    const pendingScribe = new Promise((resolve) => { resolveScribe = resolve; });
+    const openScribe = vi.fn(() => pendingScribe);
+    const h = makeCleanupHarness({ openScribe });
+
+    const selection = h.deps.selectScenario({ department: 'obgyn' });
+    await vi.waitFor(() => expect(openScribe).toHaveBeenCalledTimes(1));
+    h.client.emit('close');
+    resolveScribe(h.fakeScribe);
+
+    await expect(selection).rejects.toThrow(/disconnected.*Scribe was starting/i);
+    expect(h.fakeScribe.close).toHaveBeenCalledTimes(1);
+  });
+
+  it('normal full-call teardown closes Scribe exactly once even when upstream close and client close both fire', async () => {
+    const h = makeCleanupHarness();
+    await h.deps.selectScenario({ department: 'obgyn' });
+    const outer = { onMessage: vi.fn(), onOpen: vi.fn(), onClose: vi.fn(), onError: vi.fn() };
+    const upstream = h.deps.createUpstream('gemini-key', outer);
+
+    upstream.close();
+    h.client.emit('close');
+    h.client.emit('error', new Error('post-close error'));
+
+    expect(h.fakeScribe.close).toHaveBeenCalledTimes(1);
+    expect(h.fakeGemini.close).toHaveBeenCalledTimes(1);
+  });
+
+  it('practice-call close creates no Scribe session and cleanup is harmless', () => {
+    const h = makeCleanupHarness();
+    const outer = { onMessage: vi.fn(), onOpen: vi.fn(), onClose: vi.fn(), onError: vi.fn() };
+
+    expect(() => h.deps.createUpstream('gemini-key', outer)).not.toThrow();
+    expect(() => h.client.emit('close')).not.toThrow();
+    expect(() => h.client.emit('error', new Error('practice socket closed'))).not.toThrow();
+
+    expect(h.openScribe).not.toHaveBeenCalled();
+    expect(h.fakeScribe.close).not.toHaveBeenCalled();
+  });
+});
