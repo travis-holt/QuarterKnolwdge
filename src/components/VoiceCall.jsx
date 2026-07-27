@@ -57,6 +57,65 @@ export function isTemporaryQaGradeError(err) {
   return err?.name === 'AbortError' || [409, 429, 503].includes(err?.status);
 }
 
+// Presentation-only: scoring and the stored QA projection stay flat and
+// server-authoritative. Grouping happens only at render time so supervisor and
+// historical data keep their existing shape.
+export function QaDevelopmentAreas({ criteria = [] }) {
+  const missed = criteria.filter((criterion) => criterion.verdict === 'NOT_MET');
+  if (missed.length === 0) return null;
+  const groups = missed.reduce((byCategory, criterion) => {
+    const id = criterion.categoryId ?? criterion.categoryName ?? 'other';
+    if (!byCategory.has(id)) {
+      byCategory.set(id, { id, name: criterion.categoryName ?? 'Areas to develop', items: [], points: 0 });
+    }
+    const group = byCategory.get(id);
+    group.items.push(criterion);
+    group.points += Number(criterion.points) || 0;
+    return byCategory;
+  }, new Map());
+  const categoryGroups = [...groups.values()];
+  const lostPoints = missed.reduce((total, criterion) => total + (Number(criterion.points) || 0), 0);
+
+  return (
+    <section className="qa-development" aria-labelledby="qa-development-title">
+      <header className="qa-development__header">
+        <div>
+          <h3 id="qa-development-title" className="qa-development__title">Areas to develop</h3>
+          <p className="qa-development__summary">{categoryGroups.length} {categoryGroups.length === 1 ? 'area' : 'areas'} · {lostPoints} {lostPoints === 1 ? 'point' : 'points'} to recover</p>
+        </div>
+      </header>
+      <div className="qa-development__groups">
+        {categoryGroups.map((group) => (
+          <article key={group.id} className="qa-development__group">
+            <header className="qa-development__group-header">
+              <h4>{group.name}</h4>
+              <span className="qa-development__points">−{group.points} pts</span>
+            </header>
+            <div className="qa-development__items">
+              {group.items.map((criterion) => {
+                const coaching = String(criterion.note ?? '').trim() || criterion.text;
+                const hasCoachingNote = Boolean(String(criterion.note ?? '').trim());
+                return (
+                  <div key={criterion.id} className="qa-development__item">
+                    <p className="qa-development__criterion">What to improve</p>
+                    <p className="qa-development__coaching">{coaching}</p>
+                    {hasCoachingNote && (
+                      <details className="qa-development__rubric">
+                        <summary>Rubric detail</summary>
+                        <p>{criterion.text}</p>
+                      </details>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          </article>
+        ))}
+      </div>
+    </section>
+  );
+}
+
 function savedGradeWaitExceededError() {
   const error = new Error(QA_GRADE_WAIT_EXCEEDED_MESSAGE);
   error.code = 'qa-grade-wait-exceeded';
@@ -884,17 +943,7 @@ export default function VoiceCall({ navigatorId, name, department = 'pediatrics'
           )}
 
           {missed.length > 0 && (
-            <div className="card interview__feedback-card interview__feedback-card--improvements">
-              <h3 className="interview__feedback-title"><span className="interview__feedback-icon" aria-hidden="true">→</span>Points you lost</h3>
-              <ul className="interview__feedback-list">
-                {missed.map((c) => (
-                  <li key={c.id} className="interview__feedback-item">
-                    <strong>{c.categoryName} (−{c.points}):</strong> {c.text}
-                    {c.note ? <span className="qa-missed__note"> — {c.note}</span> : null}
-                  </li>
-                ))}
-              </ul>
-            </div>
+            <QaDevelopmentAreas criteria={qa.criteria} />
           )}
 
           <button className="btn btn--primary" onClick={onDone ?? (() => setPhase('setup'))} style={{ alignSelf: 'flex-start' }}>

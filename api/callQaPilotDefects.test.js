@@ -481,12 +481,16 @@ describe('hiddenChartState never reaches the model-visible grader context', () =
     expect(everythingSentToGemini).toContain('Active orders: None on file');
   });
 
-  it('grader instructions carry the sched-recap NA and listen-gather caller-observable rules; prompt is v9', () => {
+  it('grader instructions carry the caller-volunteered, criterion-isolation, and chart applicability rules; prompt is v10', () => {
     const { systemInstruction } = buildMessages('grading scenario', WRONG_BOOKING_TRANSCRIPT, 'obgyn', 'sop', OBGYN);
     expect(systemInstruction).toMatch(/SCHEDULING RECAP: \[sched-recap\] is CONDITIONAL/);
     expect(systemInstruction).toMatch(/CALLER-OBSERVABLE information gathering/);
+    expect(systemInstruction).toMatch(/CALLER-VOLUNTEERED FACTS COUNT AS COLLECTED/);
+    expect(systemInstruction).toMatch(/Do not mark a criterion NOT_MET merely because the navigator did not ask a question whose answer the caller already clearly supplied/);
+    expect(systemInstruction).toMatch(/CRITERION ISOLATION/);
+    expect(systemInstruction).toMatch(/independent, criterion-specific observable evidence/);
     expect(systemInstruction).toMatch(/NAVIGATOR-VISIBLE CHART: when the scenario provides/);
-    expect(CALL_QA_PROMPT_VERSION).toBe('call-qa-grader-v9');
+    expect(CALL_QA_PROMPT_VERSION).toBe('call-qa-grader-v10');
   });
 });
 

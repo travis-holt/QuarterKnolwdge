@@ -11,7 +11,32 @@
 > [§8 Current System State](#8-current-system-state) and [§15 Current Priorities](#15-current-priorities)
 > accurate at all times.
 >
-> **Current implementation update (2026-07-24) — CALL QA PILOT DEFECT CORRECTION (prompt v9).**
+> **Current implementation update (2026-07-27) — POST-MERGE CALL QA RELIABILITY + REVIEW UI FOLLOW-UP (prompt v10).**
+> Focused follow-up branch only; not merged, deployed, provisioned, or ready for automation. A real
+> OB/GYN transfer-call pilot showed that the grader treated caller-volunteered gestational age as
+> uncollected, recycled that alleged miss into unrelated documentation feedback, and could double-deduct
+> verification when Gemini echoed a synthetic scenario name (`Yulia`) while authoritative STT captured a
+> narrow initial-character variant (`Julia`). The prompt is now **`call-qa-grader-v10`**: ordinary
+> caller-volunteered workflow facts count as collected unless a real SOP requires reconfirmation, and
+> every criterion needs an independent criterion-specific observable basis. This preserves a legitimate
+> Active Listening miss for a navigator who redundantly asks whether a caller is pregnant after she
+> clearly supplied 33 weeks; it does not let that fact fail `listen-gather` or `doc-reason` by itself.
+> Identity recovery is server-only, auditable, and deliberately bounded: it requires the model to have
+> echoed the trusted synthetic full name, an exact surname, a first-name initial substitution with an
+> otherwise identical spelling, and normal caller-owned name/DOB re-verification. It is NOT fuzzy
+> matching, a nickname list, or a hard-coded name, and always forces supervisor review; different names,
+> surnames, provider/staff names, missing DOB, and post-disclosure identity remain uncredited. The
+> OB/GYN rubric remains **`qa-rubric-obgyn-v1`** (100 total, 85 pass, verification 10/100, all approved
+> policies unchanged) and no historical grade is rewritten. The navigator-facing review replaces the raw
+> “Points you lost” list with display-only grouped **Areas to develop** coaching cards: category totals,
+> concise notes first, native expandable rubric detail, mobile-safe styling; stored criteria, scores,
+> flags, auto-fails, supervisor overrides, and history are unchanged. The ignored local transfer
+> scenario was wording-corrected only; no Firestore write occurred and a later explicitly authorized
+> compatibility provisioning step is needed. Live smoke now has 24 synthetic cases incl. volunteered
+> gestational age and redundant-question contrast; calibration remains `INSUFFICIENT_DATA`.
+> See docs/HISTORY.md 2026-07-27 and docs/GRADING_INVARIANTS.md §0p.
+>
+> **Prior implementation update (2026-07-24) — CALL QA PILOT DEFECT CORRECTION (prompt v9).**
 > **PR #42 merged to `main` as `942c0860c7a59a45cbf54608e62fa094a8a6e2a1` on 2026-07-24; NOT deployed.**
 > Private-scenario compatibility was complete before merge; calibration remains `INSUFFICIENT_DATA`.
 > Based on the FIRST real reproduced post-PR-41 Call QA pilot attempt. Four defects fixed at the
@@ -1517,6 +1542,17 @@ training assignments.
   get a hard PASS/FAIL, a per-category scorecard, the exact criteria they lost points on, and
   auto-fail alerts. Supervisors see a "QA TEST · PASS/FAIL" badge on the session in
   NavigatorDetail plus the full grade breakdown.
+- **Navigator-visible chart + pilot applicability/caller fixes (2026-07-24, prompt v9).** A scored
+- **Post-merge transfer reliability + coaching review (2026-07-27, prompt v10).** Ordinary
+  caller-volunteered workflow facts count as collected unless an applicable SOP explicitly requires
+  reconfirmation; no criterion may recycle an alleged intake miss into another category without its own
+  observable basis. A redundant question after a clear volunteered fact can still be an Active Listening
+  issue. The only synthetic/STT identity recovery is a server-side, exact-surname, initial-character-only
+  first-name variant that normal transcript identity/DOB verification independently proves; it forces
+  `needs_review` and does not generalize to aliases/fuzzy matching or real wrong-person exchanges. The
+  reviewed navigator UI now groups flat missed criteria visually under **Areas to develop**, with category
+  deduction totals, concise coaching, and native expandable rubric detail; scoring/storage/history and
+  supervisor behavior are unchanged. See docs/GRADING_INVARIANTS.md §0p.
 - **Navigator-visible chart + pilot applicability/caller fixes (2026-07-24, prompt v9).** A scored
   Call QA scenario now exposes a curated, server-authoritative **`navigatorChartState`** — the
   "Simulated ECW chart" the navigator was actually shown (current plan/RTO, active orders, open

@@ -1,5 +1,33 @@
 ﻿# Development History - Knowledge Check
 
+## 2026-07-27 — Post-merge Call QA pilot reliability and coaching-review follow-up
+
+**Status: focused follow-up branch; not merged, not deployed, not provisioned.** A real OB/GYN
+transfer-call pilot exposed three grading/presentation defects. First, caller-volunteered gestational
+age was treated as though it had never been gathered. Prompt **`call-qa-grader-v10`** now says ordinary
+caller-volunteered workflow facts count as collected unless the SOP requires reconfirmation, and each
+criterion needs its own observable basis before a deduction can be reused across documentation,
+routing, knowledge, or scheduling. A later redundant “Are you pregnant?” question remains eligible for
+an Active Listening deduction, but volunteered gestational age alone cannot fail `listen-gather` or
+`doc-reason`.
+
+Second, the synthetic scenario name could differ from captured speech (`Yulia`/`Julia`): Gemini could
+echo the trusted synthetic name in structured identity evidence, then exact evidence verification
+rejected it because that value was absent from the authoritative transcript quote, causing both
+verification criteria to lose credit. The fix is deliberately bounded: only a same-surname,
+initial-character-only first-name transcription variant that the normal caller-owned name/DOB pipeline
+independently verifies can recover credit, and it always forces `needs_review`. There is no global fuzzy
+matching, nickname list, or hard-coded name; truly different names, surname changes, provider names,
+missing DOB, and late identity remain uncredited.
+
+Third, the navigator result now presents missed criteria in display-only, category-grouped **Areas to
+develop** cards with deduction totals, coaching notes first, and native expandable rubric detail. The
+stored result shape, rubric IDs/points/weights, pass threshold, review flags, auto-fails, supervisor
+overrides, and historical records are unchanged. The local ignored transfer scenario wording was changed
+only to accept caller-volunteered gestational age; no Firestore write or provisioning occurred, so a
+separate authorized compatibility update will be needed after review. Calibration remains
+`INSUFFICIENT_DATA`; no human fixtures or historical grades were created/rewritten.
+
 ## 2026-07-24 — PR #42 merged after final independent review
 
 **Status: merged to `main` as `942c0860c7a59a45cbf54608e62fa094a8a6e2a1`; NOT deployed.** PR #42 merged

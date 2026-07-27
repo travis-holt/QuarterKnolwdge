@@ -1,7 +1,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 // qa:live-contract-smoke — an OPT-IN, NON-PRODUCTION live check that the pinned
 // scored Call QA grader model actually OBEYS the CURRENT structured contract
-// (`CALL_QA_PROMPT_VERSION`, now v9).
+// (`CALL_QA_PROMPT_VERSION`, now v10).
 //
 // Unit and stubbed-pipeline tests prove the deterministic pipeline, but they
 // cannot prove the live Gemini model emits the caller-only `identityEvidence`
@@ -491,6 +491,47 @@ export const LIVE_CONTRACT_SMOKE_CASES = [
       // should never have existed. The navigator DID recap it, but the correct
       // workflow booked nothing, so the criterion does not apply.
       [verdictOf(qa, 'sched-recap') === 'NA', 'sched-recap must stay NA — the correct workflow books nothing, so a wrong booking is never double-penalized here'],
+    ),
+  },
+  // ── v10 caller-volunteered facts + criterion isolation (2026-07-27) ────────
+  // Both are entirely synthetic. The fact is spoken before the navigator asks
+  // any intake question, so a grade may not demand it again merely because the
+  // transfer scenario says to establish gestational age.
+  {
+    id: '23-transfer-volunteered-gestational-age',
+    department: 'obgyn',
+    transcript: [
+      GREET,
+      caller('We just moved here, and I am 33 weeks pregnant. I need to transfer my prenatal care as soon as possible.'),
+      nav('I can help with the transfer process. May I have your first name, last name, and date of birth?'),
+      caller('Maria Alvarez, March 2nd 1991.'),
+      nav('Thank you. I will document that you are 33 weeks pregnant and send the transfer request with your records for clinical review. Once the clinical team accepts the transfer, we will contact you to arrange the appointment.'),
+      CLOSE_OFFER,
+      caller('No, that is everything.'),
+    ],
+    check: (qa) => checkAll(
+      [verdictOf(qa, 'listen-gather') !== 'NOT_MET', 'listen-gather must not fail because gestational age was clearly volunteered before any question repeated it'],
+      [verdictOf(qa, 'doc-reason') !== 'NOT_MET', 'doc-reason must not fail merely because gestational age was volunteered rather than re-asked'],
+      [verdictOf(qa, 'know-rule') !== 'NOT_MET', 'the transfer workflow must credit clinical review before appointment arrangement'],
+    ),
+  },
+  {
+    id: '24-transfer-repetitive-pregnancy-question',
+    department: 'obgyn',
+    transcript: [
+      GREET,
+      caller('We just moved here, and I am 33 weeks pregnant. I need to transfer my prenatal care as soon as possible.'),
+      nav('I can help with the transfer process. May I have your first name, last name, and date of birth?'),
+      caller('Maria Alvarez, March 2nd 1991.'),
+      nav('Are you pregnant, or is this a GYN visit?'),
+      caller('As I mentioned, I am 33 weeks pregnant and need prenatal care.'),
+      nav('I will document the transfer request with your records for clinical review. After acceptance, we will contact you to arrange the appointment.'),
+      CLOSE_OFFER,
+    ],
+    check: (qa) => checkAll(
+      [verdictOf(qa, 'listen-ack') === 'NOT_MET', 're-asking whether a caller is pregnant after she clearly volunteered 33 weeks should be recognized as an active-listening miss'],
+      [verdictOf(qa, 'doc-reason') !== 'NOT_MET', 'the repetitive question alone must not be recycled into a documentation failure'],
+      [verdictOf(qa, 'know-rule') !== 'NOT_MET', 'the otherwise correct transfer-review workflow must remain independently judged'],
     ),
   },
 ];

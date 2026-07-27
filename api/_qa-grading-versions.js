@@ -55,7 +55,11 @@
 //          exist;
 //        * [listen-gather] is scoped to CALLER-OBSERVABLE information gathering —
 //          not failed for an internal chart fact the navigator could not see.
-export const CALL_QA_PROMPT_VERSION = 'call-qa-grader-v9';
+// v10 = post-merge pilot reliability correction (2026-07-27): caller-volunteered
+//       ordinary workflow facts count as collected (without weakening structured
+//       identity verification), and every rubric deduction needs an independent,
+//       criterion-specific basis rather than recycling one alleged intake miss.
+export const CALL_QA_PROMPT_VERSION = 'call-qa-grader-v10';
 
 // Prompt versions this repository can still INTERPRET for stored records.
 // Historical attempts keep rendering under the version they recorded; this list
@@ -74,6 +78,7 @@ export const SUPPORTED_CALL_QA_PROMPT_VERSIONS = Object.freeze([
   'call-qa-grader-v7',
   'call-qa-grader-v8',
   'call-qa-grader-v9',
+  'call-qa-grader-v10',
 ]);
 
 const SUPPORTED = new Set(SUPPORTED_CALL_QA_PROMPT_VERSIONS);

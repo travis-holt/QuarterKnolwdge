@@ -8,9 +8,12 @@
 > [`api/_qa-grading-corpus.test.js`](../api/_qa-grading-corpus.test.js) — if one of
 > those tests fails after your change, re-read this document before "fixing" the test.
 >
-> Last updated: 2026-07-24 (pilot assessment-observability correction — §0o — navigator-visible chart
+> Last updated: 2026-07-27 (post-merge pilot reliability + review presentation correction — §0p —
+> caller-volunteered workflow facts, criterion isolation, bounded synthetic/STT identity uncertainty,
+> and coaching UI). Current grader prompt version `call-qa-grader-v10`; OB/GYN rubric remains
+> `qa-rubric-obgyn-v1`. Earlier: 2026-07-24 (pilot assessment-observability correction — §0o — navigator-visible chart
 > authority, sched-recap conditional NA, listen-gather caller-observable scope, and the caller
-> role-break fail-safe. Current grader prompt version `call-qa-grader-v9`; OB/GYN rubric unchanged at
+> role-break fail-safe. The prior pilot correction used grader prompt `call-qa-grader-v9`; OB/GYN rubric unchanged at
 > `qa-rubric-obgyn-v1`. Earlier: correction pass #7 follow-up 2 — §0n — genuine caller-information
 > requests are non-disclosures while auxiliary-led confirmations that reveal protected facts remain
 > disclosures. §0n supersedes the candidate, DOB ownership, and af-hipaa chronology portions of §0m.
@@ -32,7 +35,37 @@
 > server-derived identity evidence, real spoken/calendar DOB parsing, strict raw-response
 > validation, a truthful prompt-version policy, and metadata-less history resolving to the
 > historical shared rubric. Correction pass #4 is §0k. Current grader prompt version
-> `call-qa-grader-v9`; OB/GYN rubric `qa-rubric-obgyn-v1`.)
+> `call-qa-grader-v10`; OB/GYN rubric `qa-rubric-obgyn-v1`.)
+
+## 0p. Post-merge pilot reliability and navigator coaching presentation (2026-07-27)
+
+The OB/GYN rubric remains `qa-rubric-obgyn-v1`: 100 points, 85 pass threshold, first + last name +
+DOB verification, 10 verification points, conditional empathy/hold, five-point further-assistance
+closing, auto-fails, and supervisor-final authority are unchanged. No historical grade is rewritten.
+
+1. **Caller-volunteered ordinary workflow facts count as collected.** When a caller clearly provides
+   gestational age, pregnancy status, reason for visit, symptoms, preferences, callback information,
+   or another ordinary workflow fact, the grader must treat it as available to the navigator. It may
+   not require a duplicate question merely because scenario wording says ask/gather/obtain/establish/
+   collect/confirm unless the applicable SOP explicitly requires reconfirmation. This never changes
+   the separate structured identity-verification policy.
+2. **No duplicate cross-criterion penalty without independent evidence.** Each criterion is judged on
+   its own purpose. A fact can support more than one deduction only where each deduction has a real,
+   independent criterion-specific observable basis; an alleged missed intake question cannot be reused
+   as a documentation/routing/knowledge/scheduling miss by default. This is not a one-mistake/one-
+   deduction rule: genuinely independent errors remain separately scoreable.
+3. **Bounded synthetic/STT identity uncertainty.** The transcript remains authoritative. A synthetic
+   recovery exists only when the model echoed the trusted synthetic full caller name, the caller quote
+   has the same surname and a first name differing solely by its initial character with every remaining
+   character identical, and the normal caller-owned name/DOB pipeline independently verifies the
+   recovered transcript claims. It is not a nickname dictionary, Levenshtein match, or general fuzzy
+   identity policy. The recovered exchange can earn verification credit only with mandatory supervisor
+   review; different first names, surname changes, provider/staff names, missing DOB, and identity after
+   a protected disclosure remain uncredited under the existing deterministic checks.
+4. **Review presentation is display-only.** The navigator Call QA result now shows missed criteria as
+   grouped “Areas to develop” category cards with deduction totals, concise coaching first, and native
+   expandable rubric detail. Flat criterion IDs, points, stored QA shape, scoring, supervisor overrides,
+   auto-fails, review flags, and historical rendering are unchanged.
 
 ## 0o. Assessment observability, scheduling/listening applicability, and caller integrity (2026-07-24, pilot correction)
 
