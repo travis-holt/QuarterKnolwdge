@@ -262,7 +262,9 @@ export function buildTranscriptionProviderDeps({
     }
   };
 
-  if (typeof client?.on === 'function') {
+  // The default/unset Gemini path remains untouched: no additional client
+  // listeners are installed unless ElevenLabs was explicitly selected.
+  if (provider === CALL_QA_TRANSCRIPTION_PROVIDERS.ELEVENLABS && typeof client?.on === 'function') {
     client.on('close', release);
     client.on('error', release);
   }
