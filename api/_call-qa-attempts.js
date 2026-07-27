@@ -76,10 +76,6 @@ export function buildScenarioSnapshot(scenario) {
     sourceSopVersion: scenario.sourceSopVersion ?? null,
     sourceRuleVersion: scenario.sourceRuleVersion ?? null,
     sourceAuthority: scenario.sourceAuthority ?? null,
-    // Capture provenance: the provider adapter adds these server-side after the
-    // private scenario has been selected/validated. They never come from the browser.
-    transcriptionProvider: scenario.transcriptionProvider ?? 'gemini',
-    transcriptionModel: scenario.transcriptionModel ?? null,
   };
 }
 
@@ -117,6 +113,8 @@ export function buildAttemptDoc({ navigatorId, name, department, scenario, liveM
     captureAuthority: CALL_QA_CAPTURE_AUTHORITY,
     captureVersion: CALL_QA_CAPTURE_VERSION,
     liveModel: liveModel ?? null,
+    // Server-added capture provenance. These values come from the provider adapter
+    // after trusted scenario selection, never from the browser or private bank.
     transcriptionProvider: scenario.transcriptionProvider ?? 'gemini',
     transcriptionModel: scenario.transcriptionModel ?? null,
 
