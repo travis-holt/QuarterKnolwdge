@@ -19,7 +19,8 @@ before PR #44 have no `transcriptionProvider` field and are interpreted as
 `gemini` by the runtime default. Scores captured across a transcription-provider
 switch are not directly comparable; calibration and reliability analysis must
 segment runs by `transcriptionProvider` instead of pooling Gemini and ElevenLabs
-Scribe attempts into one population.
+Scribe attempts into one population. Treat legacy missing-provider attempts as
+the `gemini` segment for that comparison.
 
 The runtime scenario bank is private (Admin-only Firestore
 `callQaScenariosPrivate`); calibration references committed non-production
