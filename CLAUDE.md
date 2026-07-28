@@ -6,6 +6,9 @@
 > from the scored-call limit: one active test session per authenticated navigator.
 > The navigator slot is acquired only after all test-start validation succeeds and
 > released on every relay shutdown; browser identity and transcript authority remain unchanged.
+> P0-2 keys authenticated Call QA and navigator data-route rate limits by the cached
+> Firebase identity (falling back to IP only when unauthenticated), while login and
+> roster abuse controls remain IP-keyed with cohort-safe ceilings.
 
 > **Purpose of this file.** This is the single source of truth for the project: product
 > spec, architecture reference, development journal, decision log, and onboarding doc in one.

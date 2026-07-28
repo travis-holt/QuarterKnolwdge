@@ -14,31 +14,35 @@ export function clientIp(req) {
   return isIP(remote) ? remote : 'unknown';
 }
 
-function keyFor(req, label) {
-  return `${label}:${clientIp(req)}`;
+function keyFor(req, label, key) {
+  return `${label}:${key ?? clientIp(req)}`;
 }
 
-export function rateLimit({ label, windowMs = 60_000, max = 20 }) {
+export function rateLimit({ label, windowMs = 60_000, max = 20, keyBy }) {
   return (req, res, next) => {
-    const key = keyFor(req, label);
-    const now = Date.now();
-    // Bound the process map during long-lived Railway deployments.
-    if (windows.size > 2_000) {
-      for (const [candidate, value] of windows) {
-        if (now >= value.resetAt) windows.delete(candidate);
+    const apply = (identityKey) => {
+      const key = keyFor(req, label, identityKey);
+      const now = Date.now();
+      // Bound the process map during long-lived Railway deployments.
+      if (windows.size > 2_000) {
+        for (const [candidate, value] of windows) {
+          if (now >= value.resetAt) windows.delete(candidate);
+        }
       }
-    }
-    const entry = windows.get(key);
-    if (!entry || now >= entry.resetAt) {
-      windows.set(key, { count: 1, resetAt: now + windowMs });
-      return next();
-    }
-    entry.count += 1;
-    if (entry.count > max) {
-      res.status(429).json({ error: 'Too many requests. Please wait a minute and try again.' });
-      return;
-    }
-    next();
+      const entry = windows.get(key);
+      if (!entry || now >= entry.resetAt) {
+        windows.set(key, { count: 1, resetAt: now + windowMs });
+        return next();
+      }
+      entry.count += 1;
+      if (entry.count > max) {
+        res.status(429).json({ error: 'Too many requests. Please wait a minute and try again.' });
+        return;
+      }
+      next();
+    };
+    if (!keyBy) return apply();
+    return Promise.resolve(keyBy(req)).then(apply, () => apply());
   };
 }
 

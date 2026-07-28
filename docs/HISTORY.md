@@ -9,6 +9,10 @@ module-local navigator counter permits only one validated `mode:'test'` session 
 authenticated navigator. Slots are acquired after roster/scenario validation and released
 on the shared shutdown path, so rejected duplicates cannot release a session they never held.
 The authoritative transcript and terminal-write-before-ack invariant are unchanged.
+P0-2 makes rate limiting identity-keyed for authenticated Call QA/navigator routes by
+reusing the cached Firebase identity reader; unresolved identity falls back to IP.
+Unauthenticated brute-force routes remain IP-keyed, with ceilings raised to 60 for
+navigator login, 120 for roster reads, and 20 for supervisor login.
 
 ## 2026-07-28 — PR #43 private-scenario provisioning write-minimality correction
 

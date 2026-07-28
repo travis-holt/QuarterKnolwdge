@@ -30,25 +30,33 @@ import myInterviews from './api/my-interviews.js';
 import logout from './api/logout.js';
 import health from './api/health.js';
 import { attachLiveRelay } from './api/live-relay.js';
+import { readFirebaseIdentity } from './api/_auth.js';
+
+// Authenticated endpoints share the Firebase reader with their handlers. The
+// reader caches on req, so this never verifies a token twice.
+const identityRateKey = async (req) => {
+  const identity = req.identity ?? await readFirebaseIdentity(req);
+  return identity?.navigatorId ? `navigator:${identity.navigatorId}` : identity?.uid ? `uid:${identity.uid}` : null;
+};
 
 app.post('/api/refine-sop', rateLimit({ label: 'refine-sop', max: 6 }), express.json({ limit: '20mb' }), refineSop);
 app.use(express.json({ limit: '100kb' }));
 
 // Supervisor session (server-side authorization). Login rate-limited to blunt
 // passcode brute-forcing; logout is a plain cookie-clear.
-app.post('/api/supervisor-login', rateLimit({ label: 'supervisor-login', max: 10 }), supervisorLogin);
-app.post('/api/navigator-login', rateLimit({ label: 'navigator-login', max: 12 }), navigatorLogin);
-app.get('/api/navigator-roster', rateLimit({ label: 'navigator-roster', max: 30 }), navigatorRoster);
+app.post('/api/supervisor-login', rateLimit({ label: 'supervisor-login', max: 20 }), supervisorLogin);
+app.post('/api/navigator-login', rateLimit({ label: 'navigator-login', max: 60 }), navigatorLogin);
+app.get('/api/navigator-roster', rateLimit({ label: 'navigator-roster', max: 120 }), navigatorRoster);
 app.post('/api/logout', logout);
-app.post('/api/set-navigator-pin', rateLimit({ label: 'set-navigator-pin', max: 20 }), setNavigatorPin);
-app.post('/api/mentor-scores', rateLimit({ label: 'mentor-scores', max: 30 }), mentorScores);
-app.post('/api/my-interviews', rateLimit({ label: 'my-interviews', max: 30 }), myInterviews);
+app.post('/api/set-navigator-pin', rateLimit({ label: 'set-navigator-pin', max: 20, keyBy: identityRateKey }), setNavigatorPin);
+app.post('/api/mentor-scores', rateLimit({ label: 'mentor-scores', max: 30, keyBy: identityRateKey }), mentorScores);
+app.post('/api/my-interviews', rateLimit({ label: 'my-interviews', max: 30, keyBy: identityRateKey }), myInterviews);
 
 app.post('/api/generate-scenarios', rateLimit({ label: 'generate-scenarios', max: 12 }), generateScenarios);
 app.post('/api/generate-coaching', rateLimit({ label: 'generate-coaching', max: 20 }), generateCoaching);
 app.post('/api/interview-turn', rateLimit({ label: 'interview-turn', max: 30 }), interviewTurn);
 app.post('/api/grade-interview', rateLimit({ label: 'grade-interview', max: 20 }), gradeInterview);
-app.post('/api/grade-call-qa', rateLimit({ label: 'grade-call-qa', max: 12 }), gradeCallQa);
+app.post('/api/grade-call-qa', rateLimit({ label: 'grade-call-qa', max: 12, keyBy: identityRateKey }), gradeCallQa);
 app.post('/api/generate-audit', rateLimit({ label: 'generate-audit', max: 12 }), generateAudit);
 app.post('/api/coach-audit', rateLimit({ label: 'coach-audit', max: 20 }), coachAudit);
 app.post('/api/sequence-path', rateLimit({ label: 'sequence-path', max: 12 }), sequencePath);
