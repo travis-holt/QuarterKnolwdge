@@ -307,19 +307,23 @@ export default function VoiceCall({ navigatorId, name, department = 'pediatrics'
 
   async function runMicCheck(stream) {
     let ctx; let source; let analyser;
+    const check = { ctx: null, source: null, analyser: null, timer: null, frame: null, done: false, cancelled: false };
+    micCheckRef.current = check;
     try {
       if (!AudioContext.prototype.createAnalyser || typeof requestAnimationFrame !== 'function') throw new Error('microphone analysis unavailable');
       ctx = new AudioContext();
+      check.ctx = ctx;
       await ctx.resume();
+      if (!mountedRef.current || micCheckRef.current !== check || check.cancelled) return 'cancelled';
       if (ctx.state !== 'running') throw new Error('audio context not running');
       source = ctx.createMediaStreamSource(stream);
+      check.source = source;
       analyser = ctx.createAnalyser();
+      check.analyser = analyser;
       analyser.fftSize = 256;
       source.connect(analyser);
       setPhase('micCheck');
       return await new Promise((resolve) => {
-        const check = { ctx, source, analyser, frame: null, timer: null, done: false };
-        micCheckRef.current = check;
         const finish = (passed, skipped = false) => {
           if (check.done) return;
           check.done = true;
@@ -334,6 +338,7 @@ export default function VoiceCall({ navigatorId, name, department = 'pediatrics'
           if (skipped) console.warn('[voice-call] microphone check skipped');
           resolve(passed);
         };
+        check.cancel = () => { check.cancelled = true; finish('cancelled'); };
         const samples = new Float32Array(analyser.fftSize);
         const sample = () => {
           if (check.done || micCheckRef.current !== check) return;
@@ -350,19 +355,19 @@ export default function VoiceCall({ navigatorId, name, department = 'pediatrics'
       try { source?.disconnect(); } catch {}
       try { analyser?.disconnect(); } catch {}
       try { ctx?.close(); } catch {}
+      if (!mountedRef.current || micCheckRef.current !== check || check.cancelled) return 'cancelled';
       setError("We couldn't verify your microphone automatically. Check your headset, then try again or skip the check.");
       setPhase('micCheck');
       return await new Promise((resolve) => {
-        const fallback = { done: false, cancel: () => finish('cancelled') };
         const finish = (result) => {
-          if (fallback.done) return;
-          fallback.done = true;
-          if (micCheckRef.current === fallback) micCheckRef.current = null;
+          if (check.done) return;
+          check.done = true;
+          if (micCheckRef.current === check) micCheckRef.current = null;
           micCheckContinueRef.current = null;
           micCheckRetryRef.current = null;
           resolve(result);
         };
-        micCheckRef.current = fallback;
+        check.cancel = () => { check.cancelled = true; finish('cancelled'); };
         micCheckContinueRef.current = () => { console.warn('[voice-call] microphone check skipped'); finish(true); };
         micCheckRetryRef.current = () => finish('retry');
       });

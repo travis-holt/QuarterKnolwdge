@@ -503,3 +503,20 @@ describe('P0-5B retry and practice coverage', () => {
     expect(FakeWS.instances[0].parsed('start').mode).toBe('practice');
   });
 });
+
+describe('P0-5B async resume cancellation', () => {
+  it('cancels a deferred microphone resume after unmount without creating fallback UI', async () => {
+    let resolveResume; const close = vi.fn(); const stop = vi.fn();
+    class DeferredContext extends FakeAudioContext { resume() { return new Promise((resolve) => { resolveResume = resolve; }); } close() { close(); return Promise.resolve(); } }
+    global.AudioContext = DeferredContext;
+    Object.defineProperty(navigator, 'mediaDevices', { value: { getUserMedia: vi.fn().mockResolvedValue({ getTracks: () => [{ stop }] }) }, configurable: true });
+    const view = render(<VoiceCall navigatorId="nav-a" name="Ada" mode="test" />);
+    fireEvent.click(screen.getByRole('button', { name: /start the test call/i }));
+    await act(async () => { await Promise.resolve(); });
+    view.unmount();
+    await act(async () => { resolveResume(); await Promise.resolve(); });
+    expect(FakeWS.instances).toHaveLength(0);
+    expect(close).toHaveBeenCalled();
+    expect(stop).toHaveBeenCalledOnce();
+  });
+});
