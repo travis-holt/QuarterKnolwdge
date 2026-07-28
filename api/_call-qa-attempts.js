@@ -32,6 +32,7 @@ export const CAPTURE_STATUS = Object.freeze({
   INCOMPLETE: 'capture_incomplete',
   ABANDONED: 'abandoned',
 });
+export const STALE_ACTIVE_RECLAIM_MS = 15 * 60 * 1000;
 
 export const GRADING_STATUS = Object.freeze({
   NOT_STARTED: 'not_started',
@@ -214,7 +215,17 @@ export async function claimGradingLease(db, attemptId, { leaseId, now = Date.now
     if (data.gradingStatus === GRADING_STATUS.GRADED && data.qa) {
       return { status: 'already_graded', attempt: { id: attemptId, ...data } };
     }
-    if (data.captureStatus === CAPTURE_STATUS.ACTIVE) return { status: 'capture_active' };
+    if (data.captureStatus === CAPTURE_STATUS.ACTIVE) {
+      if (typeof data.startedAt === 'number' && Number.isFinite(data.startedAt) && now - data.startedAt > STALE_ACTIVE_RECLAIM_MS) {
+        tx.update(ref, {
+          captureStatus: CAPTURE_STATUS.ABANDONED,
+          endedAt: now,
+          captureMetadata: { ...(data.captureMetadata ?? {}), drainReason: 'stale-active-reclaimed', endedBy: 'server_reclaim' },
+        });
+        return { status: 'abandoned' };
+      }
+      return { status: 'capture_active' };
+    }
     if (data.captureStatus === CAPTURE_STATUS.ABANDONED) return { status: 'abandoned' };
     if (!isGradeableCaptureStatus(data.captureStatus)) return { status: 'not_gradeable' };
 

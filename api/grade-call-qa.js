@@ -958,6 +958,11 @@ export default async function handler(req, res) {
     await markGradeFailed(db, attemptId, { leaseId });
     return res.status(422).json({ error: 'This attempt has no recorded transcript to grade.' });
   }
+  const navigatorTurns = transcript.filter((turn) => turn?.role === 'navigator').length;
+  if (navigatorTurns === 0) {
+    await markGradeFailed(db, attemptId, { leaseId });
+    return res.status(422).json({ error: 'No navigator speech was captured. Nothing was scored.' });
+  }
 
   const scenarioContext = buildScenarioContextFromAttempt(claimed);
   const transcriptMetadata = buildTranscriptMetadata(claimed);
