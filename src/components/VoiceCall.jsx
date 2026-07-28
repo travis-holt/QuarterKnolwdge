@@ -288,6 +288,7 @@ export default function VoiceCall({ navigatorId, name, department = 'pediatrics'
   function teardown() {
     const check = micCheckRef.current;
     if (check) {
+      check.cancel?.();
       if (check.timer) clearTimeout(check.timer);
       if (check.frame) cancelAnimationFrame(check.frame);
       try { check.source?.disconnect(); } catch {}
@@ -329,6 +330,7 @@ export default function VoiceCall({ navigatorId, name, department = 'pediatrics'
           try { ctx.close(); } catch {}
           if (micCheckRef.current === check) micCheckRef.current = null;
           micCheckContinueRef.current = null;
+          micCheckRetryRef.current = null;
           if (skipped) console.warn('[voice-call] microphone check skipped');
           resolve(passed);
         };
@@ -351,8 +353,18 @@ export default function VoiceCall({ navigatorId, name, department = 'pediatrics'
       setError("We couldn't verify your microphone automatically. Check your headset, then try again or skip the check.");
       setPhase('micCheck');
       return await new Promise((resolve) => {
-        micCheckContinueRef.current = () => { console.warn('[voice-call] microphone check skipped'); micCheckContinueRef.current = null; micCheckRetryRef.current = null; resolve(true); };
-        micCheckRetryRef.current = () => { micCheckContinueRef.current = null; micCheckRetryRef.current = null; resolve('retry'); };
+        const fallback = { done: false, cancel: () => finish('cancelled') };
+        const finish = (result) => {
+          if (fallback.done) return;
+          fallback.done = true;
+          if (micCheckRef.current === fallback) micCheckRef.current = null;
+          micCheckContinueRef.current = null;
+          micCheckRetryRef.current = null;
+          resolve(result);
+        };
+        micCheckRef.current = fallback;
+        micCheckContinueRef.current = () => { console.warn('[voice-call] microphone check skipped'); finish(true); };
+        micCheckRetryRef.current = () => finish('retry');
       });
     }
   }
@@ -456,6 +468,7 @@ export default function VoiceCall({ navigatorId, name, department = 'pediatrics'
     }
     let micResult = await runMicCheck(stream);
     while (micResult === 'retry') micResult = await runMicCheck(stream);
+    if (!mountedRef.current || micResult === 'cancelled') return;
     if (!micResult) {
       setError("We couldn't hear your microphone. Check your headset is selected as the input device and try again.");
       teardown();

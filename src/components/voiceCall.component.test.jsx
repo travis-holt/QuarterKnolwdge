@@ -475,3 +475,31 @@ describe('P0-5B unavailable analyser fallback', () => {
     warn.mockRestore();
   });
 });
+
+describe('P0-5B retry and practice coverage', () => {
+  it('retries unavailable analysis with fresh resources before connecting', async () => {
+    let calls = 0;
+    FakeAudioContext.prototype.createAnalyser = () => {
+      calls += 1;
+      if (calls === 1) throw new Error('first analysis fails');
+      return { fftSize: 256, disconnect() {}, getFloatTimeDomainData: (data) => data.fill(MIC_CHECK_PEAK_THRESHOLD + 0.1) };
+    };
+    global.requestAnimationFrame = () => 1;
+    render(<VoiceCall navigatorId="nav-a" name="Ada" mode="test" />);
+    fireEvent.click(screen.getByRole('button', { name: /start the test call/i }));
+    await waitFor(() => expect(screen.getByRole('button', { name: /retry microphone check/i })).toBeTruthy());
+    fireEvent.click(screen.getByRole('button', { name: /retry microphone check/i }));
+    await waitFor(() => expect(FakeWS.instances).toHaveLength(1));
+    expect(calls).toBe(2);
+  });
+
+  it('requires microphone verification before a practice relay socket opens', async () => {
+    enableMicCheck(MIC_CHECK_PEAK_THRESHOLD + 0.1);
+    apiFetchMock.mockResolvedValue({ scenario: 'Practice scenario', callerName: 'Caller', reply: '' });
+    render(<VoiceCall navigatorId="nav-a" name="Ada" mode="practice" />);
+    fireEvent.click(screen.getByRole('button', { name: /start voice call/i }));
+    await waitFor(() => expect(FakeWS.instances).toHaveLength(1));
+    await act(async () => { FakeWS.instances[0].onopen(); });
+    expect(FakeWS.instances[0].parsed('start').mode).toBe('practice');
+  });
+});
