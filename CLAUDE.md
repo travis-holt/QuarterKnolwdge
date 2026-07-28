@@ -11,6 +11,21 @@
 > [§8 Current System State](#8-current-system-state) and [§15 Current Priorities](#15-current-priorities)
 > accurate at all times.
 >
+> **Current correction addendum (2026-07-28) — PRIVATE-SCENARIO PROVISIONING WRITE MINIMALITY.**
+> PR #43 remains open, **DRAFT**, unmerged, with auto-merge disabled; this operator-tool-only
+> correction changes no grader, prompt, rubric, UI, runtime retrieval, rules, calibration threshold,
+> historical grade, or private scenario content. The dedicated non-production v10 live smoke passed
+> **24/24** on 2026-07-27. A fresh read-only recovery found 15 active OB/GYN scenarios, and the ignored
+> local PR #43 transfer candidate validated 15/15 with exactly one wording-only change to
+> `expectedActions` and `criticalMisses`; neither private manifest was committed, printed, or modified.
+> Provisioning was stopped before any write because the operator tool classified every remotely existing
+> manifest ID as an update and would have rewritten unchanged documents. It now performs a full-document,
+> key-order-insensitive semantic comparison (arrays and primitive types remain meaningful), reports
+> unchanged IDs separately, and applies only creates, actual updates, and scoped deactivations. No
+> Firestore read or write occurred during this correction; provisioning remains separately owner-authorized.
+> Calibration remains `INSUFFICIENT_DATA` and no fixture or threshold was fabricated/changed.
+> See docs/HISTORY.md 2026-07-28.
+>
 > **Current implementation update (2026-07-27) — POST-MERGE CALL QA RELIABILITY + REVIEW UI FOLLOW-UP (prompt v10).**
 > Focused follow-up branch only; not merged, deployed, provisioned, or ready for automation. A real
 > OB/GYN transfer-call pilot showed that the grader treated caller-volunteered gestational age as

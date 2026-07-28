@@ -1,5 +1,22 @@
 ﻿# Development History - Knowledge Check
 
+## 2026-07-28 — PR #43 private-scenario provisioning write-minimality correction
+
+**Status: PR #43 remains OPEN, DRAFT, unmerged, and auto-merge disabled.** The dedicated
+non-production v10 live-contract smoke passed **24/24** on 2026-07-27; it was not rerun for this
+operator-tool-only correction. Calibration remains `INSUFFICIENT_DATA` with no fabricated fixture or
+threshold change.
+
+A fresh read-only recovery found **15 active OB/GYN** private scenarios. The ignored local PR #43
+transfer candidate validates **15/15** and has exactly one wording-only change, limited to
+`expectedActions` and `criticalMisses`. No private content was printed, committed, or changed.
+
+Provisioning was blocked before any write: `diffAgainstExisting` classified every existing manifest ID
+as an update, and `--apply` wrote every validated manifest document. The operator tool now compares the
+full stored document semantically, reports `unchanged` separately, and writes only creates, actual
+updates, and scoped deactivations. No Firestore read/write, provisioning run, deployment, merge, or
+historical-grade change occurred during discovery or this correction.
+
 ## 2026-07-27 — Post-merge Call QA pilot reliability and coaching-review follow-up
 
 **Status: focused follow-up branch; not merged, not deployed, not provisioned.** A real OB/GYN

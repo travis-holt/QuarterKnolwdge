@@ -90,13 +90,42 @@ export function validateProvisioningPayload(payload) {
   return { documents, activeByDepartment };
 }
 
+// Produces a deterministic, type-preserving JSON-comparable representation.
+// Recovered manifests are plain JSON; Firestore Timestamps serialize as
+// _seconds/_nanoseconds while the Admin SDK exposes seconds/nanoseconds.
+export function normalizeComparableValue(value) {
+  if (value === undefined) return ['undefined'];
+  if (value === null) return ['null'];
+  if (value instanceof Date) return ['date', value.getTime()];
+  if (typeof value === 'object') {
+    const seconds = value.seconds ?? value._seconds;
+    const nanoseconds = value.nanoseconds ?? value._nanoseconds;
+    if (typeof seconds === 'number' && typeof nanoseconds === 'number') {
+      return ['timestamp', seconds, nanoseconds];
+    }
+    if (Array.isArray(value)) return ['array', value.map(normalizeComparableValue)];
+    return ['object', Object.keys(value).sort().map((key) => [key, normalizeComparableValue(value[key])])];
+  }
+  if (typeof value === 'number') {
+    if (Number.isNaN(value)) return ['number', 'NaN'];
+    if (Object.is(value, -0)) return ['number', '-0'];
+  }
+  return [typeof value, value];
+}
+
+export function semanticallyEqual(left, right) {
+  return JSON.stringify(normalizeComparableValue(left)) === JSON.stringify(normalizeComparableValue(right));
+}
+
 export function diffAgainstExisting(documents, existingDocs) {
   const existing = new Map(existingDocs.map((doc) => [doc.id, doc.data]));
   const creates = [];
   const updates = [];
+  const unchanged = [];
   const deactivates = [];
   for (const [documentId, data] of documents) {
     if (!existing.has(documentId)) creates.push(documentId);
+    else if (semanticallyEqual(data, existing.get(documentId))) unchanged.push(documentId);
     else updates.push(documentId);
   }
   for (const [documentId, data] of existing) {
@@ -106,7 +135,18 @@ export function diffAgainstExisting(documents, existingDocs) {
     if (!isCallQaRolloutDept(data?.department)) continue;
     if (!documents.has(documentId) && data?.active === true) deactivates.push(documentId);
   }
-  return { creates, updates, deactivates };
+  return { creates, updates, unchanged, deactivates };
+}
+
+export async function applyProvisioningChanges({ collection, documents, creates, updates, deactivates }) {
+  for (const documentId of [...creates, ...updates]) {
+    const data = documents.get(documentId);
+    if (!data) throw new Error(`Missing validated data for ${documentId}.`);
+    await collection.doc(documentId).set(data);
+  }
+  for (const documentId of deactivates) {
+    await collection.doc(documentId).set({ active: false }, { merge: true });
+  }
 }
 
 async function main() {
@@ -127,22 +167,17 @@ async function main() {
   }
   const collection = admin.db.collection(CALL_QA_PRIVATE_SCENARIOS_COLLECTION);
   const snap = await collection.get();
-  const { creates, updates, deactivates } = diffAgainstExisting(
+  const { creates, updates, unchanged, deactivates } = diffAgainstExisting(
     documents,
     snap.docs.map((doc) => ({ id: doc.id, data: doc.data() })),
   );
-  console.log(`Would create: ${creates.length} · update: ${updates.length} · deactivate: ${deactivates.length}`);
+  console.log(`Would create: ${creates.length} · update: ${updates.length} · deactivate: ${deactivates.length} · unchanged: ${unchanged.length}`);
 
   if (!options.apply) {
     console.log('DRY RUN — no writes performed. Re-run with --apply to write.');
     return;
   }
-  for (const [documentId, data] of documents) {
-    await collection.doc(documentId).set(data);
-  }
-  for (const documentId of deactivates) {
-    await collection.doc(documentId).set({ active: false }, { merge: true });
-  }
+  await applyProvisioningChanges({ collection, documents, creates, updates, deactivates });
   console.log(`Applied: ${creates.length} created, ${updates.length} updated, ${deactivates.length} deactivated.`);
 }
 
