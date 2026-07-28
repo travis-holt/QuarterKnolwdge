@@ -246,6 +246,7 @@ export default function VoiceCall({ navigatorId, name, department = 'pediatrics'
   const caseFileRef = useRef(null);
   const micCheckRef = useRef(null);
   const micCheckContinueRef = useRef(null);
+  const micCheckRetryRef = useRef(null);
   const mountedRef = useRef(true);
   const domain = DOMAINS.find((d) => d.id === domainId);
 
@@ -295,6 +296,7 @@ export default function VoiceCall({ navigatorId, name, department = 'pediatrics'
       micCheckRef.current = null;
     }
     micCheckContinueRef.current = null;
+    micCheckRetryRef.current = null;
     const ws = wsRef.current;
     wsRef.current = null;
     if (finalizeTimerRef.current) { clearTimeout(finalizeTimerRef.current); finalizeTimerRef.current = null; }
@@ -303,9 +305,9 @@ export default function VoiceCall({ navigatorId, name, department = 'pediatrics'
   }
 
   async function runMicCheck(stream) {
-    if (!AudioContext.prototype.createAnalyser || typeof requestAnimationFrame !== 'function') return true;
     let ctx; let source; let analyser;
     try {
+      if (!AudioContext.prototype.createAnalyser || typeof requestAnimationFrame !== 'function') throw new Error('microphone analysis unavailable');
       ctx = new AudioContext();
       await ctx.resume();
       if (ctx.state !== 'running') throw new Error('audio context not running');
@@ -346,8 +348,12 @@ export default function VoiceCall({ navigatorId, name, department = 'pediatrics'
       try { source?.disconnect(); } catch {}
       try { analyser?.disconnect(); } catch {}
       try { ctx?.close(); } catch {}
-      console.warn('[voice-call] microphone check unavailable');
-      return false;
+      setError("We couldn't verify your microphone automatically. Check your headset, then try again or skip the check.");
+      setPhase('micCheck');
+      return await new Promise((resolve) => {
+        micCheckContinueRef.current = () => { console.warn('[voice-call] microphone check skipped'); micCheckContinueRef.current = null; micCheckRetryRef.current = null; resolve(true); };
+        micCheckRetryRef.current = () => { micCheckContinueRef.current = null; micCheckRetryRef.current = null; resolve('retry'); };
+      });
     }
   }
 
@@ -448,7 +454,9 @@ export default function VoiceCall({ navigatorId, name, department = 'pediatrics'
       stream.getTracks().forEach((track) => track.stop());
       return;
     }
-    if (!await runMicCheck(stream)) {
+    let micResult = await runMicCheck(stream);
+    while (micResult === 'retry') micResult = await runMicCheck(stream);
+    if (!micResult) {
       setError("We couldn't hear your microphone. Check your headset is selected as the input device and try again.");
       teardown();
       return setPhase('setup');
@@ -1074,6 +1082,7 @@ export default function VoiceCall({ navigatorId, name, department = 'pediatrics'
             <p className="readoff__sub">Say your name so we can check your microphone.</p>
             <div className="voicecall__mic-meter" aria-label="Microphone level"><span /></div>
             <button className="btn btn--ghost btn--sm" onClick={() => micCheckContinueRef.current?.()} type="button">Skip check</button>
+            {micCheckRetryRef.current && <button className="btn btn--ghost btn--sm" onClick={() => micCheckRetryRef.current?.()} type="button">Retry microphone check</button>}
           </> : <button className="btn btn--primary" disabled={phase !== 'setup'} onClick={startCall} type="button">
             {phase === 'connecting' ? 'Connecting…' : isTest ? 'Start the test call' : 'Start voice call'}
           </button>}

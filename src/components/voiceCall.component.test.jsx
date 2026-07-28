@@ -80,6 +80,9 @@ beforeEach(() => {
   dbMocks.updateInterviewGrade.mockReset();
   global.WebSocket = FakeWS;
   global.AudioContext = FakeAudioContext;
+  FakeAudioContext.prototype.createAnalyser = () => ({ fftSize: 256, disconnect() {}, getFloatTimeDomainData: (data) => data.fill(0.1) });
+  global.requestAnimationFrame = () => 1;
+  global.cancelAnimationFrame = () => {};
   Object.defineProperty(window, 'location', { value: { protocol: 'http:', host: 'localhost' }, configurable: true });
   Object.defineProperty(navigator, 'mediaDevices', {
     value: { getUserMedia: vi.fn().mockResolvedValue({ getTracks: () => [{ stop() {} }] }) },
@@ -449,8 +452,26 @@ describe('P0-5B stale mic-check callbacks', () => {
     global.requestAnimationFrame = vi.fn(() => 1);
     render(<VoiceCall navigatorId="nav-a" name="Ada" mode="test" />);
     fireEvent.click(screen.getByRole('button', { name: /start the test call/i }));
-    await waitFor(() => expect(screen.getByText(/couldn't hear your microphone/i)).toBeTruthy());
+    await waitFor(() => expect(screen.getByText(/couldn't verify your microphone automatically/i)).toBeTruthy());
     expect(FakeWS.instances).toHaveLength(0);
+    expect(screen.getByRole('button', { name: /skip check/i })).toBeTruthy();
+    expect(screen.getByRole('button', { name: /retry microphone check/i })).toBeTruthy();
     expect(screen.queryByText(/device secret/i)).toBeNull();
+  });
+});
+
+describe('P0-5B unavailable analyser fallback', () => {
+  it('requires an explicit Skip check before connecting after analyser setup failure', async () => {
+    FakeAudioContext.prototype.createAnalyser = () => { throw new Error('hidden device failure'); };
+    global.requestAnimationFrame = () => 1;
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    render(<VoiceCall navigatorId="nav-a" name="Ada" mode="test" />);
+    fireEvent.click(screen.getByRole('button', { name: /start the test call/i }));
+    await waitFor(() => expect(screen.getByRole('button', { name: /skip check/i })).toBeTruthy());
+    expect(FakeWS.instances).toHaveLength(0);
+    fireEvent.click(screen.getByRole('button', { name: /skip check/i }));
+    await waitFor(() => expect(FakeWS.instances).toHaveLength(1));
+    expect(warn).toHaveBeenCalledWith('[voice-call] microphone check skipped');
+    warn.mockRestore();
   });
 });
