@@ -1,5 +1,15 @@
 # CLAUDE.md — Knowledge Check (Project Knowledge Base)
 
+> **Current draft implementation (2026-07-28) — PR #46 Call QA launch hardening.**
+> Draft-only, unmerged, and undeployed. P0-1 separates a configurable pre-auth
+> per-IP DoS backstop (`CALL_QA_MAX_SESSIONS_PER_IP`, default 25, clamped 1..200)
+> from the scored-call limit: one active test session per authenticated navigator.
+> The navigator slot is acquired only after all test-start validation succeeds and
+> released on every relay shutdown; browser identity and transcript authority remain unchanged.
+> P0-2 keys authenticated Call QA and navigator data-route rate limits by the cached
+> Firebase identity (falling back to IP only when unauthenticated), while login and
+> roster abuse controls remain IP-keyed with cohort-safe ceilings.
+
 > **Purpose of this file.** This is the single source of truth for the project: product
 > spec, architecture reference, development journal, decision log, and onboarding doc in one.
 > A new developer or AI agent should be able to read **only this file** and become productive.

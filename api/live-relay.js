@@ -64,7 +64,6 @@ import {
 const LIVE_MODEL = 'gemini-3.1-flash-live-preview';
 const GEMINI_WS = (key) =>
   `wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent?key=${key}`;
-const MAX_SESSIONS_PER_IP = 2;
 const MAX_CALL_MS = 10 * 60 * 1000;
 const START_TIMEOUT_MS = 10_000;
 const UPSTREAM_SETUP_TIMEOUT_MS = 12_000;
@@ -76,6 +75,15 @@ function clampEnvMs(raw, dflt, min, max) {
   if (!Number.isFinite(n) || n <= 0) return dflt;
   return Math.min(max, Math.max(min, Math.floor(n)));
 }
+
+function clampEnvInt(raw, dflt, min, max) {
+  const n = Number(raw);
+  if (!Number.isFinite(n) || n <= 0) return dflt;
+  return Math.min(max, Math.max(min, Math.floor(n)));
+}
+
+// Pre-auth backstop only. Authenticated scored calls are limited per navigator.
+const MAX_SESSIONS_PER_IP = clampEnvInt(process.env.CALL_QA_MAX_SESSIONS_PER_IP, 25, 1, 200);
 
 // Overall bound on the End-Call drain: the relay signals end-of-audio upstream,
 // then finalizes no later than this even if the transcript never settles.
@@ -111,6 +119,12 @@ export function clientFinalizeGuardMs() {
 
 
 const activeByIp = new Map();
+const activeByNavigator = new Map();
+
+export function resetLiveRelaySessionCounts() {
+  activeByIp.clear();
+  activeByNavigator.clear();
+}
 
 // The SAFE browser projection of the navigator-visible chart. It carries ONLY
 // the curated navigator-observable chart facts (validated + sanitized upstream in
@@ -223,6 +237,7 @@ export function handleConnection(client, req, depsInput) {
     scenario: null,
     department: 'pediatrics',
     navigatorId: null,
+    navigatorSlotHeld: false,
   };
 
   const startTimer = deps.setTimer(() => {
@@ -240,6 +255,14 @@ export function handleConnection(client, req, depsInput) {
     if ((activeByIp.get(ip) ?? 0) === 0) activeByIp.delete(ip);
   }
 
+  function releaseNavigator() {
+    if (!session.navigatorSlotHeld || !session.navigatorId) return;
+    const navigatorId = session.navigatorId;
+    activeByNavigator.set(navigatorId, Math.max(0, (activeByNavigator.get(navigatorId) ?? 1) - 1));
+    if ((activeByNavigator.get(navigatorId) ?? 0) === 0) activeByNavigator.delete(navigatorId);
+    session.navigatorSlotHeld = false;
+  }
+
   function clearDrainTimers() {
     if (session.drainTimer) { deps.clearTimer(session.drainTimer); session.drainTimer = null; }
     if (session.settleTimer) { deps.clearTimer(session.settleTimer); session.settleTimer = null; }
@@ -253,6 +276,7 @@ export function handleConnection(client, req, depsInput) {
     deps.clearTimer(callTimer);
     clearDrainTimers();
     releaseIp();
+    releaseNavigator();
     try { session.upstream?.close(); } catch {}
     try { client.close(); } catch {}
   }
@@ -513,9 +537,12 @@ export function handleConnection(client, req, depsInput) {
 
       // Scenario selection is entirely server-side. Browser-supplied scenario
       // ids, prompts, prior-attempt lists, and answer metadata are ignored.
+      let priorAttempts = [];
+      try { priorAttempts = await deps.loadPriorQaAttempts(identity.navigatorId); } catch (err) {
+        console.warn(`[live-relay] prior attempt lookup failed: ${err?.message ?? err}`);
+      }
       let scenario = null;
       try {
-        const priorAttempts = await deps.loadPriorQaAttempts(identity.navigatorId);
         scenario = await deps.selectScenario({ department, priorAttempts });
       } catch (err) {
         console.warn(`[live-relay] scenario selection failed: ${err?.message ?? err}`);
@@ -535,7 +562,14 @@ export function handleConnection(client, req, depsInput) {
         return shutdown('missing-navigator-chart');
       }
 
+      if ((activeByNavigator.get(identity.navigatorId) ?? 0) >= 1) {
+        send(client, { type: 'error', message: 'You already have a call in progress. Finish or close that one first.' });
+        return shutdown('duplicate-session');
+      }
+
       session.navigatorId = identity.navigatorId;
+      activeByNavigator.set(session.navigatorId, (activeByNavigator.get(session.navigatorId) ?? 0) + 1);
+      session.navigatorSlotHeld = true;
       session.department = department;
       session.scenario = scenario;
 

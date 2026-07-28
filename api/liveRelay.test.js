@@ -5,7 +5,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import {
   handleConnection, CALL_QA_DRAIN_TIMEOUT_MS, CALL_QA_TRANSCRIPT_SETTLE_MS,
-  CALL_QA_ACTIVE_TURN_SETTLE_MS, clientFinalizeGuardMs,
+  CALL_QA_ACTIVE_TURN_SETTLE_MS, clientFinalizeGuardMs, resetLiveRelaySessionCounts,
 } from './live-relay.js';
 import { createFakeFirestore } from './fixtures/fakeFirestore.js';
 import { CAPTURE_STATUS } from './_call-qa-attempts.js';
@@ -125,7 +125,10 @@ function storedAttempt(h) {
   return key ? h.db._store.get(key) : null;
 }
 
-beforeEach(() => vi.clearAllMocks());
+beforeEach(() => {
+  vi.clearAllMocks();
+  resetLiveRelaySessionCounts();
+});
 
 describe('server-authoritative start contract', () => {
   it('derives navigatorId from the token and selects the scenario server-side (ignoring every client scenario field)', async () => {
@@ -253,6 +256,68 @@ describe('roster-member validation (item 6)', () => {
     await flush();
     expect(h.client.lastByType('error')).toBeTruthy();
     expect(storedAttempt(h)).toBeNull();
+  });
+});
+
+describe('P0-1 scored-session concurrency', () => {
+  const sameIpHarness = (navigatorId) => harness({
+    clientIp: () => 'shared-floor-ip',
+    verifyToken: vi.fn(async () => ({ role: 'navigator', navigatorId })),
+    loadRosterMember: vi.fn(async () => ({ id: navigatorId, name: navigatorId, status: 'active' })),
+  });
+
+  it('allows three navigators behind one NAT to reach ready', async () => {
+    const sessions = ['nav-a', 'nav-b', 'nav-c'].map(sameIpHarness);
+    for (const h of sessions) await startTest(h);
+    expect(sessions.map((h) => h.client.lastByType('ready'))).toHaveLength(3);
+    await Promise.all(sessions.map((h) => h.client.emit('close')));
+    await flush();
+  });
+
+  it('rejects a duplicate navigator without affecting the first session or releasing its slot', async () => {
+    const first = sameIpHarness('nav-duplicate');
+    await startTest(first);
+    const duplicate = sameIpHarness('nav-duplicate');
+    handleConnection(duplicate.client, {}, duplicate.deps);
+    await duplicate.client.emit('message', JSON.stringify({ type: 'start', idToken: 't', mode: 'test', department: 'obgyn' }));
+    await flush();
+    expect(duplicate.client.lastByType('error')).toMatchObject({ message: 'You already have a call in progress. Finish or close that one first.' });
+    expect(first.client.lastByType('error')).toBeUndefined();
+
+    const third = sameIpHarness('nav-duplicate');
+    handleConnection(third.client, {}, third.deps);
+    await third.client.emit('message', JSON.stringify({ type: 'start', idToken: 't', mode: 'test', department: 'obgyn' }));
+    await flush();
+    expect(third.client.lastByType('error')).toMatchObject({ message: 'You already have a call in progress. Finish or close that one first.' });
+    await first.client.emit('close');
+    await flush();
+  });
+
+  it('releases a navigator slot after client disconnect and call timeout', async () => {
+    const disconnected = sameIpHarness('nav-release');
+    await startTest(disconnected);
+    await disconnected.client.emit('close');
+    await flush();
+    const afterDisconnect = sameIpHarness('nav-release');
+    await startTest(afterDisconnect);
+    afterDisconnect.timers.find((timer) => timer.ms === 10 * 60 * 1000).fn();
+    await flush();
+    await flush();
+    const afterTimeout = sameIpHarness('nav-release');
+    await startTest(afterTimeout);
+    await afterTimeout.client.emit('close');
+  });
+});
+
+describe('P0-3 scenario availability resilience', () => {
+  it('continues a scored call when prior-attempt variety lookup fails', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const h = harness({ loadPriorQaAttempts: vi.fn(async () => { throw new Error('Firestore unavailable'); }) });
+    await startTest(h);
+    expect(h.client.lastByType('ready')).toBeTruthy();
+    expect(h.deps.selectScenario).toHaveBeenCalledWith({ department: 'obgyn', priorAttempts: [] });
+    warn.mockRestore();
+    await h.client.emit('close');
   });
 });
 

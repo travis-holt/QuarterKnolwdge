@@ -34,4 +34,27 @@ describe('Railway-aware rate limiting', () => {
     middleware(req, res, vi.fn());
     expect(res.status).toHaveBeenCalledWith(429);
   });
+
+  it('uses the supplied authenticated identity key instead of the shared IP', async () => {
+    const middleware = rateLimit({ label: 'grade-call-qa', max: 1, keyBy: async (req) => `navigator:${req.identity.navigatorId}` });
+    const request = (navigatorId) => ({ identity: { navigatorId }, headers: { 'x-real-ip': '203.0.113.1' }, socket: {} });
+    const first = vi.fn();
+    const second = vi.fn();
+    await middleware(request('nav-a'), response(), first);
+    await middleware(request('nav-b'), response(), second);
+    expect(first).toHaveBeenCalledOnce();
+    expect(second).toHaveBeenCalledOnce();
+    const blocked = response();
+    await middleware(request('nav-a'), blocked, vi.fn());
+    expect(blocked.status).toHaveBeenCalledWith(429);
+  });
+
+  it('falls back to IP when an asynchronous key cannot be resolved', async () => {
+    const middleware = rateLimit({ label: 'test', max: 1, keyBy: async () => { throw new Error('no identity'); } });
+    const req = { headers: { 'x-real-ip': '203.0.113.1' }, socket: {} };
+    await middleware(req, response(), vi.fn());
+    const blocked = response();
+    await middleware(req, blocked, vi.fn());
+    expect(blocked.status).toHaveBeenCalledWith(429);
+  });
 });

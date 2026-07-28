@@ -287,4 +287,22 @@ describe('private Call QA scenario selection', () => {
       priorAttempts: [],
     })).resolves.toBeNull();
   });
+
+  it('logs malformed active docs once and selects from valid survivors', async () => {
+    const valid = privateScenario('qa-test-valid');
+    const malformed = privateScenario('qa-test-bad', { gradingContext: '' });
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const { db } = fakeDb([valid, malformed]);
+    await expect(selectServerCallQaScenario(db, { department: 'pediatrics', priorAttempts: [], random: () => 0 }))
+      .resolves.toMatchObject({ id: valid.id });
+    expect(warn).toHaveBeenCalledOnce();
+    expect(warn.mock.calls[0][0]).toContain('qa-test-bad');
+    expect(warn.mock.calls[0][0]).toContain('gradingContext');
+    warn.mockRestore();
+  });
+
+  it('returns null when every active document is malformed', async () => {
+    const { db } = fakeDb([privateScenario('qa-test-bad', { gradingContext: '' })]);
+    await expect(selectServerCallQaScenario(db, { department: 'pediatrics', priorAttempts: [] })).resolves.toBeNull();
+  });
 });

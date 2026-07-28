@@ -178,6 +178,22 @@ describe('grading lease + idempotency', () => {
     expect((await claimGradingLease(abandoned, 'a1', { leaseId: 'l', now: 1 })).status).toBe('abandoned');
   });
 
+  it('reclaims only a provably stale active capture as abandoned', async () => {
+    const db = createFakeFirestore({ interviews: { a1: seededAttempt({ startedAt: 1_000 }) } });
+    const result = await claimGradingLease(db, 'a1', { leaseId: 'l', now: 1_000 + 20 * 60 * 1000 });
+    expect(result.status).toBe('abandoned');
+    const doc = await loadAttempt(db, 'a1');
+    expect(doc.captureStatus).toBe(CAPTURE_STATUS.ABANDONED);
+    expect(doc.endedAt).toBe(1_000 + 20 * 60 * 1000);
+    expect(doc.captureMetadata).toMatchObject({ drainReason: 'stale-active-reclaimed', endedBy: 'server_reclaim' });
+  });
+
+  it.each([undefined, 'not-a-time', 1_000 + 13 * 60 * 1000])('does not guess about non-stale active startedAt %j', async (startedAt) => {
+    const db = createFakeFirestore({ interviews: { a1: seededAttempt({ startedAt }) } });
+    expect((await claimGradingLease(db, 'a1', { leaseId: 'l', now: 1_000 + 15 * 60 * 1000 })).status).toBe('capture_active');
+    expect((await loadAttempt(db, 'a1')).captureStatus).toBe(CAPTURE_STATUS.ACTIVE);
+  });
+
   it('a second concurrent claim is refused while the first lease is live', async () => {
     const db = createFakeFirestore({ interviews: { a1: captured() } });
     const [first, second] = await Promise.all([

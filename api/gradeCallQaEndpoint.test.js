@@ -254,6 +254,18 @@ describe('POST /api/grade-call-qa (attempt-id)', () => {
     expect(geminiWithRotation).not.toHaveBeenCalled();
   });
 
+  it('marks a caller-only capture grade_failed instead of scoring it', async () => {
+    seedAttempt(state.db, { transcript: [{ role: 'patient', text: 'Hello, I need help.' }] });
+    const res = makeRes();
+    await handler(makeReq(), res);
+    expect(res.statusCode).toBe(422);
+    expect(res.body.error).toContain('No navigator speech');
+    const stored = state.db._store.get('interviews/att-1');
+    expect(stored.gradingStatus).toBe(GRADING_STATUS.FAILED);
+    expect(stored.transcript).toEqual([{ role: 'patient', text: 'Hello, I need help.' }]);
+    expect(geminiWithRotation).not.toHaveBeenCalled();
+  });
+
   it('grades a captured attempt from the STORED transcript, ignoring any client transcript', async () => {
     seedAttempt(state.db);
     geminiWithRotation.mockResolvedValue(OK(validText));

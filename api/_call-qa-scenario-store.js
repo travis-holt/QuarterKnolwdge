@@ -338,8 +338,17 @@ export async function selectServerCallQaScenario(db, { department, priorAttempts
   const snap = await db.collection(CALL_QA_PRIVATE_SCENARIOS_COLLECTION)
     .where('department', '==', department)
     .get();
-  const scenarios = snap.docs
-    .filter((doc) => doc.data()?.active === true)
-    .map((doc) => validatePrivateScenario(doc.data(), { documentId: doc.id, department }));
+  const rejected = [];
+  const scenarios = snap.docs.flatMap((doc) => {
+    const data = doc.data();
+    if (data?.active !== true) return [];
+    try {
+      return [validatePrivateScenario(data, { documentId: doc.id, department })];
+    } catch (error) {
+      rejected.push({ id: doc.id, reason: error?.message ?? String(error) });
+      return [];
+    }
+  });
+  if (rejected.length) console.warn(`[call-qa] rejected ${rejected.length} scenario doc(s): ${rejected.map(({ id, reason }) => `${id}: ${reason}`).join('; ')}`);
   return selectLoadedCallQaScenario(scenarios, { department, priorAttempts, random });
 }
