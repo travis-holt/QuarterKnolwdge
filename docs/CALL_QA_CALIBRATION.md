@@ -158,7 +158,13 @@ does not pass the field into `buildTrustedGradingScenario` at all, so the grader
 facts the navigator could not see (it remains server-side in the immutable attempt snapshot for trusted
 audit provenance). `sched-recap` is described as
 CONDITIONAL (NA when the correct workflow books no appointment), and `listen-gather` is scoped to
-caller-observable information gathering — moving the prompt to **`call-qa-grader-v9`**. The OB/GYN
+caller-observable information gathering — moving the prompt to **`call-qa-grader-v9`**. The post-merge
+pilot reliability correction (2026-07-27) makes caller-volunteered ordinary workflow facts count as
+collected unless the SOP requires reconfirmation and requires an independent criterion-specific basis for
+each deduction, moving the prompt to **`call-qa-grader-v10`**. Identity performance is now derived from
+the captured transcript; a complete identity that differs from the server-owned simulator identity is a
+separate supervisor-review integrity signal, not a name-recovery rule or score deduction.
+The OB/GYN
 criteria, points, category weights, applicability flags and auto-fails are unchanged, so the rubric
 stays `qa-rubric-obgyn-v1`. The server-only candidate, name-field, DOB-ownership, and HIPAA chronology
 checks, and the deterministic caller role-break fail-safe, do not independently require a prompt bump.
@@ -175,13 +181,13 @@ An unknown recorded rubric or prompt version fails closed. The compatibility pol
 
 | Department | Rubric version | Legitimate prompt versions |
 |---|---|---|
-| `pediatrics` | `qa-rubric-v2` | any supported (v3–v9) |
+| `pediatrics` | `qa-rubric-v2` | any supported (v3–v10) |
 | `obgyn` | `qa-rubric-v2` (historical shared) | v3 only |
-| `obgyn` | `qa-rubric-obgyn-v1` | v4, v5, v6, v7, v8, v9 |
+| `obgyn` | `qa-rubric-obgyn-v1` | v4, v5, v6, v7, v8, v9, v10 |
 
 **Interpretable is not the same as producible (corrected 2026-07-21).**
 `SUPPORTED_CALL_QA_PROMPT_VERSIONS` lists every version this build can still INTERPRET in a
-stored record (v3–v9). It previously read as though a fixture could simply declare any
+stored record (v3–v10). It previously read as though a fixture could simply declare any
 of them, while `validateModelRun` in fact required an exact match with the current version —
 a contradiction the second review flagged. The policy is now explicit and enforced:
 
@@ -206,9 +212,9 @@ breaks down prompt version, a multi-version population displays
 every gate on its own (`requireSinglePromptVersion`). Two helpers express the split —
 `isSupportedStoredPromptVersion()` and `isCurrentPromptVersion()`.
 
-**Re-baselining.** `call-qa-grader-v9` (like the v4/v5/v6/v7/v8 moves before it, and like
+**Re-baselining.** `call-qa-grader-v10` (like the v4/v5/v6/v7/v8/v9 moves before it, and like
 `qa-rubric-obgyn-v1`) re-baselines OB/GYN calibration: evidence gathered under an earlier
-prompt is a separate population and cannot be pooled with v9 evidence. This has no effect
+prompt is a separate population and cannot be pooled with v10 evidence. This has no effect
 on current readiness, because there are still zero human-pilot fixtures.
 
 ## Simulated-caller integrity
@@ -349,7 +355,7 @@ fixtures and requires each grading fixture to embed a sanitized
 Firestore bank.
 
 The production grader prompt version has one source of truth:
-`api/_qa-grading-versions.js` (`call-qa-grader-v9`), re-exported by
+`api/_qa-grading-versions.js` (`call-qa-grader-v10`), re-exported by
 `api/grade-call-qa.js` and validated against fixture `modelRun.promptVersion`.
 
 Private provisioning is a separate deliberate operator action:
@@ -385,7 +391,7 @@ CALL_QA_LIVE_SMOKE_API_KEY=dedicated-non-production-key npm run qa:live-contract
 The plural `CALL_QA_LIVE_SMOKE_API_KEYS` is also supported and takes precedence when it holds at
 least one usable key; a set-but-empty plural variable falls back to the singular (correction pass
 #5 — the earlier nullish-coalescing resolver masked a populated singular key). This command
-deliberately does **not** read the application's `GEMINI_API_KEY(S)` pool. It runs **22** synthetic
+deliberately does **not** read the application's `GEMINI_API_KEY(S)` pool. It runs **24** synthetic
 semantic cases (correction pass #6 — ten explicit HIPAA/chronology cases; the 2026-07-24 pilot
 correction — two navigator-visible-chart cases) against the pinned scored
 grader model with static SOP context, no Firestore or private-bank access, no provisioning, and no
@@ -415,9 +421,16 @@ the missing-vs-explicit-empty distinction is exercised live. Neither case suppli
   the scan. The case asserts the wrong outcome IS captured by `sched-flow` and/or `know-rule` while
   `sched-recap` stays **NA**, so a booking that should never have existed is never double-penalized.
 
-All 20 prior identity/privacy cases are retained.
+All 22 prior identity/chart cases are retained. The v10 cases are:
 
-**Measure the exit code from ONE invocation.** The gate makes 22 sequential upstream calls, and the
+* **`23-transfer-volunteered-gestational-age`** — caller states gestational age before the navigator
+  asks any intake question; transfer workflow uses and documents it without a redundant question. The
+  case rejects a `listen-gather` or `doc-reason` miss solely for not asking again.
+* **`24-transfer-repetitive-pregnancy-question`** — identical volunteered fact, but the navigator later
+  re-asks whether the caller is pregnant. This is an Active Listening contrast while documentation and
+  knowledge remain independently judged.
+
+**Measure the exit code from ONE invocation.** The gate makes 24 sequential upstream calls, and the
 free-tier quota is per-key-per-model, so running the command twice back to back to "confirm" the exit
 code reliably trips HTTP 429 and produces a FAILED run that says nothing about the contract. Use
 `npm run qa:live-contract-smoke; echo $?` once. A run whose `[FAIL]` lines all read

@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  applyProvisioningChanges,
   diffAgainstExisting,
   parseArgs,
   validateProvisioningPayload,
@@ -115,8 +116,44 @@ describe('provision-private-scenarios operator tool', () => {
     ];
     const diff = diffAgainstExisting(documents, existing);
     expect(diff.updates).toEqual([firstId]);
+    expect(diff.unchanged).toEqual([]);
     expect(diff.creates).toHaveLength(14);
     expect(diff.deactivates).toEqual(['stale__old-v0']);
+  });
+
+  it('classifies identical full documents as unchanged', () => {
+    const { documents } = validateProvisioningPayload(fullPayload());
+    const [documentId, data] = documents.entries().next().value;
+    expect(diffAgainstExisting(new Map([[documentId, data]]), [{ id: documentId, data }])).toEqual({
+      creates: [], updates: [], unchanged: [documentId], deactivates: [],
+    });
+  });
+
+  it('updates one wording-only change without classifying it unchanged', () => {
+    const { documents } = validateProvisioningPayload(fullPayload());
+    const [documentId, data] = documents.entries().next().value;
+    const existing = { ...data, expectedActions: ['Different wording.'] };
+    const diff = diffAgainstExisting(new Map([[documentId, data]]), [{ id: documentId, data: existing }]);
+    expect(diff.updates).toEqual([documentId]);
+    expect(diff.unchanged).toEqual([]);
+  });
+
+  it('classifies a 15-document manifest with one wording change as 1 update and 14 unchanged', () => {
+    const { documents } = validateProvisioningPayload(fullPayload());
+    const existing = [...documents].map(([id, data], index) => ({
+      id,
+      data: index === 4 ? { ...data, criticalMisses: ['Different wording.'] } : data,
+    }));
+    const diff = diffAgainstExisting(documents, existing);
+    expect(diff.creates).toHaveLength(0);
+    expect(diff.updates).toHaveLength(1);
+    expect(diff.unchanged).toHaveLength(14);
+    expect(diff.deactivates).toHaveLength(0);
+  });
+
+  it('classifies a remote absence as a create', () => {
+    const data = { active: true, department: 'obgyn' };
+    expect(diffAgainstExisting(new Map([['new__v1', data]]), []).creates).toEqual(['new__v1']);
   });
 
   it('never deactivates an out-of-scope (Pediatrics) document from an OB/GYN-only manifest', () => {
@@ -128,6 +165,57 @@ describe('provision-private-scenarios operator tool', () => {
     const diff = diffAgainstExisting(documents, existing);
     expect(diff.deactivates).toEqual(['stale-obgyn__v0']);
     expect(diff.deactivates).not.toContain('legacy-peds__v1');
+  });
+
+  it('ignores object key insertion order but preserves meaningful array order', () => {
+    const candidate = { active: true, department: 'obgyn', nested: { b: 2, a: 1 }, ordered: ['first', 'second'] };
+    const same = { ordered: ['first', 'second'], nested: { a: 1, b: 2 }, department: 'obgyn', active: true };
+    const reordered = { ...same, ordered: ['second', 'first'] };
+    expect(diffAgainstExisting(new Map([['doc__v1', candidate]]), [{ id: 'doc__v1', data: same }]).unchanged)
+      .toEqual(['doc__v1']);
+    expect(diffAgainstExisting(new Map([['doc__v1', candidate]]), [{ id: 'doc__v1', data: reordered }]).updates)
+      .toEqual(['doc__v1']);
+  });
+
+  it.each([
+    ['null', { value: null }],
+    ['empty array', { value: [] }],
+    ['false', { value: false }],
+  ])('treats a missing property as different from explicit %s', (_label, existing) => {
+    const candidate = { active: true, department: 'obgyn' };
+    expect(diffAgainstExisting(new Map([['doc__v1', candidate]]), [{ id: 'doc__v1', data: { ...candidate, ...existing } }]).updates)
+      .toEqual(['doc__v1']);
+  });
+
+  it('normalizes equivalent recovered JSON and Firestore Timestamp representations', () => {
+    const candidate = { active: true, department: 'obgyn', changedAt: { _seconds: 12, _nanoseconds: 34 } };
+    const existing = { active: true, department: 'obgyn', changedAt: { seconds: 12, nanoseconds: 34, toDate() {} } };
+    expect(diffAgainstExisting(new Map([['doc__v1', candidate]]), [{ id: 'doc__v1', data: existing }]).unchanged)
+      .toEqual(['doc__v1']);
+  });
+
+  it('applies only classified creates and updates, never unchanged documents', async () => {
+    const writes = [];
+    const collection = { doc: (id) => ({ set: (...args) => { writes.push([id, args]); } }) };
+    const documents = new Map([
+      ['create__v1', { active: true }],
+      ['update__v1', { active: true }],
+      ...Array.from({ length: 14 }, (_, index) => [`same-${index}__v1`, { active: true }]),
+    ]);
+    await applyProvisioningChanges({
+      collection, documents, creates: ['create__v1'], updates: ['update__v1'],
+      unchanged: Array.from({ length: 14 }, (_, index) => `same-${index}__v1`), deactivates: [],
+    });
+    expect(writes.map(([id]) => id)).toEqual(['create__v1', 'update__v1']);
+  });
+
+  it('applies only the identified deactivation as a merge update', async () => {
+    const writes = [];
+    const collection = { doc: (id) => ({ set: (...args) => { writes.push([id, args]); } }) };
+    await applyProvisioningChanges({
+      collection, documents: new Map(), creates: [], updates: [], deactivates: ['stale__v1'],
+    });
+    expect(writes).toEqual([['stale__v1', [{ active: false }, { merge: true }]]]);
   });
 
   it('document identities bind id and version', () => {

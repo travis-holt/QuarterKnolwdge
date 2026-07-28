@@ -3135,6 +3135,32 @@ textarea:focus-visible {
   color: var(--ink-soft);
   line-height: 1.5;
 }
+.interview-log__grade--qa { gap: 14px; }
+.qa-history-summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 14px;
+  border: 1px solid var(--line-soft);
+  border-radius: 10px;
+  background: var(--surface);
+}
+.qa-history-summary__eyebrow { margin: 0; color: var(--ink-faint); font-size: 0.7rem; font-weight: 750; letter-spacing: .07em; text-transform: uppercase; }
+.qa-history-summary__score { margin: 2px 0; font-size: 1.45rem; line-height: 1.1; }
+.qa-history-summary__sub { margin: 0; color: var(--ink-soft); font-size: .78rem; }
+.qa-history-summary__verdicts { display: grid; gap: 5px; text-align: right; }
+.qa-history-summary__verdicts p { margin: 0; font-size: .8rem; color: var(--ink-soft); }
+.qa-history-summary__verdicts span { font-weight: 700; color: var(--ink); }
+.qa-history-review { display: grid; gap: 10px; padding: 13px; border: 1px solid var(--level-solid); border-radius: 10px; background: var(--surface); }
+.qa-history-review > header { display: flex; align-items: start; justify-content: space-between; gap: 10px; }
+.qa-history-review__meta { margin: 3px 0 0; color: var(--ink-soft); font-size: .76rem; }
+.qa-history-review__count { flex: none; padding: 3px 7px; border-radius: 999px; background: var(--surface-2); color: var(--ink-soft); font-size: .72rem; font-weight: 700; }
+.qa-history-review__flags { display: grid; gap: 6px; }
+.qa-history-review__flags details { padding: 7px 9px; border-radius: 7px; background: var(--surface-2); }
+.qa-history-review__flags summary { color: var(--ink); cursor: pointer; font-size: .8rem; font-weight: 700; }
+.qa-history-review__flags p { margin: 7px 0 0; color: var(--ink-soft); font-size: .8rem; line-height: 1.45; }
+.qa-history-strengths { padding: 2px 4px; }
 
 /* ── Supervisor grade override ─────────────────────────────────────────────── */
 .interview-log__override-flag {
@@ -5909,9 +5935,125 @@ textarea:focus-visible {
 }
 .qa-missed__note { color: var(--ink-soft); }
 
+/* Call QA coaching: a flat, server-scored criterion list is grouped here only
+   for navigator readability. This intentionally is not an alert treatment. */
+.qa-development {
+  display: grid;
+  gap: 14px;
+}
+.qa-development__header {
+  display: flex;
+  align-items: end;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 0 4px;
+}
+.qa-development__title {
+  margin: 0;
+  color: var(--ink);
+  font-size: 1.15rem;
+  letter-spacing: -0.015em;
+}
+.qa-development__summary {
+  margin: 4px 0 0;
+  color: var(--ink-soft);
+  font-size: 0.88rem;
+  line-height: 1.5;
+}
+.qa-development__groups {
+  display: grid;
+  gap: 12px;
+}
+.qa-development__group {
+  position: relative;
+  overflow: hidden;
+  padding: 17px 19px;
+  border: 1px solid color-mix(in srgb, var(--accent) 17%, var(--line));
+  border-radius: var(--radius);
+  background: var(--surface);
+  box-shadow: var(--shadow-xs);
+}
+.qa-development__group::before {
+  content: '';
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 3px;
+  background: var(--accent-soft);
+}
+.qa-development__group-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.qa-development__group-header h4 {
+  margin: 0;
+  color: var(--ink);
+  font-size: 0.95rem;
+  font-weight: 750;
+}
+.qa-development__points {
+  flex: none;
+  padding: 4px 8px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--accent) 13%, var(--surface));
+  color: var(--accent-deep);
+  font-size: 0.76rem;
+  font-weight: 750;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.qa-development__items { margin-top: 13px; }
+.qa-development__item {
+  padding: 13px 0 0;
+  border-top: 1px solid var(--line-soft);
+}
+.qa-development__item + .qa-development__item { margin-top: 13px; }
+.qa-development__criterion {
+  margin: 0 0 4px;
+  color: var(--ink-faint);
+  font-size: 0.72rem;
+  font-weight: 750;
+  letter-spacing: 0.055em;
+  text-transform: uppercase;
+}
+.qa-development__coaching {
+  margin: 0;
+  color: var(--ink);
+  font-size: 0.93rem;
+  line-height: 1.58;
+}
+.qa-development__rubric { margin-top: 9px; }
+.qa-development__rubric summary {
+  width: fit-content;
+  color: var(--ink-soft);
+  cursor: pointer;
+  font-size: 0.82rem;
+  font-weight: 650;
+}
+.qa-development__rubric summary:focus-visible {
+  outline: none;
+  border-radius: 4px;
+  box-shadow: var(--ring);
+}
+.qa-development__rubric p {
+  margin: 7px 0 0;
+  color: var(--ink-soft);
+  font-size: 0.84rem;
+  line-height: 1.55;
+}
+@media (prefers-reduced-motion: no-preference) {
+  .qa-development__group { animation: fadeIn var(--dur-2) var(--ease-out); }
+}
+
 @media (max-width: 560px) {
   .qa-breakdown__row { grid-template-columns: 1fr 3.5rem; }
   .qa-breakdown__bar { display: none; }
+  .qa-development__group { padding: 16px; }
+  .qa-development__group-header { align-items: flex-start; }
+  .qa-development__coaching { font-size: 0.92rem; }
+  .qa-history-summary { align-items: flex-start; flex-direction: column; }
+  .qa-history-summary__verdicts { text-align: left; }
 }
 
 .qa-log-badge {

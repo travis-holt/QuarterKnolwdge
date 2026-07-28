@@ -1,5 +1,68 @@
 ﻿# Development History - Knowledge Check
 
+## 2026-07-28 — PR #43 private-scenario provisioning write-minimality correction
+
+**Status: PR #43 remains OPEN, DRAFT, unmerged, and auto-merge disabled.** The dedicated
+non-production v10 live-contract smoke passed **24/24** on 2026-07-27; it was not rerun for this
+operator-tool-only correction. Calibration remains `INSUFFICIENT_DATA` with no fabricated fixture or
+threshold change.
+
+A fresh read-only recovery found **15 active OB/GYN** private scenarios. The ignored local PR #43
+transfer candidate validates **15/15** and has exactly one wording-only change, limited to
+`expectedActions` and `criticalMisses`. No private content was printed, committed, or changed.
+
+Provisioning was blocked before any write: `diffAgainstExisting` classified every existing manifest ID
+as an update, and `--apply` wrote every validated manifest document. The operator tool now compares the
+full stored document semantically, reports `unchanged` separately, and writes only creates, actual
+updates, and scoped deactivations. No Firestore read/write, provisioning run, deployment, merge, or
+historical-grade change occurred during discovery or this correction.
+
+## 2026-07-28 — PR #43 single-scenario private provisioning complete
+
+**Status: PR #43 remains OPEN, DRAFT, unmerged, and undeployed; auto-merge remains disabled.** After
+separate owner authorization, a read-only recovery of `callQaScenariosPrivate` produced 15 active
+OB/GYN scenarios (0 inactive) in an ignored, untracked local manifest. A recreated ignored candidate
+validated 15/15 and changed exactly one scenario, limited to wording in `expectedActions` and
+`criticalMisses`; all chart, caller-case, active-status, and provenance fields remained unchanged.
+
+The content-aware dry-run reported **0 creates, 1 update, 0 deactivations, and 14 unchanged**. A guarded
+live comparison reconfirmed those counts before a single-document update applied only
+`obgyn-pv1-transfer-33-weeks__2026-07-18-a`; the generic full-manifest `--apply` path was not used.
+Read-only post-apply verification reported **0 creates, 0 updates, 0 deactivations, and 15 unchanged**.
+The apply and verification sequence accessed only `callQaScenariosPrivate` (2 reads, 1 write): no other
+document, private content, historical grade, or result changed or was published/committed. The v10
+live-contract smoke remains the accepted 24/24 result; calibration remains `INSUFFICIENT_DATA`, with no
+fabricated fixture or threshold change. Merge and deployment remain separate, explicitly authorized
+actions.
+
+## 2026-07-27 — Post-merge Call QA pilot reliability and coaching-review follow-up
+
+**Status: focused follow-up branch; not merged, not deployed, not provisioned.** A real OB/GYN
+transfer-call pilot exposed three grading/presentation defects. First, caller-volunteered gestational
+age was treated as though it had never been gathered. Prompt **`call-qa-grader-v10`** now says ordinary
+caller-volunteered workflow facts count as collected unless the SOP requires reconfirmation, and each
+criterion needs its own observable basis before a deduction can be reused across documentation,
+routing, knowledge, or scheduling. A later redundant “Are you pregnant?” question remains eligible for
+an Active Listening deduction, but volunteered gestational age alone cannot fail `listen-gather` or
+`doc-reason`.
+
+Second, a synthetic scenario identity could differ from captured caller speech. Navigator identity
+performance is now derived from the authoritative transcript for that simulator/capture mismatch, while
+the mismatch itself is a separate `needs_review` integrity signal. There is no first-character recovery,
+fuzzy matching, nickname list, or name-equivalence rule: a different complete caller identity does not
+deduct from the navigator, but must be reviewed as scenario/capture integrity. Provider names, missing
+DOB, ambiguous candidates, and identity after protected disclosure remain uncredited under the existing
+deterministic checks.
+
+Third, the navigator and supervisor historical Call QA views now share display-only, category-grouped
+**Areas to develop** cards with deduction totals, coaching notes first, and native expandable rubric
+detail. The supervisor uses them only for current interpretable structured criteria and clearly labels its
+legacy stored-summary fallback. The stored result shape, rubric IDs/points/weights, pass threshold,
+review flags, auto-fails, supervisor overrides, and historical records are unchanged. The local ignored transfer scenario wording was changed
+only to accept caller-volunteered gestational age; no Firestore write or provisioning occurred, so a
+separate authorized compatibility update will be needed after review. Calibration remains
+`INSUFFICIENT_DATA`; no human fixtures or historical grades were created/rewritten.
+
 ## 2026-07-24 — PR #42 merged after final independent review
 
 **Status: merged to `main` as `942c0860c7a59a45cbf54608e62fa094a8a6e2a1`; NOT deployed.** PR #42 merged

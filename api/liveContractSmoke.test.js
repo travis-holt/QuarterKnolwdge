@@ -9,7 +9,7 @@ import {
 } from '../scripts/call-qa/live-contract-smoke.mjs';
 
 describe('qa:live-contract-smoke case coverage', () => {
-  it('covers all twenty-two required contract scenarios in order', () => {
+  it('covers all twenty-four required contract scenarios in order', () => {
     const ids = LIVE_CONTRACT_SMOKE_CASES.map((c) => c.id);
     expect(ids).toEqual([
       '1-volunteered-one-turn',
@@ -35,6 +35,9 @@ describe('qa:live-contract-smoke case coverage', () => {
       // v9 navigator-visible chart + applicability coverage (2026-07-24).
       '21-no-order-correct-no-booking',
       '22-no-order-wrong-booking',
+      // v10 caller-volunteered facts and repetitive-question contrast.
+      '23-transfer-volunteered-gestational-age',
+      '24-transfer-repetitive-pregnancy-question',
     ]);
   });
 
@@ -104,7 +107,7 @@ describe('qa:live-contract-smoke case coverage', () => {
     });
 
     it('keeps every prior identity/privacy case alongside the new ones', () => {
-      expect(LIVE_CONTRACT_SMOKE_CASES.length).toBe(22);
+      expect(LIVE_CONTRACT_SMOKE_CASES.length).toBe(24);
       expect(LIVE_CONTRACT_SMOKE_CASES.filter((c) => c.gradingScenario).length).toBe(2);
     });
   });
@@ -180,6 +183,10 @@ function qaFor(id) {
       return build(verds({
         'sched-flow': 'NOT_MET', 'know-rule': 'NOT_MET', 'sched-recap': 'NA', 'listen-gather': 'MET',
       }), { recommendation: 'fail', pass: false });
+    case '23-transfer-volunteered-gestational-age':
+      return build(verds({ 'listen-gather': 'MET', 'doc-reason': 'MET', 'know-rule': 'MET' }));
+    case '24-transfer-repetitive-pregnancy-question':
+      return build(verds({ 'listen-ack': 'MET', 'doc-reason': 'MET', 'know-rule': 'MET' }));
     default:
       // 1,2,3,8,10,11,12,14,17,20 — clean, correct-model scorecards.
       return build(verds());
@@ -236,7 +243,7 @@ describe('qa:live-contract-smoke gate behavior', () => {
     expect(lines.filter((l) => l.includes('[FAIL]'))).toEqual([]);
     expect(code).toBe(0);
     expect(output).toContain('LIVE_CONTRACT_SMOKE_VERIFIED');
-    expect(output).toContain('call-qa-grader-v9');
+    expect(output).toContain('call-qa-grader-v10');
     expect(output).not.toMatch(/Maria|Alvarez|1991|dedicated-test-key/);
   });
 

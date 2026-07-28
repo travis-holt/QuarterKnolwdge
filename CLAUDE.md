@@ -11,7 +11,50 @@
 > [§8 Current System State](#8-current-system-state) and [§15 Current Priorities](#15-current-priorities)
 > accurate at all times.
 >
-> **Current implementation update (2026-07-24) — CALL QA PILOT DEFECT CORRECTION (prompt v9).**
+> **Current correction addendum (2026-07-28) — PRIVATE-SCENARIO PROVISIONING WRITE MINIMALITY.**
+> PR #43 remains open, **DRAFT**, unmerged, with auto-merge disabled; this operator-tool-only
+> correction changes no grader, prompt, rubric, UI, runtime retrieval, rules, calibration threshold,
+> historical grade, or private scenario content. The dedicated non-production v10 live smoke passed
+> **24/24** on 2026-07-27. During the code correction itself, no Firestore access occurred. In a later,
+> separately owner-authorized operator sequence, a read-only recovery found 15 active OB/GYN scenarios;
+> the ignored local candidate validated 15/15 with one wording-only change to `expectedActions` and
+> `criticalMisses`; and neither private manifest was committed or printed. The content-aware dry-run was
+> **0 creates, 1 update, 0 deactivations, 14 unchanged**. A guarded single-document update then applied
+> only `obgyn-pv1-transfer-33-weeks__2026-07-18-a` (the generic full-manifest `--apply` path was not
+> used); post-apply verification was **0 creates, 0 updates, 0 deactivations, 15 unchanged**. The apply
+> and verification accessed only `callQaScenariosPrivate` (2 reads, 1 write); no other document,
+> historical grade, or result changed. No private content was committed or printed. Calibration remains
+> `INSUFFICIENT_DATA`, automation remains unauthorized, and deployment/merge remain separate actions.
+> See docs/HISTORY.md 2026-07-28.
+>
+> **Current implementation update (2026-07-27) — POST-MERGE CALL QA RELIABILITY + REVIEW UI FOLLOW-UP (prompt v10).**
+> Focused follow-up branch only; not merged, deployed, provisioned, or ready for automation. A real
+> OB/GYN transfer-call pilot showed that the grader treated caller-volunteered gestational age as
+> uncollected, recycled that alleged miss into unrelated documentation feedback, and could double-deduct
+> verification when Gemini echoed a synthetic scenario name while authoritative STT captured a different
+> caller name. The prompt is now **`call-qa-grader-v10`**: ordinary
+> caller-volunteered workflow facts count as collected unless a real SOP requires reconfirmation, and
+> every criterion needs an independent criterion-specific observable basis. This preserves a legitimate
+> Active Listening miss for a navigator who redundantly asks whether a caller is pregnant after she
+> clearly supplied 33 weeks; the live smoke treats that contrast as observational rather than forcing an
+> exact `listen-ack` verdict. Identity performance is derived from the captured transcript alone. A
+> complete caller identity that differs from the server-owned simulator identity earns its normal
+> navigator-performance credit and separately forces `needs_review` as a simulator/capture integrity
+> mismatch—there is no fuzzy matching, name equivalence, or score deduction. Provider/staff names,
+> missing DOB, ambiguous candidates, and post-disclosure identity remain uncredited. The
+> OB/GYN rubric remains **`qa-rubric-obgyn-v1`** (100 total, 85 pass, verification 10/100, all approved
+> policies unchanged) and no historical grade is rewritten. The navigator-facing review replaces the raw
+> “Points you lost” list with display-only grouped **Areas to develop** coaching cards: category totals,
+> concise notes first, native expandable rubric detail, mobile-safe styling. The same shared component now
+> renders in the supervisor’s historical Call QA panel only for current interpretable structured criteria;
+> legacy/uninterpretable records retain a labelled stored-summary fallback. Stored criteria, scores,
+> flags, auto-fails, supervisor overrides, and history are unchanged. At the time of this correction the
+> ignored local transfer scenario was wording-corrected only; the later separately authorized
+> single-document provisioning operation is recorded in the current 2026-07-28 addendum above. Live smoke now has 24 synthetic cases incl. volunteered
+> gestational age and redundant-question contrast; calibration remains `INSUFFICIENT_DATA`.
+> See docs/HISTORY.md 2026-07-27 and docs/GRADING_INVARIANTS.md §0p.
+>
+> **Prior implementation update (2026-07-24) — CALL QA PILOT DEFECT CORRECTION (prompt v9).**
 > **PR #42 merged to `main` as `942c0860c7a59a45cbf54608e62fa094a8a6e2a1` on 2026-07-24; NOT deployed.**
 > Private-scenario compatibility was complete before merge; calibration remains `INSUFFICIENT_DATA`.
 > Based on the FIRST real reproduced post-PR-41 Call QA pilot attempt. Four defects fixed at the
@@ -1518,6 +1561,16 @@ training assignments.
   auto-fail alerts. Supervisors see a "QA TEST · PASS/FAIL" badge on the session in
   NavigatorDetail plus the full grade breakdown.
 - **Navigator-visible chart + pilot applicability/caller fixes (2026-07-24, prompt v9).** A scored
+- **Post-merge transfer reliability + coaching review (2026-07-27, prompt v10).** Ordinary
+  caller-volunteered workflow facts count as collected unless an applicable SOP explicitly requires
+  reconfirmation; no criterion may recycle an alleged intake miss into another category without its own
+  observable basis. A redundant question after a clear volunteered fact can still be an Active Listening
+  issue. Identity performance is derived from the captured transcript; a complete caller identity that
+  differs from the synthetic scenario identity does not change the score and instead forces a separate
+  simulator-integrity review flag. The shared reviewed UI groups structured current Call QA misses under
+  **Areas to develop** in both navigator and supervisor detail views, with a legacy-summary fallback;
+  scoring/storage/history and supervisor authority are unchanged. See docs/GRADING_INVARIANTS.md §0p.
+- **Navigator-visible chart + pilot applicability/caller fixes (2026-07-24, prompt v9).** A scored
   Call QA scenario now exposes a curated, server-authoritative **`navigatorChartState`** — the
   "Simulated ECW chart" the navigator was actually shown (current plan/RTO, active orders, open
   Telephone Encounters, future appointments, other visible facts, including explicit "none on file"
@@ -2844,6 +2897,16 @@ of this file on 2026-07-07 to cut per-session context cost (it was ~55% of the f
 ---
 
 ## 8. Current System State
+
+- **PR #43 private-scenario transfer correction (2026-07-28):** the code correction remains on the
+  open DRAFT PR, unmerged and undeployed. Later separate operator authorization recovered and validated
+  15 active OB/GYN scenarios, dry-ran the recreated candidate at 0 creates / 1 update / 0 deactivations
+  / 14 unchanged, and applied only `obgyn-pv1-transfer-33-weeks__2026-07-18-a` through a guarded
+  single-document update. Post-apply verification is 0 creates / 0 updates / 0 deactivations / 15
+  unchanged. Only `callQaScenariosPrivate` was accessed for the apply/verification sequence (2 reads,
+  1 write); no other document, historical grade, private content, or result changed. The generic
+  full-manifest `--apply` path was not used. Calibration remains `INSUFFICIENT_DATA`; automation,
+  deployment, and merge remain unauthorized.
 
 - **PR #41 controlled-pilot merge status (2026-07-24):** **MERGED** as
   `107817809f72b421b0d8bf8492e65981253099a3`; deployment remains a separate action. The live v8

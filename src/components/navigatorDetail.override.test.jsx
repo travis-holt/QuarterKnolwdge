@@ -47,6 +47,7 @@ function baseSession(extra = {}) {
 function qaSession(extra = {}) {
   return baseSession({
     id: 'qa-1',
+    assessmentType: 'call-qa',
     qa: {
       pass: true,
       score: 92,
@@ -192,6 +193,34 @@ describe('NavigatorDetail — supervisor grade override', () => {
     expect(await screen.findByText('QA-only domain signal')).toBeInTheDocument();
     expect(screen.getByText(/Call Opening & Identification:/).closest('li')?.textContent).toContain('92');
     expect(screen.getByText(/Scheduling & Appointment Rules:/).closest('li')?.textContent).toContain('—');
+  });
+
+  it('uses structured current Call QA criteria for supervisor development coaching', async () => {
+    renderDetail(qaSession({
+      qa: {
+        pass: false,
+        score: 72,
+        passThreshold: 85,
+        gradingMetadata: { rubricVersion: 'qa-rubric-obgyn-v1', rubricDepartment: 'obgyn' },
+        review: { recommendation: 'needs_review', confidence: 'medium', safetyRisk: 'none', reviewFlags: [{ id: 'simulator-identity-integrity-mismatch', label: 'Simulator identity integrity mismatch', detail: 'Review the simulator or capture.' }] },
+        criteria: [
+          { id: 'verify-three', verdict: 'NOT_MET', categoryId: 'verification', categoryName: 'Verification', points: 6, text: 'Collect all identifiers.', note: 'Collect the complete identity before continuing.' },
+          { id: 'close-offer-help', verdict: 'MET', categoryId: 'closing', categoryName: 'Closing', points: 5, text: 'Offer further help.', note: '' },
+        ],
+      },
+    }));
+    fireEvent.click(await screen.findByText('Jordan'));
+    expect(await screen.findByRole('heading', { name: 'Areas to develop' })).toBeInTheDocument();
+    expect(screen.getByText('Collect the complete identity before continuing.')).toBeInTheDocument();
+    expect(screen.getByText('Simulator identity integrity mismatch')).toBeInTheDocument();
+    expect(screen.queryByText('Verify sooner')).not.toBeInTheDocument();
+  });
+
+  it('uses the legacy improvement summary only when structured QA criteria are unavailable', async () => {
+    renderDetail(qaSession());
+    fireEvent.click(await screen.findByText('Jordan'));
+    expect(await screen.findByText('Areas to develop (legacy summary)')).toBeInTheDocument();
+    expect(screen.getByText('Verify sooner')).toBeInTheDocument();
   });
 
   it('labels an auto-failed domain in the QA-only domain signal', async () => {

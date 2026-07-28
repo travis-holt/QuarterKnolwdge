@@ -12,6 +12,7 @@ import { resolveQaScoringState } from '../lib/qaDomainScoring.js';
 import { compareTimestampValues, timestampMillis } from '../lib/time.js';
 import Sparkline from './Sparkline.jsx';
 import FeedbackControls from './FeedbackControls.jsx';
+import QaDevelopmentAreas from './QaDevelopmentAreas.jsx';
 import { contentVersionStatus } from '../lib/contentVersion.js';
 
 function formatWorkflow(type) {
@@ -681,6 +682,9 @@ export default function NavigatorDetail({ rows, name, deptName, dept, deptMatrix
                 // record written by a future/unknown rubric would carry stale
                 // domain scores and no flag, and the projection would render.
                 const qaScoringState = resolveQaScoringState(session.qa);
+                const hasInterpretableQaCriteria = session.assessmentType === 'call-qa'
+                  && !qaScoringState.scoringUnavailable
+                  && Array.isArray(session.qa?.criteria);
                 const versionStatus = session.assessmentType === 'call-qa' && contentVersionContext
                   ? contentVersionStatus(session, contentVersionContext)
                   : null;
@@ -776,10 +780,24 @@ export default function NavigatorDetail({ rows, name, deptName, dept, deptMatrix
 
                         {/* Grade breakdown (if available) */}
                         {g && (
-                          <div className="interview-log__grade">
-                            <p className="interview-log__grade-score" style={{ color: scoreColor }}>
-                              Score: <strong>{effectiveScore}/100</strong>
-                            </p>
+                          <div className={`interview-log__grade${session.qa ? ' interview-log__grade--qa' : ''}`}>
+                            {session.qa ? (
+                              <section className="qa-history-summary" aria-label="Call QA score and review status">
+                                <div>
+                                  <p className="qa-history-summary__eyebrow">Call QA score</p>
+                                  <p className="qa-history-summary__score" style={{ color: scoreColor }}><strong>{effectiveScore}/100</strong></p>
+                                  {override && <p className="qa-history-summary__sub">AI score: {g.score}/100</p>}
+                                </div>
+                                <div className="qa-history-summary__verdicts">
+                                  <p><span>AI verdict:</span> <strong>{session.qa.review?.recommendation === 'needs_review' ? 'NEEDS REVIEW' : qaVerdict.aiPass ? 'PASS' : 'FAIL'}</strong></p>
+                                  <p><span>Final verdict:</span> <strong>{qaFinalReviewLabel(session)}</strong></p>
+                                </div>
+                              </section>
+                            ) : (
+                              <p className="interview-log__grade-score" style={{ color: scoreColor }}>
+                                Score: <strong>{effectiveScore}/100</strong>
+                              </p>
+                            )}
                             {override && (
                               <div className="grade-override__badge">
                                 <span className="grade-override__tag">Supervisor override</span>
@@ -832,16 +850,23 @@ export default function NavigatorDetail({ rows, name, deptName, dept, deptMatrix
                               <p className="interview-log__grade-summary">{g.summary}</p>
                             )}
                             {session.qa?.review?.reviewFlags?.length > 0 && (
-                              <div className="interview-log__grade-section interview-log__grade-section--flags">
-                                <p className="interview-log__grade-heading">
-                                  Supervisor review flags · confidence: {session.qa.review.confidence} · safety risk: {session.qa.review.safetyRisk}
-                                </p>
-                                <ul>
+                              <section className="qa-history-review" aria-labelledby={`qa-review-${session.id}`}>
+                                <header>
+                                  <div>
+                                    <p id={`qa-review-${session.id}`} className="interview-log__grade-heading">Supervisor review required</p>
+                                    <p className="qa-history-review__meta">Confidence: {session.qa.review.confidence} · Safety risk: {session.qa.review.safetyRisk}</p>
+                                  </div>
+                                  <span className="qa-history-review__count">{session.qa.review.reviewFlags.length} flag{session.qa.review.reviewFlags.length === 1 ? '' : 's'}</span>
+                                </header>
+                                <div className="qa-history-review__flags">
                                   {session.qa.review.reviewFlags.map((f, flagIndex) => (
-                                    <li key={f.id ?? `${f.label ?? 'flag'}-${flagIndex}`}><strong>{f.label}:</strong> {f.detail}</li>
+                                    <details key={f.id ?? `${f.label ?? 'flag'}-${flagIndex}`}>
+                                      <summary>{f.label ?? 'Review flag'}</summary>
+                                      <p>{f.detail}</p>
+                                    </details>
                                   ))}
-                                </ul>
-                              </div>
+                                </div>
+                              </section>
                             )}
                             {session.qa?.repairs?.length > 0 && (
                               <div className="interview-log__grade-section">
@@ -879,14 +904,6 @@ export default function NavigatorDetail({ rows, name, deptName, dept, deptMatrix
                             )}
                             {session.qa && (
                               <div className="qa-final-review">
-                                <div className="qa-final-review__row">
-                                  <span className="qa-final-review__label">AI verdict:</span>
-                                  <strong>{session.qa.review?.recommendation === 'needs_review' ? 'NEEDS REVIEW' : qaVerdict.aiPass ? 'PASS' : 'FAIL'}</strong>
-                                </div>
-                                <div className="qa-final-review__row">
-                                  <span className="qa-final-review__label">Final verdict:</span>
-                                  <strong>{qaFinalReviewLabel(session)}</strong>
-                                </div>
                                 {qaReviewed && !isQaReviewEditing && (
                                   <div className="qa-final-review__meta">
                                     <span>
@@ -1018,16 +1035,17 @@ export default function NavigatorDetail({ rows, name, deptName, dept, deptMatrix
                               </div>
                             )}
                             {g.strengths?.length > 0 && (
-                              <div className="interview-log__grade-section">
+                              <div className="interview-log__grade-section qa-history-strengths">
                                 <p className="interview-log__grade-heading">What went well</p>
                                 <ul>
                                   {g.strengths.map((s, i) => <li key={i}>{s}</li>)}
                                 </ul>
                               </div>
                             )}
-                            {g.improvements?.length > 0 && (
+                            {hasInterpretableQaCriteria && <QaDevelopmentAreas criteria={session.qa.criteria} />}
+                            {!hasInterpretableQaCriteria && g.improvements?.length > 0 && (
                               <div className="interview-log__grade-section">
-                                <p className="interview-log__grade-heading">Areas to develop</p>
+                                <p className="interview-log__grade-heading">Areas to develop (legacy summary)</p>
                                 <ul>
                                   {g.improvements.map((s, i) => <li key={i}>{s}</li>)}
                                 </ul>

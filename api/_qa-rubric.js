@@ -39,6 +39,7 @@ import {
   evaluateIdentityEvidence,
   evaluateVerificationBeforeAccess,
   findProtectedDisclosureInTurn,
+  resolveIdentityCandidates,
 } from './_qa-identity-verification.js';
 import { normalizeForMatch, quoteWords, stripRoleLabel } from './_qa-text-normalize.js';
 import { detectObgynContradictions, isObgynProhibitedActionNegated } from '../src/lib/contentGuards.js';
@@ -553,6 +554,24 @@ export const CALL_QA_FAIRNESS_RULES = {
   obgynCallerObservableOutcome: 'obgyn-caller-observable-outcome',
 };
 
+// Synthetic scenario identity is an integrity check, never evidence of how the
+// navigator performed. The transcript parser independently determines whether a
+// caller completed a coherent identity exchange. If that exchange names a
+// different synthetic person, retain the navigator's transcript-derived score
+// and ask a supervisor to review the simulator/capture mismatch. There is no
+// fuzzy comparison, initial-letter recovery, or score deduction here.
+function simulatorIdentityIntegrityMismatch(transcript, callerName) {
+  const expected = normalizeForMatch(callerName).split(' ').filter(Boolean);
+  if (expected.length !== 2) return false;
+  const { candidates } = resolveIdentityCandidates(transcript);
+  const completeCandidates = candidates.filter((candidate) => candidate.firstNameTokens?.length
+    && candidate.lastNameTokens?.length && candidate.dobTurn != null);
+  if (completeCandidates.length === 0) return false;
+  return !completeCandidates.some((candidate) =>
+    candidate.firstNameTokens.join(' ') === expected[0]
+      && candidate.lastNameTokens.join(' ') === expected[1]);
+}
+
 export function normalizeQaText(text) {
   return String(text ?? '').toLowerCase().replace(/[^\p{L}\p{N}\s]/gu, ' ').replace(/\s+/g, ' ').trim();
 }
@@ -974,6 +993,19 @@ export function repairQaVerdictsForScenario(validated, transcript, context = {})
       && !verifyNavigatorEvidence(transcript, criterion.evidence),
   }));
   const repairs = [];
+  // Scenario/capture integrity is deliberately independent of navigator
+  // performance. It is stored as a review-only signal, without exposing either
+  // identity, and must never replace transcript-derived identity evidence.
+  const simulatorIdentityMismatch = simulatorIdentityIntegrityMismatch(
+    transcript, context?.metadata?.callerName,
+  );
+  if (simulatorIdentityMismatch) {
+    for (const criterion of criteria) {
+      if (Array.isArray(criterion.identityEvidence) && criterion.identityEvidence.length > 0) {
+        criterion.simulatorIdentityIntegrityMismatch = true;
+      }
+    }
+  }
   const signals = getRefillWorkflowSignals(transcript, context);
   const routingPolicy = routingPolicyFor(context);
   const obgynOutcomeLine = findObgynCallerOutcomeLine(transcript, context);
@@ -1251,17 +1283,7 @@ export function scoreQa(verdicts, autoFails, transcript, profile, profileBinding
   // whichever identity criteria are MET.
   const identityDefs = [...defs.values()]
     .filter((d) => d.evidencePolicy === QA_EVIDENCE_POLICIES.IDENTITY_VERIFICATION);
-  let canonicalIdentity = null;
-  let canonicalOrder = null;
-  if (identityDefs.length > 0) {
-    const canonicalArray = identityDefs
-      .map((d) => verdicts.find((v) => v.id === d.id)?.identityEvidence)
-      .find((arr) => Array.isArray(arr) && arr.length > 0) ?? [];
-    canonicalIdentity = evaluateIdentityEvidence(transcript, canonicalArray);
-    canonicalOrder = evaluateVerificationBeforeAccess(transcript, canonicalArray);
-  }
-
-  // ── Independent, model-agnostic identity chronology (correction pass #6) ─────
+  // ── Independent, model-agnostic identity chronology ─────────────────────────
   // Derived from the whole transcript, NEVER from the model's selected claims, so
   // a model that submits only a LATER repetition of an identity cannot make the
   // server believe verification happened after a disclosure when it actually
@@ -1275,6 +1297,44 @@ export function scoreQa(verdicts, autoFails, transcript, profile, profileBinding
   const orderProvenBefore = Boolean(serverChrono
     && serverChrono.earliestIndex !== null && !serverChrono.ambiguous
     && (firstDisclosure === null || serverChrono.earliestIndex < firstDisclosure.turnIndex));
+  // Call QA identity performance is derived from the transcript itself, not the
+  // scenario's expected caller name and not Gemini's selected name tokens. This
+  // means a simulator/capture mismatch cannot silently turn a real, complete
+  // caller exchange into a navigator deduction.
+  const transcriptIdentityComplete = Boolean(serverChrono
+    && serverChrono.earliestIndex !== null && !serverChrono.ambiguous);
+  const transcriptDerivedIdentity = identityDefs.length > 0 ? {
+    complete: transcriptIdentityComplete,
+    verified: Object.fromEntries(IDENTITY_FIELDS.map((field) => [field, transcriptIdentityComplete])),
+    completedAtIndex: transcriptIdentityComplete ? serverChrono.earliestIndex : null,
+    failures: transcriptIdentityComplete ? [] : [{ field: 'identity', reason: 'identity-not-verified' }],
+  } : null;
+  const transcriptDerivedOrder = identityDefs.length > 0 ? {
+    satisfied: orderProvenBefore,
+    reason: orderProvenBefore
+      ? 'verified-before-disclosure'
+      : (!transcriptIdentityComplete ? 'identity-not-verified'
+        : (firstDisclosure ? 'identifiers-collected-after-disclosure' : 'identity-order-unverified')),
+    identity: transcriptDerivedIdentity,
+    disclosureIndex: firstDisclosure?.turnIndex,
+    disclosureCategory: firstDisclosure?.category,
+    disclosureClauseIndex: firstDisclosure?.clauseIndex,
+  } : null;
+  // Preserve the normal structured-claim audit path for ordinary calls. The
+  // scenario/capture mismatch is the narrow exception: in that condition, the
+  // navigator's score is decided from the independently derived exchange, while
+  // the mismatch itself is surfaced separately for review.
+  const canonicalArray = identityDefs
+    .map((d) => verdicts.find((v) => v.id === d.id)?.identityEvidence)
+    .find((arr) => Array.isArray(arr) && arr.length > 0) ?? [];
+  const hasSimulatorIdentityMismatch = identityDefs.some((def) =>
+    verdicts.find((v) => v.id === def.id)?.simulatorIdentityIntegrityMismatch === true);
+  const canonicalIdentity = hasSimulatorIdentityMismatch
+    ? transcriptDerivedIdentity
+    : evaluateIdentityEvidence(transcript, canonicalArray);
+  const canonicalOrder = hasSimulatorIdentityMismatch
+    ? transcriptDerivedOrder
+    : evaluateVerificationBeforeAccess(transcript, canonicalArray);
   // A disclosure happened but identity-before-disclosure is NOT proven: an
   // unresolved privacy situation → critical review, never an automatic zero
   // unless the auto-fail itself positively verifies.
@@ -1295,6 +1355,8 @@ export function scoreQa(verdicts, autoFails, transcript, profile, profileBinding
     // effective verdict to MET — carry that unresolved status through.
     let unresolved = Boolean(v.originalUnresolved);
     let unresolvedReason = unresolved ? 'negative-evidence-not-verified' : null;
+    const simulatorIdentityIntegrityMismatch = def.evidencePolicy === QA_EVIDENCE_POLICIES.IDENTITY_VERIFICATION
+      && v.simulatorIdentityIntegrityMismatch === true;
 
     // MET credit uses the criterion's own evidence policy. For an identity
     // criterion this re-derives the STRUCTURED identifier claims (and, where the
@@ -1390,6 +1452,7 @@ export function scoreQa(verdicts, autoFails, transcript, profile, profileBinding
       verdict, basis, evidence, note: v.note,
       ...(isIdentityCriterion ? { evidenceSource: 'server-derived' } : {}),
       unverified, unresolved, unresolvedReason,
+      ...(simulatorIdentityIntegrityMismatch ? { simulatorIdentityIntegrityMismatch: true } : {}),
       modelJudgment,
       // Auditable record of WHY an identity criterion was (or was not) credited:
       // which identifiers verified, in which turns, where the first protected
@@ -1543,6 +1606,14 @@ export function assessQa(qa, transcript, { correctedTurns = 0, repairs = [], det
   // navigator evidence) may have changed it to MET — the original allegation
   // stays unresolved regardless, must not be presented as definitively observed,
   // and forces supervisor review.
+  const simulatorIdentityMismatches = qa.criteria.filter((c) => c.simulatorIdentityIntegrityMismatch);
+  if (simulatorIdentityMismatches.length > 0) {
+    flags.push({
+      id: 'simulator-identity-integrity-mismatch',
+      label: 'Simulator identity integrity mismatch',
+      detail: 'The caller identity derived from the captured transcript differs from the simulator scenario. Navigator verification was scored from the transcript; review the scenario or capture before treating this result as final.',
+    });
+  }
   const unresolvedNegatives = qa.criteria.filter((c) => c.unresolved);
   if (unresolvedNegatives.length > 0) {
     flags.push({
@@ -1659,7 +1730,7 @@ export function assessQa(qa, transcript, { correctedTurns = 0, repairs = [], det
   // An unresolved negative (grader alleged an observed miss its quote can't back
   // up) can never produce a confident verdict — a supervisor decides, regardless
   // of the numerical score. Safety-critical unresolved negatives elevate risk.
-  else if (unresolvedNegatives.length > 0) recommendation = 'needs_review';
+  else if (unresolvedNegatives.length > 0 || simulatorIdentityMismatches.length > 0) recommendation = 'needs_review';
   else if (confidence === 'low' || borderline || qa.unverifiedAutoFails?.length > 0) recommendation = 'needs_review';
   else if (qa.pass && safetyMissed.length > 0) recommendation = 'needs_review'; // never an unreviewed pass over a safety miss
   else if (repairFlippedOutcome) recommendation = 'needs_review'; // repairs are decision support, not the final word

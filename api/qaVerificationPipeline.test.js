@@ -83,12 +83,12 @@ const SCENARIO_CONTEXT = {
 };
 
 /** Run the real grading pipeline against a scripted sequence of raw responses. */
-async function runPipeline(transcript, responses) {
+async function runPipeline(transcript, responses, scenarioContext = SCENARIO_CONTEXT) {
   const queue = Array.isArray(responses) ? [...responses] : [responses];
   const calls = [];
   const result = await gradeCallQaTranscript({
     transcript,
-    scenarioContext: SCENARIO_CONTEXT,
+    scenarioContext,
     captureMetadata: { captureComplete: true },
     transcriptMetadata: { captureStatus: 'captured' },
   }, {
@@ -637,13 +637,81 @@ describe('E2E · historical rendering', () => {
   });
 });
 
+describe('E2E · transcript performance and simulator identity integrity stay separate', () => {
+  const driftTranscript = [
+    nav('Thank you for calling Aizer Women\'s Health, this is Dana. How can I help you today?'),
+    caller('I need help transferring my prenatal care.'),
+    nav('Can I have your first name, last name, and date of birth?'),
+    caller('Julia Petrenko, and my date of birth is May 15th 1990.'),
+    nav('I do not see that you are a patient yet. We need your records sent for clinical transfer review before an appointment can be arranged.'),
+    nav('Is there anything else I can help you with?'),
+  ];
+  const expectedClaims = [
+    { field: 'firstName', value: 'Yulia', role: 'caller', turnIndex: 3, quote: 'Julia Petrenko, and my date of birth is May 15th 1990.' },
+    { field: 'lastName', value: 'Petrenko', role: 'caller', turnIndex: 3, quote: 'Julia Petrenko, and my date of birth is May 15th 1990.' },
+    { field: 'dob', value: 'May 15th 1990', role: 'caller', turnIndex: 3, quote: 'Julia Petrenko, and my date of birth is May 15th 1990.' },
+  ];
+  const context = {
+    ...SCENARIO_CONTEXT,
+    repairContext: { department: 'obgyn', metadata: { callerName: 'Yulia Petrenko' } },
+  };
+
+  it('credits the navigator’s transcript-derived Julia exchange while flagging the Yulia simulator mismatch', async () => {
+    const { qa } = await runPipeline(driftTranscript, modelResponse({ identityEvidence: expectedClaims }), context);
+    expect(criterion(qa, 'verify-three')).toMatchObject({ verdict: 'MET', simulatorIdentityIntegrityMismatch: true });
+    expect(criterion(qa, 'verify-before-access')).toMatchObject({ verdict: 'MET', simulatorIdentityIntegrityMismatch: true });
+    expect(qa.review.recommendation).toBe('needs_review');
+    expect(qa.review.reviewFlags.map((flag) => flag.id)).toContain('simulator-identity-integrity-mismatch');
+  });
+
+  it('does not use name equivalence: other complete caller identities remain navigator credit plus an integrity review', async () => {
+    const mariaContext = { ...SCENARIO_CONTEXT, repairContext: { department: 'obgyn', metadata: { callerName: 'Maria Alvarez' } } };
+    const mariaClaims = expectedClaims.map((claim) => ({ ...claim, value: claim.field === 'firstName' ? 'Maria' : claim.field === 'lastName' ? 'Alvarez' : claim.value }));
+    const variants = [
+      driftTranscript.map((turn) => turn.text.includes('Julia Petrenko') ? { ...turn, text: turn.text.replaceAll('Julia Petrenko', 'Daria Alvarez') } : turn),
+      driftTranscript.map((turn) => turn.text.includes('Julia Petrenko') ? { ...turn, text: turn.text.replaceAll('Julia Petrenko', 'Maria Sanchez') } : turn),
+    ];
+    for (const transcript of variants) {
+      const { qa } = await runPipeline(transcript, modelResponse({ identityEvidence: mariaClaims }), mariaContext);
+      expect(criterion(qa, 'verify-three')).toMatchObject({ verdict: 'MET', simulatorIdentityIntegrityMismatch: true });
+      expect(criterion(qa, 'verify-before-access')).toMatchObject({ verdict: 'MET', simulatorIdentityIntegrityMismatch: true });
+      expect(qa.review.reviewFlags.map((flag) => flag.id)).toContain('simulator-identity-integrity-mismatch');
+    }
+  });
+
+  it('does not create an integrity mismatch when the complete simulated identity is present', async () => {
+    const cleanContext = { ...SCENARIO_CONTEXT, repairContext: { department: 'obgyn', metadata: { callerName: 'Julia Petrenko' } } };
+    const cleanClaims = expectedClaims.map((claim) => ({ ...claim, value: claim.field === 'firstName' ? 'Julia' : claim.value }));
+    const { qa } = await runPipeline(driftTranscript, modelResponse({ identityEvidence: cleanClaims }), cleanContext);
+    expect(criterion(qa, 'verify-three')).toMatchObject({ verdict: 'MET' });
+    expect(criterion(qa, 'verify-three').simulatorIdentityIntegrityMismatch).toBeUndefined();
+    expect(qa.review.reviewFlags.map((flag) => flag.id)).not.toContain('simulator-identity-integrity-mismatch');
+  });
+
+  it('withholds performance credit for provider names, missing DOB, late identity, and ambiguous candidates', async () => {
+    const negativeContext = { ...SCENARIO_CONTEXT, repairContext: { department: 'obgyn', metadata: {} } };
+    const variants = [
+      [driftTranscript[0], caller('I need help transferring my prenatal care.'), nav('What is the last name of your OB-GYN and your date of birth?'), caller('Petrenko, May 15th 1990.'), driftTranscript[4], driftTranscript[5]],
+      driftTranscript.map((turn) => turn.text.includes('May 15th 1990') ? { ...turn, text: turn.text.replace(/,? and my date of birth is May 15th 1990\.?/, '.') } : turn),
+      [driftTranscript[0], driftTranscript[1], nav('I can see an ultrasound was ordered for you.'), driftTranscript[2], driftTranscript[3], driftTranscript[5]],
+      [driftTranscript[0], caller('I am Julia Petrenko, but the appointment is for Maria Alvarez, date of birth May 15th 1990.'), driftTranscript[4], driftTranscript[5]],
+    ];
+    for (const transcript of [variants[0], variants[1], variants[3]]) {
+      const { qa } = await runPipeline(transcript, modelResponse({ identityEvidence: expectedClaims }), negativeContext);
+      expect(criterion(qa, 'verify-three').verdict).not.toBe('MET');
+    }
+    const { qa: lateIdentity } = await runPipeline(variants[2], modelResponse({ identityEvidence: expectedClaims }), negativeContext);
+    expect(criterion(lateIdentity, 'verify-before-access').verdict).not.toBe('MET');
+  });
+});
+
 describe('E2E · prompt contract matches what the server enforces', () => {
   const { systemInstruction } = buildMessages(
     'Synthetic scenario.', BASE_TRANSCRIPT, 'obgyn', 'Synthetic SOP context.', OBGYN,
   );
 
   it('is stamped with the current prompt version', () => {
-    expect(CALL_QA_PROMPT_VERSION).toBe('call-qa-grader-v9');
+    expect(CALL_QA_PROMPT_VERSION).toBe('call-qa-grader-v10');
   });
 
   it('tells the model the navigator\'s own name is not the patient\'s', () => {

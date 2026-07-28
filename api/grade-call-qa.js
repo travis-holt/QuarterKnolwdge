@@ -431,6 +431,8 @@ request must be handled per the SOP; verify the navigator did not conflate them.
 
 FAIRNESS RULES — apply these BEFORE marking a criterion NOT_MET. They scope the strictness \
 above so a navigator is never failed for something they actually did right:
+- CALLER-VOLUNTEERED FACTS COUNT AS COLLECTED: when the caller clearly supplies an ordinary workflow fact (for example gestational age, pregnancy status, reason for visit, symptoms, preference, or callback information), treat it as available to the navigator. Never require the navigator to repeat a question solely because a scenario says ask, obtain, gather, establish, collect, or confirm, unless the SOP specifically requires a re-confirmation. Do not mark a criterion NOT_MET merely because the navigator did not ask a question whose answer the caller already clearly supplied. This does NOT weaken the dedicated structured identity-verification policy.
+- CRITERION ISOLATION: judge every criterion against its OWN purpose. A fact may support more than one deduction only when there is independent, criterion-specific observable evidence for each one. Do not recycle an alleged missed intake question into documentation, routing, knowledge, or scheduling failures without a separate criterion-specific basis. Do not impose a one-mistake/one-deduction rule: genuinely independent failures may still affect multiple criteria. Every NOT_MET note must explain that criterion's own miss.
 - Transcription tolerance: this transcript is auto-generated from a phone call and may mis-spell \
 proper nouns (organization, locations, provider or queue names) or numbers. Judge whether the \
 navigator conveyed the CORRECT entity or rule — never fail a criterion only because a name, \
@@ -656,6 +658,11 @@ export function buildScenarioContextFromAttempt(attempt) {
       department,
       metadata: {
         qaScenarioId: attempt.qaScenarioId ?? null,
+        // Trusted synthetic roleplay identity is used only for a server-side
+        // simulator/capture integrity comparison. It is never sent to Gemini,
+        // never accepted as identity evidence, and never changes performance
+        // scoring derived from the captured transcript.
+        callerName: snapshot.callerName ?? attempt.callerName ?? null,
         workflowType: snapshot.workflowType ?? attempt.workflowType ?? null,
         difficulty: snapshot.difficulty ?? attempt.difficulty ?? null,
         expectedActions: snapshot.expectedActions ?? attempt.expectedActions ?? [],

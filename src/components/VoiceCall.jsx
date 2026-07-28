@@ -6,6 +6,7 @@ import { qaAiResultLabel } from '../lib/qaFinalReview.js';
 import { apiFetch } from '../lib/apiFetch.js';
 import { selectPracticeDomain } from '../lib/practiceDomain.js';
 import { getFirebaseIdToken } from '../lib/firebase.js';
+import QaDevelopmentAreas from './QaDevelopmentAreas.jsx';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // VoiceCall — real-time voice call (Gemini Live API via /api/live).
@@ -884,17 +885,7 @@ export default function VoiceCall({ navigatorId, name, department = 'pediatrics'
           )}
 
           {missed.length > 0 && (
-            <div className="card interview__feedback-card interview__feedback-card--improvements">
-              <h3 className="interview__feedback-title"><span className="interview__feedback-icon" aria-hidden="true">→</span>Points you lost</h3>
-              <ul className="interview__feedback-list">
-                {missed.map((c) => (
-                  <li key={c.id} className="interview__feedback-item">
-                    <strong>{c.categoryName} (−{c.points}):</strong> {c.text}
-                    {c.note ? <span className="qa-missed__note"> — {c.note}</span> : null}
-                  </li>
-                ))}
-              </ul>
-            </div>
+            <QaDevelopmentAreas criteria={qa.criteria} />
           )}
 
           <button className="btn btn--primary" onClick={onDone ?? (() => setPhase('setup'))} style={{ alignSelf: 'flex-start' }}>
