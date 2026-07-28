@@ -537,9 +537,12 @@ export function handleConnection(client, req, depsInput) {
 
       // Scenario selection is entirely server-side. Browser-supplied scenario
       // ids, prompts, prior-attempt lists, and answer metadata are ignored.
+      let priorAttempts = [];
+      try { priorAttempts = await deps.loadPriorQaAttempts(identity.navigatorId); } catch (err) {
+        console.warn(`[live-relay] prior attempt lookup failed: ${err?.message ?? err}`);
+      }
       let scenario = null;
       try {
-        const priorAttempts = await deps.loadPriorQaAttempts(identity.navigatorId);
         scenario = await deps.selectScenario({ department, priorAttempts });
       } catch (err) {
         console.warn(`[live-relay] scenario selection failed: ${err?.message ?? err}`);

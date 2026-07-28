@@ -309,6 +309,18 @@ describe('P0-1 scored-session concurrency', () => {
   });
 });
 
+describe('P0-3 scenario availability resilience', () => {
+  it('continues a scored call when prior-attempt variety lookup fails', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const h = harness({ loadPriorQaAttempts: vi.fn(async () => { throw new Error('Firestore unavailable'); }) });
+    await startTest(h);
+    expect(h.client.lastByType('ready')).toBeTruthy();
+    expect(h.deps.selectScenario).toHaveBeenCalledWith({ department: 'obgyn', priorAttempts: [] });
+    warn.mockRestore();
+    await h.client.emit('close');
+  });
+});
+
 describe('transcript capture + turn-scoped ordering', () => {
   it('coalesces same-role fragments and keeps roles distinct', async () => {
     const h = harness();
