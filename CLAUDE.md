@@ -15,15 +15,16 @@
 > PR #43 remains open, **DRAFT**, unmerged, with auto-merge disabled; this operator-tool-only
 > correction changes no grader, prompt, rubric, UI, runtime retrieval, rules, calibration threshold,
 > historical grade, or private scenario content. The dedicated non-production v10 live smoke passed
-> **24/24** on 2026-07-27. A fresh read-only recovery found 15 active OB/GYN scenarios, and the ignored
-> local PR #43 transfer candidate validated 15/15 with exactly one wording-only change to
-> `expectedActions` and `criticalMisses`; neither private manifest was committed, printed, or modified.
-> Provisioning was stopped before any write because the operator tool classified every remotely existing
-> manifest ID as an update and would have rewritten unchanged documents. It now performs a full-document,
-> key-order-insensitive semantic comparison (arrays and primitive types remain meaningful), reports
-> unchanged IDs separately, and applies only creates, actual updates, and scoped deactivations. No
-> Firestore read or write occurred during this correction; provisioning remains separately owner-authorized.
-> Calibration remains `INSUFFICIENT_DATA` and no fixture or threshold was fabricated/changed.
+> **24/24** on 2026-07-27. During the code correction itself, no Firestore access occurred. In a later,
+> separately owner-authorized operator sequence, a read-only recovery found 15 active OB/GYN scenarios;
+> the ignored local candidate validated 15/15 with one wording-only change to `expectedActions` and
+> `criticalMisses`; and neither private manifest was committed or printed. The content-aware dry-run was
+> **0 creates, 1 update, 0 deactivations, 14 unchanged**. A guarded single-document update then applied
+> only `obgyn-pv1-transfer-33-weeks__2026-07-18-a` (the generic full-manifest `--apply` path was not
+> used); post-apply verification was **0 creates, 0 updates, 0 deactivations, 15 unchanged**. The apply
+> and verification accessed only `callQaScenariosPrivate` (2 reads, 1 write); no other document,
+> historical grade, or result changed. No private content was committed or printed. Calibration remains
+> `INSUFFICIENT_DATA`, automation remains unauthorized, and deployment/merge remain separate actions.
 > See docs/HISTORY.md 2026-07-28.
 >
 > **Current implementation update (2026-07-27) — POST-MERGE CALL QA RELIABILITY + REVIEW UI FOLLOW-UP (prompt v10).**
@@ -47,9 +48,9 @@
 > concise notes first, native expandable rubric detail, mobile-safe styling. The same shared component now
 > renders in the supervisor’s historical Call QA panel only for current interpretable structured criteria;
 > legacy/uninterpretable records retain a labelled stored-summary fallback. Stored criteria, scores,
-> flags, auto-fails, supervisor overrides, and history are unchanged. The ignored local transfer
-> scenario was wording-corrected only; no Firestore write occurred and a later explicitly authorized
-> compatibility provisioning step is needed. Live smoke now has 24 synthetic cases incl. volunteered
+> flags, auto-fails, supervisor overrides, and history are unchanged. At the time of this correction the
+> ignored local transfer scenario was wording-corrected only; the later separately authorized
+> single-document provisioning operation is recorded in the current 2026-07-28 addendum above. Live smoke now has 24 synthetic cases incl. volunteered
 > gestational age and redundant-question contrast; calibration remains `INSUFFICIENT_DATA`.
 > See docs/HISTORY.md 2026-07-27 and docs/GRADING_INVARIANTS.md §0p.
 >
@@ -2896,6 +2897,16 @@ of this file on 2026-07-07 to cut per-session context cost (it was ~55% of the f
 ---
 
 ## 8. Current System State
+
+- **PR #43 private-scenario transfer correction (2026-07-28):** the code correction remains on the
+  open DRAFT PR, unmerged and undeployed. Later separate operator authorization recovered and validated
+  15 active OB/GYN scenarios, dry-ran the recreated candidate at 0 creates / 1 update / 0 deactivations
+  / 14 unchanged, and applied only `obgyn-pv1-transfer-33-weeks__2026-07-18-a` through a guarded
+  single-document update. Post-apply verification is 0 creates / 0 updates / 0 deactivations / 15
+  unchanged. Only `callQaScenariosPrivate` was accessed for the apply/verification sequence (2 reads,
+  1 write); no other document, historical grade, private content, or result changed. The generic
+  full-manifest `--apply` path was not used. Calibration remains `INSUFFICIENT_DATA`; automation,
+  deployment, and merge remain unauthorized.
 
 - **PR #41 controlled-pilot merge status (2026-07-24):** **MERGED** as
   `107817809f72b421b0d8bf8492e65981253099a3`; deployment remains a separate action. The live v8

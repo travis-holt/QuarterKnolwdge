@@ -17,6 +17,24 @@ full stored document semantically, reports `unchanged` separately, and writes on
 updates, and scoped deactivations. No Firestore read/write, provisioning run, deployment, merge, or
 historical-grade change occurred during discovery or this correction.
 
+## 2026-07-28 — PR #43 single-scenario private provisioning complete
+
+**Status: PR #43 remains OPEN, DRAFT, unmerged, and undeployed; auto-merge remains disabled.** After
+separate owner authorization, a read-only recovery of `callQaScenariosPrivate` produced 15 active
+OB/GYN scenarios (0 inactive) in an ignored, untracked local manifest. A recreated ignored candidate
+validated 15/15 and changed exactly one scenario, limited to wording in `expectedActions` and
+`criticalMisses`; all chart, caller-case, active-status, and provenance fields remained unchanged.
+
+The content-aware dry-run reported **0 creates, 1 update, 0 deactivations, and 14 unchanged**. A guarded
+live comparison reconfirmed those counts before a single-document update applied only
+`obgyn-pv1-transfer-33-weeks__2026-07-18-a`; the generic full-manifest `--apply` path was not used.
+Read-only post-apply verification reported **0 creates, 0 updates, 0 deactivations, and 15 unchanged**.
+The apply and verification sequence accessed only `callQaScenariosPrivate` (2 reads, 1 write): no other
+document, private content, historical grade, or result changed or was published/committed. The v10
+live-contract smoke remains the accepted 24/24 result; calibration remains `INSUFFICIENT_DATA`, with no
+fabricated fixture or threshold change. Merge and deployment remain separate, explicitly authorized
+actions.
+
 ## 2026-07-27 — Post-merge Call QA pilot reliability and coaching-review follow-up
 
 **Status: focused follow-up branch; not merged, not deployed, not provisioned.** A real OB/GYN
