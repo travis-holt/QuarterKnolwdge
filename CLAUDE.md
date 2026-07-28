@@ -11,8 +11,9 @@
 > [§8 Current System State](#8-current-system-state) and [§15 Current Priorities](#15-current-priorities)
 > accurate at all times.
 >
-> **Current correction addendum (2026-07-28) — PRIVATE-SCENARIO PROVISIONING WRITE MINIMALITY.**
-> PR #43 remains open, **DRAFT**, unmerged, with auto-merge disabled; this operator-tool-only
+> **Current merge-status addendum (2026-07-28) — PR #43 MERGED, NOT DEPLOYED.**
+> PR #43 merged into `main` as `a3dd529302099f1b07f990bd28e511cb389a7e0c` after exact-head review;
+> auto-merge remained disabled. This operator-tool-only
 > correction changes no grader, prompt, rubric, UI, runtime retrieval, rules, calibration threshold,
 > historical grade, or private scenario content. The dedicated non-production v10 live smoke passed
 > **24/24** on 2026-07-27. During the code correction itself, no Firestore access occurred. In a later,
@@ -24,11 +25,11 @@
 > used); post-apply verification was **0 creates, 0 updates, 0 deactivations, 15 unchanged**. The apply
 > and verification accessed only `callQaScenariosPrivate` (2 reads, 1 write); no other document,
 > historical grade, or result changed. No private content was committed or printed. Calibration remains
-> `INSUFFICIENT_DATA`, automation remains unauthorized, and deployment/merge remain separate actions.
+> `INSUFFICIENT_DATA`, automation remains unauthorized, and deployment remains a separate action.
 > See docs/HISTORY.md 2026-07-28.
 >
 > **Current implementation update (2026-07-27) — POST-MERGE CALL QA RELIABILITY + REVIEW UI FOLLOW-UP (prompt v10).**
-> Focused follow-up branch only; not merged, deployed, provisioned, or ready for automation. A real
+> Merged to `main` on 2026-07-28 as `a3dd529302099f1b07f990bd28e511cb389a7e0c`; not deployed or ready for automation. A real
 > OB/GYN transfer-call pilot showed that the grader treated caller-volunteered gestational age as
 > uncollected, recycled that alleged miss into unrelated documentation feedback, and could double-deduct
 > verification when Gemini echoed a synthetic scenario name while authoritative STT captured a different
@@ -2898,15 +2899,15 @@ of this file on 2026-07-07 to cut per-session context cost (it was ~55% of the f
 
 ## 8. Current System State
 
-- **PR #43 private-scenario transfer correction (2026-07-28):** the code correction remains on the
-  open DRAFT PR, unmerged and undeployed. Later separate operator authorization recovered and validated
+- **PR #43 private-scenario transfer correction (2026-07-28):** merged to `main` as
+  `a3dd529302099f1b07f990bd28e511cb389a7e0c` and remains undeployed. Later separate operator authorization recovered and validated
   15 active OB/GYN scenarios, dry-ran the recreated candidate at 0 creates / 1 update / 0 deactivations
   / 14 unchanged, and applied only `obgyn-pv1-transfer-33-weeks__2026-07-18-a` through a guarded
   single-document update. Post-apply verification is 0 creates / 0 updates / 0 deactivations / 15
   unchanged. Only `callQaScenariosPrivate` was accessed for the apply/verification sequence (2 reads,
   1 write); no other document, historical grade, private content, or result changed. The generic
-  full-manifest `--apply` path was not used. Calibration remains `INSUFFICIENT_DATA`; automation,
-  deployment, and merge remain unauthorized.
+  full-manifest `--apply` path was not used. Calibration remains `INSUFFICIENT_DATA`; automation and
+  deployment remain unauthorized.
 
 - **PR #41 controlled-pilot merge status (2026-07-24):** **MERGED** as
   `107817809f72b421b0d8bf8492e65981253099a3`; deployment remains a separate action. The live v8
