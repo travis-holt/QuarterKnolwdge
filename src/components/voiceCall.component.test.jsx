@@ -22,6 +22,7 @@ const {
   default: VoiceCall,
   QA_GRADE_PENDING_MESSAGE,
   QA_GRADE_WAIT_EXCEEDED_MESSAGE,
+  MIC_CHECK_PEAK_THRESHOLD,
 } = await import('./VoiceCall.jsx');
 
 // ── Fake browser APIs ────────────────────────────────────────────────────────
@@ -42,6 +43,12 @@ class FakeAudioContext {
   createGain() { return { gain: { value: 0 }, connect() {} }; }
   createBuffer() { return { copyToChannel() {}, duration: 0 }; }
   createBufferSource() { return { buffer: null, connect() {}, start() {}, stop() {}, onended: null }; }
+}
+
+function enableMicCheck(peak) {
+  FakeAudioContext.prototype.createAnalyser = () => ({ fftSize: 256, disconnect: vi.fn(), getFloatTimeDomainData: (data) => data.fill(peak) });
+  global.requestAnimationFrame = vi.fn(() => 1);
+  global.cancelAnimationFrame = vi.fn();
 }
 
 const QA = {
@@ -80,6 +87,9 @@ beforeEach(() => {
   });
 });
 afterEach(() => {
+  delete FakeAudioContext.prototype.createAnalyser;
+  delete global.requestAnimationFrame;
+  delete global.cancelAnimationFrame;
   vi.useRealTimers();
   cleanup();
 });
@@ -340,5 +350,36 @@ describe('VoiceCall test mode — server-authoritative handshake', () => {
     // Fallback must exceed the server max drain(30s)+settle(10s)+margin(20s) = 60s.
     expect(delays.some((d) => d >= 60000)).toBe(true);
     setTimeoutSpy.mockRestore();
+  });
+});
+
+describe('P0-5B microphone verification', () => {
+  it('keeps a silent microphone out of the relay and returns to setup', async () => {
+    vi.useFakeTimers();
+    enableMicCheck(0);
+    render(<VoiceCall navigatorId="nav-a" name="Ada" mode="test" />);
+    fireEvent.click(screen.getByRole('button', { name: /start the test call/i }));
+    await act(async () => { await Promise.resolve(); await vi.advanceTimersByTimeAsync(3_000); });
+    expect(FakeWS.instances).toHaveLength(0);
+    expect(screen.getByText(/couldn't hear your microphone/i)).toBeTruthy();
+  });
+
+  it('opens exactly one relay socket after a live microphone peak', async () => {
+    enableMicCheck(MIC_CHECK_PEAK_THRESHOLD + 0.01);
+    render(<VoiceCall navigatorId="nav-a" name="Ada" mode="test" />);
+    fireEvent.click(screen.getByRole('button', { name: /start the test call/i }));
+    await waitFor(() => expect(FakeWS.instances).toHaveLength(1));
+  });
+
+  it('allows an explicit mic-check skip without exposing sensitive data', async () => {
+    enableMicCheck(0);
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    render(<VoiceCall navigatorId="nav-a" name="Ada" mode="test" />);
+    fireEvent.click(screen.getByRole('button', { name: /start the test call/i }));
+    await waitFor(() => expect(screen.getByRole('button', { name: /skip check/i })).toBeTruthy());
+    fireEvent.click(screen.getByRole('button', { name: /skip check/i }));
+    await waitFor(() => expect(FakeWS.instances).toHaveLength(1));
+    expect(warn).toHaveBeenCalledWith('[voice-call] microphone check skipped');
+    warn.mockRestore();
   });
 });

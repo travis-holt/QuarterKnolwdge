@@ -47,6 +47,8 @@ const FINALIZE_GUARD_MIN_MS = 10_000;   // defensive clamp on the server value
 const FINALIZE_GUARD_MAX_MS = 120_000;
 const TARGET_IN_RATE = 16000;
 const OUT_RATE = 24000;
+export const MIC_CHECK_PEAK_THRESHOLD = 0.02;
+const MIC_CHECK_DURATION_MS = 3_000;
 
 // Grade a SCORED Call QA attempt by its server attempt id. The browser sends ONLY
 // the attempt id — never a transcript, scenario, department, or grader metadata.
@@ -242,6 +244,8 @@ export default function VoiceCall({ navigatorId, name, department = 'pediatrics'
   const finalizeTimerRef = useRef(null);
   const finalizeGuardRef = useRef(FINALIZE_FALLBACK_MS); // server-provided guard (ms)
   const caseFileRef = useRef(null);
+  const micCheckRef = useRef(null);
+  const micCheckContinueRef = useRef(null);
   const domain = DOMAINS.find((d) => d.id === domainId);
 
   function clearPersistenceState() {
@@ -280,11 +284,66 @@ export default function VoiceCall({ navigatorId, name, department = 'pediatrics'
   }
 
   function teardown() {
+    const check = micCheckRef.current;
+    if (check) {
+      if (check.timer) clearTimeout(check.timer);
+      if (check.frame) cancelAnimationFrame(check.frame);
+      try { check.source?.disconnect(); } catch {}
+      try { check.ctx?.close(); } catch {}
+      micCheckRef.current = null;
+    }
+    micCheckContinueRef.current = null;
     const ws = wsRef.current;
     wsRef.current = null;
     if (finalizeTimerRef.current) { clearTimeout(finalizeTimerRef.current); finalizeTimerRef.current = null; }
     try { ws?.close(); } catch {}
     stopAudio();
+  }
+
+  async function runMicCheck(stream) {
+    if (!AudioContext.prototype.createAnalyser || typeof requestAnimationFrame !== 'function') return true;
+    let ctx;
+    try {
+      ctx = new AudioContext();
+      await ctx.resume();
+      if (ctx.state !== 'running') throw new Error('audio context not running');
+      const source = ctx.createMediaStreamSource(stream);
+      const analyser = ctx.createAnalyser();
+      analyser.fftSize = 256;
+      source.connect(analyser);
+      setPhase('micCheck');
+      return await new Promise((resolve) => {
+        const check = { ctx, source, analyser, frame: null, timer: null, done: false };
+        micCheckRef.current = check;
+        const finish = (passed, skipped = false) => {
+          if (check.done) return;
+          check.done = true;
+          if (check.timer) clearTimeout(check.timer);
+          if (check.frame) cancelAnimationFrame(check.frame);
+          try { source.disconnect(); } catch {}
+          try { ctx.close(); } catch {}
+          if (micCheckRef.current === check) micCheckRef.current = null;
+          micCheckContinueRef.current = null;
+          if (skipped) console.warn('[voice-call] microphone check skipped');
+          resolve(passed);
+        };
+        const samples = new Float32Array(analyser.fftSize);
+        const sample = () => {
+          if (check.done || micCheckRef.current !== check) return;
+          analyser.getFloatTimeDomainData(samples);
+          const peak = samples.reduce((max, value) => Math.max(max, Math.abs(value)), 0);
+          if (peak >= MIC_CHECK_PEAK_THRESHOLD) return finish(true);
+          check.frame = requestAnimationFrame(sample);
+        };
+        micCheckContinueRef.current = () => finish(true, true);
+        check.timer = setTimeout(() => finish(false), MIC_CHECK_DURATION_MS);
+        sample();
+      });
+    } catch (error) {
+      try { ctx?.close(); } catch {}
+      console.warn('[voice-call] microphone check unavailable');
+      return true; // analyser support is advisory; Skip must never hard-block a navigator.
+    }
   }
 
   // ── Playback ──────────────────────────────────────────────────────────────
@@ -380,6 +439,12 @@ export default function VoiceCall({ navigatorId, name, department = 'pediatrics'
       return setPhase('setup');
     }
     streamRef.current = stream;
+    if (!await runMicCheck(stream)) {
+      setError("We couldn't hear your microphone. Check your headset is selected as the input device and try again.");
+      teardown();
+      return setPhase('setup');
+    }
+    setPhase('connecting');
 
     try {
       const inCtx = new AudioContext();
@@ -996,9 +1061,13 @@ export default function VoiceCall({ navigatorId, name, department = 'pediatrics'
               : 'A scenario is generated for you. Every call is different. Your mic turns on when the call starts.'}
           </p>
           {error && <p className="gate__error">{error}</p>}
-          <button className="btn btn--primary" disabled={phase === 'connecting'} onClick={startCall} type="button">
+          {phase === 'micCheck' ? <>
+            <p className="readoff__sub">Say your name so we can check your microphone.</p>
+            <div className="voicecall__mic-meter" aria-label="Microphone level"><span /></div>
+            <button className="btn btn--ghost btn--sm" onClick={() => micCheckContinueRef.current?.()} type="button">Skip check</button>
+          </> : <button className="btn btn--primary" disabled={phase !== 'setup'} onClick={startCall} type="button">
             {phase === 'connecting' ? 'Connecting…' : isTest ? 'Start the test call' : 'Start voice call'}
-          </button>
+          </button>}
           {onExit && <button className="linkbtn" onClick={onExit} style={{ marginTop: '0.75rem' }}>← Back</button>}
         </div>
       )}
