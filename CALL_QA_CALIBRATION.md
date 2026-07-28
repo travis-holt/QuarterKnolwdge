@@ -14,6 +14,13 @@ Current committed evidence:
 That result is expected. Synthetic fixtures and the deterministic regression
 corpus do not prove real-model or real-transcription accuracy.
 
+Transcription-provider provenance matters for calibration. Attempts written
+before PR #44 have no `transcriptionProvider` field and are interpreted as
+`gemini` by the runtime default. Scores captured across a transcription-provider
+switch are not directly comparable; calibration and reliability analysis must
+segment runs by `transcriptionProvider` (treat legacy missing-provider attempts
+as the `gemini` segment) instead of pooling Gemini and ElevenLabs Scribe attempts.
+
 The runtime scenario bank is private (Admin-only Firestore
 `callQaScenariosPrivate`); calibration references committed non-production
 synthetic descriptors or an ignored local private-bank manifest, and coverage

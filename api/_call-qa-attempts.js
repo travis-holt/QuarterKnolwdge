@@ -113,6 +113,10 @@ export function buildAttemptDoc({ navigatorId, name, department, scenario, liveM
     captureAuthority: CALL_QA_CAPTURE_AUTHORITY,
     captureVersion: CALL_QA_CAPTURE_VERSION,
     liveModel: liveModel ?? null,
+    // Server-added capture provenance. These values come from the provider adapter
+    // after trusted scenario selection, never from the browser or private bank.
+    transcriptionProvider: scenario.transcriptionProvider ?? 'gemini',
+    transcriptionModel: scenario.transcriptionModel ?? null,
 
     captureStatus: CAPTURE_STATUS.ACTIVE,
     gradingStatus: GRADING_STATUS.NOT_STARTED,
