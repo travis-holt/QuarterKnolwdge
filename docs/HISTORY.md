@@ -1,5 +1,15 @@
 ﻿# Development History - Knowledge Check
 
+## 2026-07-28 — PR #46 P0-1 Call QA per-navigator concurrency
+
+**Status: draft, unmerged, and undeployed.** The relay no longer uses the shared NAT
+address as the scored-call identity limit. The IP cap remains a configurable pre-auth
+DoS backstop (`CALL_QA_MAX_SESSIONS_PER_IP`, default 25, clamped 1..200), while a
+module-local navigator counter permits only one validated `mode:'test'` session per
+authenticated navigator. Slots are acquired after roster/scenario validation and released
+on the shared shutdown path, so rejected duplicates cannot release a session they never held.
+The authoritative transcript and terminal-write-before-ack invariant are unchanged.
+
 ## 2026-07-28 — PR #43 private-scenario provisioning write-minimality correction
 
 **Status: PR #43 remains OPEN, DRAFT, unmerged, and auto-merge disabled.** The dedicated
