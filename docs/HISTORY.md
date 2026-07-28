@@ -1,5 +1,12 @@
 ﻿# Development History - Knowledge Check
 
+## 2026-07-28 — PR #43 merged; deployment remains separate
+
+**Status: PR #43 merged into `main` as `a3dd529302099f1b07f990bd28e511cb389a7e0c` from the independently
+reviewed exact head `fe1f21fe0f95cd8204df852f86461a6834da9d1b`.** Auto-merge remained disabled. The merge did
+not deploy the application, access Firestore, modify private scenarios, or change historical grades. Calibration
+remains `INSUFFICIENT_DATA`; automation remains unauthorized.
+
 ## 2026-07-28 — PR #43 private-scenario provisioning write-minimality correction
 
 **Status: PR #43 remains OPEN, DRAFT, unmerged, and auto-merge disabled.** The dedicated
