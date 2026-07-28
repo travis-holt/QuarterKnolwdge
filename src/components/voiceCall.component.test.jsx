@@ -383,3 +383,74 @@ describe('P0-5B microphone verification', () => {
     warn.mockRestore();
   });
 });
+
+describe('P0-5B lifecycle ownership', () => {
+  it('unmounting during a silent mic check cannot open a later socket', async () => {
+    vi.useFakeTimers();
+    const stop = vi.fn();
+    enableMicCheck(0);
+    navigator.mediaDevices.getUserMedia.mockResolvedValue({ getTracks: () => [{ stop }] });
+    const view = render(<VoiceCall navigatorId="nav-a" name="Ada" mode="test" />);
+    fireEvent.click(screen.getByRole('button', { name: /start the test call/i }));
+    await act(async () => { await Promise.resolve(); });
+    view.unmount();
+    await act(async () => { await vi.runAllTimersAsync(); });
+    expect(FakeWS.instances).toHaveLength(0);
+    expect(stop).toHaveBeenCalledOnce();
+  });
+
+  it('repeated Start clicks create at most one mic-check connection', async () => {
+    enableMicCheck(MIC_CHECK_PEAK_THRESHOLD + 0.01);
+    render(<VoiceCall navigatorId="nav-a" name="Ada" mode="test" />);
+    const start = screen.getByRole('button', { name: /start the test call/i });
+    fireEvent.click(start); fireEvent.click(start);
+    await waitFor(() => expect(FakeWS.instances).toHaveLength(1));
+    expect(navigator.mediaDevices.getUserMedia).toHaveBeenCalledOnce();
+  });
+});
+
+describe('P0-5B stale mic-check callbacks', () => {
+  function retainedMic(peakRef) {
+    let callback;
+    FakeAudioContext.prototype.createAnalyser = () => ({ fftSize: 256, disconnect: vi.fn(), getFloatTimeDomainData: (data) => data.fill(peakRef.value) });
+    global.requestAnimationFrame = vi.fn((cb) => { callback = cb; return 7; });
+    global.cancelAnimationFrame = vi.fn();
+    return () => callback?.();
+  }
+
+  it('cannot reconnect from a retained callback after silent failure', async () => {
+    vi.useFakeTimers();
+    const peak = { value: 0 }; const fireOld = retainedMic(peak);
+    render(<VoiceCall navigatorId="nav-a" name="Ada" mode="test" />);
+    fireEvent.click(screen.getByRole('button', { name: /start the test call/i }));
+    await act(async () => { await Promise.resolve(); await vi.advanceTimersByTimeAsync(3_000); });
+    peak.value = MIC_CHECK_PEAK_THRESHOLD + 0.1;
+    await act(async () => { fireOld(); });
+    expect(FakeWS.instances).toHaveLength(0);
+    expect(screen.getByText(/couldn't hear your microphone/i)).toBeTruthy();
+  });
+
+  it('cannot open a second socket from a retained callback after Skip check', async () => {
+    const peak = { value: 0 }; const fireOld = retainedMic(peak);
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    render(<VoiceCall navigatorId="nav-a" name="Ada" mode="test" />);
+    fireEvent.click(screen.getByRole('button', { name: /start the test call/i }));
+    await waitFor(() => expect(screen.getByRole('button', { name: /skip check/i })).toBeTruthy());
+    fireEvent.click(screen.getByRole('button', { name: /skip check/i }));
+    await waitFor(() => expect(FakeWS.instances).toHaveLength(1));
+    peak.value = MIC_CHECK_PEAK_THRESHOLD + 0.1;
+    await act(async () => { fireOld(); });
+    expect(FakeWS.instances).toHaveLength(1);
+    expect(warn).toHaveBeenCalledOnce(); warn.mockRestore();
+  });
+
+  it('fails safely when microphone analyser setup throws', async () => {
+    FakeAudioContext.prototype.createAnalyser = () => { throw new Error('device secret'); };
+    global.requestAnimationFrame = vi.fn(() => 1);
+    render(<VoiceCall navigatorId="nav-a" name="Ada" mode="test" />);
+    fireEvent.click(screen.getByRole('button', { name: /start the test call/i }));
+    await waitFor(() => expect(screen.getByText(/couldn't hear your microphone/i)).toBeTruthy());
+    expect(FakeWS.instances).toHaveLength(0);
+    expect(screen.queryByText(/device secret/i)).toBeNull();
+  });
+});

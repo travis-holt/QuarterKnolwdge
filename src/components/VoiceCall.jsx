@@ -246,6 +246,7 @@ export default function VoiceCall({ navigatorId, name, department = 'pediatrics'
   const caseFileRef = useRef(null);
   const micCheckRef = useRef(null);
   const micCheckContinueRef = useRef(null);
+  const mountedRef = useRef(true);
   const domain = DOMAINS.find((d) => d.id === domainId);
 
   function clearPersistenceState() {
@@ -266,7 +267,7 @@ export default function VoiceCall({ navigatorId, name, department = 'pediatrics'
     else setPhase('setup');
   }
 
-  useEffect(() => () => teardown(), []);    // stop everything on unmount
+  useEffect(() => () => { mountedRef.current = false; teardown(); }, []);    // stop everything on unmount
 
   // ── Teardown ────────────────────────────────────────────────────────────────
   function stopAudio() {
@@ -289,6 +290,7 @@ export default function VoiceCall({ navigatorId, name, department = 'pediatrics'
       if (check.timer) clearTimeout(check.timer);
       if (check.frame) cancelAnimationFrame(check.frame);
       try { check.source?.disconnect(); } catch {}
+      try { check.analyser?.disconnect(); } catch {}
       try { check.ctx?.close(); } catch {}
       micCheckRef.current = null;
     }
@@ -302,13 +304,13 @@ export default function VoiceCall({ navigatorId, name, department = 'pediatrics'
 
   async function runMicCheck(stream) {
     if (!AudioContext.prototype.createAnalyser || typeof requestAnimationFrame !== 'function') return true;
-    let ctx;
+    let ctx; let source; let analyser;
     try {
       ctx = new AudioContext();
       await ctx.resume();
       if (ctx.state !== 'running') throw new Error('audio context not running');
-      const source = ctx.createMediaStreamSource(stream);
-      const analyser = ctx.createAnalyser();
+      source = ctx.createMediaStreamSource(stream);
+      analyser = ctx.createAnalyser();
       analyser.fftSize = 256;
       source.connect(analyser);
       setPhase('micCheck');
@@ -321,6 +323,7 @@ export default function VoiceCall({ navigatorId, name, department = 'pediatrics'
           if (check.timer) clearTimeout(check.timer);
           if (check.frame) cancelAnimationFrame(check.frame);
           try { source.disconnect(); } catch {}
+          try { analyser.disconnect(); } catch {}
           try { ctx.close(); } catch {}
           if (micCheckRef.current === check) micCheckRef.current = null;
           micCheckContinueRef.current = null;
@@ -340,9 +343,11 @@ export default function VoiceCall({ navigatorId, name, department = 'pediatrics'
         sample();
       });
     } catch (error) {
+      try { source?.disconnect(); } catch {}
+      try { analyser?.disconnect(); } catch {}
       try { ctx?.close(); } catch {}
       console.warn('[voice-call] microphone check unavailable');
-      return true; // analyser support is advisory; Skip must never hard-block a navigator.
+      return false;
     }
   }
 
@@ -439,6 +444,10 @@ export default function VoiceCall({ navigatorId, name, department = 'pediatrics'
       return setPhase('setup');
     }
     streamRef.current = stream;
+    if (!mountedRef.current) {
+      stream.getTracks().forEach((track) => track.stop());
+      return;
+    }
     if (!await runMicCheck(stream)) {
       setError("We couldn't hear your microphone. Check your headset is selected as the input device and try again.");
       teardown();
